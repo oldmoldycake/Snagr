@@ -1,2 +1,10 @@
 #Agent ignores
 agent/.env
+
+#Frontend ignores
+frontend/.env
+
+#Backend ignores
+backend/.env
+
+
