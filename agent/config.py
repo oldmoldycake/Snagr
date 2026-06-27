@@ -10,10 +10,9 @@ load_dotenv()
 
 
 #Database
-from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Numeric, create_engine, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Numeric, create_engine, func
 from sqlalchemy.orm import DeclarativeBase, Session, mapped_column, Mapped
 from datetime import datetime
-from decimal import Decimal
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 assert DATABASE_URL is not None, "DATABASE_URL environment varable is not set"
@@ -26,13 +25,14 @@ engine = create_engine(
 class Base(DeclarativeBase):
     pass
 
+        
 class User(Base):
     __tablename__ = "users"
 
     id:             Mapped[int]         = mapped_column(primary_key=True)
     email:          Mapped[str]         = mapped_column(Text, unique=True)
     email_varified: Mapped[bool]        = mapped_column(Boolean, default=False)
-    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), current_timestamp=True)
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class Sites(Base):
     __tablename__ = "sites"
@@ -40,7 +40,7 @@ class Sites(Base):
     id:             Mapped[int]         = mapped_column(primary_key=True)
     name:           Mapped[str]         = mapped_column(Text, nullable=False)
     base_url:       Mapped[str]         = mapped_column(Text, nullable=False)
-    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), current_timestamp=True) 
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now()) 
 
 
 class Items(Base):
@@ -49,24 +49,24 @@ class Items(Base):
     id:             Mapped[int]         = mapped_column(primary_key=True)
     name:           Mapped[str]         = mapped_column(Text, nullable=False)
     target_price:   Mapped[float|None]  = mapped_column(Numeric(precision=10, scale=2))
-    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), current_timestamp=True)
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class Listings(Base):
     __tablename__ = "listings"
 
     id:             Mapped[int]         = mapped_column(primary_key=True)   
     item_id:        Mapped[int]         = mapped_column(ForeignKey("items.id"))
-    site_id:        Mapped[int]         = mapped_column(ForeignKey("site.id"))
+    site_id:        Mapped[int]         = mapped_column(ForeignKey("sites.id"))
     url:            Mapped[str]         = mapped_column(Text, nullable=False)
     site_sku:       Mapped[str|None]    = mapped_column(Text)
     active:         Mapped[bool]        = mapped_column(Boolean, default=True)
     
     __table_args__ = (
-        UniqueConstraint("item_id", "site_id", name="uq_item_site")     
+        UniqueConstraint("item_id", "site_id", name="uq_item_site"),   
     )
 
 class PriceChecks(Base):
-    __table_name__ = "price_checks"
+    __tablename__ = "price_checks"
 
     id:             Mapped[int]         = mapped_column(primary_key=True)
     listing_id:     Mapped[int]         = mapped_column(ForeignKey("listings.id"))
@@ -79,15 +79,15 @@ class PriceChecks(Base):
 class Watches(Base):
     __tablename__ = "watches"
 
-    id:             Mapped[int]         = mapped_column(primary_key=true)
+    id:             Mapped[int]         = mapped_column(primary_key=True)
     user_id:        Mapped[int]         = mapped_column(ForeignKey("users.id"))
     item_id:        Mapped[int]         = mapped_column(ForeignKey("items.id"))
     target_price:   Mapped[float|None]  = mapped_column(Numeric(precision=10, scale=2))
-    notify:         Mapped[bool]        = mapped_columnm(Boolean, default=True)
-    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), current_timestamp=True)
+    notify:         Mapped[bool]        = mapped_column(Boolean, default=True)
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
     
     __table_args__ = (
-        UniqueConstraint("user_id", "item_id", os.name="uq_item_user")
+        UniqueConstraint("user_id", "item_id", name="uq_item_user"),
     )
         
 #AI 
