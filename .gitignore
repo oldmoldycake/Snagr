@@ -1,10 +1,25 @@
-#Agent ignores
+# Env files
 agent/.env
-
-#Frontend ignores
 frontend/.env
-
-#Backend ignores
+frontend/.env.local
 backend/.env
 
+# Logs
+*.log
+logs/
 
+# Frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/dist-ssr/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -1,0 +1,77 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@theme {
+  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
+  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', monospace;
+
+  /* Surfaces */
+  --color-page: #111315;
+  --color-surface: #16191d;
+  --color-raised: #1c2025;
+  --color-overlay: #21262c;
+  --color-hairline: rgb(255 255 255 / 0.08);
+  --color-grid: #262b30;
+
+  /* Ink */
+  --color-ink: #f2f4f5;
+  --color-ink-2: #a8b0b8;
+  --color-ink-3: #6c7680;
+
+  /* Semantics — always paired with a glyph (▲▼✓⌖), never color alone */
+  --color-drop: #2fbf71;
+  --color-rise: #e5484d;
+  --color-warn: #fab219;
+  --color-accent: #3987e5;
+
+  /* Chart series (validated for the #16191D surface) */
+  --color-series-1: #3987e5;
+  --color-series-2: #199e70;
+  --color-series-3: #c98500;
+  --color-series-4: #9085e9;
+  --color-series-5: #d55181;
+  --color-series-6: #d95926;
+  --color-spark: #4a4f55;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-page font-sans text-[13px] leading-normal text-ink antialiased;
+  }
+
+  ::selection {
+    background: rgb(57 135 229 / 0.35);
+  }
+
+  *:focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2c3238 transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility tnum {
+  font-variant-numeric: tabular-nums;
+}
