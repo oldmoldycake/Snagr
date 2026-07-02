@@ -1,1 +1,5 @@
 langgraph==1.2.6
+sqlalchemy
+dotenv
+langchain-ollama 
+langchain-mcp-adapters

@@ -1,7 +1,7 @@
 from decimal import Decimal
+from enum import unique
 import os
 from dotenv import load_dotenv
-from httpx._transports import default
 import sqlalchemy
 from sqlalchemy.sql.functions import current_timestamp
 from sqlalchemy.util import concurrency
@@ -10,18 +10,24 @@ load_dotenv()
 
 
 #Database
+<<<<<<< HEAD
 from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Numeric, create_engine, func
+=======
+from sqlalchemy import Boolean, DateTime, ForeignKey, Nullable, Text, UniqueConstraint, Numeric, func
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+>>>>>>> c3e3e0521907e29c31391aebd25e66e9cd31317b
 from sqlalchemy.orm import DeclarativeBase, Session, mapped_column, Mapped
 from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 assert DATABASE_URL is not None, "DATABASE_URL environment varable is not set"
-engine = create_engine(
-    url=sqlalchemy.engine.make_url(DATABASE_URL),
-    pool_size=5,    
-    echo=False
+engine = create_async_engine(DATABASE_URL)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine, 
+    class_=AsyncSession,
+    expire_on_commit=True
 )
-    
 class Base(DeclarativeBase):
     pass
 
@@ -31,7 +37,7 @@ class User(Base):
 
     id:             Mapped[int]         = mapped_column(primary_key=True)
     email:          Mapped[str]         = mapped_column(Text, unique=True)
-    email_varified: Mapped[bool]        = mapped_column(Boolean, default=False)
+    email_verified: Mapped[bool]        = mapped_column(Boolean, default=False)
     created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class Sites(Base):
@@ -42,28 +48,43 @@ class Sites(Base):
     base_url:       Mapped[str]         = mapped_column(Text, nullable=False)
     created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now()) 
 
+class Categories(Base):
+    __tablename__ = "categories"
+
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    name:           Mapped[str]         = mapped_column(Text, nullable=False, unique=True)
+    slug:           Mapped[str]         = mapped_column(Text, nullable=False, unique=True)
+
+class SiteCategories(Base):
+    __tablename__ = "site_categories"
+
+    site_id:        Mapped[int]         = mapped_column(ForeignKey("sites.id"))
+    categories_id:  Mapped[int]         = mapped_column(ForeignKey("categories.id"))    
 
 class Items(Base):
     __tablename__ = "items"
      
     id:             Mapped[int]         = mapped_column(primary_key=True)
+    category_id:    Mapped[int]         = mapped_column(ForeignKey("categories.id"), index=True)
     name:           Mapped[str]         = mapped_column(Text, nullable=False)
     target_price:   Mapped[float|None]  = mapped_column(Numeric(precision=10, scale=2))
     created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 class Listings(Base):
     __tablename__ = "listings"
-
-    id:             Mapped[int]         = mapped_column(primary_key=True)   
+    
+    id:             Mapped[int]         = mapped_column(primary_key=True)
     item_id:        Mapped[int]         = mapped_column(ForeignKey("items.id"))
     site_id:        Mapped[int]         = mapped_column(ForeignKey("sites.id"))
     url:            Mapped[str]         = mapped_column(Text, nullable=False)
     site_sku:       Mapped[str|None]    = mapped_column(Text)
     active:         Mapped[bool]        = mapped_column(Boolean, default=True)
-    
+    rationale:      Mapped[str]         = mapped_column(Text)
+    confidence:     Mapped[float]       = mapped_column(Numeric)
+
     __table_args__ = (
-        UniqueConstraint("item_id", "site_id", name="uq_item_site"),   
-    )
+        UniqueConstraint("site_id", "url", name="uq_site_url"),
+    ) 
 
 class PriceChecks(Base):
     __tablename__ = "price_checks"
@@ -96,4 +117,4 @@ OLLAMA_MODEL = os.getenv("OLLAMA_URL","qwen3.6:34b")
 
 #MCP
 PLAYWRIGHT_MCP_URL = os.getenv("PLAYWRIGHT_MCP_URL")
-
+    
