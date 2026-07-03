@@ -46,22 +46,40 @@ async def save_listing(item_id: int, site_id: int, url: str, rationale: str, con
             ).limit(1)
 
             results = await session.execute(stmt)
-
-            if results:
-                listing_id = results.scalar()
-                return int(listing_id)
+            listing_id  = results.scalar()            
+            if listing_id is not None:      
+                return int(listing_id.id)
             else:
                 return f"Unable to fetch the listing id for the item {item_id} on site {site_id}"
         except Exception as e:
           return f"Error recording listing for item {item_id} on site {site_id}: {e}"
 
 
-        
-async def save_price_check(listing_id: int, price: float, currency: str = "USD", in_stock: bool):
-  """
-  Use this tool after a listing is create for a item meeting the crieteriae3
-  """
+    
+async def save_price_check(listing_id: int, price: float, in_stock: bool, status: str, currency: str = "USD") -> str:
+    """
+    Use this tool after a listing is create for a item meeting the crieteriae3
+    """
 
     async with AsyncSessionLocal() as session:
-    
+        try:
+            stmt = insert(PriceChecks).values(
+                listing_id=listing_id,
+                price=price,
+                currency=currency,
+                in_stock=in_stock,
+                status=status,
+                created_at=datetime.now
+            )    
 
+            await session.execute(stmt)
+            await session.commit(   )
+
+            return f"Successfully recorded listing {listing_id}"
+
+
+        except Exception as e:
+            return f"Error inserting price check for listing {listing_id}: {e}"
+
+
+    
