@@ -1,0 +1,117 @@
+import logging
+import os
+from dotenv import load_dotenv
+from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Numeric, RowMapping, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, mapped_column, Mapped
+from datetime import datetime
+from typing import Sequence
+load_dotenv()
+
+log = logging.getLogger(__name__)
+
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+assert DATABASE_URL is not None, "DATABASE_URL environment varable is not set"
+engine = create_async_engine(DATABASE_URL)
+
+AsyncSessionLocal = async_sessionmaker(
+    engine, 
+    class_=AsyncSession,
+    expire_on_commit=True
+)
+class Base(DeclarativeBase):
+    pass
+
+        
+class User(Base):
+    __tablename__ = "users"
+
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    email:          Mapped[str]         = mapped_column(Text, unique=True)
+    email_verified: Mapped[bool]        = mapped_column(Boolean, default=False)
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class Sites(Base):
+    __tablename__ = "sites"
+    
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    name:           Mapped[str]         = mapped_column(Text, nullable=False)
+    base_url:       Mapped[str]         = mapped_column(Text, nullable=False)
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now()) 
+
+class Categories(Base):
+    __tablename__ = "categories"
+
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    name:           Mapped[str]         = mapped_column(Text, nullable=False, unique=True)
+    slug:           Mapped[str]         = mapped_column(Text, nullable=False, unique=True)
+
+class SiteCategories(Base):
+    __tablename__ = "site_categories"
+
+    site_id:        Mapped[int]         = mapped_column(ForeignKey("sites.id"), primary_key=True)
+    categories_id:  Mapped[int]         = mapped_column(ForeignKey("categories.id"), primary_key=True)    
+
+class Items(Base):
+    __tablename__ = "items"
+     
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    category_id:    Mapped[int]         = mapped_column(ForeignKey("categories.id"), index=True)
+    name:           Mapped[str]         = mapped_column(Text, nullable=False)
+    target_price:   Mapped[float|None]  = mapped_column(Numeric(precision=10, scale=2))
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+class Listings(Base):
+    __tablename__ = "listings"
+    
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    item_id:        Mapped[int]         = mapped_column(ForeignKey("items.id"))
+    site_id:        Mapped[int]         = mapped_column(ForeignKey("sites.id"))
+    url:            Mapped[str]         = mapped_column(Text, nullable=False)
+    site_sku:       Mapped[str|None]    = mapped_column(Text)
+    active:         Mapped[bool]        = mapped_column(Boolean, default=True)
+    rationale:      Mapped[str]         = mapped_column(Text)
+    confidence:     Mapped[float]       = mapped_column(Numeric)
+
+    __table_args__ = (
+        UniqueConstraint("site_id", "url", name="uq_site_url"),
+    ) 
+
+class PriceChecks(Base):
+    __tablename__ = "price_checks"
+
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    listing_id:     Mapped[int]         = mapped_column(ForeignKey("listings.id"))
+    price:          Mapped[float|None]  = mapped_column(Numeric(precision=10, scale=2))
+    currency:       Mapped[str]         = mapped_column(Text, default="USD")
+    in_stock:       Mapped[bool|None]   = mapped_column(Boolean)
+    status:         Mapped[str|None]    = mapped_column(Text)
+    checked_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True))
+
+class Watches(Base):
+    __tablename__ = "watches"
+
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    user_id:        Mapped[int]         = mapped_column(ForeignKey("users.id"))
+    item_id:        Mapped[int]         = mapped_column(ForeignKey("items.id"))
+    target_price:   Mapped[float|None]  = mapped_column(Numeric(precision=10, scale=2))
+    notify:         Mapped[bool]        = mapped_column(Boolean, default=True)
+    created_at:     Mapped[datetime]    = mapped_column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint("user_id", "item_id", name="uq_item_user"),
+    )
+        
+async def get_watched_item_list() -> Sequence[RowMapping]:
+    """
+    Use this function to get a list of Row Mapping of the currently watched items.
+    """
+    async with AsyncSessionLocal() as session:
+        watched_item_ids = select(Watches.item_id).distinct()
+        
+        stmt = select(Sites.id.label("site_id"), Sites.name.label("site_name"), Items.id.label("item_id"), Items.name.label("item_name")).join(SiteCategories, SiteCategories.site_id == Sites.id).join(Items, Items.category_id == SiteCategories.categories_id).where(Items.id.in_(watched_item_ids))
+
+        results = await session.execute(stmt)
+        return results.mappings().all()
+

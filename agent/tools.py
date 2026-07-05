@@ -1,12 +1,13 @@
+
+import logging
 from datetime import datetime
-
-from sqlalchemy.orm.base import LOAD_AGAINST_COMMITTED
-from config import AsyncSessionLocal
-from config import Items, Sites, Listings, PriceChecks
+from database import AsyncSessionLocal
+from database import Listings, PriceChecks
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import Select, select, update
+from sqlalchemy import select
 
 
+log = logging.getLogger(__name__)
 async def save_listing(item_id: int, site_id: int, url: str, rationale: str, confidence:float, site_sku:str|None = None) -> int|str:
     """
     This tool is used to save a listing that matches the users selected criteria to the database and generated a listing site_id
