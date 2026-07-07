@@ -1,5 +1,20 @@
 langgraph==1.2.6
 sqlalchemy
 dotenv
-langchain-ollama 
+langchain
 langchain-mcp-adapters
+
+# AI providers (init_chat_model "provider:model" support)
+langchain-ollama
+langchain-openrouter
+langchain-openai
+langchain-anthropic
+langchain-google-genai
+langchain-groq
+langchain-mistralai
+langchain-together
+langchain-fireworks
+langchain-xai
+langchain-deepseek
+langchain-cohere
+langchain-aws
