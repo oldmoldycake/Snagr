@@ -17,7 +17,7 @@ export function DialogContent({
       <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 data-[state=open]:animate-in data-[state=open]:fade-in" />
       <DialogPrimitive.Content
         className={cn(
-          'fixed top-1/2 left-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2',
+          'fixed top-1/2 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2',
           'rounded-lg border border-hairline bg-raised p-5 shadow-2xl focus:outline-none',
           className,
         )}
@@ -25,7 +25,7 @@ export function DialogContent({
       >
         {children}
         <DialogPrimitive.Close
-          className="absolute top-4 right-4 rounded-sm text-ink-3 hover:text-ink"
+          className="absolute top-4 right-4 -m-2 rounded-sm p-2 text-ink-3 hover:text-ink"
           aria-label="Close"
         >
           <X className="size-4" />

@@ -159,9 +159,9 @@ export function SitesPage() {
                 <TR>
                   <TH>Site</TH>
                   <TH>Base URL</TH>
-                  <TH>Used by</TH>
+                  <TH className="hidden md:table-cell">Used by</TH>
                   <TH className="text-right">Listings</TH>
-                  <TH>Last check</TH>
+                  <TH className="hidden md:table-cell">Last check</TH>
                   <TH className="w-24" />
                 </TR>
               </THead>
@@ -170,11 +170,17 @@ export function SitesPage() {
                   <TR key={site.id}>
                     <TD className="font-medium text-ink">{site.name}</TD>
                     <TD>
-                      <a href={site.base_url} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
+                      <a
+                        href={site.base_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={site.base_url}
+                        className="inline-block max-w-[40vw] truncate align-middle text-xs text-accent hover:underline"
+                      >
                         {site.base_url}
                       </a>
                     </TD>
-                    <TD>
+                    <TD className="hidden md:table-cell">
                       <span className="flex flex-wrap gap-1">
                         {site.category_ids.length === 0 ? (
                           <span className="text-xs text-ink-3">not linked</span>
@@ -188,7 +194,7 @@ export function SitesPage() {
                       </span>
                     </TD>
                     <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
-                    <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(site.last_checked_at)}</TD>
+                    <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(site.last_checked_at)}</TD>
                     <TD>
                       <div className="flex items-center justify-end gap-1">
                         <RunButton scope="site" scopeId={site.id} label="Run" variant="ghost" size="sm" />

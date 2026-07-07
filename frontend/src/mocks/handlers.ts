@@ -99,6 +99,7 @@ interface TrackingFields {
   criteria: string | null
   selection_mode: 'cheapest' | 'best_match'
   max_listings: number
+  allow_reproductions: boolean
   site_ids: number[] | null
 }
 
@@ -129,6 +130,8 @@ function validateTracking(
     })
   }
 
+  const allow_reproductions = body.allow_reproductions ?? existing?.allow_reproductions ?? false
+
   let site_ids = body.site_ids !== undefined ? body.site_ids : (existing?.site_ids ?? null)
   if (site_ids != null) {
     if (site_ids.some((id) => !category.site_ids.includes(id))) {
@@ -140,7 +143,7 @@ function validateTracking(
     if (site_ids.length === 0 || site_ids.length === category.site_ids.length) site_ids = null
   }
 
-  return { criteria, selection_mode, max_listings, site_ids }
+  return { criteria, selection_mode, max_listings, allow_reproductions, site_ids }
 }
 
 // --- handlers --------------------------------------------------------------------

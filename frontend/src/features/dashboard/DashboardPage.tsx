@@ -76,7 +76,7 @@ export function DashboardPage() {
                   <Link
                     key={item.id}
                     to={`/items/${item.id}`}
-                    className="flex min-w-52 flex-col gap-0.5 rounded-md border border-drop/30 bg-drop/5 px-3 py-2 hover:bg-drop/10"
+                    className="flex w-full flex-col gap-0.5 rounded-md border border-drop/30 bg-drop/5 px-3 py-2 hover:bg-drop/10 sm:w-auto sm:min-w-52"
                   >
                     <span className="text-[13px] font-medium text-ink">{item.name}</span>
                     <span className="font-mono text-xs tnum">
@@ -112,10 +112,10 @@ export function DashboardPage() {
                   <THead>
                     <TR>
                       <TH>Item</TH>
-                      <TH>Site</TH>
+                      <TH className="hidden sm:table-cell">Site</TH>
                       <TH className="text-right">Price</TH>
                       <TH className="text-right">Change</TH>
-                      <TH>When</TH>
+                      <TH className="hidden sm:table-cell">When</TH>
                     </TR>
                   </THead>
                   <TBody>
@@ -126,7 +126,7 @@ export function DashboardPage() {
                         onClick={() => navigate(`/items/${drop.item_id}`)}
                       >
                         <TD className="font-medium text-ink">{drop.item_name}</TD>
-                        <TD className="text-ink-2">
+                        <TD className="hidden text-ink-2 sm:table-cell">
                           <span className="inline-flex items-center gap-1">
                             {drop.site_name} <ExternalLink className="size-3 text-ink-3" />
                           </span>
@@ -138,7 +138,7 @@ export function DashboardPage() {
                         <TD className="text-right">
                           <DeltaText value={drop.pct_change} />
                         </TD>
-                        <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(drop.checked_at)}</TD>
+                        <TD className="hidden text-xs whitespace-nowrap text-ink-3 sm:table-cell">{relativeTime(drop.checked_at)}</TD>
                       </TR>
                     ))}
                   </TBody>

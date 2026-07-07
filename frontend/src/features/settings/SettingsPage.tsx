@@ -140,7 +140,7 @@ export function SettingsPage() {
           {instance?.ntfy_server_url == null ? (
             <p className="text-[13px] text-ink-2">
               Your admin hasn't configured a ntfy server yet. Set{' '}
-              <code className="rounded-sm bg-page px-1 py-0.5 font-mono text-xs">NTFY_SERVER_URL</code> on the
+              <code className="rounded-sm bg-page px-1 py-0.5 font-mono text-xs break-all">NTFY_SERVER_URL</code> on the
               backend to enable push notifications when a target price is hit.
             </p>
           ) : (
@@ -169,7 +169,7 @@ export function SettingsPage() {
                 </div>
                 <p className="mt-1.5 text-xs text-ink-3">
                   Subscribe to{' '}
-                  <code className="rounded-sm bg-page px-1 py-0.5 font-mono">
+                  <code className="rounded-sm bg-page px-1 py-0.5 font-mono break-all">
                     {instance.ntfy_server_url}/{topic.trim() || suggestedTopic}
                   </code>{' '}
                   in the ntfy app. You'll get a push when an item you watch hits its target — toggle

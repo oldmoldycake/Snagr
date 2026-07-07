@@ -61,10 +61,10 @@ export function RunsPage() {
                   <TH>Status</TH>
                   <TH>Scope</TH>
                   <TH>Started</TH>
-                  <TH>Duration</TH>
-                  <TH className="text-right">Checked</TH>
-                  <TH className="text-right">Prices</TH>
-                  <TH className="text-right">New</TH>
+                  <TH className="hidden sm:table-cell">Duration</TH>
+                  <TH className="hidden text-right sm:table-cell">Checked</TH>
+                  <TH className="hidden text-right sm:table-cell">Prices</TH>
+                  <TH className="hidden text-right sm:table-cell">New</TH>
                   <TH className="text-right">Errors</TH>
                 </TR>
               </THead>
@@ -82,13 +82,13 @@ export function RunsPage() {
                       </TD>
                       <TD className="font-medium text-ink">{run.scope_label}</TD>
                       <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(run.created_at)}</TD>
-                      <TD className="font-mono text-xs text-ink-2 tnum">
+                      <TD className="hidden font-mono text-xs text-ink-2 tnum sm:table-cell">
                         {run.started_at ? formatDuration(run.started_at, run.finished_at) : '—'}
                         {isActive ? <span className="ml-1 text-accent">live</span> : null}
                       </TD>
-                      <TD className="text-right font-mono text-ink-2 tnum">{run.stats?.listings_checked ?? '—'}</TD>
-                      <TD className="text-right font-mono text-ink-2 tnum">{run.stats?.prices_found ?? '—'}</TD>
-                      <TD className="text-right font-mono text-ink-2 tnum">{run.stats?.new_listings ?? '—'}</TD>
+                      <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{run.stats?.listings_checked ?? '—'}</TD>
+                      <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{run.stats?.prices_found ?? '—'}</TD>
+                      <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{run.stats?.new_listings ?? '—'}</TD>
                       <TD className="text-right font-mono tnum">
                         {run.stats == null ? (
                           <span className="text-ink-2">—</span>

@@ -55,6 +55,8 @@ export interface MockItem {
   criteria: string | null
   selection_mode: 'cheapest' | 'best_match'
   max_listings: number
+  /** optional so existing fixtures default to false */
+  allow_reproductions?: boolean
   site_ids: number[] | null
   created_at: number
 }

@@ -136,7 +136,7 @@ export function CategoryPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <RangeSelector value={range} onChange={setRange} />
-        <div role="group" aria-label="Status filter" className="inline-flex overflow-hidden rounded-sm border border-hairline">
+        <div role="group" aria-label="Status filter" className="inline-flex flex-wrap overflow-hidden rounded-sm border border-hairline">
           {STATUS_FILTERS.map((f) => (
             <button
               key={f.value}

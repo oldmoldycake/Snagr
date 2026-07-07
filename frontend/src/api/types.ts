@@ -152,6 +152,8 @@ export interface ItemSummary {
   selection_mode: SelectionMode
   /** how many listings to track at once (1–10) */
   max_listings: number
+  /** true = skip the agent's reproduction/counterfeit screening for this item */
+  allow_reproductions: boolean
   /** subset of the category's linked sites to search; null = all of them */
   site_ids: number[] | null
   best_price: string | null
@@ -210,6 +212,8 @@ export interface ItemCreateRequest {
   selection_mode?: SelectionMode
   /** default 5; 422 outside 1–10 */
   max_listings?: number
+  /** default false */
+  allow_reproductions?: boolean
   /** must be a subset of the category's sites (422 otherwise); empty/full set normalizes to null */
   site_ids?: number[] | null
 }
@@ -220,6 +224,7 @@ export interface ItemUpdateRequest {
   criteria?: string | null
   selection_mode?: SelectionMode
   max_listings?: number
+  allow_reproductions?: boolean
   site_ids?: number[] | null
 }
 

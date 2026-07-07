@@ -13,14 +13,17 @@ import type { CategoryItemChange } from '@/api/types'
 import { axisTickStyle, chart } from '@/components/charts/chartTheme'
 import { TooltipFrame, TooltipRow } from '@/components/charts/ChartTooltip'
 import { formatMoney } from '@/lib/money'
+import { useMediaQuery } from '@/lib/useMediaQuery'
 
 const MAX_BARS = 15
+const NARROW_TICK_CHARS = 14
 
 /**
  * Diverging horizontal bars: % change of best price over the range, centered
  * at 0. Drops (good) green, rises red — polarity semantics, not series colors.
  */
 export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) {
+  const narrow = useMediaQuery('(max-width: 640px)')
   const data = items
     .filter((i) => i.pct_change != null)
     .map((i) => ({ ...i, pct: Number(i.pct_change) }))
@@ -48,7 +51,10 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
           <YAxis
             type="category"
             dataKey="name"
-            width={170}
+            width={narrow ? 100 : 170}
+            tickFormatter={(name: string) =>
+              narrow && name.length > NARROW_TICK_CHARS ? `${name.slice(0, NARROW_TICK_CHARS)}…` : name
+            }
             tick={{ fill: chart.inkSecondary, fontSize: 12 }}
             axisLine={false}
             tickLine={false}

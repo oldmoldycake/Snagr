@@ -79,12 +79,12 @@ export function ActivitySheet() {
         <div className="border-b border-hairline px-4 py-3">
           <div className="flex items-center gap-2 pr-8">
             {activeRun ? <RunStatusDot status={activeRun.status} /> : null}
-            <SheetTitle className="font-display text-sm font-semibold text-ink">
+            <SheetTitle className="min-w-0 truncate font-display text-sm font-semibold text-ink">
               {activeRun ? activeRun.scope_label : 'Agent activity'}
             </SheetTitle>
             {active && activeRun ? <ElapsedTimer startedAt={activeRun.started_at} /> : null}
           </div>
-          <SheetDescription className="mt-1 flex items-center gap-3 text-xs text-ink-3">
+          <SheetDescription className="mt-1 flex flex-wrap items-center gap-3 text-xs text-ink-3">
             <span className="flex items-center gap-1.5">
               <span
                 aria-hidden
@@ -134,7 +134,7 @@ export function ActivitySheet() {
               setFollowing(true)
               logRef.current?.scrollTo({ top: logRef.current.scrollHeight })
             }}
-            className="absolute right-4 bottom-4 flex items-center gap-1 rounded-full border border-hairline bg-overlay px-2.5 py-1 text-xs text-ink-2 shadow-lg hover:text-ink"
+            className="absolute right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] flex items-center gap-1 rounded-full border border-hairline bg-overlay px-2.5 py-2 text-xs text-ink-2 shadow-lg hover:text-ink"
           >
             <ArrowDown className="size-3" /> Follow
           </button>

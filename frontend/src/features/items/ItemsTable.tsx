@@ -90,13 +90,13 @@ export function ItemsTable({
         <TR>
           {expandable ? <TH className="w-8" /> : null}
           <TH>Item</TH>
-          {showCategory ? <TH>Category</TH> : null}
+          {showCategory ? <TH className="hidden md:table-cell">Category</TH> : null}
           <TH className="text-right">Best price</TH>
-          <TH className="text-right">Target</TH>
+          <TH className="hidden text-right md:table-cell">Target</TH>
           <TH className="text-right">Δ target</TH>
           {showListings ? <TH className="text-right">Listings</TH> : null}
-          <TH>Trend</TH>
-          {showLastChecked ? <TH>Checked</TH> : null}
+          <TH className="hidden md:table-cell">Trend</TH>
+          {showLastChecked ? <TH className="hidden md:table-cell">Checked</TH> : null}
           {hasActions ? <TH className="w-10" /> : null}
         </TR>
       </THead>
@@ -138,11 +138,11 @@ export function ItemsTable({
                     ) : null}
                   </div>
                 </TD>
-                {showCategory ? <TD className="text-ink-2">{item.category_name}</TD> : null}
+                {showCategory ? <TD className="hidden text-ink-2 md:table-cell">{item.category_name}</TD> : null}
                 <TD className="text-right font-mono text-ink tnum">
                   {formatMoney(item.best_price, item.currency)}
                 </TD>
-                <TD className="text-right font-mono text-ink-2 tnum">
+                <TD className="hidden text-right font-mono text-ink-2 tnum md:table-cell">
                   {formatMoney(item.watch.target_price ?? item.target_price, item.currency)}
                 </TD>
                 <TD className="text-right">
@@ -151,11 +151,11 @@ export function ItemsTable({
                 {showListings ? (
                   <TD className="text-right font-mono text-ink-2 tnum">{item.active_listing_count}</TD>
                 ) : null}
-                <TD>
+                <TD className="hidden md:table-cell">
                   <Sparkline data={item.spark} />
                 </TD>
                 {showLastChecked ? (
-                  <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(item.last_checked_at)}</TD>
+                  <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(item.last_checked_at)}</TD>
                 ) : null}
                 {hasActions ? (
                   <TD onClick={(e) => e.stopPropagation()}>

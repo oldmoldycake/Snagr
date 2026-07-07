@@ -180,8 +180,8 @@ export function AdminUsersPage() {
                   <TH>Email</TH>
                   <TH>Role</TH>
                   <TH>Status</TH>
-                  <TH className="text-right">Items</TH>
-                  <TH>Joined</TH>
+                  <TH className="hidden text-right sm:table-cell">Items</TH>
+                  <TH className="hidden sm:table-cell">Joined</TH>
                   <TH className="w-10" />
                 </TR>
               </THead>
@@ -202,8 +202,8 @@ export function AdminUsersPage() {
                         <span className="text-xs text-warn">Deactivated</span>
                       )}
                     </TD>
-                    <TD className="text-right font-mono text-ink-2 tnum">{user.item_count}</TD>
-                    <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(user.created_at)}</TD>
+                    <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{user.item_count}</TD>
+                    <TD className="hidden text-xs whitespace-nowrap text-ink-3 sm:table-cell">{relativeTime(user.created_at)}</TD>
                     <TD>
                       {user.id !== me?.id ? (
                         <DropdownMenu>

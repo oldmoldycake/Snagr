@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, Search, User as UserIcon } from 'lucide-react'
+import { LogOut, Menu, Search, User as UserIcon } from 'lucide-react'
 import { useLogout, useSession } from '@/features/auth/useSession'
 import { isRunActive, useRunEvents } from '@/features/runs/RunEventsProvider'
 import { RunButton } from '@/features/runs/RunButton'
 import { Input } from '@/components/ui/input'
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
+import { SidebarNav } from '@/components/layout/Sidebar'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,6 +21,7 @@ export function TopBar() {
   const logout = useLogout()
   const { activeRun, setPanelOpen } = useRunEvents()
   const [search, setSearch] = useState('')
+  const [navOpen, setNavOpen] = useState(false)
 
   const submitSearch = (e: FormEvent) => {
     e.preventDefault()
@@ -28,7 +31,28 @@ export function TopBar() {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline bg-surface px-4">
-      <form onSubmit={submitSearch} className="relative w-full max-w-64">
+      <Sheet open={navOpen} onOpenChange={setNavOpen}>
+        <SheetTrigger
+          className="-ml-2 flex size-10 shrink-0 items-center justify-center rounded-sm text-ink-2 hover:text-ink md:hidden"
+          aria-label="Open navigation"
+        >
+          <Menu className="size-4" />
+        </SheetTrigger>
+        <SheetContent side="left" className="max-w-64">
+          <SheetTitle className="sr-only">Navigation</SheetTitle>
+          <div className="flex items-center gap-2 px-4 pt-4 pb-5">
+            <span aria-hidden className="text-lg leading-none text-drop">
+              ⌖
+            </span>
+            <span className="font-display text-[15px] font-bold tracking-wide text-ink">
+              SNAGR
+            </span>
+          </div>
+          <SidebarNav onNavigate={() => setNavOpen(false)} />
+        </SheetContent>
+      </Sheet>
+
+      <form onSubmit={submitSearch} className="relative w-full max-w-40 sm:max-w-64">
         <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-3" />
         <Input
           value={search}

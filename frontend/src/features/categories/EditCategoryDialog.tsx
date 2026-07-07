@@ -103,7 +103,7 @@ export function EditCategoryDialog({
 
           <div className="border-t border-hairline pt-3">
             {confirmingDelete ? (
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-xs text-rise">
                   Delete “{category.name}” and its {category.item_count} item
                   {category.item_count === 1 ? '' : 's'}? This cannot be undone.

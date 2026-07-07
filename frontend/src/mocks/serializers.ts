@@ -117,6 +117,7 @@ export function toItemSummary(item: MockItem, range: TimeRange = '30d'): ItemSum
     criteria: item.criteria,
     selection_mode: item.selection_mode,
     max_listings: item.max_listings,
+    allow_reproductions: item.allow_reproductions ?? false,
     site_ids: item.site_ids,
     best_price: best ? cents(best.cents) : null,
     best_listing_id: best?.listing.id ?? null,

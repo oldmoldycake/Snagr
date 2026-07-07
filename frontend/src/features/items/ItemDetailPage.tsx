@@ -77,7 +77,7 @@ function ListingRow({
               href={listing.url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex max-w-72 items-center gap-1 text-[13px] text-ink hover:text-accent hover:underline"
+              className="inline-flex max-w-52 items-center gap-1 text-[13px] text-ink hover:text-accent hover:underline sm:max-w-72"
             >
               <span className="truncate">
                 {listing.title ?? listing.url.replace(/^https?:\/\/(www\.)?/, '')}
@@ -93,7 +93,7 @@ function ListingRow({
           ) : null}
         </div>
       </TD>
-      <TD>
+      <TD className="hidden md:table-cell">
         <MatchPill score={listing.match_score} summary={listing.match_summary} />
       </TD>
       <TD className="text-right font-mono text-ink tnum">{formatMoney(listing.latest_price)}</TD>
@@ -114,8 +114,8 @@ function ListingRow({
           </span>
         )}
       </TD>
-      <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(listing.last_checked_at)}</TD>
-      <TD className="text-xs whitespace-nowrap text-ink-3">
+      <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(listing.last_checked_at)}</TD>
+      <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">
         {listing.discovered_by_run_id != null ? (
           <Link to={`/runs/${listing.discovered_by_run_id}`} className="hover:text-ink hover:underline">
             {relativeTime(listing.created_at)}
@@ -342,11 +342,11 @@ export function ItemDetailPage() {
               <THead>
                 <TR>
                   <TH>Listing</TH>
-                  <TH>Match</TH>
+                  <TH className="hidden md:table-cell">Match</TH>
                   <TH className="text-right">Latest price</TH>
                   <TH>Stock</TH>
-                  <TH>Checked</TH>
-                  <TH>Discovered</TH>
+                  <TH className="hidden md:table-cell">Checked</TH>
+                  <TH className="hidden md:table-cell">Discovered</TH>
                   <TH>Active</TH>
                 </TR>
               </THead>
