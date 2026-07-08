@@ -1,19 +1,32 @@
-import logging, os
-from langchain_ollama import ChatOllama
+"""Agent orchestration: builds the LLM agent (model + Playwright MCP browser
+tools + database tools) and runs one search per (watch, site) pair."""
+
+import logging
+from langchain.chat_models import init_chat_model
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
-from config import OLLAMA_MODEL, OLLAMA_URL, PLAYWRIGHT_MCP_URL
-from tools import save_listing, save_price_check
-from database import get_watched_item_list
+from langchain.agents import create_agent
+from config import PLAYWRIGHT_MCP_URL, AI_MODEL,AI_PROVIDER, AI_API_KEY, AI_URL
+from tools import save_listing, save_price_check, log_listing_check, disable_listing
+from database import get_watched_item_list, get_listed_items, get_checked_urls
+from prompt import generate_prompt, generate_recheck_prompt
 
 log = logging.getLogger(__name__)
 
 assert PLAYWRIGHT_MCP_URL is not None, "PLAYWRIGHT_MCP_URL not set"
-llm = ChatOllama(
-    model=OLLAMA_MODEL,
-    base_url=OLLAMA_URL
-)
+
+if AI_API_KEY:
+    llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL, api_key=AI_API_KEY)
+else:
+    llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL)
+
+
 async def run():
+    """
+    Run one full scrape job: connect to the Playwright MCP server, build the
+    agent, then for every (watch, site) pair from get_watched_item_list()
+    generate a prompt and stream the agent through the search. A failure on
+    one pair is logged and skipped so the remaining pairs still run.
+    """
     client = MultiServerMCPClient({
         "playwright": {
             "url": PLAYWRIGHT_MCP_URL,
@@ -21,12 +34,103 @@ async def run():
         }
     })
 
-    tools = await client.get_tools()  # ← now async
-    tools = tools + [save_price_check, save_listing]
 
-    agent = create_react_agent(llm, tools)
+    #Here we get the current listing for tracked listings and check if active and updateprice
+    log.info("Starting scan on current listings") 
 
-    site_item_list = await get_watched_item_list()
+    tools = await client.get_tools()
+    tools = tools + [save_price_check, disable_listing]
 
-    for site_id, site_name, item_id, item_name in site_item_list:
-        log.info(f"Starting search for {item_id}, {item_name}, on site {site_id}, {site_name}")
+    agent = create_agent(llm, tools)
+    listed_items_list =  await get_listed_items()
+    current_listing_urls = []
+    for row in listed_items_list:
+        listing_id          = int(row["listing_id"])
+        listing_url         = row["listing_url"]
+        watch_id            = row["watch_id"]
+        site_id             = row["site_id"]
+        site_name           = row["site_name"]
+        item_id             = row["item_id"]
+        item_name           = row["item_name"]
+
+        log.info(f"Rechecking listing {listing_id} for item {item_id} ({item_name}) on site {site_id} ({site_name})")
+
+        prompt = await generate_recheck_prompt(
+            listing_id=listing_id,
+            listing_url=listing_url,
+            watch_id=watch_id,
+            site_id=site_id,
+            site_name=site_name,
+            item_id=item_id,
+            item_name=item_name,
+        )
+
+        try:
+            async for step in agent.astream(
+                {"messages": [{"role": "user", "content": prompt}]},
+                stream_mode="values",
+            ):
+                step["messages"][-1].pretty_print()
+
+            current_listing_urls.append(listing_url)
+            log.info(f"Finished recheck for listing {listing_id}")
+        except Exception as e:
+            log.error(f"Recheck failed for listing {listing_id}: {e}")
+            continue
+
+    #We scan the sites and ingore all the already seen and currently tracked listings
+    log.info("Starting scan for new items")
+
+    tools = await client.get_tools()
+    tools = tools + [save_price_check, save_listing, log_listing_check]
+
+    agent = create_agent(llm, tools)
+    watch_site_list = await get_watched_item_list()
+    for row in watch_site_list:
+        watch_id            = row["watch_id"]
+        site_id             = row["site_id"]
+        site_name           = row["site_name"]
+        item_id             = row["item_id"]
+        item_name           = row["item_name"]
+        base_url            = row["base_url"]
+        criteria            = row["criteria"]
+        selection_mode      = row["selection_mode"]
+        max_listings        = int(row["max_listings"])
+        allow_reproductions = bool(row["allow_reproductions"])
+
+        log.info(f"Starting search for watch {watch_id}: item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}")
+
+        checked_urls_list = await get_checked_urls(watch_id, site_id)
+        rejected_checks = [
+            {"url": c["url"], "reason": c["reason"], "notes": c["notes"]}
+            for c in checked_urls_list
+        ]
+
+        prompt = await generate_prompt(
+            watch_id=watch_id,
+            site_id=site_id,
+            site_name=site_name,
+            item_id=item_id,
+            item_name=item_name,
+            base_url=base_url,
+            criteria=criteria,
+            selection_mode=selection_mode,
+            max_listings=max_listings,
+            allow_reproductions=allow_reproductions,
+            known_urls=current_listing_urls,
+            rejected_checks=rejected_checks,
+        )
+
+        try:
+            async for step in agent.astream(
+                {"messages": [{"role": "user", "content": prompt}]},
+                stream_mode="values",
+            ):
+                step["messages"][-1].pretty_print()
+            log.info(f"Finished {item_name} on site {site_name}")
+        except Exception as e:
+            log.error(f"Item {item_name} on site {site_name} failed: {e}")
+            continue
+
+
+

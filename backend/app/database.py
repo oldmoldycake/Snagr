@@ -1,27 +1,35 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, DeclarativeBase
-from dotenv import load_dotenv
-import os
+"""Async SQLAlchemy engine + session factory + the get_db() dependency.
 
+Replaces the earlier sync stub. The whole app is async (asyncpg) so the SSE
+run stream and concurrent requests never block a worker thread.
 
-load_dotenv()
+Note: Alembic migrations run with a SYNC driver in migrations/env.py — the
+app runs async here. Same database, two drivers, on purpose.
+"""
 
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = os.getenv("DATABASE_URL", "No URL loaded")
+from app.config import settings
 
+engine = create_async_engine(settings.DATABASE_URL, pool_pre_ping=True)
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+SessionLocal = async_sessionmaker(
+    engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
 
 
 class Base(DeclarativeBase):
-    pass
+    """Declarative base shared by every ORM model in app/models.py."""
 
 
-def get_db():
-    db = SessionLocal()
-
-    try:
-        yield db
-    finally:
-        db.close()
+async def get_db():
+    """FastAPI dependency: yields a request-scoped async session."""
+    async with SessionLocal() as session:
+        yield session
