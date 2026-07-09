@@ -4,28 +4,29 @@ React 19 + Vite + TypeScript + Tailwind v4 + Recharts + TanStack Query SPA for S
 self-hosted price-tracking app. Dark "deal-hunter" UI: set a target price, run the LLM agent,
 watch it work live, snag the deal.
 
-## Run it (no backend needed)
+## Run it
 
-The app ships with a full mock API (MSW) seeded with a year of deterministic price history, so
-everything — auth, charts, live agent runs — works before the backend exists.
+The app talks to the real backend: dev requests to `/api` proxy to `http://localhost:8000`
+(see `vite.config.ts`), so start the FastAPI server first.
 
 ```bash
 npm install
 npm run dev          # http://localhost:5173
 ```
 
-Sign in with **demo@snagr.dev / snagr**. Click **Run all** (or the run buttons on categories,
-sites, and items) to watch a scripted agent run stream into the activity panel; it writes real
-price checks into the mock store, so the dashboard updates when it finishes. Mock data resets on
-page reload; the session survives.
+### Mock mode (no backend needed)
 
-Mocks are controlled by `VITE_USE_MOCKS` (`.env.development` sets it to `true`). Point the app
-at a real backend by setting it to `false` — dev requests to `/api` proxy to
-`http://localhost:8000` (see `vite.config.ts`).
+A full mock API (MSW) seeded with a year of deterministic price history is still available —
+set `VITE_USE_MOCKS=true` in `.env.development` and restart the dev server. Sign in with
+**demo@snagr.dev / snagr**. Click **Run all** (or the run buttons on categories, sites, and
+items) to watch a scripted agent run stream into the activity panel; it writes real price
+checks into the mock store, so the dashboard updates when it finishes. Mock data resets on
+page reload; the session survives. `src/mocks/handlers.ts` doubles as the behavioral spec
+(status codes + `error.code`) the backend is built against.
 
 ## Scripts
 
-- `npm run dev` — dev server with mocks
+- `npm run dev` — dev server (proxies `/api` to `localhost:8000`)
 - `npm run build` — type-check + production build to `dist/`
 - `npm run preview` — serve the production build locally
 - `npx tsc -b` — type-check only

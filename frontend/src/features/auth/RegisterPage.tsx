@@ -22,10 +22,10 @@ export function RegisterPage() {
 
   return (
     <AuthLayout>
-      <h1 className="font-display text-base font-semibold text-ink">Set up Snagr</h1>
+      <h1 className="font-display text-base font-semibold text-ink">Create your account</h1>
       <p className="mt-1 text-xs text-ink-2">
-        This is a fresh instance. The account you create here becomes the admin; registration closes
-        afterward and new users join by invite.
+        The first account on a fresh instance becomes the admin. After that, sign-up stays open
+        while the instance allows it — otherwise new users join by invite.
       </p>
 
       <form
@@ -67,7 +67,7 @@ export function RegisterPage() {
 
         <Button type="submit" variant="primary" className="w-full" disabled={register.isPending}>
           {register.isPending ? <Loader2 className="animate-spin" /> : null}
-          Create admin account
+          Create account
         </Button>
       </form>
 

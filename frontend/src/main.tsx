@@ -5,7 +5,6 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { RouterProvider } from 'react-router-dom'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { enableMocking } from '@/mocks/browser'
 import { router } from '@/router'
 
 import '@fontsource-variable/space-grotesk/index.css'
@@ -14,6 +13,16 @@ import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import '@fontsource/ibm-plex-mono/600.css'
 import '@/styles/globals.css'
+
+// Dynamic import so msw + fixtures are only fetched (and only bundled into a
+// lazy chunk) when mocks are on; real deployments never load them.
+async function enableMocking(): Promise<void> {
+  if (import.meta.env.VITE_USE_MOCKS !== 'true') return
+  const { worker } = await import('@/mocks/browser')
+  await worker.start({ onUnhandledRequest: 'bypass' })
+  // eslint-disable-next-line no-console
+  console.info('[snagr] Mock API enabled — sign in with demo@snagr.dev / snagr')
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -30,10 +30,9 @@ WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY app ./app
 
-# Uncomment once Alembic is initialized (getting-started step 2) so migrations
-# ship in the image and can run on deploy:
-# COPY migrations ./migrations
-# COPY alembic.ini .
+# Migrations ship in the image so `alembic upgrade head` can run on deploy
+COPY migrations ./migrations
+COPY alembic.ini .
 
 # Run as a non-root user
 RUN useradd --create-home --uid 1000 snagr && chown -R snagr:snagr /app

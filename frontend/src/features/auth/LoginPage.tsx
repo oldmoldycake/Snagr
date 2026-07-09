@@ -94,9 +94,9 @@ export function LoginPage() {
 
       {instance?.registration_open ? (
         <p className="mt-4 text-center text-xs text-ink-3">
-          New instance?{' '}
+          New here?{' '}
           <Link to="/register" className="text-accent hover:underline">
-            Set up the first admin account
+            Create an account
           </Link>
         </p>
       ) : (
