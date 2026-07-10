@@ -23,6 +23,7 @@ These paths return 401 DIRECTLY on bad creds — they must not trip the client's
 refresh-retry loop (client.ts skips retry for /api/auth/*).
 """
 
+import hmac
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -119,7 +120,30 @@ async def oidc_login(request: Request):
 
 @router.get("/oidc/callback", name="oidc_callback")
 async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    return _sso_failed()    # implemented in the next task
+    """The IdP sent the browser back: verify state, trade the code for an ID
+    token, resolve the local user, and start a completely normal session."""
+    if not settings.oidc_enabled:
+        return _sso_failed()
+    raw = request.cookies.get(FLOW_COOKIE)
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    if not raw or not code or not state or request.query_params.get("error"):
+        return _sso_failed()
+    try:
+        flow = oidc.unpack_flow(raw)
+        if not hmac.compare_digest(state.encode(), str(flow.get("state", "")).encode()):
+            raise oidc.OidcError("state mismatch")
+        token = await oidc.exchange_code(code, _redirect_uri(request), flow["verifier"])
+        claims = await oidc.validate_id_token(token["id_token"], flow["nonce"])
+        user = await oidc.resolve_oidc_user(db, claims)
+    except (oidc.OidcError, KeyError) as exc:
+        log.warning("OIDC callback failed: %s", exc)
+        return _sso_failed()
+    response = RedirectResponse("/", status_code=302)
+    response.delete_cookie(FLOW_COOKIE, path=FLOW_PATH)
+    await _start_session(db, response, user)
+    await db.commit()
+    return response
 
 
 # --- register / login -------------------------------------------------------

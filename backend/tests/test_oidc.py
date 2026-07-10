@@ -125,3 +125,82 @@ async def test_oidc_login_404_when_disabled(client, monkeypatch):
     res = await client.get("/api/auth/oidc/login")
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "not_found"
+
+
+# --- GET /api/auth/oidc/callback -------------------------------------------------
+
+def _stub_idp(monkeypatch, claims):
+    """Replace the two network-touching service fns; the rest runs for real."""
+    async def fake_exchange(code, redirect_uri, verifier):
+        return {"id_token": "stub-id-token"}
+    async def fake_validate(id_token, nonce):
+        return claims
+    monkeypatch.setattr(oidc, "exchange_code", fake_exchange)
+    monkeypatch.setattr(oidc, "validate_id_token", fake_validate)
+
+
+def _set_flow_cookie(client, flow):
+    # No `domain=` here: httpx's stdlib-cookiejar-backed jar never matches an
+    # explicit domain against a single-label test host ("test") for version-0
+    # cookies (eff_request_host appends ".local" specifically to defeat that
+    # match) -- the cookie would silently never be sent. Leaving domain unset
+    # makes it a match-any-domain cookie, fine for a client with exactly one host.
+    client.cookies.set("snagr_oidc_flow", oidc.pack_flow(flow),
+                       path="/api/auth/oidc")
+
+
+async def _sso_login(client, monkeypatch, claims=CLAIMS):
+    """Drive a full (stubbed-IdP) SSO sign-in on `client`; returns the response."""
+    _stub_idp(monkeypatch, claims)
+    flow = {"state": "st-1", "nonce": "n-1", "verifier": "v-1"}
+    _set_flow_cookie(client, flow)
+    return await client.get("/api/auth/oidc/callback",
+                            params={"code": "c-1", "state": "st-1"})
+
+
+async def test_callback_signs_in_and_creates_user(client, monkeypatch):
+    res = await _sso_login(client, monkeypatch)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/"
+    assert "snagr_access" in res.cookies and "snagr_refresh" in res.cookies
+    me = await client.get("/api/auth/me")
+    assert me.status_code == 200
+    assert me.json()["email"] == "sso@example.com"
+
+
+async def test_callback_marries_existing_account(client, monkeypatch):
+    # a password user registers first...
+    reg = await client.post("/api/auth/register",
+                            json={"email": "sso@example.com", "password": "hunter2hunter2"},
+                            headers={"X-Snagr-Csrf": "1"})
+    uid = reg.json()["user"]["id"]
+    await client.post("/api/auth/logout", headers={"X-Snagr-Csrf": "1"})
+    # ...then signs in via SSO with the same (verified) email -> same account
+    await _sso_login(client, monkeypatch)
+    me = await client.get("/api/auth/me")
+    assert me.json()["id"] == uid
+
+
+async def test_callback_rejects_state_mismatch(client, monkeypatch):
+    _stub_idp(monkeypatch, CLAIMS)
+    _set_flow_cookie(client, {"state": "st-1", "nonce": "n-1", "verifier": "v-1"})
+    res = await client.get("/api/auth/oidc/callback",
+                           params={"code": "c-1", "state": "EVIL"})
+    assert res.status_code == 302
+    assert res.headers["location"] == "/login?error=sso_failed"
+    assert "snagr_access" not in res.cookies
+
+
+async def test_callback_rejects_missing_flow_cookie(client, monkeypatch):
+    _stub_idp(monkeypatch, CLAIMS)
+    res = await client.get("/api/auth/oidc/callback",
+                           params={"code": "c-1", "state": "st-1"})
+    assert res.headers["location"] == "/login?error=sso_failed"
+
+
+async def test_callback_rejects_idp_error_param(client, monkeypatch):
+    _stub_idp(monkeypatch, CLAIMS)
+    _set_flow_cookie(client, {"state": "st-1", "nonce": "n-1", "verifier": "v-1"})
+    res = await client.get("/api/auth/oidc/callback",
+                           params={"error": "access_denied", "state": "st-1", "code": "x"})
+    assert res.headers["location"] == "/login?error=sso_failed"

@@ -16,6 +16,9 @@ import secrets
 from urllib.parse import urlencode
 
 import httpx
+from authlib.integrations.httpx_client import AsyncOAuth2Client
+from authlib.jose import JsonWebKey, JsonWebToken
+from authlib.jose.errors import JoseError
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,6 +87,63 @@ async def build_authorize_url(redirect_uri: str, flow: dict) -> str:
         "code_challenge": create_s256_code_challenge(flow["verifier"]),
         "code_challenge_method": "S256",
     })
+
+
+async def _jwks():
+    global _keyset
+    if _keyset is None:
+        meta = await _discovery()
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(meta["jwks_uri"])
+                resp.raise_for_status()
+                _keyset = JsonWebKey.import_key_set(resp.json())
+        except (httpx.HTTPError, KeyError, ValueError) as exc:
+            raise OidcError(f"JWKS fetch failed: {exc}")
+    return _keyset
+
+
+async def exchange_code(code: str, redirect_uri: str, verifier: str) -> dict:
+    """Swap the authorization code for tokens at the IdP's token endpoint."""
+    meta = await _discovery()
+    try:
+        async with AsyncOAuth2Client(
+            client_id=settings.OIDC_CLIENT_ID,
+            client_secret=settings.OIDC_CLIENT_SECRET,
+            redirect_uri=redirect_uri,
+        ) as client:
+            token = await client.fetch_token(
+                meta["token_endpoint"],
+                grant_type="authorization_code",
+                code=code,
+                code_verifier=verifier,
+            )
+    except Exception as exc:   # authlib raises a small zoo; every one means "failed"
+        raise OidcError(f"code exchange failed: {exc}")
+    if "id_token" not in token:
+        raise OidcError("token response has no id_token")
+    return token
+
+
+async def validate_id_token(id_token: str, nonce: str) -> dict:
+    """Verify signature (JWKS), issuer, audience, expiry, nonce -> claims."""
+    global _keyset
+    meta = await _discovery()
+    try:
+        claims = JsonWebToken(["RS256", "ES256"]).decode(
+            id_token, await _jwks(),
+            claims_options={
+                "iss": {"essential": True, "value": meta["issuer"]},
+                "aud": {"essential": True, "value": settings.OIDC_CLIENT_ID},
+            },
+        )
+        claims.validate()
+    except JoseError as exc:
+        _keyset = None      # maybe the IdP rotated keys — refetch on the next attempt
+        raise OidcError(f"id_token validation failed: {exc}")
+    if claims.get("nonce") != nonce:
+        raise OidcError("nonce mismatch")
+    return dict(claims)
 
 
 # --- account linking ----------------------------------------------------------
