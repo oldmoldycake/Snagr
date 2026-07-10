@@ -115,7 +115,7 @@ async def create_site(body: SiteCreateRequest, user=Depends(current_user), db: A
 @router.patch("/{site_id}", response_model=Site, dependencies=[Depends(csrf_guard)])
 async def update_site(site_id: int, body: SiteUpdateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     if not site_id or not body:
-        rasie err(422, "validation_error", "Name or site id is requeired")
+        raise err(422, "validation_error", "Name or site id is required")
 
     # 404 not_found
     raise NotImplementedError
