@@ -44,6 +44,8 @@ export interface InstanceInfo {
   ntfy_server_url: string | null
   /** true only while the instance has zero users (first-admin bootstrap) */
   registration_open: boolean
+  /** SSO login-button label (e.g. "Authentik"); null when OIDC is not configured */
+  oidc_provider_name: string | null
 }
 
 export type UserRole = 'admin' | 'user'

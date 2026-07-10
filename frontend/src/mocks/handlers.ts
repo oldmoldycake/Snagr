@@ -156,6 +156,7 @@ export const handlers = [
       version: '0.1.0-mock',
       ntfy_server_url: 'https://ntfy.example.com',
       registration_open: store.users.length === 0,
+      oidc_provider_name: null,
     })
   }),
 

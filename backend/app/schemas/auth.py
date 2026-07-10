@@ -17,6 +17,7 @@ class InstanceInfo(BaseModel):
     version: str
     ntfy_server_url: str | None
     registration_open: bool
+    oidc_provider_name: str | None    # null = SSO not configured
 
 
 # --- auth / identity --------------------------------------------------------
