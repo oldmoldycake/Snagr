@@ -204,3 +204,14 @@ async def test_callback_rejects_idp_error_param(client, monkeypatch):
     res = await client.get("/api/auth/oidc/callback",
                            params={"error": "access_denied", "state": "st-1", "code": "x"})
     assert res.headers["location"] == "/login?error=sso_failed"
+
+
+# --- SSO-only accounts and the password form -------------------------------------
+
+async def test_password_change_blocked_for_sso_user(client, monkeypatch):
+    await _sso_login(client, monkeypatch)     # auto-created, password_hash NULL
+    res = await client.post("/api/me/password",
+                            json={"current_password": "x", "new_password": "y" * 10},
+                            headers={"X-Snagr-Csrf": "1"})
+    assert res.status_code == 422
+    assert res.json()["error"]["fields"]["current_password"] == "This account signs in with SSO"

@@ -35,8 +35,10 @@ async def update_me(body: MeUpdateRequest, user=Depends(current_user),
 @router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(body: PasswordChangeRequest, user=Depends(current_user),
                           db: AsyncSession = Depends(get_db)):
-    # NULL password_hash (invite created, never set) can never match — same 422
-    if user.password_hash is None or not verify_password(body.current_password, user.password_hash):
+    if user.password_hash is None:   # SSO-provisioned account — no password to change
+        raise err(422, "invalid_password", "This account signs in with SSO",
+                  fields={"current_password": "This account signs in with SSO"})
+    if not verify_password(body.current_password, user.password_hash):
         raise err(422, "invalid_password", "Current password is incorrect",
                   fields={"current_password": "Current password is incorrect"})
     user.password_hash = hash_password(body.new_password)
