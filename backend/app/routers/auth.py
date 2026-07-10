@@ -23,9 +23,11 @@ These paths return 401 DIRECTLY on bad creds — they must not trip the client's
 refresh-retry loop (client.ts skips retry for /api/auth/*).
 """
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +58,7 @@ from app.schemas.auth import (
     user_out,
 )
 from app.schemas.auth import User as UserSchema
+from app.services import oidc
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -75,6 +78,48 @@ async def _start_session(db: AsyncSession, response: Response, user: User) -> No
         expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TTL_DAYS),
     ))
     set_refresh_cookie(response, raw)
+
+
+# --- SSO (OIDC) ---------------------------------------------------------------
+
+log = logging.getLogger(__name__)
+
+FLOW_COOKIE = "snagr_oidc_flow"   # carries state+nonce+PKCE verifier between the two hops
+FLOW_PATH = "/api/auth/oidc"
+
+
+def _redirect_uri(request: Request) -> str:
+    # behind a proxy the request-derived host can be wrong — the setting overrides
+    return settings.OIDC_REDIRECT_URI or str(request.url_for("oidc_callback"))
+
+
+def _sso_failed() -> RedirectResponse:
+    """Every failure looks the same to the browser; details go to the log."""
+    response = RedirectResponse("/login?error=sso_failed", status_code=302)
+    response.delete_cookie(FLOW_COOKIE, path=FLOW_PATH)
+    return response
+
+
+@router.get("/oidc/login")
+async def oidc_login(request: Request):
+    """Kick off SSO: stash the flow secrets in a cookie, bounce to the IdP."""
+    if not settings.oidc_enabled:
+        raise err(404, "not_found", "SSO is not configured")
+    flow = oidc.new_flow()
+    try:
+        url = await oidc.build_authorize_url(_redirect_uri(request), flow)
+    except oidc.OidcError as exc:
+        log.warning("OIDC login redirect failed: %s", exc)
+        return _sso_failed()
+    response = RedirectResponse(url, status_code=302)
+    response.set_cookie(FLOW_COOKIE, oidc.pack_flow(flow), max_age=600, httponly=True,
+                        samesite="lax", secure=settings.cookie_secure, path=FLOW_PATH)
+    return response
+
+
+@router.get("/oidc/callback", name="oidc_callback")
+async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
+    return _sso_failed()    # implemented in the next task
 
 
 # --- register / login -------------------------------------------------------

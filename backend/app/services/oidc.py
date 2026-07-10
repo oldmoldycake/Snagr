@@ -10,14 +10,80 @@ Every failure raises OidcError; the router maps them all to one redirect
 (/login?error=sso_failed) and logs the detail server-side.
 """
 
+import base64
+import json
+import secrets
+from urllib.parse import urlencode
+
+import httpx
+from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.models import User
 
 
 class OidcError(Exception):
     """Any OIDC failure; the callback maps every one to the same redirect."""
+
+
+# --- provider metadata (lazy, cached — the app must boot while the IdP is down) --
+
+_metadata: dict | None = None
+_keyset = None            # JWKS, cached by Task 5's validate_id_token
+
+
+async def _discovery() -> dict:
+    global _metadata
+    if _metadata is None:
+        url = settings.OIDC_ISSUER.rstrip("/") + "/.well-known/openid-configuration"
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                _metadata = resp.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise OidcError(f"OIDC discovery failed: {exc}")
+    return _metadata
+
+
+# --- one login attempt's short-lived secrets (live in the flow cookie) ----------
+
+def new_flow() -> dict:
+    return {
+        "state": secrets.token_urlsafe(24),     # CSRF binding for the redirect flow
+        "nonce": secrets.token_urlsafe(24),     # binds the ID token to this attempt
+        "verifier": secrets.token_urlsafe(48),  # PKCE
+    }
+
+
+def pack_flow(flow: dict) -> str:
+    """Cookie-safe encoding — JSON's quotes/braces are hostile to cookie values."""
+    return base64.urlsafe_b64encode(json.dumps(flow).encode()).decode()
+
+
+def unpack_flow(raw: str) -> dict:
+    try:
+        return json.loads(base64.urlsafe_b64decode(raw.encode()))
+    except (ValueError, UnicodeDecodeError):
+        raise OidcError("unreadable flow cookie")
+
+
+async def build_authorize_url(redirect_uri: str, flow: dict) -> str:
+    meta = await _discovery()
+    if "authorization_endpoint" not in meta:
+        raise OidcError("discovery document has no authorization_endpoint")
+    return meta["authorization_endpoint"] + "?" + urlencode({
+        "response_type": "code",
+        "client_id": settings.OIDC_CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "scope": "openid email profile",
+        "state": flow["state"],
+        "nonce": flow["nonce"],
+        "code_challenge": create_s256_code_challenge(flow["verifier"]),
+        "code_challenge_method": "S256",
+    })
 
 
 # --- account linking ----------------------------------------------------------

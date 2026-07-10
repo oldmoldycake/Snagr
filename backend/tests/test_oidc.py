@@ -96,3 +96,32 @@ async def test_resolve_rejects_inactive_user(db_session):
     async with db_session() as s:
         with pytest.raises(oidc.OidcError):
             await oidc.resolve_oidc_user(s, CLAIMS)
+
+
+# --- GET /api/auth/oidc/login ---------------------------------------------------
+
+FAKE_METADATA = {
+    "issuer": "https://idp.test/application/o/snagr/",
+    "authorization_endpoint": "https://idp.test/authorize",
+    "token_endpoint": "https://idp.test/token",
+    "jwks_uri": "https://idp.test/jwks",
+}
+
+
+async def test_oidc_login_redirects_to_idp(client, monkeypatch):
+    monkeypatch.setattr(oidc, "_metadata", FAKE_METADATA)   # skip discovery HTTP
+    res = await client.get("/api/auth/oidc/login")
+    assert res.status_code == 302
+    loc = res.headers["location"]
+    assert loc.startswith("https://idp.test/authorize?")
+    assert "client_id=snagr-client" in loc
+    assert "code_challenge_method=S256" in loc
+    assert "state=" in loc and "nonce=" in loc
+    assert "snagr_oidc_flow" in res.cookies                 # flow cookie stashed
+
+
+async def test_oidc_login_404_when_disabled(client, monkeypatch):
+    monkeypatch.setattr(settings, "OIDC_ISSUER", None)
+    res = await client.get("/api/auth/oidc/login")
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
