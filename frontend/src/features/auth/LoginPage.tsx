@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Link, Navigate } from 'react-router-dom'
+import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { ApiError } from '@/api/client'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/cn'
 import { AuthLayout } from './AuthLayout'
 import { useInstance, useLogin, useSession } from './useSession'
 
@@ -16,6 +17,7 @@ export function LoginPage() {
   const login = useLogin()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [searchParams] = useSearchParams()
 
   if (user) return <Navigate to="/" replace />
 
@@ -24,7 +26,9 @@ export function LoginPage() {
       ? login.error.message
       : login.error
         ? 'Something went wrong — try again'
-        : null
+        : searchParams.get('error') === 'sso_failed'
+          ? 'SSO sign-in failed — try again or use your password'
+          : null
 
   return (
     <AuthLayout>
@@ -91,6 +95,22 @@ export function LoginPage() {
           Sign in
         </Button>
       </form>
+
+      {instance?.oidc_provider_name ? (
+        <div className="mt-4">
+          <div className="flex items-center gap-2">
+            <span className="h-px flex-1 bg-hairline" />
+            <span className="text-xs text-ink-3">or</span>
+            <span className="h-px flex-1 bg-hairline" />
+          </div>
+          <a
+            href="/api/auth/oidc/login"
+            className={cn(buttonVariants({ variant: 'default' }), 'mt-3 w-full')}
+          >
+            Sign in with {instance.oidc_provider_name}
+          </a>
+        </div>
+      ) : null}
 
       {instance?.registration_open ? (
         <p className="mt-4 text-center text-xs text-ink-3">
