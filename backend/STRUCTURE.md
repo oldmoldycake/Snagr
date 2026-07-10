@@ -48,6 +48,7 @@ backend/
 │       ├── items.py        # the item↔watch↔watch_sites mapping + validation
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
 │       ├── runs.py         # run enqueue/scope-label/409-active-check
+│       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       └── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
 ├── tests/
 │   ├── conftest.py         # async httpx client + (todo) throwaway-DB session fixtures
@@ -78,7 +79,7 @@ JSON in/out. **core** holds cross-cutting concerns (errors, auth, security).
 
 **Rule of thumb:** a thin CRUD route (list categories) can call the DB directly
 from the router. Reach for a `service` only when there's real logic — that's why
-only four services exist, not one per router.
+only five services exist, not one per router.
 
 ---
 

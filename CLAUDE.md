@@ -60,7 +60,7 @@ The frontend runs against a full MSW mock by default; set `VITE_USE_MOCKS=false`
 
 ## Backend architecture
 
-Request flow: **router** (HTTP, validation, status codes) → **service** (multi-step logic, only where non-trivial) → **models/database** (SQL). `schemas/` are the JSON shapes; `core/` holds cross-cutting concerns (error envelope, auth deps, hashing/tokens); `config.py` is the *only* place env vars are read (via the `settings` singleton — never `os.getenv`). Thin CRUD routes may call the DB directly; only four services exist, for real logic (item mapping, aggregation math, run lifecycle, SSE).
+Request flow: **router** (HTTP, validation, status codes) → **service** (multi-step logic, only where non-trivial) → **models/database** (SQL). `schemas/` are the JSON shapes; `core/` holds cross-cutting concerns (error envelope, auth deps, hashing/tokens); `config.py` is the *only* place env vars are read (via the `settings` singleton — never `os.getenv`). Thin CRUD routes may call the DB directly; only five services exist, for real logic (item mapping, aggregation math, run lifecycle, SSE, OIDC login).
 
 Two things that will trip you up if you skip STRUCTURE.md:
 
