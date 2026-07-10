@@ -1,0 +1,29 @@
+# Web framework
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
+starlette==1.3.1
+
+# Data / DB
+sqlalchemy==2.0.51
+asyncpg
+alembic
+pydantic==2.13.4
+pydantic-settings
+python-dotenv
+email-validator
+
+# Auth
+argon2-cffi
+pyjwt
+
+# Realtime (SSE)
+sse-starlette
+
+# Dev / test
+pytest
+pytest-asyncio
+asgi-lifespan
+httpx
+
+# After `pip install -r requirements.txt`, run `pip freeze > requirements.txt`
+# to pin the currently-unpinned lines to exact versions.
