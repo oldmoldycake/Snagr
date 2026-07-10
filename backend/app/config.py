@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     # After that, this toggle decides: True = open self-signup, False = invite-only.
     REGISTRATION_OPEN: bool = False
 
+    # SSO via OIDC (e.g. Authentik) — enabled iff the first three are all set.
+    OIDC_ISSUER: str | None = None          # e.g. https://auth.lan/application/o/snagr/
+    OIDC_CLIENT_ID: str | None = None
+    OIDC_CLIENT_SECRET: str | None = None
+    OIDC_PROVIDER_NAME: str = "SSO"         # login-button label, e.g. "Authentik"
+    OIDC_REDIRECT_URI: str | None = None    # override when the request-derived URL is wrong (proxies)
+
+    @property
+    def oidc_enabled(self) -> bool:
+        """SSO is on only when the three OIDC_* essentials are all set."""
+        return bool(self.OIDC_ISSUER and self.OIDC_CLIENT_ID and self.OIDC_CLIENT_SECRET)
+
     # Instance / notifications
     APP_VERSION: str = "0.1.0"
     NTFY_SERVER_URL: str | None = None              # drives InstanceInfo.ntfy_server_url

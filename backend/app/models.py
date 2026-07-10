@@ -33,6 +33,7 @@ class User(Base):
     email:          Mapped[str]           = mapped_column(Text, unique=True)
     email_verified: Mapped[bool]          = mapped_column(Boolean, default=False)
     password_hash:  Mapped[str | None]    = mapped_column(Text)                    # + api (argon2; NULL = can't log in yet)
+    oidc_sub:       Mapped[str | None]    = mapped_column(Text, unique=True)        # + api (OIDC subject; NULL = password-only)
     role:           Mapped[str]           = mapped_column(Text, default="user")    # + api ('admin' | 'user')
     is_active:      Mapped[bool]          = mapped_column(Boolean, default=True)    # + api (admin can deactivate)
     ntfy_topic:     Mapped[str | None]    = mapped_column(Text)                     # + api
