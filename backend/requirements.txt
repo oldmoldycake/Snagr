@@ -15,7 +15,7 @@ email-validator
 # Auth
 argon2-cffi
 pyjwt
-authlib
+authlib<2
 
 # Realtime (SSE)
 sse-starlette

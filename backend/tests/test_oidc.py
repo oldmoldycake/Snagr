@@ -72,6 +72,17 @@ async def test_resolve_marries_verified_email(db_session):
         assert (await s.get(User, uid)).oidc_sub == "authentik-sub-1"   # married
 
 
+async def test_resolve_marries_case_variant_email(db_session):
+    uid = await _seed_user(db_session, "sso@example.com",
+                           password_hash=hash_password("pw12345678"))
+    async with db_session() as s:
+        user = await oidc.resolve_oidc_user(s, {**CLAIMS, "email": "SSO@Example.COM"})
+        await s.commit()
+    assert user.id == uid
+    async with db_session() as s:
+        assert (await s.get(User, uid)).oidc_sub == "authentik-sub-1"   # married
+
+
 async def test_resolve_refuses_unverified_email(db_session):
     uid = await _seed_user(db_session, "sso@example.com")
     async with db_session() as s:
@@ -186,6 +197,16 @@ async def test_callback_rejects_state_mismatch(client, monkeypatch):
     _set_flow_cookie(client, {"state": "st-1", "nonce": "n-1", "verifier": "v-1"})
     res = await client.get("/api/auth/oidc/callback",
                            params={"code": "c-1", "state": "EVIL"})
+    assert res.status_code == 302
+    assert res.headers["location"] == "/login?error=sso_failed"
+    assert "snagr_access" not in res.cookies
+
+
+async def test_callback_rejects_non_dict_flow_cookie(client, monkeypatch):
+    _stub_idp(monkeypatch, CLAIMS)
+    client.cookies.set("snagr_oidc_flow", oidc.pack_flow(5), path="/api/auth/oidc")
+    res = await client.get("/api/auth/oidc/callback",
+                           params={"code": "c-1", "state": "st-1"})
     assert res.status_code == 302
     assert res.headers["location"] == "/login?error=sso_failed"
     assert "snagr_access" not in res.cookies

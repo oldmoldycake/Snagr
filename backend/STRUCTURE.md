@@ -35,7 +35,7 @@ backend/
 │   │   └── runs.py         # AgentRun, RunEvent, RunStats + requests
 │   ├── routers/           # one file per section of endpoints.ts — HTTP layer only
 │   │   ├── instance.py     # GET /api/instance                       ← build this first (Task 0)
-│   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites)
+│   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, oidc login/callback)
 │   │   ├── me.py           # /api/me, /api/me/password, /api/me/ntfy/test
 │   │   ├── categories.py   # /api/categories[/{id}][/sites]
 │   │   ├── sites.py        # /api/sites[/{id}]

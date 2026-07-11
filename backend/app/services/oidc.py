@@ -20,6 +20,7 @@ from authlib.integrations.httpx_client import AsyncOAuth2Client
 from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
+from email_validator import EmailNotValidError, validate_email
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,9 +69,12 @@ def pack_flow(flow: dict) -> str:
 
 def unpack_flow(raw: str) -> dict:
     try:
-        return json.loads(base64.urlsafe_b64decode(raw.encode()))
+        flow = json.loads(base64.urlsafe_b64decode(raw.encode()))
     except (ValueError, UnicodeDecodeError):
         raise OidcError("unreadable flow cookie")
+    if not isinstance(flow, dict):
+        raise OidcError("unreadable flow cookie")
+    return flow
 
 
 async def build_authorize_url(redirect_uri: str, flow: dict) -> str:
@@ -156,6 +160,16 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     if not sub:
         raise OidcError("ID token has no sub")
     email = claims.get("email")
+    if email:
+        try:
+            # .normalized alone only case-folds the domain (email-validator
+            # preserves local-part case per RFC); lower() the whole address
+            # too so a same-mailbox claim always marries regardless of how
+            # the IdP cased it. Still a plain `==` lookup below, not a SQL-side
+            # case-insensitive compare.
+            email = validate_email(email, check_deliverability=False).normalized.lower()
+        except EmailNotValidError:
+            email = None
     email_ok = claims.get("email_verified") is True and bool(email)
 
     # 1. the stable link — survives email changes at the IdP
