@@ -83,6 +83,28 @@ async def test_resolve_marries_case_variant_email(db_session):
         assert (await s.get(User, uid)).oidc_sub == "authentik-sub-1"   # married
 
 
+async def test_resolve_marries_mixed_case_local_email(db_session):
+    uid = await _seed_user(db_session, "Alice@example.com",
+                           password_hash=hash_password("pw12345678"))
+    async with db_session() as s:
+        user = await oidc.resolve_oidc_user(s, {**CLAIMS, "email": "alice@example.com"})
+        await s.commit()
+    assert user.id == uid
+    async with db_session() as s:
+        assert (await s.get(User, uid)).oidc_sub == "authentik-sub-1"   # married
+
+
+async def test_resolve_refuses_ambiguous_email_match(db_session):
+    uid_a = await _seed_user(db_session, "case@example.com")
+    uid_b = await _seed_user(db_session, "Case@example.com")
+    async with db_session() as s:
+        with pytest.raises(oidc.OidcError):
+            await oidc.resolve_oidc_user(s, {**CLAIMS, "email": "case@example.com"})
+    async with db_session() as s:
+        assert (await s.get(User, uid_a)).oidc_sub is None              # NOT married
+        assert (await s.get(User, uid_b)).oidc_sub is None              # NOT married
+
+
 async def test_resolve_refuses_unverified_email(db_session):
     uid = await _seed_user(db_session, "sso@example.com")
     async with db_session() as s:
