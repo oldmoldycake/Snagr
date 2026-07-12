@@ -21,7 +21,7 @@ from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -162,7 +162,12 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     email = claims.get("email")
     if email:
         try:
-            email = validate_email(email, check_deliverability=False).normalized
+            # .normalized alone only case-folds the domain (email-validator
+            # preserves local-part case per RFC); lower() the whole address
+            # too so a same-mailbox claim always marries regardless of how
+            # the IdP cased it. Still a plain `==` lookup below, not a SQL-side
+            # case-insensitive compare.
+            email = validate_email(email, check_deliverability=False).normalized.lower()
         except EmailNotValidError:
             email = None
     email_ok = claims.get("email_verified") is True and bool(email)
@@ -172,16 +177,9 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
 
     # 2. the marriage: claim an existing local account, once. Only a VERIFIED
     #    email may do this — an unverified one could hijack someone's account.
-    #    Case-insensitive lookup (mailboxes are the same regardless of case),
-    #    but guarded: if case-variant duplicate rows already exist, refuse
-    #    rather than guess which account to marry.
     if user is None and email_ok:
-        matches = (await db.scalars(
-            select(User).where(func.lower(User.email) == email.lower()))).all()
-        if len(matches) > 1:
-            raise OidcError(f"ambiguous email match for {email!r}")
-        if matches:
-            user = matches[0]
+        user = await db.scalar(select(User).where(User.email == email))
+        if user is not None:
             user.oidc_sub = sub
 
     # 3. unknown at the IdP-approved door -> provision a fresh account
