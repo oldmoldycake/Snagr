@@ -3,10 +3,13 @@
 category_ids / listing_count / last_checked_at are computed (services/aggregates.py).
 """
 
+from dataclasses import field
+from datetime import datetime
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import select, func
+from sqlalchemy import except_, select, func, insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import base
 
 from app.core.deps import csrf_guard, current_user
 from app.core.errors import err
@@ -66,7 +69,7 @@ async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_
                 )
             )
 
-        return DataList(data=sites)
+            return DataList(data=sites)
     except SQLAlchemyError:
         raise err(503, "db_unavailable", "Could not reach the database")
 
@@ -105,48 +108,20 @@ async def create_site(body: SiteCreateRequest, user=Depends(current_user), db: A
         raise err(503, "validation_error", "Could not reach the database")
  
 
+    # 422 validation_error (name + base_url required)
+    raise NotImplementedError
 
 
 @router.patch("/{site_id}", response_model=Site, dependencies=[Depends(csrf_guard)])
 async def update_site(site_id: int, body: SiteUpdateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
-    try:
-        site = await db.get(Sites, site_id)
-        if site is None:
-            raise err(404, "not_found", f"Site {site_id} does not exsist")            
-        
-        if body.name is not None:
-            site.name = body.name
+    if not site_id or not body:
+        raise err(422, "validation_error", "Name or site id is required")
 
-        if body.base_url is not None:
-            site.base_url = body.base_url
+    # 404 not_found
+    raise NotImplementedError
 
-
-        await db.commit()
-
-        return Site(
-            id=site.id,
-            name=site.name,
-            base_url=site.base_url,
-            created_at=site.created_at.isoformat(),
-            category_ids=[],
-            listing_count=0,
-            last_checked_at=None
-        )
-    except SQLAlchemyError:
-        raise err(503, "validation_error", "Could not reach the database")
 
 @router.delete("/{site_id}", status_code=status.HTTP_204_NO_CONTENT,
                dependencies=[Depends(csrf_guard)])
 async def delete_site(site_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
-    try:
-        site = await db.get(Sites, site_id)
-
-        if site is None:
-            raise err(404, "not_found", f"Site {site_id} does not exist")
-
-        await db.delete(site)
-        await db.commit()
-        return None
-
-    except SQLAlchemyError:
-        raise err(503, "validation_error", "Could not reach the database")
+    raise NotImplementedError
