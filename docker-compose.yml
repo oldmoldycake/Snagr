@@ -1,0 +1,33 @@
+# Dev stack: frontend (nginx) + backend (uvicorn --reload, source bind-mounted).
+# Postgres is NOT here — the backend uses the existing LAN DB the agent writes to
+# (DATABASE_URL in backend/.env, kept out of the image by .dockerignore).
+#
+#   docker compose up --build      # frontend http://localhost:8081, API http://localhost:8000
+#
+# Editing backend/app/** hot-reloads inside the container. Changing
+# requirements.txt (or frontend code) needs a rebuild: docker compose up --build.
+
+services:
+  backend:
+    build: ./backend
+    env_file: backend/.env
+    ports:
+      - "8000:8000" # also lets `npm run dev` (Vite proxy) hit the containerized API
+    # Dev overrides: hot-reload on the mounted source. A production deploy drops
+    # both `command` and `volumes` and runs the image's baked-in CMD.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend/app:/app/app:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/instance')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "8081:80" # 8080 is taken by VS Code on this machine
+    depends_on:
+      - backend
