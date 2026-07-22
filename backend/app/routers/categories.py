@@ -36,6 +36,7 @@ async def cat_build(id: int, name: str, slug: str, db: AsyncSession) -> Category
         stmt = select(func.count()
             ).select_from(Items
             ).where(Items.category_id == id)
+
         item_rows = await db.execute(stmt)
         item_count = item_rows.scalar()
         assert item_count is not None, 0
