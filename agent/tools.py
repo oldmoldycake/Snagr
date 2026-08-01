@@ -13,7 +13,18 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 log = logging.getLogger(__name__)
-async def save_listing(watch_id: int, item_id: int, site_id: int, url: str, title: str, match_score: int, match_summary: str, site_sku:str|None = None) -> int|str:
+
+
+async def save_listing(
+    watch_id: int,
+    item_id: int,
+    site_id: int,
+    url: str,
+    title: str,
+    match_score: int,
+    match_summary: str,
+    site_sku: str | None = None,
+) -> int | str:
     """
     Save a listing that matches the user's selected criteria to the database and return its listing_id.
 
@@ -36,29 +47,35 @@ async def save_listing(watch_id: int, item_id: int, site_id: int, url: str, titl
 
     async with AsyncSessionLocal() as session:
         try:
-            stmt = insert(Listings).values(
-                watch_id=watch_id,
-                item_id=item_id,
-                site_id=site_id,
-                url=url,
-                title=title,
-                site_sku=site_sku,
-                active=True,
-                match_score=match_score,
-                match_summary=match_summary
-            ).on_conflict_do_nothing(constraint='uq_watch_site_url')
+            stmt = (
+                insert(Listings)
+                .values(
+                    watch_id=watch_id,
+                    item_id=item_id,
+                    site_id=site_id,
+                    url=url,
+                    title=title,
+                    site_sku=site_sku,
+                    active=True,
+                    match_score=match_score,
+                    match_summary=match_summary,
+                )
+                .on_conflict_do_nothing(constraint="uq_watch_site_url")
+            )
 
             await session.execute(stmt)
             await session.commit()
 
-            stmt = select(Listings).where(
-              Listings.watch_id == watch_id,
-              Listings.site_id == site_id,
-              Listings.url == url
-            ).limit(1)
+            stmt = (
+                select(Listings)
+                .where(
+                    Listings.watch_id == watch_id, Listings.site_id == site_id, Listings.url == url
+                )
+                .limit(1)
+            )
 
             results = await session.execute(stmt)
-            listing_id  = results.scalar()
+            listing_id = results.scalar()
             if listing_id is not None:
                 log.info(f"Successfully created listing for item {item_id} on site {site_id}")
                 return int(listing_id.id)
@@ -70,8 +87,9 @@ async def save_listing(watch_id: int, item_id: int, site_id: int, url: str, titl
             return f"Error recording listing for item {item_id} on site {site_id}: {e}"
 
 
-    
-async def save_price_check(listing_id: int, in_stock: bool, status: str, price: float | None = None, currency: str = "USD") -> str:
+async def save_price_check(
+    listing_id: int, in_stock: bool, status: str, price: float | None = None, currency: str = "USD"
+) -> str:
     """
     Use this tool after a listing is created, to record its current price and availability.
 
@@ -93,7 +111,9 @@ async def save_price_check(listing_id: int, in_stock: bool, status: str, price: 
       A confirmation string on success, or a string describing the error.
     """
 
-    log.info(f"Saving price check for listing {listing_id} at a price of {price} {currency} (status={status})")
+    log.info(
+        f"Saving price check for listing {listing_id} at a price of {price} {currency} (status={status})"
+    )
     async with AsyncSessionLocal() as session:
         try:
             stmt = insert(PriceChecks).values(
@@ -102,7 +122,7 @@ async def save_price_check(listing_id: int, in_stock: bool, status: str, price: 
                 currency=currency,
                 in_stock=in_stock,
                 status=status,
-                checked_at=datetime.now()
+                checked_at=datetime.now(),
             )
 
             await session.execute(stmt)
@@ -110,7 +130,6 @@ async def save_price_check(listing_id: int, in_stock: bool, status: str, price: 
 
             log.info(f"Successfully recorded listing {listing_id}")
             return f"Successfully recorded listing {listing_id}"
-
 
         except Exception as e:
             log.error(f"Error inserting price check for listing {listing_id}: {e}")
@@ -149,7 +168,9 @@ async def disable_listing(listing_id: int, reason: str) -> str:
             return f"Error disabling listing {listing_id}: {e}"
 
 
-async def log_listing_check(watch_id: int, site_id: int, url: str, reason: str, notes: str|None = None) -> str:
+async def log_listing_check(
+    watch_id: int, site_id: int, url: str, reason: str, notes: str | None = None
+) -> str:
     """
     Log a listing you evaluated but decided NOT to save, so future runs don't
     have to re-discover and re-judge the same rejection from scratch.
@@ -188,6 +209,3 @@ async def log_listing_check(watch_id: int, site_id: int, url: str, reason: str, 
         except Exception as e:
             log.error(f"Error logging listing check for watch {watch_id} on site {site_id}: {e}")
             return f"Error logging listing check for watch {watch_id} on site {site_id}: {e}"
-
-
-

@@ -77,7 +77,7 @@ class ItemCreateRequest(BaseModel):
     target_price: str | None
     criteria: str | None = None
     selection_mode: SelectionMode = "cheapest"
-    max_listings: int = 5             # contract default (note: DB column defaults to 3)
+    max_listings: int = 5  # contract default (note: DB column defaults to 3)
     allow_reproductions: bool = False
     site_ids: list[int] | None = None
 

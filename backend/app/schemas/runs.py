@@ -17,9 +17,9 @@ RunEventType = Literal[
     "item_started",
     "listing_check",
     "price_found",
-    "listing_evaluated",   # candidate scored vs criteria — payload: url, title, match_score, match_summary, tracked
+    "listing_evaluated",  # candidate scored vs criteria — payload: url, title, match_score, match_summary, tracked
     "listing_discovered",
-    "listing_ended",       # tracked listing sold/ended; slot freed — payload: listing_id, item_id
+    "listing_ended",  # tracked listing sold/ended; slot freed — payload: listing_id, item_id
     "error",
     "run_finished",
 ]
@@ -48,6 +48,7 @@ class AgentRun(BaseModel):
 
 class RunEnvelope(BaseModel):
     """triggerRun response: {"run": AgentRun}."""
+
     run: AgentRun
 
 
@@ -75,6 +76,7 @@ class RunListParams(BaseModel):
 
 class RunSnapshotEntry(BaseModel):
     """One active run in the connect snapshot (a subset of AgentRun)."""
+
     id: int
     status: RunStatus
     scope: RunScope

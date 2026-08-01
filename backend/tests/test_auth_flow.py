@@ -4,7 +4,6 @@ Each test starts from an empty DB (conftest truncates between tests), so
 "first user" scenarios are the default and every actor is created explicitly.
 """
 
-
 from app.config import settings
 
 from tests.conftest import CSRF
@@ -18,6 +17,7 @@ async def _register(client, creds=ADMIN):
 
 
 # --- registration + toggle ----------------------------------------------------
+
 
 async def test_first_user_registers_as_admin(client):
     res = await _register(client)
@@ -64,6 +64,7 @@ async def test_instance_reflects_toggle(client, monkeypatch):
 
 # --- invites -------------------------------------------------------------------
 
+
 async def test_invite_lifecycle(client, make_client):
     await _register(client)  # client is now the admin
 
@@ -97,14 +98,17 @@ async def test_invite_unknown_token_404(client):
 
 async def test_invite_pinned_email_wins(client, make_client):
     await _register(client)
-    created = await client.post("/api/admin/invites",
-                                json={"email": "pinned@example.com"}, headers=CSRF)
+    created = await client.post(
+        "/api/admin/invites", json={"email": "pinned@example.com"}, headers=CSRF
+    )
     token = created.json()["token"]
 
     invitee = await make_client()
-    res = await invitee.post(f"/api/auth/invites/{token}/accept",
-                             json={"email": "other@example.com", "password": "pw-pw-pw-pw"},
-                             headers=CSRF)
+    res = await invitee.post(
+        f"/api/auth/invites/{token}/accept",
+        json={"email": "other@example.com", "password": "pw-pw-pw-pw"},
+        headers=CSRF,
+    )
     assert res.status_code == 201
     assert res.json()["user"]["email"] == "pinned@example.com"
 
@@ -119,27 +123,33 @@ async def test_invite_revoke(client):
 
 # --- /api/me --------------------------------------------------------------------
 
+
 async def test_password_change(client, make_client):
     await _register(client)
 
-    wrong = await client.post("/api/me/password",
-                              json={"current_password": "nope", "new_password": "new-password-1"},
-                              headers=CSRF)
+    wrong = await client.post(
+        "/api/me/password",
+        json={"current_password": "nope", "new_password": "new-password-1"},
+        headers=CSRF,
+    )
     assert wrong.status_code == 422
     assert wrong.json()["error"]["code"] == "invalid_password"
 
-    ok = await client.post("/api/me/password",
-                           json={"current_password": ADMIN["password"],
-                                 "new_password": "new-password-1"},
-                           headers=CSRF)
+    ok = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": "new-password-1"},
+        headers=CSRF,
+    )
     assert ok.status_code == 204
 
     fresh = await make_client()
     old = await fresh.post("/api/auth/login", json=ADMIN, headers=CSRF)
     assert old.status_code == 401
-    new = await fresh.post("/api/auth/login",
-                           json={"email": ADMIN["email"], "password": "new-password-1"},
-                           headers=CSRF)
+    new = await fresh.post(
+        "/api/auth/login",
+        json={"email": ADMIN["email"], "password": "new-password-1"},
+        headers=CSRF,
+    )
     assert new.status_code == 200
 
 
@@ -158,6 +168,7 @@ async def test_me_update_and_ntfy_guard(client):
 
 
 # --- admin ----------------------------------------------------------------------
+
 
 async def test_admin_endpoints_require_admin(client, make_client, monkeypatch):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
@@ -181,8 +192,9 @@ async def test_admin_deactivate_locks_out(client, make_client, monkeypatch):
     plain = await make_client()
     guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
 
-    res = await client.patch(f"/api/admin/users/{guest_id}",
-                             json={"is_active": False}, headers=CSRF)
+    res = await client.patch(
+        f"/api/admin/users/{guest_id}", json={"is_active": False}, headers=CSRF
+    )
     assert res.status_code == 200 and res.json()["is_active"] is False
     # their existing session dies immediately (current_user checks is_active)...
     assert (await plain.get("/api/auth/me")).status_code == 401
@@ -199,6 +211,7 @@ async def test_admin_delete_user_and_watch_guard(client, make_client, monkeypatc
 
     # give the guest a watch -> delete must refuse (their data anchors listings)
     from app.models import Categories, Items, Watches
+
     async with db_session() as s:
         cat = Categories(name="Consoles", slug="consoles")
         s.add(cat)
@@ -216,6 +229,7 @@ async def test_admin_delete_user_and_watch_guard(client, make_client, monkeypatc
     # drop the watch -> delete goes through
     async with db_session() as s:
         from sqlalchemy import delete as sa_delete
+
         await s.execute(sa_delete(Watches).where(Watches.user_id == guest_id))
         await s.commit()
     assert (await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)).status_code == 204

@@ -41,15 +41,23 @@ from app.services.aggregates import (
 # The disagreement is deliberate: price_drops treats None as "no lower bound",
 # dashboard_stats substitutes a year because a growth tile needs a window.
 
+
 async def test_range_start_is_none_for_all():
     assert await _range_start("all") is None
 
 
-@pytest.mark.parametrize("range_name,expected_days", [
-    ("7d", 7), ("30d", 30), ("90d", 90), ("1y", 365),
-])
+@pytest.mark.parametrize(
+    "range_name,expected_days",
+    [
+        ("7d", 7),
+        ("30d", 30),
+        ("90d", 90),
+        ("1y", 365),
+    ],
+)
 async def test_range_start_offsets_by_the_named_window(range_name, expected_days):
     from datetime import datetime
+
     start = await _range_start(range_name)
     actual_days = (datetime.now(UTC) - start).days
     assert actual_days == expected_days
@@ -72,6 +80,7 @@ def test_points_capped_at_the_mock_ceiling():
 # --- price_history ------------------------------------------------------------
 #
 # One series per LIVE listing the caller owns, each thinned to <= `points`.
+
 
 async def test_price_history_one_series_per_active_listing(sc):
     item, watch = await sc.tracked()
@@ -137,7 +146,11 @@ async def test_price_history_downsamples_to_points(sc):
     series = await price_history(sc.db, sc.user_id, item.id, "30d", 5)
 
     assert [p.price for p in series[0].points] == [
-        "100.00", "98.00", "96.00", "94.00", "92.00",
+        "100.00",
+        "98.00",
+        "96.00",
+        "94.00",
+        "92.00",
     ]
 
 
@@ -184,6 +197,7 @@ async def test_price_history_survives_points_zero(sc):
 # Same checks as price_history, but pooled across listings and bucketed into
 # `points` equal time slices with an avg and a best per slice.
 
+
 async def test_price_summary_returns_one_point_per_bucket(sc):
     item, watch = await sc.tracked()
     listing = await sc.listing(watch, item)
@@ -196,7 +210,7 @@ async def test_price_summary_empty_bucket_is_null_never_zero(sc):
     # "No data" and "free" must not look the same to the chart.
     item, watch = await sc.tracked()
     listing = await sc.listing(watch, item)
-    await sc.checks(listing, (2, "100.00"))     # only the newest bucket has data
+    await sc.checks(listing, (2, "100.00"))  # only the newest bucket has data
 
     points = await price_summary(sc.db, sc.user_id, item.id, "30d", 4)
 
@@ -212,7 +226,7 @@ async def test_price_summary_averages_and_takes_the_best(sc):
 
     newest = (await price_summary(sc.db, sc.user_id, item.id, "30d", 4))[-1]
 
-    assert newest.avg == "80.00"     # (90 + 80 + 70) / 3
+    assert newest.avg == "80.00"  # (90 + 80 + 70) / 3
     assert newest.best == "70.00"
 
 
@@ -225,7 +239,7 @@ async def test_price_summary_pools_across_listings(sc):
 
     newest = (await price_summary(sc.db, sc.user_id, item.id, "30d", 4))[-1]
 
-    assert newest.avg == "100.00"    # one series, not two
+    assert newest.avg == "100.00"  # one series, not two
     assert newest.best == "50.00"
 
 
@@ -262,6 +276,7 @@ async def test_price_summary_survives_points_zero(sc):
 # The computed fields on an item-list row. Returns a dict whose keys are splatted
 # straight into ItemSummary, so key names are part of the contract.
 
+
 async def test_item_rollups_takes_the_cheapest_live_listing(sc):
     item, watch = await sc.tracked(target_price="85.00")
     cheap = await sc.listing(watch, item, "cheap")
@@ -275,7 +290,7 @@ async def test_item_rollups_takes_the_cheapest_live_listing(sc):
     assert rollup["best_listing_id"] == cheap.id
     assert rollup["best_site_name"] == "TestBay"
     assert rollup["active_listing_count"] == 2
-    assert rollup["avg_price"] == "85.00"      # mean of each listing's LATEST price
+    assert rollup["avg_price"] == "85.00"  # mean of each listing's LATEST price
 
 
 async def test_item_rollups_without_listings_is_all_null(sc):
@@ -287,18 +302,18 @@ async def test_item_rollups_without_listings_is_all_null(sc):
     assert rollup["avg_price"] is None
     assert rollup["last_checked_at"] is None
     assert rollup["active_listing_count"] == 0
-    assert rollup["target_met"] is False       # no price cannot meet a target
+    assert rollup["target_met"] is False  # no price cannot meet a target
 
 
 async def test_item_rollups_listing_without_priced_checks(sc):
     item, watch = await sc.tracked(target_price="85.00")
     listing = await sc.listing(watch, item)
-    await sc.checks(listing, (5, None))        # sold, no price
+    await sc.checks(listing, (5, None))  # sold, no price
 
     rollup = await item_rollups(sc.db, sc.user_id, item, watch, "30d")
 
-    assert rollup["active_listing_count"] == 1   # the listing exists...
-    assert rollup["best_price"] is None          # ...but has no usable price
+    assert rollup["active_listing_count"] == 1  # the listing exists...
+    assert rollup["best_price"] is None  # ...but has no usable price
 
 
 async def test_item_rollups_target_met_on_exact_match(sc):
@@ -362,7 +377,7 @@ async def test_item_rollups_ignores_other_users_listings(sc):
     my_listing = await sc.listing(mine, item, "mine")
     their_listing = await sc.listing(theirs, item, "theirs")
     await sc.checks(my_listing, (5, "100.00"))
-    await sc.checks(their_listing, (5, "1.00"))    # cheaper, but not mine
+    await sc.checks(their_listing, (5, "1.00"))  # cheaper, but not mine
 
     rollup = await item_rollups(sc.db, sc.user_id, item, mine, "30d")
 
@@ -384,6 +399,7 @@ async def test_item_rollups_ignores_other_users_listings(sc):
 # timestamps mid-bucket — an exact integer offset sits on a boundary, and which
 # side it falls on depends on the microseconds between `sc.now` and the clock
 # read inside the service.
+
 
 async def test_item_rollups_spark_has_thirty_buckets(sc):
     item, watch = await sc.tracked()
@@ -485,7 +501,7 @@ async def test_item_rollups_spark_ignores_other_users_listings(sc):
     my_listing = await sc.listing(mine, item, "mine")
     their_listing = await sc.listing(theirs, item, "theirs")
     await sc.checks(my_listing, (4.5, "100.00"))
-    await sc.checks(their_listing, (4.5, "1.00"))    # cheaper, but not mine
+    await sc.checks(their_listing, (4.5, "1.00"))  # cheaper, but not mine
 
     spark = (await item_rollups(sc.db, sc.user_id, item, mine, "30d"))["spark"]
 
@@ -513,6 +529,7 @@ async def test_item_rollups_spark_clamps_a_future_check_into_the_last_bucket(sc)
 # MORE than 3%. Strictly more — the mock uses `> 0.03`, so exactly 3% is not a
 # drop. _count_listings_with_drop counts LISTINGS, not events.
 
+
 async def _one_listing_with(sc, *checks):
     item, watch = await sc.tracked()
     listing = await sc.listing(watch, item)
@@ -521,12 +538,12 @@ async def _one_listing_with(sc, *checks):
 
 
 async def test_drop_of_exactly_three_percent_is_not_counted(sc):
-    await _one_listing_with(sc, (20, "100.00"), (10, "97.00"))   # exactly 3%
+    await _one_listing_with(sc, (20, "100.00"), (10, "97.00"))  # exactly 3%
     assert await _count_listings_with_drop(sc.db, sc.user_id, sc.ago(30), sc.now) == 0
 
 
 async def test_drop_just_over_three_percent_is_counted(sc):
-    await _one_listing_with(sc, (20, "100.00"), (10, "96.99"))   # 3.01%
+    await _one_listing_with(sc, (20, "100.00"), (10, "96.99"))  # 3.01%
     assert await _count_listings_with_drop(sc.db, sc.user_id, sc.ago(30), sc.now) == 1
 
 
@@ -558,11 +575,11 @@ async def test_drop_counter_ignores_checks_outside_the_window(sc):
 # growth tiles compare against range start; price_drops uses a true previous
 # equal-length window; snagged's delta is a known placeholder.
 
+
 async def test_dashboard_for_an_empty_account_is_all_zeros(sc):
     stats = await dashboard_stats(sc.db, sc.user_id, "30d")
 
-    for tile in (stats.tracked_items, stats.active_listings,
-                 stats.price_drops, stats.snagged):
+    for tile in (stats.tracked_items, stats.active_listings, stats.price_drops, stats.snagged):
         assert tile.value == 0
         assert tile.delta == 0
 
@@ -574,16 +591,15 @@ async def test_dashboard_every_spark_has_twelve_points(sc):
 
     stats = await dashboard_stats(sc.db, sc.user_id, "30d")
 
-    for tile in (stats.tracked_items, stats.active_listings,
-                 stats.price_drops, stats.snagged):
+    for tile in (stats.tracked_items, stats.active_listings, stats.price_drops, stats.snagged):
         assert len(tile.spark) == 12
 
 
 async def test_dashboard_tracked_items_delta_is_growth_in_range(sc):
     old_item = await sc.item("Old")
-    await sc.watch(old_item, days_ago=200)          # existed before the window
+    await sc.watch(old_item, days_ago=200)  # existed before the window
     new_item = await sc.item("New")
-    await sc.watch(new_item, days_ago=10)           # added inside it
+    await sc.watch(new_item, days_ago=10)  # added inside it
 
     stats = await dashboard_stats(sc.db, sc.user_id, "30d")
 
@@ -640,7 +656,7 @@ async def test_dashboard_drops_compare_against_the_previous_window(sc):
 async def test_dashboard_isolates_users(sc):
     stranger = await sc.other_user()
     item = await sc.item()
-    their_watch = await sc.watch(item, user=stranger)   # uq_item_user: one per (user, item)
+    their_watch = await sc.watch(item, user=stranger)  # uq_item_user: one per (user, item)
     await sc.listing(their_watch, item, "theirs")
 
     stats = await dashboard_stats(sc.db, sc.user_id, "30d")
@@ -653,6 +669,7 @@ async def test_dashboard_isolates_users(sc):
 #
 # The dashboard's "biggest recent drops" table. Shares the 3% threshold with the
 # counter above but differs on two rules, both mirroring the mock.
+
 
 async def test_price_drops_reports_only_the_newest_drop_per_listing(sc):
     item, watch = await sc.tracked()
@@ -720,7 +737,7 @@ async def test_price_drops_pct_change_is_negative_and_two_places(sc):
 async def test_price_drops_all_range_has_no_lower_bound(sc):
     item, watch = await sc.tracked()
     listing = await sc.listing(watch, item)
-    await sc.checks(listing, (100, "200.00"), (90, "100.00"))   # long ago
+    await sc.checks(listing, (100, "200.00"), (90, "100.00"))  # long ago
 
     assert await price_drops(sc.db, sc.user_id, "30d", 10) == []
     assert len(await price_drops(sc.db, sc.user_id, "all", 10)) == 1
@@ -755,6 +772,7 @@ async def test_price_drops_carries_the_display_names(sc):
 #
 # Per-item best-price movement across one category. Scoped to the CALLER's
 # watched items — a deliberate divergence from the single-user mock.
+
 
 async def test_category_change_compares_baseline_to_now(sc):
     item, watch = await sc.tracked("Alpha")
@@ -812,7 +830,7 @@ async def test_category_change_null_without_a_baseline(sc):
 
     assert row.old_best is None
     assert row.pct_change is None
-    assert row.new_best == "30.00"      # the current price is still reported
+    assert row.new_best == "30.00"  # the current price is still reported
 
 
 async def test_category_change_all_range_has_no_baseline(sc):
@@ -862,7 +880,7 @@ async def test_category_change_only_lists_watched_items(sc):
     their_watch = await sc.watch(theirs, user=await sc.other_user())
     await sc.checks(await sc.listing(their_watch, theirs, "t"), (5, "10.00"))
 
-    unwatched = await sc.item("Unwatched")   # in the catalog, nobody watching
+    unwatched = await sc.item("Unwatched")  # in the catalog, nobody watching
 
     rows = await category_price_change(sc.db, sc.user_id, cameras.id, "30d")
 
@@ -876,6 +894,7 @@ async def test_category_change_empty_for_a_category_with_no_watches(sc):
 
 
 # --- cross-cutting contract rules ---------------------------------------------
+
 
 async def test_every_price_field_is_a_decimal_string(sc):
     """Prices cross the wire as "80.00", never as 80.0.

@@ -13,14 +13,16 @@ UserRole = Literal["admin", "user"]
 
 # --- instance ---------------------------------------------------------------
 
+
 class InstanceInfo(BaseModel):
     version: str
     ntfy_server_url: str | None
     registration_open: bool
-    oidc_provider_name: str | None    # null = SSO not configured
+    oidc_provider_name: str | None  # null = SSO not configured
 
 
 # --- auth / identity --------------------------------------------------------
+
 
 class User(BaseModel):
     id: int
@@ -32,6 +34,7 @@ class User(BaseModel):
 
 class UserEnvelope(BaseModel):
     """login / register / accept-invite responses: {"user": User}."""
+
     user: User
 
 
@@ -47,6 +50,7 @@ class RegisterRequest(BaseModel):
 
 class InviteValidation(BaseModel):
     """GET /api/auth/invites/{token} — 404 invalid, 410 expired/used."""
+
     email: str | None
     expires_at: str
 
@@ -57,6 +61,7 @@ class InviteAcceptRequest(BaseModel):
 
 
 # --- me ---------------------------------------------------------------------
+
 
 class MeUpdateRequest(BaseModel):
     email: EmailStr | None = None
@@ -69,6 +74,7 @@ class PasswordChangeRequest(BaseModel):
 
 
 # --- admin ------------------------------------------------------------------
+
 
 class AdminUser(BaseModel):
     id: int
@@ -98,6 +104,7 @@ class InviteCreateRequest(BaseModel):
 
 # --- ORM-row -> schema serializers -------------------------------------------
 # (timestamps must go out as ISO-8601 strings, so plain model_validate won't do)
+
 
 def user_out(u) -> User:
     return User(

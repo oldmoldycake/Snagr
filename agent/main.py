@@ -12,7 +12,7 @@ logging.basicConfig(
     handlers=[
         logging.FileHandler("scraper.log"),
         logging.StreamHandler(),
-    ]
+    ],
 )
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,3 @@ if __name__ == "__main__":
     except Exception as e:
         log.error(f"Job failed: {e}")
     log.info("Price Scraper job finished")
-
-
-

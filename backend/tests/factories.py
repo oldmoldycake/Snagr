@@ -23,6 +23,7 @@ Prices are passed as strings ("100.00") and stored as Decimal, matching the
 contract's decimal-string rule. Pass None for an unpriced check — the agent
 writes those for sold/unavailable listings.
 """
+
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -122,8 +123,9 @@ class Scenario:
         await self.db.flush()
         return row
 
-    async def listing(self, watch, item, tag=None, active=True,
-                      site=None, title=None, days_ago=200) -> Listings:
+    async def listing(
+        self, watch, item, tag=None, active=True, site=None, title=None, days_ago=200
+    ) -> Listings:
         """A marketplace listing. `active=False` must be invisible to every rollup."""
         tag = tag or f"l{id(watch)}-{item.id}-{active}"
         row = Listings(
@@ -146,24 +148,26 @@ class Scenario:
         rather than treat them as zero.
         """
         for days_ago, price in points:
-            self.db.add(PriceChecks(
-                listing_id=listing.id,
-                price=Decimal(price) if price is not None else None,
-                currency=currency,
-                in_stock=in_stock,
-                status=None if price is not None else "sold",
-                checked_at=self.ago(days_ago),
-            ))
+            self.db.add(
+                PriceChecks(
+                    listing_id=listing.id,
+                    price=Decimal(price) if price is not None else None,
+                    currency=currency,
+                    in_stock=in_stock,
+                    status=None if price is not None else "sold",
+                    checked_at=self.ago(days_ago),
+                )
+            )
         await self.db.flush()
 
     # --- convenience ---------------------------------------------------------
 
-    async def tracked(self, name="Alpha", target_price=None, category=None,
-                      watch_days_ago=200, user=None):
+    async def tracked(
+        self, name="Alpha", target_price=None, category=None, watch_days_ago=200, user=None
+    ):
         """item + watch in one call, for tests that don't care about the split."""
         it = await self.item(name, category=category)
-        w = await self.watch(it, target_price=target_price,
-                             days_ago=watch_days_ago, user=user)
+        w = await self.watch(it, target_price=target_price, days_ago=watch_days_ago, user=user)
         return it, w
 
     async def commit(self):

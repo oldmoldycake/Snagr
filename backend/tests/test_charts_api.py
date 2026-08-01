@@ -55,6 +55,7 @@ async def _item_with_history(db_session, user_id, name="Alpha", target="85.00"):
 
 # --- authentication -----------------------------------------------------------
 
+
 @pytest.mark.parametrize("path", CHART_ROUTES)
 async def test_chart_routes_require_a_session(client, path):
     res = await client.get(path)
@@ -63,6 +64,7 @@ async def test_chart_routes_require_a_session(client, path):
 
 
 # --- ownership + 404s ---------------------------------------------------------
+
 
 @pytest.mark.parametrize("route", ["price-history", "price-summary"])
 async def test_unknown_item_is_404(client, route):
@@ -120,6 +122,7 @@ async def test_error_responses_use_the_error_envelope(client):
 
 # --- query parameters ---------------------------------------------------------
 
+
 async def test_invalid_range_is_rejected(client):
     await _sign_in(client)
     res = await client.get("/api/dashboard/stats?range=banana")
@@ -166,6 +169,7 @@ async def test_price_drops_respects_limit(client, db_session):
 # Paginated = {data, meta}; plain list = {data: [...]}; everything else is a
 # bare object. Getting this wrong breaks the client silently.
 
+
 async def test_price_drops_uses_the_plain_list_envelope(client, db_session):
     owner_id = await _sign_in(client)
     await _item_with_history(db_session, owner_id)
@@ -194,7 +198,7 @@ async def test_price_history_response_shape(client, db_session):
     body = (await client.get(f"/api/items/{item_id}/price-history?range=30d")).json()
 
     assert body["item_id"] == item_id
-    assert body["target_price"] == "85.00"      # decimal string, from the watch
+    assert body["target_price"] == "85.00"  # decimal string, from the watch
     assert body["currency"] == "USD"
     assert body["range"] == "30d"
     assert len(body["series"]) == 1
@@ -224,7 +228,7 @@ async def test_category_price_change_response_shape(client, db_session):
     assert len(body["items"]) == 1
     row = body["items"][0]
     assert set(row) == {"item_id", "name", "pct_change", "old_best", "new_best"}
-    assert row["pct_change"] == "-20.00"        # 100.00 -> 80.00
+    assert row["pct_change"] == "-20.00"  # 100.00 -> 80.00
 
 
 async def test_target_price_is_null_not_zero_when_unset(client, db_session):

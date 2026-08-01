@@ -66,6 +66,7 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # --- helpers ----------------------------------------------------------------
 
+
 async def _start_session(db: AsyncSession, response: Response, user: User) -> None:
     """Mint a fresh access+refresh pair for `user` and put both on the response.
     Called by register, login, and refresh — the one place cookies are issued."""
@@ -73,11 +74,13 @@ async def _start_session(db: AsyncSession, response: Response, user: User) -> No
     set_access_cookie(response, make_access_jwt(user.id, user.role))
     # refresh token: keep only the hash server-side; the raw value goes in the cookie
     raw, digest = new_refresh_token()
-    db.add(Sessions(
-        user_id=user.id,
-        refresh_hash=digest,
-        expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TTL_DAYS),
-    ))
+    db.add(
+        Sessions(
+            user_id=user.id,
+            refresh_hash=digest,
+            expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TTL_DAYS),
+        )
+    )
     set_refresh_cookie(response, raw)
 
 
@@ -85,7 +88,7 @@ async def _start_session(db: AsyncSession, response: Response, user: User) -> No
 
 log = logging.getLogger(__name__)
 
-FLOW_COOKIE = "snagr_oidc_flow"   # carries state+nonce+PKCE verifier between the two hops
+FLOW_COOKIE = "snagr_oidc_flow"  # carries state+nonce+PKCE verifier between the two hops
 FLOW_PATH = "/api/auth/oidc"
 
 
@@ -113,8 +116,15 @@ async def oidc_login(request: Request):
         log.warning("OIDC login redirect failed: %s", exc)
         return _sso_failed()
     response = RedirectResponse(url, status_code=302)
-    response.set_cookie(FLOW_COOKIE, oidc.pack_flow(flow), max_age=600, httponly=True,
-                        samesite="lax", secure=settings.cookie_secure, path=FLOW_PATH)
+    response.set_cookie(
+        FLOW_COOKIE,
+        oidc.pack_flow(flow),
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=settings.cookie_secure,
+        path=FLOW_PATH,
+    )
     return response
 
 
@@ -148,8 +158,13 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
 
 # --- register / login -------------------------------------------------------
 
-@router.post("/register", response_model=UserEnvelope, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(csrf_guard)])
+
+@router.post(
+    "/register",
+    response_model=UserEnvelope,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(csrf_guard)],
+)
 async def register(body: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)):
     # the very first user can always register (and becomes admin). After that,
     # self-signup is only open while the REGISTRATION_OPEN toggle is on —
@@ -157,11 +172,17 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     user_count = await db.scalar(select(func.count()).select_from(User))
     is_first_user = (user_count or 0) == 0
     if not is_first_user and not settings.REGISTRATION_OPEN:
-        raise err(403, "registration_closed", "Registration is closed — ask your admin for an invite")
+        raise err(
+            403, "registration_closed", "Registration is closed — ask your admin for an invite"
+        )
 
     if await db.scalar(select(User).where(User.email == body.email)):
-        raise err(422, "validation_error", "An account with this email already exists",
-                  fields={"email": "An account with this email already exists"})
+        raise err(
+            422,
+            "validation_error",
+            "An account with this email already exists",
+            fields={"email": "An account with this email already exists"},
+        )
 
     user = User(
         email=body.email,
@@ -171,8 +192,8 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         email_verified=True,
     )
     db.add(user)
-    await db.flush()          # INSERT now, so user.id exists
-    await db.refresh(user)    # load DB-filled columns (created_at)
+    await db.flush()  # INSERT now, so user.id exists
+    await db.refresh(user)  # load DB-filled columns (created_at)
     await _start_session(db, response, user)
     await db.commit()
     return UserEnvelope(user=user_out(user))
@@ -183,7 +204,11 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
     user = await db.scalar(select(User).where(User.email == body.email))
     # same generic error whether the email is unknown or the password is wrong —
     # never tell an attacker which half they got right.
-    if user is None or user.password_hash is None or not verify_password(body.password, user.password_hash):
+    if (
+        user is None
+        or user.password_hash is None
+        or not verify_password(body.password, user.password_hash)
+    ):
         raise err(401, "invalid_credentials", "Email or password is incorrect")
     if not user.is_active:
         raise err(403, "forbidden", "This account is disabled")
@@ -193,6 +218,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 
 # --- session lifecycle ------------------------------------------------------
+
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)])
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
@@ -239,6 +265,7 @@ async def get_me(user: User = Depends(current_user)):
 
 # --- invites (admin-issued signup) -------------------------------------------
 
+
 async def _live_invite(db: AsyncSession, token: str) -> Invites:
     """Look up an invite token, or raise the contract's 404/410."""
     invite = await db.scalar(select(Invites).where(Invites.token == token))
@@ -255,16 +282,25 @@ async def validate_invite(token: str, db: AsyncSession = Depends(get_db)):
     return InviteValidation(email=invite.email, expires_at=invite.expires_at.isoformat())
 
 
-@router.post("/invites/{token}/accept", response_model=UserEnvelope,
-             status_code=status.HTTP_201_CREATED, dependencies=[Depends(csrf_guard)])
-async def accept_invite(token: str, body: InviteAcceptRequest, response: Response,
-                        db: AsyncSession = Depends(get_db)):
+@router.post(
+    "/invites/{token}/accept",
+    response_model=UserEnvelope,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(csrf_guard)],
+)
+async def accept_invite(
+    token: str, body: InviteAcceptRequest, response: Response, db: AsyncSession = Depends(get_db)
+):
     invite = await _live_invite(db, token)
     # an invite pinned to an email wins over whatever the form submitted
     email = invite.email or body.email
     if await db.scalar(select(User).where(User.email == email)):
-        raise err(422, "validation_error", "An account with this email already exists",
-                  fields={"email": "An account with this email already exists"})
+        raise err(
+            422,
+            "validation_error",
+            "An account with this email already exists",
+            fields={"email": "An account with this email already exists"},
+        )
 
     user = User(
         email=email,
@@ -274,7 +310,7 @@ async def accept_invite(token: str, body: InviteAcceptRequest, response: Respons
         email_verified=True,
     )
     db.add(user)
-    invite.used_at = datetime.now(UTC)   # single-use: burn it
+    invite.used_at = datetime.now(UTC)  # single-use: burn it
     await db.flush()
     await db.refresh(user)
     await _start_session(db, response, user)

@@ -13,6 +13,7 @@ Revises: 001
 Create Date: 2026-07-08 18:40:48.631860
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -20,8 +21,8 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
-revision: str = '002'
-down_revision: str | Sequence[str] | None = '001'
+revision: str = "002"
+down_revision: str | Sequence[str] | None = "001"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -30,8 +31,12 @@ def upgrade() -> None:
     """Upgrade schema."""
     # --- users: auth columns (server defaults backfill the existing rows) ---
     op.add_column("users", sa.Column("password_hash", sa.Text, nullable=True))
-    op.add_column("users", sa.Column("role", sa.Text, nullable=False, server_default=sa.text("'user'")))
-    op.add_column("users", sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.text("true")))
+    op.add_column(
+        "users", sa.Column("role", sa.Text, nullable=False, server_default=sa.text("'user'"))
+    )
+    op.add_column(
+        "users", sa.Column("is_active", sa.Boolean, nullable=False, server_default=sa.text("true"))
+    )
     op.add_column("users", sa.Column("ntfy_topic", sa.Text, nullable=True))
 
     # --- watch_sites: the contract's `site_ids` (no rows = all category sites) ---
@@ -51,7 +56,9 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("used_at", sa.DateTime(timezone=True)),
         sa.Column("created_by", sa.Integer, sa.ForeignKey("users.id"), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
 
     # --- sessions: refresh-token store (sha256 of the cookie value) ---
@@ -62,7 +69,9 @@ def upgrade() -> None:
         sa.Column("refresh_hash", sa.Text, nullable=False, unique=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
     op.create_index("ix_sessions_user_id", "sessions", ["user_id"])
 
@@ -79,7 +88,9 @@ def upgrade() -> None:
         sa.Column("stats", JSONB),
         sa.Column("error", sa.Text),
         sa.Column("last_seq", sa.Integer, nullable=False, server_default=sa.text("0")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
 
     # --- run_events: ordered progress log; SSE fans out from here ---
@@ -106,7 +117,9 @@ def downgrade() -> None:
     op.create_table(
         "job_runs",
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.Column("finished_at", sa.DateTime(timezone=True)),
         sa.Column("sites_checked", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("errors", sa.Integer, nullable=False, server_default=sa.text("0")),

@@ -25,6 +25,7 @@ _ALGO = "HS256"
 
 # --- passwords --------------------------------------------------------------
 
+
 def hash_password(plain: str) -> str:
     """Argon2 hash to store in users.password_hash."""
     return _ph.hash(plain)
@@ -34,11 +35,12 @@ def verify_password(plain: str, hashed: str) -> bool:
     """True if `plain` matches the stored hash; False on any mismatch/bad hash."""
     try:
         return _ph.verify(hashed, plain)
-    except (VerifyMismatchError, InvalidHashError):
+    except VerifyMismatchError, InvalidHashError:
         return False
 
 
 # --- access token (JWT) -----------------------------------------------------
+
 
 def make_access_jwt(user_id: int, role: str) -> str:
     """Short-lived signed token for the snagr_access cookie."""
@@ -59,6 +61,7 @@ def decode_access_jwt(token: str) -> dict:
 
 
 # --- refresh token ----------------------------------------------------------
+
 
 def new_refresh_token() -> tuple[str, str]:
     """Return (raw_token_for_cookie, sha256_hash_for_sessions_table).

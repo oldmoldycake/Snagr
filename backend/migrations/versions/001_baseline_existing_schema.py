@@ -11,13 +11,14 @@ Revises:
 Create Date: 2026-07-08 18:40:48.398674
 
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = '001'
+revision: str = "001"
 down_revision: str | Sequence[str] | None = None
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
@@ -30,7 +31,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("email", sa.Text, nullable=False, unique=True),
         sa.Column("email_verified", sa.Boolean, nullable=False, server_default=sa.text("false")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
 
     op.create_table(
@@ -38,7 +41,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("name", sa.Text, nullable=False),
         sa.Column("base_url", sa.Text, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
 
     op.create_table(
@@ -59,7 +64,9 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer, primary_key=True),
         sa.Column("category_id", sa.Integer, sa.ForeignKey("categories.id"), nullable=False),
         sa.Column("name", sa.Text, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
     op.create_index("ix_items_category_id", "items", ["category_id"])
 
@@ -73,9 +80,13 @@ def upgrade() -> None:
         sa.Column("criteria", sa.Text),
         sa.Column("selection_mode", sa.Text, nullable=False, server_default=sa.text("'cheapest'")),
         sa.Column("max_listings", sa.Integer, nullable=False, server_default=sa.text("3")),
-        sa.Column("allow_reproductions", sa.Boolean, nullable=False, server_default=sa.text("false")),
+        sa.Column(
+            "allow_reproductions", sa.Boolean, nullable=False, server_default=sa.text("false")
+        ),
         sa.Column("last_notified_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.UniqueConstraint("user_id", "item_id", name="uq_item_user"),
     )
 
@@ -91,7 +102,9 @@ def upgrade() -> None:
         sa.Column("active", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.Column("match_score", sa.Integer),
         sa.Column("match_summary", sa.Text),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),
     )
     op.create_index("ix_listings_watch_id", "listings", ["watch_id"])
@@ -115,7 +128,9 @@ def upgrade() -> None:
         sa.Column("url", sa.Text, nullable=False),
         sa.Column("reason", sa.Text, nullable=False),
         sa.Column("notes", sa.Text),
-        sa.Column("checked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "checked_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
     )
     op.create_index("ix_listing_checks_watch_id", "listing_checks", ["watch_id"])
 
@@ -124,7 +139,9 @@ def upgrade() -> None:
     op.create_table(
         "job_runs",
         sa.Column("id", sa.Integer, primary_key=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.Column("finished_at", sa.DateTime(timezone=True)),
         sa.Column("sites_checked", sa.Integer, nullable=False, server_default=sa.text("0")),
         sa.Column("errors", sa.Integer, nullable=False, server_default=sa.text("0")),

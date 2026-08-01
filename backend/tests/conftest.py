@@ -43,7 +43,7 @@ def _engine():
 async def _schema():
     """Create the full schema in snagr_test once, drop it when the run ends."""
     async with _engine().begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)   # clear leftovers from a crashed run
+        await conn.run_sync(Base.metadata.drop_all)  # clear leftovers from a crashed run
         await conn.run_sync(Base.metadata.create_all)
     yield
     async with _engine().begin() as conn:
@@ -99,5 +99,5 @@ async def sc(db_session):
 
     async with db_session() as session:
         scenario = Scenario(session)
-        await scenario.user()    # so sc.user_id is usable without ceremony
+        await scenario.user()  # so sc.user_id is usable without ceremony
         yield scenario

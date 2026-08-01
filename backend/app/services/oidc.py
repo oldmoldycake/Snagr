@@ -35,7 +35,7 @@ class OidcError(Exception):
 # --- provider metadata (lazy, cached — the app must boot while the IdP is down) --
 
 _metadata: dict | None = None
-_keyset = None            # JWKS, cached by Task 5's validate_id_token
+_keyset = None  # JWKS, cached by Task 5's validate_id_token
 
 
 async def _discovery() -> dict:
@@ -54,10 +54,11 @@ async def _discovery() -> dict:
 
 # --- one login attempt's short-lived secrets (live in the flow cookie) ----------
 
+
 def new_flow() -> dict:
     return {
-        "state": secrets.token_urlsafe(24),     # CSRF binding for the redirect flow
-        "nonce": secrets.token_urlsafe(24),     # binds the ID token to this attempt
+        "state": secrets.token_urlsafe(24),  # CSRF binding for the redirect flow
+        "nonce": secrets.token_urlsafe(24),  # binds the ID token to this attempt
         "verifier": secrets.token_urlsafe(48),  # PKCE
     }
 
@@ -70,7 +71,7 @@ def pack_flow(flow: dict) -> str:
 def unpack_flow(raw: str) -> dict:
     try:
         flow = json.loads(base64.urlsafe_b64decode(raw.encode()))
-    except (ValueError, UnicodeDecodeError):
+    except ValueError, UnicodeDecodeError:
         raise OidcError("unreadable flow cookie")
     if not isinstance(flow, dict):
         raise OidcError("unreadable flow cookie")
@@ -81,16 +82,22 @@ async def build_authorize_url(redirect_uri: str, flow: dict) -> str:
     meta = await _discovery()
     if "authorization_endpoint" not in meta:
         raise OidcError("discovery document has no authorization_endpoint")
-    return meta["authorization_endpoint"] + "?" + urlencode({
-        "response_type": "code",
-        "client_id": settings.OIDC_CLIENT_ID,
-        "redirect_uri": redirect_uri,
-        "scope": "openid email profile",
-        "state": flow["state"],
-        "nonce": flow["nonce"],
-        "code_challenge": create_s256_code_challenge(flow["verifier"]),
-        "code_challenge_method": "S256",
-    })
+    return (
+        meta["authorization_endpoint"]
+        + "?"
+        + urlencode(
+            {
+                "response_type": "code",
+                "client_id": settings.OIDC_CLIENT_ID,
+                "redirect_uri": redirect_uri,
+                "scope": "openid email profile",
+                "state": flow["state"],
+                "nonce": flow["nonce"],
+                "code_challenge": create_s256_code_challenge(flow["verifier"]),
+                "code_challenge_method": "S256",
+            }
+        )
+    )
 
 
 async def _jwks():
@@ -122,7 +129,7 @@ async def exchange_code(code: str, redirect_uri: str, verifier: str) -> dict:
                 code=code,
                 code_verifier=verifier,
             )
-    except Exception as exc:   # authlib raises a small zoo; every one means "failed"
+    except Exception as exc:  # authlib raises a small zoo; every one means "failed"
         raise OidcError(f"code exchange failed: {exc}")
     if "id_token" not in token:
         raise OidcError("token response has no id_token")
@@ -135,7 +142,8 @@ async def validate_id_token(id_token: str, nonce: str) -> dict:
     meta = await _discovery()
     try:
         claims = JsonWebToken(["RS256", "ES256"]).decode(
-            id_token, await _jwks(),
+            id_token,
+            await _jwks(),
             claims_options={
                 "iss": {"essential": True, "value": meta["issuer"]},
                 "aud": {"essential": True, "value": settings.OIDC_CLIENT_ID},
@@ -143,7 +151,7 @@ async def validate_id_token(id_token: str, nonce: str) -> dict:
         )
         claims.validate()
     except JoseError as exc:
-        _keyset = None      # maybe the IdP rotated keys — refetch on the next attempt
+        _keyset = None  # maybe the IdP rotated keys — refetch on the next attempt
         raise OidcError(f"id_token validation failed: {exc}")
     if claims.get("nonce") != nonce:
         raise OidcError("nonce mismatch")
@@ -151,6 +159,7 @@ async def validate_id_token(id_token: str, nonce: str) -> dict:
 
 
 # --- account linking ----------------------------------------------------------
+
 
 async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     """ID-token claims -> local User. Sub-first, marry-by-verified-email
@@ -186,10 +195,9 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     if user is None:
         if not email_ok:
             raise OidcError("IdP did not supply a verified email")
-        user = User(email=email, email_verified=True, role="user",
-                    is_active=True, oidc_sub=sub)
+        user = User(email=email, email_verified=True, role="user", is_active=True, oidc_sub=sub)
         db.add(user)
-        await db.flush()          # assign user.id for _start_session
+        await db.flush()  # assign user.id for _start_session
 
     if not user.is_active:
         raise OidcError(f"account {user.id} is disabled")

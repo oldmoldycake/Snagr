@@ -24,17 +24,25 @@ from app.schemas.runs import (
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 
-@router.post("", response_model=RunEnvelope, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(csrf_guard)])
-async def trigger_run(body: RunCreateRequest, user=Depends(current_user),
-                      db: AsyncSession = Depends(get_db)):
+@router.post(
+    "",
+    response_model=RunEnvelope,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(csrf_guard)],
+)
+async def trigger_run(
+    body: RunCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+):
     # 409 run_in_progress (error.run_id = active run) if one is queued/running
     raise NotImplementedError
 
 
 @router.get("", response_model=Paginated[AgentRun])
-async def list_runs(filters: Annotated[RunListParams, Query()], user=Depends(current_user),
-                    db: AsyncSession = Depends(get_db)):
+async def list_runs(
+    filters: Annotated[RunListParams, Query()],
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     raise NotImplementedError
 
 
@@ -45,8 +53,13 @@ async def get_run(run_id: int, user=Depends(current_user), db: AsyncSession = De
 
 
 @router.get("/{run_id}/events", response_model=DataList[RunEvent])
-async def get_run_events(run_id: int, after_seq: int = 0, limit: int = 500,
-                         user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def get_run_events(
+    run_id: int,
+    after_seq: int = 0,
+    limit: int = 500,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     raise NotImplementedError
 
 

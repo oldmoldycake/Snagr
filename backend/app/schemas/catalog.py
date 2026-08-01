@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 # --- categories -------------------------------------------------------------
 
+
 class Category(BaseModel):
     id: int
     name: str
@@ -27,10 +28,12 @@ class CategoryUpdateRequest(BaseModel):
 
 class SetCategorySitesRequest(BaseModel):
     """PUT /api/categories/{id}/sites body."""
+
     site_ids: list[int]
 
 
 # --- sites ------------------------------------------------------------------
+
 
 class Site(BaseModel):
     id: int

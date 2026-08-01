@@ -38,9 +38,7 @@ async def _watch_or_404(db: AsyncSession, user_id: int, item_id: int) -> Watches
     "no such item" are the same 404 to the caller — hence the item-shaped
     message. Both chart endpoints need the watch anyway, for target_price.
     """
-    stmt = select(Watches
-            ).where(Watches.user_id == user_id
-            ).where(Watches.item_id == item_id)
+    stmt = select(Watches).where(Watches.user_id == user_id).where(Watches.item_id == item_id)
     watch = (await db.execute(stmt)).scalar_one_or_none()
     if watch is None:
         raise err(404, "not_found", f"Item {item_id} does not exist")
@@ -48,8 +46,13 @@ async def _watch_or_404(db: AsyncSession, user_id: int, item_id: int) -> Watches
 
 
 @router.get("/items/{item_id}/price-history", response_model=PriceHistoryResponse)
-async def get_price_history(item_id: int, range: TimeRange, points: int = 300,
-                            user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def get_price_history(
+    item_id: int,
+    range: TimeRange,
+    points: int = 300,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # Ownership check first — no point building a series for an item the caller
     # can't see.
     watch = await _watch_or_404(db, user.id, item_id)
@@ -64,8 +67,13 @@ async def get_price_history(item_id: int, range: TimeRange, points: int = 300,
 
 
 @router.get("/items/{item_id}/price-summary", response_model=PriceSummaryResponse)
-async def get_price_summary(item_id: int, range: TimeRange, points: int = 300,
-                            user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def get_price_summary(
+    item_id: int,
+    range: TimeRange,
+    points: int = 300,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     watch = await _watch_or_404(db, user.id, item_id)
 
     return PriceSummaryResponse(
@@ -78,8 +86,12 @@ async def get_price_summary(item_id: int, range: TimeRange, points: int = 300,
 
 
 @router.get("/categories/{category_id}/price-change", response_model=CategoryPriceChangeResponse)
-async def get_category_price_change(category_id: int, range: TimeRange,
-                                    user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def get_category_price_change(
+    category_id: int,
+    range: TimeRange,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # 404 on an unknown category; a category the caller simply watches nothing
     # in is a valid empty list, not an error.
     if await db.get(Categories, category_id) is None:
@@ -93,8 +105,9 @@ async def get_category_price_change(category_id: int, range: TimeRange,
 
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
-async def get_dashboard_stats(range: TimeRange, user=Depends(current_user),
-                              db: AsyncSession = Depends(get_db)):
+async def get_dashboard_stats(
+    range: TimeRange, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+):
     # Each tile's `delta` means something slightly different — the growth tiles
     # compare against range start, price_drops against the previous equal-length
     # window. services.aggregates.dashboard_stats documents which is which.
@@ -102,8 +115,12 @@ async def get_dashboard_stats(range: TimeRange, user=Depends(current_user),
 
 
 @router.get("/dashboard/price-drops", response_model=DataList[PriceDrop])
-async def get_price_drops(range: TimeRange, limit: int = 10, user=Depends(current_user),
-                          db: AsyncSession = Depends(get_db)):
+async def get_price_drops(
+    range: TimeRange,
+    limit: int = 10,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     # One row per listing (its most recent drop), newest first — not one row per
     # drop event. services.aggregates.price_drops explains why.
     return DataList(data=await price_drops(db, user.id, range, limit))

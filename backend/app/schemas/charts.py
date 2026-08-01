@@ -10,6 +10,7 @@ from app.schemas.common import TimeRange
 
 # --- price history / summary ------------------------------------------------
 
+
 class PricePoint(BaseModel):
     ts: str
     price: str
@@ -48,6 +49,7 @@ class PriceSummaryResponse(BaseModel):
 
 # --- category price change --------------------------------------------------
 
+
 class CategoryItemChange(BaseModel):
     item_id: int
     name: str
@@ -63,6 +65,7 @@ class CategoryPriceChangeResponse(BaseModel):
 
 
 # --- dashboard --------------------------------------------------------------
+
 
 class StatTile(BaseModel):
     value: int

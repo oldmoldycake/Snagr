@@ -48,8 +48,9 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/users/{user_id}", response_model=AdminUser, dependencies=[Depends(csrf_guard)])
-async def update_user(user_id: int, body: AdminUserUpdateRequest,
-                      db: AsyncSession = Depends(get_db)):
+async def update_user(
+    user_id: int, body: AdminUserUpdateRequest, db: AsyncSession = Depends(get_db)
+):
     user = await _get_user(db, user_id)
     if body.is_active is not None:
         user.is_active = body.is_active
@@ -60,10 +61,12 @@ async def update_user(user_id: int, body: AdminUserUpdateRequest,
     return admin_user_out(user, counts.get(user.id, 0))
 
 
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(csrf_guard)])
-async def delete_user(user_id: int, admin=Depends(require_admin),
-                      db: AsyncSession = Depends(get_db)):
+@router.delete(
+    "/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)]
+)
+async def delete_user(
+    user_id: int, admin=Depends(require_admin), db: AsyncSession = Depends(get_db)
+):
     if user_id == admin.id:
         raise err(422, "cannot_delete_self", "You cannot delete your own account")
     user = await _get_user(db, user_id)
@@ -71,10 +74,14 @@ async def delete_user(user_id: int, admin=Depends(require_admin),
     # a user's watches anchor real data (listings, price history) — refuse
     # rather than cascade-delete it. Deactivating keeps the data and locks them out.
     watch_count = await db.scalar(
-        select(func.count()).select_from(Watches).where(Watches.user_id == user_id))
+        select(func.count()).select_from(Watches).where(Watches.user_id == user_id)
+    )
     if watch_count:
-        raise err(409, "user_has_items",
-                  "This user still has tracked items — deactivate the account instead")
+        raise err(
+            409,
+            "user_has_items",
+            "This user still has tracked items — deactivate the account instead",
+        )
 
     # their sessions and issued invites go with them (FKs would block otherwise)
     await db.execute(delete(Sessions).where(Sessions.user_id == user_id))
@@ -87,18 +94,25 @@ async def delete_user(user_id: int, admin=Depends(require_admin),
 async def list_invites(db: AsyncSession = Depends(get_db)):
     # pending only: unused and unexpired, like the mock
     now = datetime.now(UTC)
-    invites = (await db.scalars(
-        select(Invites)
-        .where(Invites.used_at.is_(None), Invites.expires_at > now)
-        .order_by(Invites.id)
-    )).all()
+    invites = (
+        await db.scalars(
+            select(Invites)
+            .where(Invites.used_at.is_(None), Invites.expires_at > now)
+            .order_by(Invites.id)
+        )
+    ).all()
     return DataList(data=[invite_out(i) for i in invites])
 
 
-@router.post("/invites", response_model=Invite, status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(csrf_guard)])
-async def create_invite(body: InviteCreateRequest, admin=Depends(require_admin),
-                        db: AsyncSession = Depends(get_db)):
+@router.post(
+    "/invites",
+    response_model=Invite,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(csrf_guard)],
+)
+async def create_invite(
+    body: InviteCreateRequest, admin=Depends(require_admin), db: AsyncSession = Depends(get_db)
+):
     invite = Invites(
         token=secrets.token_urlsafe(24),
         email=body.email or None,
@@ -113,8 +127,11 @@ async def create_invite(body: InviteCreateRequest, admin=Depends(require_admin),
     return invite_out(invite)
 
 
-@router.delete("/invites/{invite_id}", status_code=status.HTTP_204_NO_CONTENT,
-               dependencies=[Depends(csrf_guard)])
+@router.delete(
+    "/invites/{invite_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(csrf_guard)],
+)
 async def revoke_invite(invite_id: int, db: AsyncSession = Depends(get_db)):
     invite = await db.get(Invites, invite_id)
     if invite is None:

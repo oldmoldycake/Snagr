@@ -10,7 +10,7 @@ async def generate_prompt(
     item_id: str,
     item_name: str,
     base_url: str,
-    criteria: str|None,
+    criteria: str | None,
     selection_mode: str,
     max_listings: int,
     allow_reproductions: bool,
@@ -50,7 +50,7 @@ async def generate_prompt(
     if selection_mode == "best_match":
         selection_block = (
             f"SELECTION MODE: best_match.\n"
-            f"The user is looking for: \"{criteria}\".\n"
+            f'The user is looking for: "{criteria}".\n'
             f"Do NOT stop searching and saving as soon as you find one acceptable listing. "
             f"Search the site thoroughly first and build a mental pool of every reasonable "
             f"candidate you find, then judge each candidate against the criteria and rank "

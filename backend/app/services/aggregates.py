@@ -83,11 +83,13 @@ async def _create_price_points(checks, step: float = 1) -> list[PricePoint]:
     while steps < len(checks):
         current_check = checks[floor(steps)]
 
-        price_point_list.append(PricePoint(
-            ts=current_check.checked_at.isoformat(),
-            price=str(current_check.price),
-            in_stock=current_check.in_stock
-        ))
+        price_point_list.append(
+            PricePoint(
+                ts=current_check.checked_at.isoformat(),
+                price=str(current_check.price),
+                in_stock=current_check.in_stock,
+            )
+        )
         steps += step
 
     return price_point_list
@@ -111,31 +113,28 @@ async def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
     width = (end - start) / points
     out = []
     for i in range(points):
-        left    = start + i * width
-        right   = start + (i + 1) * width
-        ts      = left + width / 2
+        left = start + i * width
+        right = start + (i + 1) * width
+        ts = left + width / 2
 
         prices = [c.price for c in checks if left <= c.checked_at < right]
         if prices:
-            avg     = str((sum(prices) / len(prices)).quantize(Decimal("0.01")))
-            best    = str(min(prices))
+            avg = str((sum(prices) / len(prices)).quantize(Decimal("0.01")))
+            best = str(min(prices))
         else:
             avg = best = None
 
-        out.append(SummaryPoint(
-            ts=ts.isoformat(),
-            avg=avg,
-            best=best
-        ))
+        out.append(SummaryPoint(ts=ts.isoformat(), avg=avg, best=best))
     return out
 
-async def _generate_spark(now: int, before:int) -> list[int]:
+
+async def _generate_spark(now: int, before: int) -> list[int]:
     """12-point linear ramp from `before` to `now`.
 
     Deliberately not real history — it's a shape, matching growthSpark in the
     mock handlers. Every dashboard StatTile draws its sparkline this way.
     """
-    return [round(before + (now - before) * b/11) for b in range(12)]
+    return [round(before + (now - before) * b / 11) for b in range(12)]
 
 
 # Bucket count for ItemSummary.spark. The contract says "<=30 points"; the mock
@@ -204,11 +203,13 @@ async def _active_listings_for_item(db, user_id, item_id) -> list[Listings]:
     Scoped through `watches`, so one user never sees another's listings even
     though `items` is a shared catalog.
     """
-    stmt = select(Listings
-                ).join(Watches, Watches.id == Listings.watch_id
-                ).where(Watches.user_id == user_id
-                ).where(Listings.item_id == item_id
-                ).where(Listings.active)
+    stmt = (
+        select(Listings)
+        .join(Watches, Watches.id == Listings.watch_id)
+        .where(Watches.user_id == user_id)
+        .where(Listings.item_id == item_id)
+        .where(Listings.active)
+    )
 
     return (await db.execute(stmt)).scalars().all()
 
@@ -231,10 +232,14 @@ async def _count_listings_with_drop(db, user_id, start, end) -> int:
     functions last — so a check just outside the range is never treated as the
     "previous" price. That matches the mock, which filters before it walks.
     """
-    previous_price = func.lag(PriceChecks.price).over(
-        partition_by=PriceChecks.listing_id,
-        order_by=PriceChecks.checked_at,
-    ).label("previous_price")
+    previous_price = (
+        func.lag(PriceChecks.price)
+        .over(
+            partition_by=PriceChecks.listing_id,
+            order_by=PriceChecks.checked_at,
+        )
+        .label("previous_price")
+    )
 
     # `price > 0` also drops NULLs (NULL > 0 is NULL, not true) — same filter
     # item_rollups uses, so "a priced check" means one thing across this module.
@@ -252,12 +257,13 @@ async def _count_listings_with_drop(db, user_id, start, end) -> int:
     )
 
     drop_fraction = (
-        (paired_checks.c.previous_price - paired_checks.c.price)
-        / paired_checks.c.previous_price
-    )
+        paired_checks.c.previous_price - paired_checks.c.price
+    ) / paired_checks.c.previous_price
     stmt = (
         select(func.count(func.distinct(paired_checks.c.listing_id)))
-        .where(paired_checks.c.previous_price.is_not(None))   # first check of a listing has no predecessor
+        .where(
+            paired_checks.c.previous_price.is_not(None)
+        )  # first check of a listing has no predecessor
         .where(paired_checks.c.previous_price > paired_checks.c.price)
         .where(drop_fraction > _DROP_THRESHOLD)
     )
@@ -277,10 +283,12 @@ async def _count_snagged_watches(db, user_id) -> int:
         select(
             Listings.watch_id.label("watch_id"),
             PriceChecks.price.label("price"),
-            func.row_number().over(
+            func.row_number()
+            .over(
                 partition_by=PriceChecks.listing_id,
                 order_by=PriceChecks.checked_at.desc(),
-            ).label("rn"),
+            )
+            .label("rn"),
         )
         .select_from(PriceChecks)
         .join(Listings, Listings.id == PriceChecks.listing_id)
@@ -331,10 +339,12 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
 
     listing_series_list = []
     for listing in listing_rows:
-        stmt = select(PriceChecks
-                    ).where(PriceChecks.listing_id == listing.id
-                    ).where(PriceChecks.price > 0
-                    ).order_by(PriceChecks.checked_at)
+        stmt = (
+            select(PriceChecks)
+            .where(PriceChecks.listing_id == listing.id)
+            .where(PriceChecks.price > 0)
+            .order_by(PriceChecks.checked_at)
+        )
 
         if start is not None:
             stmt = stmt.where(PriceChecks.checked_at >= start)
@@ -347,13 +357,15 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
             price_points = await _create_price_points(checks)
 
         site = await db.get(Sites, listing.site_id)
-        listing_series_list.append(ListingSeries(
-            listing_id=listing.id,
-            site_name=site.name,
-            title=listing.title,
-            active=listing.active,
-            points=price_points
-        ))
+        listing_series_list.append(
+            ListingSeries(
+                listing_id=listing.id,
+                site_name=site.name,
+                title=listing.title,
+                active=listing.active,
+                points=price_points,
+            )
+        )
 
     return listing_series_list
 
@@ -374,11 +386,12 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
     all_checks = []
 
     for listing in listing_rows:
-        stmt = select(PriceChecks
-                ).where(PriceChecks.listing_id == listing.id
-                ).where(PriceChecks.price > 0
-                ).order_by(PriceChecks.checked_at
-                )
+        stmt = (
+            select(PriceChecks)
+            .where(PriceChecks.listing_id == listing.id)
+            .where(PriceChecks.price > 0)
+            .order_by(PriceChecks.checked_at)
+        )
         if start is not None:
             stmt = stmt.where(PriceChecks.checked_at >= start)
 
@@ -387,7 +400,8 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
 
     return await _create_summary_points(all_checks, start, points)
 
-async def item_rollups(db, user_id, item, watch, range)-> dict:
+
+async def item_rollups(db, user_id, item, watch, range) -> dict:
     """The computed half of an ItemSummary row, keyed to splat straight in.
 
     Keys match ItemSummary's computed fields exactly, so build_item_summary can
@@ -409,42 +423,48 @@ async def item_rollups(db, user_id, item, watch, range)-> dict:
         "active_listing_count": len(listing_rows),
         "target_met": None,
         "pct_change_range": None,
-        "last_checked_at": None
+        "last_checked_at": None,
     }
 
     prices = []
     best_old_price = None
     best_site_id = None
     for listing in listing_rows:
-        stmt = select(PriceChecks
-                ).where(PriceChecks.listing_id == listing.id
-                ).where(PriceChecks.price > 0
-                ).order_by(PriceChecks.checked_at.desc()
-                ).limit(1)
+        stmt = (
+            select(PriceChecks)
+            .where(PriceChecks.listing_id == listing.id)
+            .where(PriceChecks.price > 0)
+            .order_by(PriceChecks.checked_at.desc())
+            .limit(1)
+        )
 
         check = (await db.execute(stmt)).scalar_one_or_none()
         if check is None:
             continue
 
-        if item_rollup["best_price"] is None or check.price < item_rollup["best_price"] :
+        if item_rollup["best_price"] is None or check.price < item_rollup["best_price"]:
             item_rollup["best_price"] = check.price
             item_rollup["best_listing_id"] = check.listing_id
             best_site_id = listing.site_id
-        if item_rollup["last_checked_at"] is None or check.checked_at > item_rollup["last_checked_at"]:
+        if (
+            item_rollup["last_checked_at"] is None
+            or check.checked_at > item_rollup["last_checked_at"]
+        ):
             item_rollup["last_checked_at"] = check.checked_at
 
         if start is not None:
-            stmt = select(PriceChecks
-                        ).where(PriceChecks.listing_id == listing.id
-                        ).where(PriceChecks.price > 0
-                        ).where(PriceChecks.checked_at <= start
-                        ).order_by(PriceChecks.checked_at.desc()
-                        ).limit(1)
+            stmt = (
+                select(PriceChecks)
+                .where(PriceChecks.listing_id == listing.id)
+                .where(PriceChecks.price > 0)
+                .where(PriceChecks.checked_at <= start)
+                .order_by(PriceChecks.checked_at.desc())
+                .limit(1)
+            )
             old_check = (await db.execute(stmt)).scalar_one_or_none()
 
-            if old_check and (best_old_price is None or old_check.price < best_old_price) :
+            if old_check and (best_old_price is None or old_check.price < best_old_price):
                 best_old_price = old_check.price
-
 
         prices.append(check.price)
 
@@ -480,6 +500,7 @@ async def item_rollups(db, user_id, item, watch, range)-> dict:
 
     return item_rollup
 
+
 async def dashboard_stats(db, user_id, range) -> DashboardStats:
     """The four dashboard StatTiles. Behavioral oracle: the mock handler for
     GET /api/dashboard/stats in frontend/src/mocks/handlers.ts.
@@ -505,50 +526,56 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
         # measure growth against. The mock charts a year here; match it.
         start = now - _ALL_RANGE_FALLBACK
 
-    #Tracked items
-    stmt = select(func.count(Watches.id)
-            ).where(Watches.user_id == user_id)
+    # Tracked items
+    stmt = select(func.count(Watches.id)).where(Watches.user_id == user_id)
     current_watch_count = (await db.execute(stmt)).scalar_one_or_none()
 
-
-    stmt = select(func.count(Watches.id)
-            ).where(Watches.user_id == user_id
-            ).where(Watches.created_at <= start)
+    stmt = (
+        select(func.count(Watches.id))
+        .where(Watches.user_id == user_id)
+        .where(Watches.created_at <= start)
+    )
     start_of_range_watch_count = (await db.execute(stmt)).scalar_one_or_none()
 
-    tracked_item_spark = await _generate_spark(current_watch_count,start_of_range_watch_count)
+    tracked_item_spark = await _generate_spark(current_watch_count, start_of_range_watch_count)
 
     tracked_stat_tile = StatTile(
         value=current_watch_count,
         delta=(current_watch_count - start_of_range_watch_count),
-        spark=tracked_item_spark
+        spark=tracked_item_spark,
     )
 
-    #Listings
-    stmt = select(func.count(Listings.id)
-            ).join(Watches, Watches.id == Listings.watch_id
-            ).where(Watches.user_id == user_id
-            ).where(Listings.active)
+    # Listings
+    stmt = (
+        select(func.count(Listings.id))
+        .join(Watches, Watches.id == Listings.watch_id)
+        .where(Watches.user_id == user_id)
+        .where(Listings.active)
+    )
 
     current_active_listing_count = (await db.execute(stmt)).scalar_one_or_none()
 
-    stmt = select(func.count(Listings.id)
-            ).join(Watches, Watches.id == Listings.watch_id
-            ).where(Watches.user_id == user_id
-            ).where(Listings.active
-            ).where(Listings.created_at <= start)
+    stmt = (
+        select(func.count(Listings.id))
+        .join(Watches, Watches.id == Listings.watch_id)
+        .where(Watches.user_id == user_id)
+        .where(Listings.active)
+        .where(Listings.created_at <= start)
+    )
 
     current_listings_at_start_of_range = (await db.execute(stmt)).scalar_one_or_none()
 
-    listing_spark = await _generate_spark(current_active_listing_count, current_listings_at_start_of_range)
+    listing_spark = await _generate_spark(
+        current_active_listing_count, current_listings_at_start_of_range
+    )
 
     listing_stat_tile = StatTile(
         value=current_active_listing_count,
         delta=(current_active_listing_count - current_listings_at_start_of_range),
-        spark=listing_spark
+        spark=listing_spark,
     )
 
-    #Price drops
+    # Price drops
     # The one tile with a real period-over-period delta: this range's drops
     # against the immediately preceding window of the same length.
     previous_start = start - (now - start)
@@ -558,10 +585,10 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     price_drops_stat_tile = StatTile(
         value=current_drop_count,
         delta=(current_drop_count - previous_drop_count),
-        spark=await _generate_spark(current_drop_count, previous_drop_count)
+        spark=await _generate_spark(current_drop_count, previous_drop_count),
     )
 
-    #Snagged
+    # Snagged
     # Watches sitting at or under their target price right now.
     # KNOWN GAP: delta is a placeholder. A truthful "how many were snagged at
     # range start" means replaying each watch's price history against its target
@@ -572,7 +599,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     snagged_stat_tile = StatTile(
         value=snagged_count,
         delta=min(snagged_count, 1),
-        spark=await _generate_spark(snagged_count, max(0, snagged_count - 1))
+        spark=await _generate_spark(snagged_count, max(0, snagged_count - 1)),
     )
 
     return DashboardStats(
@@ -609,10 +636,14 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
     # Step 1 — pair every priced check with its predecessor on the same listing.
     # Deliberately NOT range-filtered: see the docstring, `previous_price` is
     # allowed to come from before the window.
-    previous_price = func.lag(PriceChecks.price).over(
-        partition_by=PriceChecks.listing_id,
-        order_by=PriceChecks.checked_at,
-    ).label("previous_price")
+    previous_price = (
+        func.lag(PriceChecks.price)
+        .over(
+            partition_by=PriceChecks.listing_id,
+            order_by=PriceChecks.checked_at,
+        )
+        .label("previous_price")
+    )
 
     paired_checks = (
         select(
@@ -634,9 +665,8 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
     # Step 2 — keep the pairs that are real drops landing inside the range, and
     # rank each listing's drops newest-first so step 3 can take just the latest.
     drop_fraction = (
-        (paired_checks.c.previous_price - paired_checks.c.price)
-        / paired_checks.c.previous_price
-    )
+        paired_checks.c.previous_price - paired_checks.c.price
+    ) / paired_checks.c.previous_price
     qualifying = (
         select(
             paired_checks.c.listing_id,
@@ -644,12 +674,16 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
             paired_checks.c.previous_price,
             paired_checks.c.currency,
             paired_checks.c.checked_at,
-            func.row_number().over(
+            func.row_number()
+            .over(
                 partition_by=paired_checks.c.listing_id,
                 order_by=paired_checks.c.checked_at.desc(),
-            ).label("recency_rank"),
+            )
+            .label("recency_rank"),
         )
-        .where(paired_checks.c.previous_price.is_not(None))  # first check of a listing has no predecessor
+        .where(
+            paired_checks.c.previous_price.is_not(None)
+        )  # first check of a listing has no predecessor
         .where(paired_checks.c.previous_price > paired_checks.c.price)
         .where(drop_fraction > _DROP_THRESHOLD)
     )
@@ -699,6 +733,7 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
         for row in rows
     ]
 
+
 async def _best_price_per_item_as_of(db, user_id, category_id, as_of) -> dict[int, Decimal]:
     """{item_id: cheapest live price} for the user's watched items in one
     category, as the world looked at `as_of`. Pass as_of=None for "right now".
@@ -712,10 +747,12 @@ async def _best_price_per_item_as_of(db, user_id, category_id, as_of) -> dict[in
         select(
             Listings.item_id.label("item_id"),
             PriceChecks.price.label("price"),
-            func.row_number().over(
+            func.row_number()
+            .over(
                 partition_by=PriceChecks.listing_id,
                 order_by=PriceChecks.checked_at.desc(),
-            ).label("rn"),
+            )
+            .label("rn"),
         )
         .select_from(PriceChecks)
         .join(Listings, Listings.id == PriceChecks.listing_id)
@@ -771,8 +808,7 @@ async def category_price_change(db, user_id, category_id, range) -> list[Categor
     new_best_by_item = await _best_price_per_item_as_of(db, user_id, category_id, None)
     # start is None only for range="all" — see the docstring; no baseline exists.
     old_best_by_item = (
-        {} if start is None
-        else await _best_price_per_item_as_of(db, user_id, category_id, start)
+        {} if start is None else await _best_price_per_item_as_of(db, user_id, category_id, start)
     )
 
     changes = []
@@ -787,13 +823,13 @@ async def category_price_change(db, user_id, category_id, range) -> list[Categor
         if old_best is not None and new_best is not None and old_best > 0:
             pct_change = f"{(new_best - old_best) / old_best * 100:+.2f}"
 
-        changes.append(CategoryItemChange(
-            item_id=item_id,
-            name=item_name,
-            pct_change=pct_change,
-            old_best=str(old_best) if old_best is not None else None,
-            new_best=str(new_best) if new_best is not None else None,
-        ))
+        changes.append(
+            CategoryItemChange(
+                item_id=item_id,
+                name=item_name,
+                pct_change=pct_change,
+                old_best=str(old_best) if old_best is not None else None,
+                new_best=str(new_best) if new_best is not None else None,
+            )
+        )
     return changes
-
-

@@ -17,14 +17,19 @@ router = APIRouter(prefix="/api/me", tags=["me"], dependencies=[Depends(csrf_gua
 
 
 @router.patch("", response_model=User)
-async def update_me(body: MeUpdateRequest, user=Depends(current_user),
-                    db: AsyncSession = Depends(get_db)):
+async def update_me(
+    body: MeUpdateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+):
     # PATCH semantics: only touch fields the client actually sent — that's what
     # model_fields_set tracks. ntfy_topic can be sent as null to clear it.
     if "email" in body.model_fields_set and body.email is not None and body.email != user.email:
         if await db.scalar(select(UserModel).where(UserModel.email == body.email)):
-            raise err(422, "validation_error", "An account with this email already exists",
-                      fields={"email": "An account with this email already exists"})
+            raise err(
+                422,
+                "validation_error",
+                "An account with this email already exists",
+                fields={"email": "An account with this email already exists"},
+            )
         user.email = body.email
     if "ntfy_topic" in body.model_fields_set:
         user.ntfy_topic = body.ntfy_topic or None
@@ -33,14 +38,23 @@ async def update_me(body: MeUpdateRequest, user=Depends(current_user),
 
 
 @router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
-async def change_password(body: PasswordChangeRequest, user=Depends(current_user),
-                          db: AsyncSession = Depends(get_db)):
-    if user.password_hash is None:   # SSO-provisioned account — no password to change
-        raise err(422, "invalid_password", "This account signs in with SSO",
-                  fields={"current_password": "This account signs in with SSO"})
+async def change_password(
+    body: PasswordChangeRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+):
+    if user.password_hash is None:  # SSO-provisioned account — no password to change
+        raise err(
+            422,
+            "invalid_password",
+            "This account signs in with SSO",
+            fields={"current_password": "This account signs in with SSO"},
+        )
     if not verify_password(body.current_password, user.password_hash):
-        raise err(422, "invalid_password", "Current password is incorrect",
-                  fields={"current_password": "Current password is incorrect"})
+        raise err(
+            422,
+            "invalid_password",
+            "Current password is incorrect",
+            fields={"current_password": "Current password is incorrect"},
+        )
     user.password_hash = hash_password(body.new_password)
     await db.commit()
 

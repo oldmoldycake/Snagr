@@ -12,16 +12,17 @@ from fastapi import Response
 
 from app.config import settings
 
-ACCESS_COOKIE = "snagr_access"    # short-lived JWT — proves who you are
+ACCESS_COOKIE = "snagr_access"  # short-lived JWT — proves who you are
 REFRESH_COOKIE = "snagr_refresh"  # long-lived opaque token — gets you a new access token
 
 
 def _set(response: Response, name: str, value: str, max_age: int) -> None:
     response.set_cookie(
-        name, value,
+        name,
+        value,
         max_age=max_age,
-        httponly=True,               # JS can't read it
-        samesite="lax",              # not sent on cross-site requests -> CSRF defense
+        httponly=True,  # JS can't read it
+        samesite="lax",  # not sent on cross-site requests -> CSRF defense
         secure=settings.cookie_secure,  # HTTPS-only in prod
         path="/",
     )

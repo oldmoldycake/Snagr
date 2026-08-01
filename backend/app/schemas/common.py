@@ -28,4 +28,5 @@ class Paginated(BaseModel, Generic[T]):
 
 class DataList(BaseModel, Generic[T]):
     """Non-paginated list envelope: {"data": [...]} (e.g. /api/categories)."""
+
     data: list[T]

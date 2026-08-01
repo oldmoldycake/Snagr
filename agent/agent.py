@@ -28,33 +28,36 @@ async def run():
     generate a prompt and stream the agent through the search. A failure on
     one pair is logged and skipped so the remaining pairs still run.
     """
-    client = MultiServerMCPClient({
-        "playwright": {
-            "url": PLAYWRIGHT_MCP_URL,
-            "transport": "streamable_http",
+    client = MultiServerMCPClient(
+        {
+            "playwright": {
+                "url": PLAYWRIGHT_MCP_URL,
+                "transport": "streamable_http",
+            }
         }
-    })
+    )
 
-
-    #Here we get the current listing for tracked listings and check if active and updateprice
-    log.info("Starting scan on current listings") 
+    # Here we get the current listing for tracked listings and check if active and updateprice
+    log.info("Starting scan on current listings")
 
     tools = await client.get_tools()
     tools = tools + [save_price_check, disable_listing]
 
     agent = create_agent(llm, tools)
-    listed_items_list =  await get_listed_items()
+    listed_items_list = await get_listed_items()
     current_listing_urls = []
     for row in listed_items_list:
-        listing_id          = int(row["listing_id"])
-        listing_url         = row["listing_url"]
-        watch_id            = row["watch_id"]
-        site_id             = row["site_id"]
-        site_name           = row["site_name"]
-        item_id             = row["item_id"]
-        item_name           = row["item_name"]
+        listing_id = int(row["listing_id"])
+        listing_url = row["listing_url"]
+        watch_id = row["watch_id"]
+        site_id = row["site_id"]
+        site_name = row["site_name"]
+        item_id = row["item_id"]
+        item_name = row["item_name"]
 
-        log.info(f"Rechecking listing {listing_id} for item {item_id} ({item_name}) on site {site_id} ({site_name})")
+        log.info(
+            f"Rechecking listing {listing_id} for item {item_id} ({item_name}) on site {site_id} ({site_name})"
+        )
 
         prompt = await generate_recheck_prompt(
             listing_id=listing_id,
@@ -79,7 +82,7 @@ async def run():
             log.error(f"Recheck failed for listing {listing_id}: {e}")
             continue
 
-    #We scan the sites and ingore all the already seen and currently tracked listings
+    # We scan the sites and ingore all the already seen and currently tracked listings
     log.info("Starting scan for new items")
 
     tools = await client.get_tools()
@@ -88,23 +91,24 @@ async def run():
     agent = create_agent(llm, tools)
     watch_site_list = await get_watched_item_list()
     for row in watch_site_list:
-        watch_id            = row["watch_id"]
-        site_id             = row["site_id"]
-        site_name           = row["site_name"]
-        item_id             = row["item_id"]
-        item_name           = row["item_name"]
-        base_url            = row["base_url"]
-        criteria            = row["criteria"]
-        selection_mode      = row["selection_mode"]
-        max_listings        = int(row["max_listings"])
+        watch_id = row["watch_id"]
+        site_id = row["site_id"]
+        site_name = row["site_name"]
+        item_id = row["item_id"]
+        item_name = row["item_name"]
+        base_url = row["base_url"]
+        criteria = row["criteria"]
+        selection_mode = row["selection_mode"]
+        max_listings = int(row["max_listings"])
         allow_reproductions = bool(row["allow_reproductions"])
 
-        log.info(f"Starting search for watch {watch_id}: item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}")
+        log.info(
+            f"Starting search for watch {watch_id}: item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}"
+        )
 
         checked_urls_list = await get_checked_urls(watch_id, site_id)
         rejected_checks = [
-            {"url": c["url"], "reason": c["reason"], "notes": c["notes"]}
-            for c in checked_urls_list
+            {"url": c["url"], "reason": c["reason"], "notes": c["notes"]} for c in checked_urls_list
         ]
 
         prompt = await generate_prompt(
@@ -132,6 +136,3 @@ async def run():
         except Exception as e:
             log.error(f"Item {item_name} on site {site_name} failed: {e}")
             continue
-
-
-
