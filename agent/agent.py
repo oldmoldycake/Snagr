@@ -56,7 +56,8 @@ async def run():
         item_name = row["item_name"]
 
         log.info(
-            f"Rechecking listing {listing_id} for item {item_id} ({item_name}) on site {site_id} ({site_name})"
+            f"Rechecking listing {listing_id} for item {item_id} ({item_name}) "
+            f"on site {site_id} ({site_name})"
         )
 
         prompt = await generate_recheck_prompt(
@@ -103,7 +104,8 @@ async def run():
         allow_reproductions = bool(row["allow_reproductions"])
 
         log.info(
-            f"Starting search for watch {watch_id}: item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}"
+            f"Starting search for watch {watch_id}: item {item_id} ({item_name}) "
+            f"on site {site_id} ({site_name}) at {base_url}"
         )
 
         checked_urls_list = await get_checked_urls(watch_id, site_id)

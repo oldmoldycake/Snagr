@@ -17,7 +17,8 @@ RunEventType = Literal[
     "item_started",
     "listing_check",
     "price_found",
-    "listing_evaluated",  # candidate scored vs criteria — payload: url, title, match_score, match_summary, tracked
+    # candidate scored vs criteria — payload: url, title, match_score, match_summary, tracked
+    "listing_evaluated",
     "listing_discovered",
     "listing_ended",  # tracked listing sold/ended; slot freed — payload: listing_id, item_id
     "error",

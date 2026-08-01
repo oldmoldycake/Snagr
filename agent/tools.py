@@ -26,7 +26,8 @@ async def save_listing(
     site_sku: str | None = None,
 ) -> int | str:
     """
-    Save a listing that matches the user's selected criteria to the database and return its listing_id.
+    Save a listing that matches the user's selected criteria to the database and return its
+    listing_id.
 
     Args:
       watch_id: The internal id of the watch (user+item) this search is being run for
@@ -35,11 +36,14 @@ async def save_listing(
       url: The URL of the item that was found meeting the required criteria
       title: The listing's actual title as shown on the site
       site_sku: If a SKU is present on the site, record it here
-      match_score: How well this listing fits the requested criteria, as an integer 0-100 (examples: 67, 4, 42). Be calibrated - do not default to high.
-      match_summary: One short line justifying the score, e.g. "dry battery ok, cart only, authentic per photos"
+      match_score: How well this listing fits the requested criteria, as an integer 0-100
+        (examples: 67, 4, 42). Be calibrated - do not default to high.
+      match_summary: One short line justifying the score, e.g. "dry battery ok, cart only,
+        authentic per photos"
     Returns:
       One of these two:
-        listing_id: The internal ID for the listing. If it already exists, returns the existing listing_id instead.
+        listing_id: The internal ID for the listing. If it already exists, returns the
+          existing listing_id instead.
         Error: A string naming the site/item combo that errored and what the error was
     """
 
@@ -112,7 +116,8 @@ async def save_price_check(
     """
 
     log.info(
-        f"Saving price check for listing {listing_id} at a price of {price} {currency} (status={status})"
+        f"Saving price check for listing {listing_id} at a price of {price} {currency} "
+        f"(status={status})"
     )
     async with AsyncSessionLocal() as session:
         try:
