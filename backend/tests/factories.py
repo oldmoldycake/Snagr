@@ -23,7 +23,7 @@ Prices are passed as strings ("100.00") and stored as Decimal, matching the
 contract's decimal-string rule. Pass None for an unpriced check — the agent
 writes those for sold/unavailable listings.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from app.models import Categories, Items, Listings, PriceChecks, Sites, User, Watches
@@ -39,7 +39,7 @@ class Scenario:
 
     def __init__(self, session):
         self.db = session
-        self.now = datetime.now(timezone.utc)
+        self.now = datetime.now(UTC)
         self._user = None
         self._other_user = None
         self._category = None

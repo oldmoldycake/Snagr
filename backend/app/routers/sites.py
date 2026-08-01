@@ -4,16 +4,16 @@ category_ids / listing_count / last_checked_at are computed (services/aggregates
 """
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, current_user
 from app.core.errors import err
 from app.database import get_db
+from app.models import Listings, PriceChecks, SiteCategories, Sites
 from app.schemas.catalog import Site, SiteCreateRequest, SiteUpdateRequest
 from app.schemas.common import DataList
-from app.models import Listings, PriceChecks, Sites, SiteCategories
 
 router = APIRouter(prefix="/api/sites", tags=["sites"])
 

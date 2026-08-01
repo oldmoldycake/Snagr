@@ -7,11 +7,10 @@ agent can read them and react."""
 
 import logging
 from datetime import datetime
-from database import AsyncSessionLocal, ListingChecks
-from database import Listings, PriceChecks
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy import except_, select, update
 
+from database import AsyncSessionLocal, ListingChecks, Listings, PriceChecks
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 
 log = logging.getLogger(__name__)
 async def save_listing(watch_id: int, item_id: int, site_id: int, url: str, title: str, match_score: int, match_summary: str, site_sku:str|None = None) -> int|str:

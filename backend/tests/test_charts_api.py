@@ -11,8 +11,8 @@ its own session — uncommitted rows would be invisible to the endpoint under te
 from contextlib import asynccontextmanager
 
 import pytest
-
 from app.models import User
+
 from tests.conftest import CSRF
 from tests.factories import Scenario
 

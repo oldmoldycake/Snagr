@@ -11,7 +11,7 @@ auth router.
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 from argon2 import PasswordHasher
@@ -42,7 +42,7 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def make_access_jwt(user_id: int, role: str) -> str:
     """Short-lived signed token for the snagr_access cookie."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "role": role,

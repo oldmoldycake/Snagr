@@ -4,9 +4,9 @@ Each test starts from an empty DB (conftest truncates between tests), so
 "first user" scenarios are the default and every actor is created explicitly.
 """
 
-import pytest
 
 from app.config import settings
+
 from tests.conftest import CSRF
 
 ADMIN = {"email": "admin@example.com", "password": "hunter2hunter2"}

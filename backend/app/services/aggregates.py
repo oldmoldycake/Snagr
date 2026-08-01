@@ -17,13 +17,22 @@ price whose latest check falls in that bucket; null when the bucket is empty.
 Prices in and out are decimal STRINGS.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from math import floor
-from sqlalchemy import extract, func, select
-from app.schemas.charts import ListingSeries, StatTile, SummaryPoint, PricePoint, DashboardStats, CategoryItemChange, PriceDrop
-from app.models import Items, Listings, PriceChecks, Watches, Sites
 
+from sqlalchemy import extract, func, select
+
+from app.models import Items, Listings, PriceChecks, Sites, Watches
+from app.schemas.charts import (
+    CategoryItemChange,
+    DashboardStats,
+    ListingSeries,
+    PriceDrop,
+    PricePoint,
+    StatTile,
+    SummaryPoint,
+)
 
 _RANGE_DELTAS: dict[str, timedelta | None] = {
     "7d": timedelta(days=7),
@@ -48,7 +57,7 @@ async def _range_start(range: str) -> datetime | None:
     sparkline both need some window to measure against.
     """
     delta = _RANGE_DELTAS[range]
-    return None if delta is None else datetime.now(timezone.utc) - delta
+    return None if delta is None else datetime.now(UTC) - delta
 
 
 def _clamp_points(points: int) -> int:
@@ -93,7 +102,7 @@ async def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
 
     With start=None ("all"), the window opens at the oldest check on record.
     """
-    end = datetime.now(timezone.utc)
+    end = datetime.now(UTC)
     if start is None:
         if not checks:
             return []
@@ -155,7 +164,7 @@ async def _best_price_spark(db, listings, range) -> list[str | None]:
     if not listings:
         return []
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = await _range_start(range)
     if start is None:
         start = now - _ALL_RANGE_FALLBACK
@@ -489,7 +498,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     The contract defines it that way — turning it into a real time series is a
     frontend-visible change, not a backend cleanup.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = await _range_start(range)
     if start is None:
         # range="all" has no start bound, but the tiles still need a window to

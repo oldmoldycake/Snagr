@@ -6,7 +6,6 @@ the DB is covered without a network.
 """
 
 import pytest
-
 from app.config import settings
 from app.core.security import hash_password
 from app.models import User

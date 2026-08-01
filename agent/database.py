@@ -3,12 +3,24 @@ tracker schema, and the query helpers the agent uses to plan its runs."""
 
 import logging
 import os
-from dotenv import load_dotenv
-from sqlalchemy import Boolean, DateTime, ForeignKey, Text, UniqueConstraint, Numeric, RowMapping, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase, mapped_column, Mapped
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Sequence
+
+from dotenv import load_dotenv
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    RowMapping,
+    Text,
+    UniqueConstraint,
+    func,
+    select,
+)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
 load_dotenv()
 
 log = logging.getLogger(__name__)

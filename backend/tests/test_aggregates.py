@@ -19,10 +19,10 @@ they are the two that actually break in practice:
   * absent data is None, never 0
 """
 
+from datetime import UTC
 from decimal import Decimal
 
 import pytest
-
 from app.services.aggregates import (
     _clamp_points,
     _count_listings_with_drop,
@@ -34,7 +34,6 @@ from app.services.aggregates import (
     price_history,
     price_summary,
 )
-
 
 # --- range + points plumbing --------------------------------------------------
 #
@@ -50,9 +49,9 @@ async def test_range_start_is_none_for_all():
     ("7d", 7), ("30d", 30), ("90d", 90), ("1y", 365),
 ])
 async def test_range_start_offsets_by_the_named_window(range_name, expected_days):
-    from datetime import datetime, timezone
+    from datetime import datetime
     start = await _range_start(range_name)
-    actual_days = (datetime.now(timezone.utc) - start).days
+    actual_days = (datetime.now(UTC) - start).days
     assert actual_days == expected_days
 
 

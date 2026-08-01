@@ -3,22 +3,31 @@
 item_count / snagged_count / site_ids are computed (services/aggregates.py).
 """
 import re
+
 from fastapi import APIRouter, Depends, status
-from pydantic import PrivateAttr
 from sqlalchemy import delete, distinct, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.util import await_fallback
 
 from app.core.deps import csrf_guard, current_user
 from app.core.errors import err
 from app.database import get_db
-from app.models import Categories, Items, ListingChecks, Listings, PriceChecks, Sites, SiteCategories, Watches, WatchSites
+from app.models import (
+        Categories,
+        Items,
+        ListingChecks,
+        Listings,
+        PriceChecks,
+        SiteCategories,
+        Sites,
+        Watches,
+        WatchSites,
+)
 from app.schemas.catalog import (
-    Category,
-    CategoryCreateRequest,
-    CategoryUpdateRequest,
-    SetCategorySitesRequest,
+        Category,
+        CategoryCreateRequest,
+        CategoryUpdateRequest,
+        SetCategorySitesRequest,
 )
 from app.schemas.common import DataList
 

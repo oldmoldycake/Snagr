@@ -25,7 +25,7 @@ refresh-retry loop (client.ts skips retry for /api/auth/*).
 
 import hmac
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -76,7 +76,7 @@ async def _start_session(db: AsyncSession, response: Response, user: User) -> No
     db.add(Sessions(
         user_id=user.id,
         refresh_hash=digest,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TTL_DAYS),
+        expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TTL_DAYS),
     ))
     set_refresh_cookie(response, raw)
 
@@ -202,7 +202,7 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
         await db.execute(
             update(Sessions)
             .where(Sessions.refresh_hash == hash_refresh(raw), Sessions.revoked_at.is_(None))
-            .values(revoked_at=datetime.now(timezone.utc))
+            .values(revoked_at=datetime.now(UTC))
         )
         await db.commit()
     clear_auth_cookies(response)
@@ -216,7 +216,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
         raise err(401, "unauthenticated", "Refresh token missing")
 
     session = await db.scalar(select(Sessions).where(Sessions.refresh_hash == hash_refresh(raw)))
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if session is None or session.revoked_at is not None or session.expires_at < now:
         raise err(401, "unauthenticated", "Refresh token expired")
 
@@ -244,7 +244,7 @@ async def _live_invite(db: AsyncSession, token: str) -> Invites:
     invite = await db.scalar(select(Invites).where(Invites.token == token))
     if invite is None:
         raise err(404, "not_found", "This invite link is not valid")
-    if invite.used_at is not None or invite.expires_at < datetime.now(timezone.utc):
+    if invite.used_at is not None or invite.expires_at < datetime.now(UTC):
         raise err(410, "invite_expired", "This invite has expired or was already used")
     return invite
 
@@ -274,7 +274,7 @@ async def accept_invite(token: str, body: InviteAcceptRequest, response: Respons
         email_verified=True,
     )
     db.add(user)
-    invite.used_at = datetime.now(timezone.utc)   # single-use: burn it
+    invite.used_at = datetime.now(UTC)   # single-use: burn it
     await db.flush()
     await db.refresh(user)
     await _start_session(db, response, user)

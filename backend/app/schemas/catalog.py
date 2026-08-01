@@ -6,7 +6,6 @@ category_ids are COMPUTED at query time (services/aggregates.py), not columns.
 
 from pydantic import BaseModel
 
-
 # --- categories -------------------------------------------------------------
 
 class Category(BaseModel):

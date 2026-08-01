@@ -1,11 +1,10 @@
 import asyncio
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
-
-from alembic import context
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -18,9 +17,9 @@ if config.config_file_name is not None:
 
 # The app's models are the schema of record; the DB URL comes from the same
 # settings the app uses (.env), so alembic.ini never holds credentials.
+from app import models  # noqa: F401  — imports register every table on Base.metadata
 from app.config import settings
 from app.database import Base
-from app import models  # noqa: F401  — imports register every table on Base.metadata
 
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 target_metadata = Base.metadata

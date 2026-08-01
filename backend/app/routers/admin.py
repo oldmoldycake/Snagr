@@ -2,7 +2,7 @@
 depends on current_user, so it covers auth too)."""
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import delete, func, select
@@ -86,7 +86,7 @@ async def delete_user(user_id: int, admin=Depends(require_admin),
 @router.get("/invites", response_model=DataList[Invite])
 async def list_invites(db: AsyncSession = Depends(get_db)):
     # pending only: unused and unexpired, like the mock
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     invites = (await db.scalars(
         select(Invites)
         .where(Invites.used_at.is_(None), Invites.expires_at > now)
@@ -103,7 +103,7 @@ async def create_invite(body: InviteCreateRequest, admin=Depends(require_admin),
         token=secrets.token_urlsafe(24),
         email=body.email or None,
         role="user",
-        expires_at=datetime.now(timezone.utc) + timedelta(days=INVITE_TTL_DAYS),
+        expires_at=datetime.now(UTC) + timedelta(days=INVITE_TTL_DAYS),
         created_by=admin.id,
     )
     db.add(invite)

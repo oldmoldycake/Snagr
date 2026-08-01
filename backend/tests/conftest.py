@@ -23,12 +23,11 @@ os.environ["DATABASE_URL"] = _test_url
 # ------------------------------------------------------------------------------
 
 import pytest
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy import text
-
 from app import models  # noqa: F401 — registers every table on Base.metadata
 from app.database import Base, _sessionmaker
 from app.main import app
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 # every mutating request must carry the CSRF header, like the frontend does
 CSRF = {"X-Snagr-Csrf": "1"}

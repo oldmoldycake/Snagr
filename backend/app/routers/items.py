@@ -4,20 +4,28 @@ An API "item" = items row + the caller's watch + watch_sites (services/items.py)
 prefix is /api because this router owns both /api/items/* and /api/listings/*.
 """
 
-from typing import Annotated
 from decimal import Decimal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import Select, select, delete
+from sqlalchemy import delete, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, current_user
 from app.core.errors import err
 from app.database import get_db
-from app.models import ListingChecks, PriceChecks, Watches, Items, WatchSites, Listings, Sites, Categories
-from app.services.aggregates import item_rollups
-from app.schemas.common import DataList, Paginated, PageMeta
+from app.models import (
+    Categories,
+    Items,
+    ListingChecks,
+    Listings,
+    PriceChecks,
+    Sites,
+    Watches,
+    WatchSites,
+)
+from app.schemas.common import DataList, PageMeta, Paginated
 from app.schemas.items import (
     ItemCreateRequest,
     ItemDetail,
@@ -30,6 +38,7 @@ from app.schemas.items import (
     Watch,
     WatchUpdateRequest,
 )
+from app.services.aggregates import item_rollups
 
 router = APIRouter(prefix="/api", tags=["items"])
 
@@ -353,7 +362,7 @@ async def delete_item(item_id: int, user=Depends(current_user), db: AsyncSession
 
         await db.commit()
     except SQLAlchemyError:
-        raise err(503, "db_unavailable", f"Could not reach the database")
+        raise err(503, "db_unavailable", "Could not reach the database")
 
 
 @router.patch("/items/{item_id}/watch", response_model=Watch, dependencies=[Depends(csrf_guard)])
@@ -427,7 +436,7 @@ async def update_listing(listing_id: int, body: ListingUpdateRequest, user=Depen
             
         )
     except SQLAlchemyError:
-        raise err(503, "db_unavailable", f"Could not reach the database")
+        raise err(503, "db_unavailable", "Could not reach the database")
 @router.get("/items/{item_id}/price-checks", response_model=DataList[PriceCheck])
 async def list_price_checks(item_id: int, limit: int = 50, user=Depends(current_user),
                             db: AsyncSession = Depends(get_db)):

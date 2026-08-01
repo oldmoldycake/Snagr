@@ -3,9 +3,8 @@ console) and runs the agent once over all watched items."""
 
 import asyncio
 import logging
+
 from agent import run
-
-
 
 logging.basicConfig(
     level=logging.INFO,

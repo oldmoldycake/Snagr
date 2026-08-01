@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from app.schemas.common import TimeRange
 
-
 # --- price history / summary ------------------------------------------------
 
 class PricePoint(BaseModel):
