@@ -209,7 +209,7 @@ async def get_watched_item_list() -> Sequence[RowMapping]:
                 .join(Items, Items.id == Watches.item_id)
                 .join(SiteCategories, SiteCategories.category_id == Items.category_id)
                 .join(Sites, Sites.id == SiteCategories.site_id)
-                .where(Watches.notify == True)
+                .where(Watches.notify)
             )
 
             results = await session.execute(stmt)
@@ -245,7 +245,7 @@ async def get_listed_items() -> Sequence[RowMapping]:
                 .join(Sites, Sites.id == Listings.site_id)
                 .join(Watches, Watches.id == Listings.watch_id)
                 .join(Items, Items.id == Listings.item_id)
-                .where(Listings.active == True)
+                .where(Listings.active)
             )
 
             results = await session.execute(stmt)

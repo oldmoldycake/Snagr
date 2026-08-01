@@ -5,11 +5,9 @@ Conventions enforced project-wide:
   - timestamps are ISO-8601 UTC strings                  -> `str`
 """
 
-from typing import Generic, Literal, TypeVar
+from typing import Literal
 
 from pydantic import BaseModel
-
-T = TypeVar("T")
 
 # frontend/src/lib/time.ts
 TimeRange = Literal["7d", "30d", "90d", "1y", "all"]
@@ -21,12 +19,12 @@ class PageMeta(BaseModel):
     total: int
 
 
-class Paginated(BaseModel, Generic[T]):
+class Paginated[T](BaseModel):
     data: list[T]
     meta: PageMeta
 
 
-class DataList(BaseModel, Generic[T]):
+class DataList[T](BaseModel):
     """Non-paginated list envelope: {"data": [...]} (e.g. /api/categories)."""
 
     data: list[T]

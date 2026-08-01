@@ -36,7 +36,7 @@ async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_
             stmt = (
                 select(func.count())
                 .select_from(Listings)
-                .where(Listings.active == True)
+                .where(Listings.active)
                 .where(Listings.site_id == id)
             )
             listing_rows = await db.execute(stmt)
