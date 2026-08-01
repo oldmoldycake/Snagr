@@ -44,6 +44,16 @@ async def _range_start(range: str) -> datetime | None:
     return None if delta is None else datetime.now(timezone.utc) - delta
 
 
+def _clamp_points(points: int) -> int:
+    """Keep a caller-supplied `points` inside a range the math can survive.
+
+    Both series functions divide by `points`, so 0 or a negative from the query
+    string would be a 500. The upper bound mirrors the mock, which caps at 500
+    before downsampling — past that the browser gains nothing from more dots.
+    """
+    return max(1, min(500, points))
+
+
 async def _create_price_points(checks, step: float = 1) -> list[PricePoint]:
     """Serialize checks into contract PricePoints, taking every `step`-th one.
 
@@ -231,8 +241,13 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
 
     Each series is thinned to at most `points` samples: a listing checked hourly
     for a year would otherwise ship ~8,700 points to the browser.
+
+    Unpriced checks are skipped. The agent records a check with price=NULL when a
+    listing is sold or unavailable (agent/tools.py save_price_check), and a chart
+    point needs a number — the mock's downsample() drops them the same way.
     """
     listing_rows = await _active_listings_for_item(db, user_id, item_id)
+    points = _clamp_points(points)
 
     # Resolved once per request, not per listing — _range_start reads the clock
     # on every call, so doing it inside the loop would give each series its own
@@ -243,6 +258,7 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
     for listing in listing_rows:
         stmt = select(PriceChecks
                     ).where(PriceChecks.listing_id == listing.id
+                    ).where(PriceChecks.price > 0
                     ).order_by(PriceChecks.checked_at)
 
         if start is not None:
@@ -272,8 +288,12 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
 
     price_history keeps listings apart for a multi-line chart; this flattens
     them into one series for the summary view.
+
+    Unpriced checks are skipped — averaging over a NULL is not a number. See
+    price_history for why they exist.
     """
     listing_rows = await _active_listings_for_item(db, user_id, item_id)
+    points = _clamp_points(points)
     start = await _range_start(range)
 
     all_checks = []
@@ -281,6 +301,7 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
     for listing in listing_rows:
         stmt = select(PriceChecks
                 ).where(PriceChecks.listing_id == listing.id
+                ).where(PriceChecks.price > 0
                 ).order_by(PriceChecks.checked_at
                 )
         if start is not None:
