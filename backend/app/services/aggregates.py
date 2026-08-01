@@ -600,7 +600,101 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
         for row in rows
     ]
 
-async def category_price_change(db, user_id, item, range) -> list[CategoryItemChange]:
-    pass
+async def _best_price_per_item_as_of(db, user_id, category_id, as_of) -> dict[int, Decimal]:
+    """{item_id: cheapest live price} for the user's watched items in one
+    category, as the world looked at `as_of`. Pass as_of=None for "right now".
+
+    Mirrors bestPriceAt() in frontend/src/mocks/fixtures.ts: per active listing
+    take its most recent check at-or-before `as_of`, then the cheapest of those
+    across the item's listings. Items with no priced check yet are simply absent
+    from the dict — callers treat missing as null, not zero.
+    """
+    latest_check_per_listing = (
+        select(
+            Listings.item_id.label("item_id"),
+            PriceChecks.price.label("price"),
+            func.row_number().over(
+                partition_by=PriceChecks.listing_id,
+                order_by=PriceChecks.checked_at.desc(),
+            ).label("rn"),
+        )
+        .select_from(PriceChecks)
+        .join(Listings, Listings.id == PriceChecks.listing_id)
+        .join(Watches, Watches.id == Listings.watch_id)
+        .join(Items, Items.id == Listings.item_id)
+        .where(Watches.user_id == user_id)
+        .where(Items.category_id == category_id)
+        .where(Listings.active)
+        .where(PriceChecks.price > 0)
+    )
+    if as_of is not None:
+        # The rank is computed over the filtered rows, so rn == 1 is the newest
+        # check that had already happened at `as_of` — not the newest overall.
+        latest_check_per_listing = latest_check_per_listing.where(PriceChecks.checked_at <= as_of)
+    latest_check_per_listing = latest_check_per_listing.subquery()
+
+    stmt = (
+        select(
+            latest_check_per_listing.c.item_id,
+            func.min(latest_check_per_listing.c.price),
+        )
+        .where(latest_check_per_listing.c.rn == 1)
+        .group_by(latest_check_per_listing.c.item_id)
+    )
+    return {item_id: price for item_id, price in (await db.execute(stmt)).all()}
+
+
+async def category_price_change(db, user_id, category_id, range) -> list[CategoryItemChange]:
+    """Per-item best-price movement across one category, oldest baseline vs now.
+    Behavioral oracle: the mock handler for GET /api/categories/:id/price-change
+    in frontend/src/mocks/handlers.ts.
+
+    DIVERGENCE FROM THE MOCK, on purpose: the mock lists every item in the
+    category because its store has only one user. Here we list the caller's
+    WATCHED items in that category, matching GET /api/items — otherwise one
+    user's catalog would leak into another's category view.
+
+    range="all" yields a null pct_change for every item. There is no baseline
+    before the beginning of time, and the mock agrees: it asks for the best
+    price at epoch, which is always null. Absent data stays null, never 0.
+    """
+    start = await _range_start(range)
+
+    watched_items = (
+        select(Items.id, Items.name)
+        .join(Watches, Watches.item_id == Items.id)
+        .where(Watches.user_id == user_id)
+        .where(Items.category_id == category_id)
+        .order_by(Items.name)
+    )
+    item_rows = (await db.execute(watched_items)).all()
+
+    new_best_by_item = await _best_price_per_item_as_of(db, user_id, category_id, None)
+    # start is None only for range="all" — see the docstring; no baseline exists.
+    old_best_by_item = (
+        {} if start is None
+        else await _best_price_per_item_as_of(db, user_id, category_id, start)
+    )
+
+    changes = []
+    for item_id, item_name in item_rows:
+        old_best = old_best_by_item.get(item_id)
+        new_best = new_best_by_item.get(item_id)
+
+        # Needs both ends to be a change at all; old_best > 0 guards the divide.
+        # Signed like item_rollups' pct_change_range — this one can go up or
+        # down, unlike price_drops which is always negative.
+        pct_change = None
+        if old_best is not None and new_best is not None and old_best > 0:
+            pct_change = f"{(new_best - old_best) / old_best * 100:+.2f}"
+
+        changes.append(CategoryItemChange(
+            item_id=item_id,
+            name=item_name,
+            pct_change=pct_change,
+            old_best=str(old_best) if old_best is not None else None,
+            new_best=str(new_best) if new_best is not None else None,
+        ))
+    return changes
 
 

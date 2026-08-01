@@ -74,7 +74,16 @@ async def get_price_summary(item_id: int, range: TimeRange, points: int = 300,
 @router.get("/categories/{category_id}/price-change", response_model=CategoryPriceChangeResponse)
 async def get_category_price_change(category_id: int, range: TimeRange,
                                     user=Depends(current_user), db: AsyncSession = Depends(get_db)):
-    raise NotImplementedError
+    # 404 on an unknown category; a category the caller simply watches nothing
+    # in is a valid empty list, not an error.
+    if await db.get(Categories, category_id) is None:
+        raise err(404, "not_found", f"Category {category_id} does not exist")
+
+    return CategoryPriceChangeResponse(
+        category_id=category_id,
+        range=range,
+        items=await category_price_change(db, user.id, category_id, range),
+    )
 
 
 @router.get("/dashboard/stats", response_model=DashboardStats)
