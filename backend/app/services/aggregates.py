@@ -187,9 +187,95 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
 
     return await _create_summary_points(all_checks, start, points)
 
-async def item_rollups(db, user_id, item, range)-> dict:
-    pass
+async def item_rollups(db, user_id, item, watch, range)-> dict:
+    """The computed half of an ItemSummary row, keyed to splat straight in.
 
+    Keys match ItemSummary's computed fields exactly, so build_item_summary can
+    `**` the result. Every value is derived from listings + price_checks — none
+    of it is stored, and none of it should become a column.
+
+    Values stay Decimal/datetime while the math runs and are serialized to
+    decimal strings / ISO timestamps in one pass at the end.
+    """
+    listing_rows = await _active_listings_for_item(db, user_id, item.id)
+
+    start = await _range_start(range)
+
+    item_rollup = {
+        "best_price": None,
+        "best_listing_id": None,
+        "best_site_name": None,
+        "avg_price": None,
+        "active_listing_count": len(listing_rows),
+        "target_met": None,
+        "pct_change_range": None,
+        "last_checked_at": None
+    }
+
+    prices = []
+    best_old_price = None
+    best_site_id = None
+    for listing in listing_rows:
+        stmt = select(PriceChecks
+                ).where(PriceChecks.listing_id == listing.id
+                ).where(PriceChecks.price > 0
+                ).order_by(PriceChecks.checked_at.desc()
+                ).limit(1)
+
+        check = (await db.execute(stmt)).scalar_one_or_none()
+        if check is None:
+            continue
+
+        if item_rollup["best_price"] is None or check.price < item_rollup["best_price"] :
+            item_rollup["best_price"] = check.price
+            item_rollup["best_listing_id"] = check.listing_id
+            best_site_id = listing.site_id
+        if item_rollup["last_checked_at"] is None or check.checked_at > item_rollup["last_checked_at"]:
+            item_rollup["last_checked_at"] = check.checked_at
+
+        if start is not None:
+            stmt = select(PriceChecks
+                        ).where(PriceChecks.listing_id == listing.id
+                        ).where(PriceChecks.price > 0
+                        ).where(PriceChecks.checked_at <= start
+                        ).order_by(PriceChecks.checked_at.desc()
+                        ).limit(1)
+            old_check = (await db.execute(stmt)).scalar_one_or_none()
+
+            if old_check and (best_old_price is None or old_check.price < best_old_price) :
+                best_old_price = old_check.price
+
+
+        prices.append(check.price)
+
+    item_rollup["best_site_name"] = (
+        (await db.get(Sites, best_site_id)).name if best_site_id is not None else None
+    )
+
+    best_price = item_rollup["best_price"]  # still Decimal|None here; serialized below
+    target = watch.target_price
+    item_rollup["target_met"] = (
+        best_price is not None and target is not None and best_price <= target
+    )
+
+    item_rollup["avg_price"] = (
+        str((sum(prices) / len(prices)).quantize(Decimal("0.01"))) if prices else None
+    )
+
+    if best_price is not None and best_old_price is not None and best_old_price > 0:
+        change = (best_price - best_old_price) / best_old_price * 100
+        item_rollup["pct_change_range"] = f"{change:+.2f}"
+    else:
+        item_rollup["pct_change_range"] = None
+
+    # serialize for the contract: prices as decimal strings, timestamps as ISO
+    item_rollup["best_price"] = str(best_price) if best_price is not None else None
+    if item_rollup["last_checked_at"] is not None:
+        item_rollup["last_checked_at"] = item_rollup["last_checked_at"].isoformat()
+
+    item_rollup["spark"] = []  # TODO: <=30 bucketed best-price points
+
+    return item_rollup
 
 async def dashboard_stats(db, user_id, range) -> DashboardStats:
     pass

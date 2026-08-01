@@ -16,6 +16,7 @@ from app.core.deps import csrf_guard, current_user
 from app.core.errors import err
 from app.database import get_db
 from app.models import ListingChecks, PriceChecks, Watches, Items, WatchSites, Listings, Sites, Categories
+from app.services.aggregates import item_rollups
 from app.schemas.common import DataList, Paginated, PageMeta
 from app.schemas.items import (
     ItemCreateRequest,
@@ -34,7 +35,7 @@ router = APIRouter(prefix="/api", tags=["items"])
 
 
 async def build_item_summary(watch: Watches, item: Items, category: Categories,
-                             db: AsyncSession) -> ItemSummary:
+                             db: AsyncSession, range: str = "30d") -> ItemSummary:
     """One (watch, item, category) row -> ItemSummary.
 
     Stored/joined fields are real; the price rollups are PLACEHOLDERS until
@@ -62,17 +63,8 @@ async def build_item_summary(watch: Watches, item: Items, category: Categories,
         max_listings=watch.max_listings,
         allow_reproductions=watch.allow_reproductions,
         site_ids=list(site_ids) or None,
-        # ---- computed rollups: PLACEHOLDERS (Pass 2 -> services/aggregates.item_rollups) ----
-        best_price=None,
-        best_listing_id=None,
-        best_site_name=None,
-        avg_price=None,
-        active_listing_count=0,
-        target_met=False,
-        pct_change_range=None,
-        last_checked_at=None,
-        spark=[],
-        # -------------------------------------------------------------------------------------
+        # computed rollups (best/avg/target/pct/spark) — services/aggregates.item_rollups
+        **await item_rollups(db, watch.user_id, item, watch, range),
         created_at=item.created_at.isoformat(),
         watch=Watch(id=watch.id, notify=watch.notify, target_price=target_price),
     )
@@ -141,7 +133,7 @@ async def list_items(filters: Annotated[ItemListParams, Query()],
             )
 
         rows = (await db.execute(stmt.order_by(Items.name))).all()
-        summaries = [await build_item_summary(w, i, c, db) for (w, i, c) in rows]
+        summaries = [await build_item_summary(w, i, c, db, filters.range or "30d") for (w, i, c) in rows]
 
         # status filter runs AFTER serialize — it reads the computed fields
         if filters.status == "snagged":
