@@ -356,16 +356,6 @@ async def test_item_rollups_pct_change_null_without_baseline(sc):
     assert rollup["pct_change_range"] is None
 
 
-async def test_item_rollups_spark_is_still_a_todo(sc):
-    # Pinned so the day someone implements it, this test fails and gets updated
-    # rather than the empty list silently shipping forever.
-    item, watch = await sc.tracked()
-    listing = await sc.listing(watch, item)
-    await sc.checks(listing, (5, "80.00"))
-
-    assert (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"] == []
-
-
 async def test_item_rollups_ignores_other_users_listings(sc):
     item = await sc.item()
     mine = await sc.watch(item, target_price="85.00")
@@ -379,6 +369,143 @@ async def test_item_rollups_ignores_other_users_listings(sc):
 
     assert rollup["best_price"] == "100.00"
     assert rollup["active_listing_count"] == 1
+
+
+# --- item_rollups: spark ------------------------------------------------------
+#
+# 30 buckets of best-price-over-the-range. Oracle: sparkline() in
+# frontend/src/mocks/fixtures.ts.
+#
+# Do not confuse this with StatTile.spark. The contract calls both "spark", but
+# the dashboard one is a fake 12-point ramp between two counts (_generate_spark)
+# and this one is real bucketed price history. They share nothing but the name.
+#
+# Bucket arithmetic: a "30d" range over 30 buckets is one bucket per day, so a
+# check `D` days ago lands in bucket `30 - D`. Tests use half-day offsets to keep
+# timestamps mid-bucket — an exact integer offset sits on a boundary, and which
+# side it falls on depends on the microseconds between `sc.now` and the clock
+# read inside the service.
+
+async def test_item_rollups_spark_has_thirty_buckets(sc):
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (4.5, "80.00"))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"]
+
+    assert len(spark) == 30
+
+
+async def test_item_rollups_spark_runs_oldest_to_newest(sc):
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (25.5, "100.00"), (4.5, "80.00"))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"]
+
+    assert spark[4] == "100.00"
+    assert spark[25] == "80.00"
+    # every other bucket is empty — null, never 0
+    assert [i for i, price in enumerate(spark) if price is not None] == [4, 25]
+
+
+async def test_item_rollups_spark_keeps_the_cheapest_price_in_a_bucket(sc):
+    # It is a BEST-price spark: two listings checked in the same bucket collapse
+    # to the lower of the two, not an average and not the newer one.
+    item, watch = await sc.tracked()
+    cheap = await sc.listing(watch, item, "cheap")
+    dear = await sc.listing(watch, item, "dear")
+    await sc.checks(cheap, (4.5, "80.00"))
+    await sc.checks(dear, (4.6, "120.00"))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"]
+
+    assert spark[25] == "80.00"
+
+
+async def test_item_rollups_spark_is_empty_without_any_listing(sc):
+    # [] rather than 30 nulls. The mock bails before allocating the array, and
+    # the frontend draws nothing at all instead of a flat line at zero.
+    item, watch = await sc.tracked()
+
+    assert (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"] == []
+
+
+async def test_item_rollups_spark_is_empty_when_every_listing_is_inactive(sc):
+    item, watch = await sc.tracked()
+    dead = await sc.listing(watch, item, "dead", active=False)
+    await sc.checks(dead, (4.5, "80.00"))
+
+    assert (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"] == []
+
+
+async def test_item_rollups_spark_excludes_checks_before_the_range(sc):
+    # Unlike pct_change_range, which deliberately reaches back before the window
+    # for a baseline, the spark only charts what happened inside it.
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (40, "50.00"), (4.5, "80.00"))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"]
+
+    assert "50.00" not in spark
+    assert spark[25] == "80.00"
+
+
+async def test_item_rollups_spark_skips_unpriced_checks(sc):
+    # The agent writes price=NULL for a sold listing. The listing is still
+    # active, so we still emit 30 buckets — they are just all empty.
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (4.5, None))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"]
+
+    assert len(spark) == 30
+    assert all(price is None for price in spark)
+
+
+async def test_item_rollups_spark_for_all_spans_one_year(sc):
+    # "all" means "no lower bound" everywhere else in this module, but a
+    # fixed-width sparkline needs a left edge. dashboard_stats picks the same
+    # 365-day fallback for the same reason.
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (400, "50.00"), (200, "80.00"))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "all"))["spark"]
+
+    assert "50.00" not in spark
+    assert "80.00" in spark
+
+
+async def test_item_rollups_spark_ignores_other_users_listings(sc):
+    item = await sc.item()
+    mine = await sc.watch(item)
+    theirs = await sc.watch(item, user=await sc.other_user())
+    my_listing = await sc.listing(mine, item, "mine")
+    their_listing = await sc.listing(theirs, item, "theirs")
+    await sc.checks(my_listing, (4.5, "100.00"))
+    await sc.checks(their_listing, (4.5, "1.00"))    # cheaper, but not mine
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, mine, "30d"))["spark"]
+
+    assert spark[25] == "100.00"
+    assert "1.00" not in spark
+
+
+async def test_item_rollups_spark_clamps_a_future_check_into_the_last_bucket(sc):
+    # A clock-skewed check dated ahead of `now` computes bucket 30, one past the
+    # end. The mock clamps with Math.min(buckets - 1, ...); without that this is
+    # an IndexError (or a silent 31st bucket) on real data.
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (-1, "80.00"))
+
+    spark = (await item_rollups(sc.db, sc.user_id, item, watch, "30d"))["spark"]
+
+    assert len(spark) == 30
+    assert spark[29] == "80.00"
 
 
 # --- drop detection -----------------------------------------------------------

@@ -20,7 +20,7 @@ Prices in and out are decimal STRINGS.
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from math import floor
-from sqlalchemy import func, select
+from sqlalchemy import extract, func, select
 from app.schemas.charts import ListingSeries, StatTile, SummaryPoint, PricePoint, DashboardStats, CategoryItemChange, PriceDrop
 from app.models import Items, Listings, PriceChecks, Watches, Sites
 
@@ -33,12 +33,19 @@ _RANGE_DELTAS: dict[str, timedelta | None] = {
     "all": None,
 }
 
+# What range="all" becomes for callers that cannot work unbounded. Anything
+# drawing a fixed-width chart or measuring growth needs a left edge, and the mock
+# picks a year in both of those places. Shared so the two can't drift apart.
+_ALL_RANGE_FALLBACK = timedelta(days=365)
+
+
 async def _range_start(range: str) -> datetime | None:
     """Lower bound for a TimeRange, or None for "all" — which means no bound.
 
     What None *implies* is the caller's call, and they disagree on purpose:
-    price_drops treats it as "don't filter", dashboard_stats substitutes a year
-    because a growth tile needs some window to measure against.
+    price_drops treats it as "don't filter", while dashboard_stats and
+    _best_price_spark substitute _ALL_RANGE_FALLBACK because a growth tile and a
+    sparkline both need some window to measure against.
     """
     delta = _RANGE_DELTAS[range]
     return None if delta is None else datetime.now(timezone.utc) - delta
@@ -120,6 +127,65 @@ async def _generate_spark(now: int, before:int) -> list[int]:
     mock handlers. Every dashboard StatTile draws its sparkline this way.
     """
     return [round(before + (now - before) * b/11) for b in range(12)]
+
+
+# Bucket count for ItemSummary.spark. The contract says "<=30 points"; the mock
+# emits exactly 30, or none at all, so we do too.
+_SPARK_BUCKETS = 30
+
+
+async def _best_price_spark(db, listings, range) -> list[str | None]:
+    """`_SPARK_BUCKETS` buckets of cheapest-price-over-the-range, oldest first.
+
+    Behavioral oracle: sparkline() in frontend/src/mocks/fixtures.ts.
+
+    NOT the same thing as StatTile.spark, despite the contract calling both
+    "spark". That one is a fake 12-point ramp between two counts
+    (_generate_spark); this one is real bucketed price history. They share
+    nothing but the name — don't unify them.
+
+    `listings` is the caller's already-scoped active listings (from
+    _active_listings_for_item). Ownership and the active filter live there, so
+    this only has to bucket — hence no join back through watches.
+
+    Returns [] — not `_SPARK_BUCKETS` nulls — when there are no live listings.
+    The frontend draws nothing at all in that case rather than a flat line at
+    zero, and the mock bails the same way before allocating its array.
+    """
+    if not listings:
+        return []
+
+    now = datetime.now(timezone.utc)
+    start = await _range_start(range)
+    if start is None:
+        start = now - _ALL_RANGE_FALLBACK
+    width_seconds = (now - start).total_seconds() / _SPARK_BUCKETS
+
+    # Bucketing happens in SQL so Postgres collapses a year of checks into at
+    # most _SPARK_BUCKETS rows instead of shipping every one of them here.
+    # least() clamps a clock-skewed future check into the last bucket instead of
+    # indexing off the end — the same guard as the mock's Math.min.
+    bucket = func.least(
+        _SPARK_BUCKETS - 1,
+        func.floor(extract("epoch", PriceChecks.checked_at - start) / width_seconds),
+    ).label("bucket")
+
+    stmt = (
+        select(bucket, func.min(PriceChecks.price))
+        .where(PriceChecks.listing_id.in_([listing.id for listing in listings]))
+        # `price > 0` also drops unpriced checks (NULL > 0 is NULL, not true) —
+        # the same filter the rest of this module uses.
+        .where(PriceChecks.price > 0)
+        .where(PriceChecks.checked_at >= start)
+        .group_by(bucket)
+    )
+
+    # Empty buckets keep their None: the contract distinguishes "no data here"
+    # from "free", so a gap must never serialize as 0.
+    spark: list[str | None] = [None] * _SPARK_BUCKETS
+    for bucket_index, best_price in (await db.execute(stmt)).all():
+        spark[int(bucket_index)] = str(best_price)
+    return spark
 
 
 async def _active_listings_for_item(db, user_id, item_id) -> list[Listings]:
@@ -398,7 +464,10 @@ async def item_rollups(db, user_id, item, watch, range)-> dict:
     if item_rollup["last_checked_at"] is not None:
         item_rollup["last_checked_at"] = item_rollup["last_checked_at"].isoformat()
 
-    item_rollup["spark"] = []  # TODO: <=30 bucketed best-price points
+    # Reuses the listings already fetched above — see _best_price_spark for why
+    # it takes rows rather than re-querying, and why this is unrelated to the
+    # dashboard's StatTile.spark.
+    item_rollup["spark"] = await _best_price_spark(db, listing_rows, range)
 
     return item_rollup
 
@@ -425,7 +494,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     if start is None:
         # range="all" has no start bound, but the tiles still need a window to
         # measure growth against. The mock charts a year here; match it.
-        start = now - timedelta(days=365)
+        start = now - _ALL_RANGE_FALLBACK
 
     #Tracked items
     stmt = select(func.count(Watches.id)
