@@ -103,6 +103,15 @@ async def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
         ))
     return out
 
+async def _generate_spark(now: int, before:int) -> list[int]:
+    """12-point linear ramp from `before` to `now`.
+
+    Deliberately not real history — it's a shape, matching growthSpark in the
+    mock handlers. Every dashboard StatTile draws its sparkline this way.
+    """
+    return [round(before + (now - before) * b/11) for b in range(12)]
+
+
 async def _active_listings_for_item(db, user_id, item_id) -> list[Listings]:
     """The caller's live listings for one item — the starting point for every
     per-item rollup in this module.
@@ -122,6 +131,101 @@ async def _active_listings_for_item(db, user_id, item_id) -> list[Listings]:
 # What counts as a "price drop": consecutive checks on the same active listing
 # where the price fell by MORE than this fraction. Mirrors the hardcoded 0.03 in
 # frontend/src/mocks/handlers.ts (countDrops) — change both or neither.
+_DROP_THRESHOLD = Decimal("0.03")
+
+
+async def _count_listings_with_drop(db, user_id, start, end) -> int:
+    """How many of the user's active listings dropped >3% within [start, end].
+
+    Counts LISTINGS, not drop events: a listing that sawtooths five times still
+    counts once (the mock `break`s after the first qualifying pair). LAG() pairs
+    each check with the previous one for the same listing, so Postgres walks the
+    series instead of us pulling every check into Python.
+
+    Note the window is computed AFTER the WHERE clause — SQL evaluates window
+    functions last — so a check just outside the range is never treated as the
+    "previous" price. That matches the mock, which filters before it walks.
+    """
+    previous_price = func.lag(PriceChecks.price).over(
+        partition_by=PriceChecks.listing_id,
+        order_by=PriceChecks.checked_at,
+    ).label("previous_price")
+
+    # `price > 0` also drops NULLs (NULL > 0 is NULL, not true) — same filter
+    # item_rollups uses, so "a priced check" means one thing across this module.
+    paired_checks = (
+        select(PriceChecks.listing_id, PriceChecks.price, previous_price)
+        .select_from(PriceChecks)
+        .join(Listings, Listings.id == PriceChecks.listing_id)
+        .join(Watches, Watches.id == Listings.watch_id)
+        .where(Watches.user_id == user_id)
+        .where(Listings.active)
+        .where(PriceChecks.price > 0)
+        .where(PriceChecks.checked_at >= start)
+        .where(PriceChecks.checked_at <= end)
+        .subquery()
+    )
+
+    drop_fraction = (
+        (paired_checks.c.previous_price - paired_checks.c.price)
+        / paired_checks.c.previous_price
+    )
+    stmt = (
+        select(func.count(func.distinct(paired_checks.c.listing_id)))
+        .where(paired_checks.c.previous_price.is_not(None))   # first check of a listing has no predecessor
+        .where(paired_checks.c.previous_price > paired_checks.c.price)
+        .where(drop_fraction > _DROP_THRESHOLD)
+    )
+    return (await db.execute(stmt)).scalar_one()
+
+
+async def _count_snagged_watches(db, user_id) -> int:
+    """Watches whose cheapest live listing is at or under their target price.
+
+    Same rule as item_rollups' `target_met`, but answered for every watch in one
+    query rather than per item. A watch with no target_price can never be
+    snagged, so it is excluded rather than counted as met.
+    """
+    # rn == 1 picks the most recent check per listing; then take the cheapest of
+    # those per watch. Two steps, because "latest" and "cheapest" disagree.
+    latest_check_per_listing = (
+        select(
+            Listings.watch_id.label("watch_id"),
+            PriceChecks.price.label("price"),
+            func.row_number().over(
+                partition_by=PriceChecks.listing_id,
+                order_by=PriceChecks.checked_at.desc(),
+            ).label("rn"),
+        )
+        .select_from(PriceChecks)
+        .join(Listings, Listings.id == PriceChecks.listing_id)
+        .join(Watches, Watches.id == Listings.watch_id)
+        .where(Watches.user_id == user_id)
+        .where(Listings.active)
+        .where(PriceChecks.price > 0)
+        .subquery()
+    )
+
+    best_price_per_watch = (
+        select(
+            latest_check_per_listing.c.watch_id,
+            func.min(latest_check_per_listing.c.price).label("best_price"),
+        )
+        .where(latest_check_per_listing.c.rn == 1)
+        .group_by(latest_check_per_listing.c.watch_id)
+        .subquery()
+    )
+
+    stmt = (
+        select(func.count())
+        .select_from(best_price_per_watch)
+        .join(Watches, Watches.id == best_price_per_watch.c.watch_id)
+        .where(Watches.target_price.is_not(None))
+        .where(best_price_per_watch.c.best_price <= Watches.target_price)
+    )
+    return (await db.execute(stmt)).scalar_one()
+
+
 async def price_history(db, user_id, item_id, range, points: int) -> list[ListingSeries]:
     """One time series per live listing — the multi-line price-history chart.
 
@@ -278,7 +382,106 @@ async def item_rollups(db, user_id, item, watch, range)-> dict:
     return item_rollup
 
 async def dashboard_stats(db, user_id, range) -> DashboardStats:
-    pass
+    """The four dashboard StatTiles. Behavioral oracle: the mock handler for
+    GET /api/dashboard/stats in frontend/src/mocks/handlers.ts.
+
+    Every tile is {value, delta, spark}, but what `delta` compares against is
+    NOT uniform — this mirrors the mock deliberately:
+
+      tracked_items    | now vs. how many already existed at range start, so
+      active_listings  | delta reads as "added during this range"
+      price_drops      | now vs. the previous equal-length window — a true
+                       | period-over-period comparison
+      snagged          | placeholder; see the note at that tile
+
+    `spark` is NOT real history. It's a 12-point linear ramp from the previous
+    value to the current one (_generate_spark, mirroring the mock's growthSpark).
+    The contract defines it that way — turning it into a real time series is a
+    frontend-visible change, not a backend cleanup.
+    """
+    now = datetime.now(timezone.utc)
+    start = await _range_start(range)
+    if start is None:
+        # range="all" has no start bound, but the tiles still need a window to
+        # measure growth against. The mock charts a year here; match it.
+        start = now - timedelta(days=365)
+
+    #Tracked items
+    stmt = select(func.count(Watches.id)
+            ).where(Watches.user_id == user_id)
+    current_watch_count = (await db.execute(stmt)).scalar_one_or_none()
+
+
+    stmt = select(func.count(Watches.id)
+            ).where(Watches.user_id == user_id
+            ).where(Watches.created_at <= start)
+    start_of_range_watch_count = (await db.execute(stmt)).scalar_one_or_none()
+
+    tracked_item_spark = await _generate_spark(current_watch_count,start_of_range_watch_count)
+
+    tracked_stat_tile = StatTile(
+        value=current_watch_count,
+        delta=(current_watch_count - start_of_range_watch_count),
+        spark=tracked_item_spark
+    )
+
+    #Listings
+    stmt = select(func.count(Listings.id)
+            ).join(Watches, Watches.id == Listings.watch_id
+            ).where(Watches.user_id == user_id
+            ).where(Listings.active)
+
+    current_active_listing_count = (await db.execute(stmt)).scalar_one_or_none()
+
+    stmt = select(func.count(Listings.id)
+            ).join(Watches, Watches.id == Listings.watch_id
+            ).where(Watches.user_id == user_id
+            ).where(Listings.active
+            ).where(Listings.created_at <= start)
+
+    current_listings_at_start_of_range = (await db.execute(stmt)).scalar_one_or_none()
+
+    listing_spark = await _generate_spark(current_active_listing_count, current_listings_at_start_of_range)
+
+    listing_stat_tile = StatTile(
+        value=current_active_listing_count,
+        delta=(current_active_listing_count - current_listings_at_start_of_range),
+        spark=listing_spark
+    )
+
+    #Price drops
+    # The one tile with a real period-over-period delta: this range's drops
+    # against the immediately preceding window of the same length.
+    previous_start = start - (now - start)
+    current_drop_count = await _count_listings_with_drop(db, user_id, start, now)
+    previous_drop_count = await _count_listings_with_drop(db, user_id, previous_start, start)
+
+    price_drops_stat_tile = StatTile(
+        value=current_drop_count,
+        delta=(current_drop_count - previous_drop_count),
+        spark=await _generate_spark(current_drop_count, previous_drop_count)
+    )
+
+    #Snagged
+    # Watches sitting at or under their target price right now.
+    # KNOWN GAP: delta is a placeholder. A truthful "how many were snagged at
+    # range start" means replaying each watch's price history against its target
+    # at that time; the mock punts with min(value, 1), so we mirror it to stay
+    # contract-accurate. Revisit if the dashboard ever needs the real number.
+    snagged_count = await _count_snagged_watches(db, user_id)
+
+    snagged_stat_tile = StatTile(
+        value=snagged_count,
+        delta=min(snagged_count, 1),
+        spark=await _generate_spark(snagged_count, max(0, snagged_count - 1))
+    )
+
+    return DashboardStats(
+        tracked_items=tracked_stat_tile,
+        active_listings=listing_stat_tile,
+        price_drops=price_drops_stat_tile,
+        snagged=snagged_stat_tile,
+    )
 
 
 async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:

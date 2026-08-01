@@ -80,7 +80,10 @@ async def get_category_price_change(category_id: int, range: TimeRange,
 @router.get("/dashboard/stats", response_model=DashboardStats)
 async def get_dashboard_stats(range: TimeRange, user=Depends(current_user),
                               db: AsyncSession = Depends(get_db)):
-    raise NotImplementedError
+    # Each tile's `delta` means something slightly different — the growth tiles
+    # compare against range start, price_drops against the previous equal-length
+    # window. services.aggregates.dashboard_stats documents which is which.
+    return await dashboard_stats(db, user.id, range)
 
 
 @router.get("/dashboard/price-drops", response_model=DataList[PriceDrop])
