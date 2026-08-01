@@ -1,15 +1,15 @@
 # Backend Structure — What Goes Where
 
-The map of every file in `backend/`. Full build plan (schema gaps, decisions,
-phase order, getting-started): `docs/superpowers/plans/2026-07-08-backend-api.md`.
+The map of every file in `backend/`.
 
 **The contract lives in the frontend** — you build *to* it, you don't design it:
 - `frontend/src/api/endpoints.ts` — the list of routes (one function = one route)
 - `frontend/src/api/types.ts` — the exact JSON shapes (request + response)
 - `frontend/src/mocks/handlers.ts` — the exact behavior (status codes + `error.code`)
 
-Stack: FastAPI + async SQLAlchemy 2.0 (asyncpg) + Pydantic v2. Every file below
-is a stub with a docstring describing its job; fill them in per the plan's phases.
+Stack: FastAPI + async SQLAlchemy 2.0 (asyncpg) + Pydantic v2. Unimplemented
+files below carry a docstring describing their job; fill them in against the
+frontend contract.
 
 ---
 

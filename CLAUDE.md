@@ -15,8 +15,10 @@ Snagr — a self-hosted price tracker. Three independently-deployed components i
 The architecture is documented in depth — prefer reading them over re-deriving:
 
 - `backend/STRUCTURE.md` — every backend file's job, the layer model, endpoint→file lookup, and the non-obvious domain rules. **Read before touching the backend.**
-- `docs/superpowers/plans/2026-07-08-backend-api.md` — the phased build plan the backend is being implemented against: schema gaps, open decisions (D1–D4), global constraints, per-endpoint schedule. The backend is a **work in progress** against this plan; routers/schemas may still be stubs.
 - `frontend/README.md` — frontend scripts, mock mode, structure.
+
+The backend is a **work in progress**; routers and schemas may still be stubs
+(`raise NotImplementedError` / `pass`). Treat the frontend contract as the spec.
 
 ## Commands
 
