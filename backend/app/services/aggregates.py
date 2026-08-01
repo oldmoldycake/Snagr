@@ -485,8 +485,120 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
 
 
 async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
-    pass
+    """The user's biggest recent price drops, newest first. Behavioral oracle:
+    the mock handler for GET /api/dashboard/price-drops in
+    frontend/src/mocks/handlers.ts.
 
+    At most ONE row per listing — its most recent qualifying drop. A listing on
+    a long slide would otherwise fill the whole table ("one drop per listing
+    keeps the table varied", per the mock).
+
+    Two rules differ from _count_listings_with_drop, both deliberately:
+
+      * Only the NEWER check of a pair must fall inside the range. Its
+        predecessor may be older than `start` — that's how a listing last
+        checked months ago still reports a real drop when it's re-checked today.
+      * range="all" means no lower bound at all, not the 365-day fallback that
+        dashboard_stats uses for its growth window.
+
+    They share the >3% threshold (_DROP_THRESHOLD) and the "active listings,
+    priced checks only" filters.
+    """
+    start = await _range_start(range)
+    limit = max(0, limit)  # Postgres rejects a negative LIMIT outright
+
+    # Step 1 — pair every priced check with its predecessor on the same listing.
+    # Deliberately NOT range-filtered: see the docstring, `previous_price` is
+    # allowed to come from before the window.
+    previous_price = func.lag(PriceChecks.price).over(
+        partition_by=PriceChecks.listing_id,
+        order_by=PriceChecks.checked_at,
+    ).label("previous_price")
+
+    paired_checks = (
+        select(
+            PriceChecks.listing_id,
+            PriceChecks.price,
+            PriceChecks.currency,
+            PriceChecks.checked_at,
+            previous_price,
+        )
+        .select_from(PriceChecks)
+        .join(Listings, Listings.id == PriceChecks.listing_id)
+        .join(Watches, Watches.id == Listings.watch_id)
+        .where(Watches.user_id == user_id)
+        .where(Listings.active)
+        .where(PriceChecks.price > 0)
+        .subquery()
+    )
+
+    # Step 2 — keep the pairs that are real drops landing inside the range, and
+    # rank each listing's drops newest-first so step 3 can take just the latest.
+    drop_fraction = (
+        (paired_checks.c.previous_price - paired_checks.c.price)
+        / paired_checks.c.previous_price
+    )
+    qualifying = (
+        select(
+            paired_checks.c.listing_id,
+            paired_checks.c.price,
+            paired_checks.c.previous_price,
+            paired_checks.c.currency,
+            paired_checks.c.checked_at,
+            func.row_number().over(
+                partition_by=paired_checks.c.listing_id,
+                order_by=paired_checks.c.checked_at.desc(),
+            ).label("recency_rank"),
+        )
+        .where(paired_checks.c.previous_price.is_not(None))  # first check of a listing has no predecessor
+        .where(paired_checks.c.previous_price > paired_checks.c.price)
+        .where(drop_fraction > _DROP_THRESHOLD)
+    )
+    if start is not None:
+        qualifying = qualifying.where(paired_checks.c.checked_at >= start)
+    qualifying = qualifying.subquery()
+
+    # Step 3 — one row per listing (the newest drop), joined to the names the
+    # table displays, newest first, capped at `limit`.
+    stmt = (
+        select(
+            qualifying.c.listing_id,
+            qualifying.c.price,
+            qualifying.c.previous_price,
+            qualifying.c.currency,
+            qualifying.c.checked_at,
+            Items.id.label("item_id"),
+            Items.name.label("item_name"),
+            Sites.name.label("site_name"),
+        )
+        .select_from(qualifying)
+        .join(Listings, Listings.id == qualifying.c.listing_id)
+        .join(Items, Items.id == Listings.item_id)
+        .join(Sites, Sites.id == Listings.site_id)
+        .where(qualifying.c.recency_rank == 1)
+        .order_by(qualifying.c.checked_at.desc())
+        .limit(limit)
+    )
+
+    rows = (await db.execute(stmt)).all()
+
+    return [
+        PriceDrop(
+            item_id=row.item_id,
+            item_name=row.item_name,
+            listing_id=row.listing_id,
+            site_name=row.site_name,
+            old_price=str(row.previous_price),
+            new_price=str(row.price),
+            currency=row.currency,
+            # Always negative — we only selected drops — so the minus sign comes
+            # for free. That's why this is `.2f` and not the `+.2f` that
+            # item_rollups needs for pct_change_range, which can go either way.
+            pct_change=f"{(row.price - row.previous_price) / row.previous_price * 100:.2f}",
+            checked_at=row.checked_at.isoformat(),
+        )
+        for row in rows
+    ]
 
 async def category_price_change(db, user_id, item, range) -> list[CategoryItemChange]:
     pass

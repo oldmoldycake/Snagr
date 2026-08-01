@@ -89,6 +89,6 @@ async def get_dashboard_stats(range: TimeRange, user=Depends(current_user),
 @router.get("/dashboard/price-drops", response_model=DataList[PriceDrop])
 async def get_price_drops(range: TimeRange, limit: int = 10, user=Depends(current_user),
                           db: AsyncSession = Depends(get_db)):
-    raise NotImplementedError
-
-
+    # One row per listing (its most recent drop), newest first — not one row per
+    # drop event. services.aggregates.price_drops explains why.
+    return DataList(data=await price_drops(db, user.id, range, limit))
