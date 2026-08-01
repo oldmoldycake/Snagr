@@ -87,3 +87,18 @@ async def make_client():
 def db_session():
     """Direct DB access for seeding data the API can't create yet."""
     return _sessionmaker()
+
+
+@pytest.fixture
+async def sc(db_session):
+    """A Scenario builder on an open session — see tests/factories.py.
+
+    The aggregates live below the HTTP layer, so those tests call the service
+    functions directly with `sc.db` rather than going through a client.
+    """
+    from tests.factories import Scenario
+
+    async with db_session() as session:
+        scenario = Scenario(session)
+        await scenario.user()    # so sc.user_id is usable without ceremony
+        yield scenario
