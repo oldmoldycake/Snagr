@@ -21,6 +21,7 @@ authlib<2
 sse-starlette
 
 # Dev / test
+ruff
 pytest
 pytest-asyncio
 asgi-lifespan
