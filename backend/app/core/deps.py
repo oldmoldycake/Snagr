@@ -35,7 +35,7 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
     try:
         claims = decode_access_jwt(token)
     except jwt.InvalidTokenError:  # bad signature OR expired
-        raise err(401, "unauthenticated", "Session expired")
+        raise err(401, "unauthenticated", "Session expired") from None
     # 3. load the actual user row (so a deactivated user is rejected immediately)
     user = await db.get(User, int(claims["sub"]))
     if user is None or not user.is_active:

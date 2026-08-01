@@ -174,8 +174,8 @@ async def list_items(
             data=summaries,
             meta=PageMeta(page=page, per_page=per_page, total=total),
         )
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.post(
@@ -232,8 +232,8 @@ async def create_item(
 
         return await build_item_summary(watch, item, category, db)
 
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.get("/items/{item_id}", response_model=ItemDetail)
@@ -361,8 +361,8 @@ async def update_item(
             )
 
         return ItemDetail(**summary.model_dump(), listings=listings)
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach database") from e
 
 
 @router.delete(
@@ -387,8 +387,8 @@ async def delete_item(item_id: int, user=Depends(current_user), db: AsyncSession
         await db.execute(delete(Watches).where(Watches.id == watch.id))
 
         await db.commit()
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.patch("/items/{item_id}/watch", response_model=Watch, dependencies=[Depends(csrf_guard)])
@@ -420,8 +420,8 @@ async def update_watch(
             target_price=str(watch.target_price) if watch.target_price is not None else None,
         )
 
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.patch("/listings/{listing_id}", response_model=Listing, dependencies=[Depends(csrf_guard)])
@@ -467,8 +467,8 @@ async def update_listing(
             created_at=listing.created_at.isoformat(),
             discovered_by_run_id=None,
         )
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.get("/items/{item_id}/price-checks", response_model=DataList[PriceCheck])
@@ -518,5 +518,5 @@ async def list_price_checks(
 
         return DataList(data=price_check_list)
 
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e

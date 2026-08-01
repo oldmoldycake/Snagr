@@ -48,7 +48,7 @@ async def _discovery() -> dict:
                 resp.raise_for_status()
                 _metadata = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            raise OidcError(f"OIDC discovery failed: {exc}")
+            raise OidcError(f"OIDC discovery failed: {exc}") from exc
     return _metadata
 
 
@@ -72,7 +72,7 @@ def unpack_flow(raw: str) -> dict:
     try:
         flow = json.loads(base64.urlsafe_b64decode(raw.encode()))
     except ValueError, UnicodeDecodeError:
-        raise OidcError("unreadable flow cookie")
+        raise OidcError("unreadable flow cookie") from None
     if not isinstance(flow, dict):
         raise OidcError("unreadable flow cookie")
     return flow
@@ -110,7 +110,7 @@ async def _jwks():
                 resp.raise_for_status()
                 _keyset = JsonWebKey.import_key_set(resp.json())
         except (httpx.HTTPError, KeyError, ValueError) as exc:
-            raise OidcError(f"JWKS fetch failed: {exc}")
+            raise OidcError(f"JWKS fetch failed: {exc}") from exc
     return _keyset
 
 
@@ -130,7 +130,7 @@ async def exchange_code(code: str, redirect_uri: str, verifier: str) -> dict:
                 code_verifier=verifier,
             )
     except Exception as exc:  # authlib raises a small zoo; every one means "failed"
-        raise OidcError(f"code exchange failed: {exc}")
+        raise OidcError(f"code exchange failed: {exc}") from exc
     if "id_token" not in token:
         raise OidcError("token response has no id_token")
     return token
@@ -152,7 +152,7 @@ async def validate_id_token(id_token: str, nonce: str) -> dict:
         claims.validate()
     except JoseError as exc:
         _keyset = None  # maybe the IdP rotated keys — refetch on the next attempt
-        raise OidcError(f"id_token validation failed: {exc}")
+        raise OidcError(f"id_token validation failed: {exc}") from exc
     if claims.get("nonce") != nonce:
         raise OidcError("nonce mismatch")
     return dict(claims)

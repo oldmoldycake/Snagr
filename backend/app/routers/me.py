@@ -73,5 +73,5 @@ async def send_test_notification(user=Depends(current_user)):
                 headers={"Title": "Snagr", "Tags": "tada"},
             )
             resp.raise_for_status()
-    except httpx.HTTPError:
-        raise err(502, "ntfy_failed", "Could not reach the ntfy server")
+    except httpx.HTTPError as e:
+        raise err(502, "ntfy_failed", "Could not reach the ntfy server") from e

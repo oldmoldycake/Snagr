@@ -70,8 +70,8 @@ async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_
             )
 
         return DataList(data=sites)
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.post(
@@ -106,8 +106,8 @@ async def create_site(
             listing_count=0,
             last_checked_at=None,
         )
-    except SQLAlchemyError:
-        raise err(503, "validation_error", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "validation_error", "Could not reach the database") from e
 
 
 @router.patch("/{site_id}", response_model=Site, dependencies=[Depends(csrf_guard)])
@@ -139,8 +139,8 @@ async def update_site(
             listing_count=0,
             last_checked_at=None,
         )
-    except SQLAlchemyError:
-        raise err(503, "validation_error", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "validation_error", "Could not reach the database") from e
 
 
 @router.delete(
@@ -157,5 +157,5 @@ async def delete_site(site_id: int, user=Depends(current_user), db: AsyncSession
         await db.commit()
         return None
 
-    except SQLAlchemyError:
-        raise err(503, "validation_error", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "validation_error", "Could not reach the database") from e

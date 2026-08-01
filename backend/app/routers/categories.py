@@ -90,8 +90,8 @@ async def list_categories(user=Depends(current_user), db: AsyncSession = Depends
             cats.append(await cat_build(id=id, name=name, slug=slug, db=db))
         return DataList(data=cats)
 
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.post(
@@ -127,8 +127,8 @@ async def create_category(
         return Category(
             id=cat.id, name=cat.name, slug=cat.slug, site_ids=[], item_count=0, snagged_count=0
         )
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.patch("/{category_id}", response_model=Category, dependencies=[Depends(csrf_guard)])
@@ -149,8 +149,8 @@ async def update_category(
         await db.commit()
 
         return await cat_build(id=cat.id, name=cat.name, slug=cat.slug, db=db)
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.delete(
@@ -182,8 +182,8 @@ async def delete_category(
         await db.delete(cat)
         await db.commit()
         return None
-    except SQLAlchemyError:
-        raise err(503, "db_unavailable", "Could not reach the database")
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.put("/{category_id}/sites", response_model=Category, dependencies=[Depends(csrf_guard)])
