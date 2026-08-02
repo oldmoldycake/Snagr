@@ -1,7 +1,10 @@
 """Sites — /api/sites  (GET Phase 1, writes Phase 3). Auth required.
 
-category_ids / listing_count / last_checked_at are computed (services/aggregates.py).
+category_ids / listing_count / last_checked_at are computed at query time
+(helpers below), never stored.
 """
+
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select
@@ -18,60 +21,61 @@ from app.schemas.common import DataList
 router = APIRouter(prefix="/api/sites", tags=["sites"])
 
 
+async def _listing_counts(db: AsyncSession) -> dict[int, int]:
+    """site_id -> number of active listings."""
+    rows = await db.execute(
+        select(Listings.site_id, func.count()).where(Listings.active).group_by(Listings.site_id)
+    )
+    return dict(rows.all())
+
+
+async def _category_ids(db: AsyncSession) -> dict[int, list[int]]:
+    """site_id -> ids of the categories the site carries (ascending, like the mock)."""
+    rows = await db.execute(
+        select(SiteCategories.site_id, SiteCategories.category_id).order_by(
+            SiteCategories.category_id
+        )
+    )
+    out: dict[int, list[int]] = {}
+    for site_id, category_id in rows.all():
+        out.setdefault(site_id, []).append(category_id)
+    return out
+
+
+async def _last_checked(db: AsyncSession) -> dict[int, datetime]:
+    """site_id -> most recent price check. Spans inactive listings too —
+    the mock's toSite() only filters on active for listing_count, not here."""
+    rows = await db.execute(
+        select(Listings.site_id, func.max(PriceChecks.checked_at))
+        .join(PriceChecks, PriceChecks.listing_id == Listings.id)
+        .group_by(Listings.site_id)
+    )
+    return dict(rows.all())
+
+
 @router.get("", response_model=DataList[Site])
 async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     try:
-        stmt = select(Sites)
-        site_rows = await db.execute(stmt)
-        site_rows = site_rows.scalars().all()
-
-        sites = []
-        for s in site_rows:
-            id = s.id
-            name = s.name
-            created_at = s.created_at
-            base_url = s.base_url
-
-            # Select the total listings on the site
-            stmt = (
-                select(func.count())
-                .select_from(Listings)
-                .where(Listings.active)
-                .where(Listings.site_id == id)
-            )
-            listing_rows = await db.execute(stmt)
-            count = listing_rows.scalar()
-            assert count is not None, 0
-
-            # Fet the category ids for the site
-            stmt = select(SiteCategories.category_id).where(SiteCategories.site_id == id)
-            cat_ids = await db.execute(stmt)
-            cat_ids = list(cat_ids.scalars().all())
-
-            stmt = (
-                select(func.max(PriceChecks.checked_at))
-                .join(Listings, Listings.id == PriceChecks.listing_id)
-                .where(Listings.site_id == id)
-            )
-            last = await db.execute(stmt)
-            last = last.scalar()
-            last_checked_at = last.isoformat() if last else None
-
-            sites.append(
-                Site(
-                    id=id,
-                    name=name,
-                    created_at=created_at.isoformat(),
-                    listing_count=count,
-                    base_url=base_url,
-                    last_checked_at=last_checked_at,
-                    category_ids=cat_ids,
-                )
-            )
-
-        return DataList(data=sites)
+        site_rows = (await db.scalars(select(Sites).order_by(Sites.id))).all()
+        counts = await _listing_counts(db)
+        category_ids = await _category_ids(db)
+        last_checked = await _last_checked(db)
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
+
+    sites = [
+        Site(
+            id=s.id,
+            name=s.name,
+            base_url=s.base_url,
+            created_at=s.created_at.isoformat(),
+            listing_count=counts.get(s.id, 0),
+            category_ids=category_ids.get(s.id, []),
+            last_checked_at=(t.isoformat() if (t := last_checked.get(s.id)) else None),
+        )
+        for s in site_rows
+    ]
+    return DataList(data=sites)
 
 
 @router.post(

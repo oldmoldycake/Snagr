@@ -111,8 +111,9 @@ Find any `endpoints.ts` function here:
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
    `spark`, `pct_change_range`, `item_count`, `listing_count`, `last_checked_at`, the
-   dashboard tiles — all derived from `listings` + `price_checks` in
-   `services/aggregates.py`. Don't add columns for them.
+   dashboard tiles — all derived from `listings` + `price_checks` at query time:
+   the price math lives in `services/aggregates.py`, simple grouped counts as
+   router-local helpers. Don't add columns for them.
 
 3. **The schema needs new tables before any of this runs.** Auth columns on `users`,
    plus `watch_sites`, `invites`, `sessions`, `agent_runs`, `run_events`. See

@@ -1,6 +1,6 @@
 """Price aggregation math — every computed number the contract asks for.
 
-Consumed by routers/charts.py, routers/items.py, routers/categories.py, routers/sites.py.
+Consumed by routers/charts.py, routers/items.py, routers/categories.py.
 
 Responsibilities:
   - price_history(item, range, points): per-listing series of PricePoints.
@@ -10,7 +10,7 @@ Responsibilities:
   - dashboard_stats(user, range): the four StatTiles (value, delta vs prev
     equal-length period, spark[]).
   - price_drops(user, range, limit): biggest recent drops.
-  - category_price_change(category, range) and site/category counts.
+  - category_price_change(category, range).
 
 Bucketing: split [now-range, now] into N buckets; each point is the best/avg
 price whose latest check falls in that bucket; null when the bucket is empty.
