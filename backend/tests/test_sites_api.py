@@ -1,5 +1,8 @@
-"""HTTP layer for GET /api/sites — characterization tests written before the
-list_sites rework, so the refactor has to preserve every behavior below.
+"""HTTP layer for /api/sites.
+
+The GET tests characterize list_sites (written before its rework, so the
+refactor had to preserve them); the PATCH tests assert the mock's contract
+and were written failing-first against the update_site bugs.
 
 The computed fields mirror the mock's toSite() (frontend/src/mocks/serializers.ts):
 listing_count counts ACTIVE listings only, while last_checked_at scans checks on
@@ -207,3 +210,82 @@ async def test_aggregates_do_not_bleed_between_sites(client, db_session):
     assert sites["Rivalmart"]["listing_count"] == 1
     assert datetime.fromisoformat(sites["TestBay"]["last_checked_at"]) == testbay_ts
     assert datetime.fromisoformat(sites["Rivalmart"]["last_checked_at"]) == rival_ts
+
+
+# --- PATCH /api/sites/{site_id} -----------------------------------------------
+
+
+async def test_update_site_requires_a_session(client):
+    res = await client.patch("/api/sites/1", json={"name": "X"}, headers=CSRF)
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "unauthenticated"
+
+
+async def test_update_site_requires_the_csrf_header(client):
+    await _sign_in(client)
+    res = await client.patch("/api/sites/1", json={"name": "X"})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "csrf"
+
+
+async def test_update_unknown_site_is_404(client):
+    await _sign_in(client)
+    res = await client.patch("/api/sites/99999", json={"name": "X"}, headers=CSRF)
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
+
+
+async def test_update_site_returns_computed_fields_not_zeros(client, db_session):
+    """PATCH answers with toSite() like the mock — the client writes this
+    payload straight into its cache, so hardcoded zeros blank out real counts."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site = await sc.site()
+        cameras = await sc.category()
+        sc.db.add(SiteCategories(site_id=site.id, category_id=cameras.id))
+        item, watch = await sc.tracked()
+        listing = await sc.listing(watch, item)
+        await sc.checks(listing, (3, "75.00"))
+        site_id, camera_id, checked = site.id, cameras.id, sc.ago(3)
+
+    res = await client.patch(f"/api/sites/{site_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["name"] == "Renamed"
+    assert body["listing_count"] == 1
+    assert body["category_ids"] == [camera_id]
+    assert datetime.fromisoformat(body["last_checked_at"]) == checked
+
+
+async def test_update_site_normalizes_inputs_like_the_mock(client, db_session):
+    """toSite parity: both fields are trimmed, base_url loses a trailing slash."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.patch(
+        f"/api/sites/{site_id}",
+        json={"name": "  NewBay  ", "base_url": "https://newbay.test/"},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "NewBay"
+    assert res.json()["base_url"] == "https://newbay.test"
+
+    # and it stuck — the list reflects the same values
+    sites = await _sites_by_name(client)
+    assert sites["NewBay"]["base_url"] == "https://newbay.test"
+
+
+async def test_update_site_ignores_empty_strings(client, db_session):
+    """The mock skips falsy fields — {"name": ""} is a no-op, not a wipe."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json={"name": ""}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "TestBay"

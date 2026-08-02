@@ -53,6 +53,24 @@ async def _last_checked(db: AsyncSession) -> dict[int, datetime]:
     return dict(rows.all())
 
 
+def _site_out(
+    s: Sites,
+    counts: dict[int, int],
+    category_ids: dict[int, list[int]],
+    last_checked: dict[int, datetime],
+) -> Site:
+    """The contract's Site shape — the backend twin of the mock's toSite()."""
+    return Site(
+        id=s.id,
+        name=s.name,
+        base_url=s.base_url,
+        created_at=s.created_at.isoformat(),
+        listing_count=counts.get(s.id, 0),
+        category_ids=category_ids.get(s.id, []),
+        last_checked_at=(t.isoformat() if (t := last_checked.get(s.id)) else None),
+    )
+
+
 @router.get("", response_model=DataList[Site])
 async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     try:
@@ -63,18 +81,7 @@ async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
-    sites = [
-        Site(
-            id=s.id,
-            name=s.name,
-            base_url=s.base_url,
-            created_at=s.created_at.isoformat(),
-            listing_count=counts.get(s.id, 0),
-            category_ids=category_ids.get(s.id, []),
-            last_checked_at=(t.isoformat() if (t := last_checked.get(s.id)) else None),
-        )
-        for s in site_rows
-    ]
+    sites = [_site_out(s, counts, category_ids, last_checked) for s in site_rows]
     return DataList(data=sites)
 
 
@@ -124,27 +131,22 @@ async def update_site(
     try:
         site = await db.get(Sites, site_id)
         if site is None:
-            raise err(404, "not_found", f"Site {site_id} does not exsist")
+            raise err(404, "not_found", f"Site {site_id} does not exist")
 
-        if body.name is not None:
-            site.name = body.name
-
-        if body.base_url is not None:
-            site.base_url = body.base_url
-
+        # mock parity: falsy fields are skipped (an empty string is "leave it"),
+        # values are trimmed, base_url loses one trailing slash
+        if body.name:
+            site.name = body.name.strip()
+        if body.base_url:
+            site.base_url = body.base_url.strip().removesuffix("/")
         await db.commit()
 
-        return Site(
-            id=site.id,
-            name=site.name,
-            base_url=site.base_url,
-            created_at=site.created_at.isoformat(),
-            category_ids=[],
-            listing_count=0,
-            last_checked_at=None,
-        )
+        counts = await _listing_counts(db)
+        category_ids = await _category_ids(db)
+        last_checked = await _last_checked(db)
+        return _site_out(site, counts, category_ids, last_checked)
     except SQLAlchemyError as e:
-        raise err(503, "validation_error", "Could not reach the database") from e
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.delete(
