@@ -22,7 +22,11 @@ The backend is a **work in progress**; routers and schemas may still be stubs
 
 ## Commands
 
-Both `backend/` and `agent/` have their own `venv/` — invoke tools via `./venv/bin/<tool>` (don't assume a global install).
+Both `backend/` and `agent/` have their own `venv/` — invoke tools via `./venv/bin/<tool>` (don't assume a global install). Python style in both is enforced by **ruff**:
+
+```bash
+./venv/bin/ruff check --fix && ./venv/bin/ruff format   # lint + autoformat — run on what you touched before calling it done
+```
 
 **Backend** (from `backend/`):
 ```bash
@@ -82,6 +86,24 @@ The **backend owns the canonical schema and all Alembic migrations** (`backend/a
 - **Mutations require the `X-Snagr-Csrf` header** (`csrf_guard`); reject with 403 if absent. The frontend always sends it.
 - **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop (`frontend/src/api/client.ts` refreshes once + retries on 401 for all *other* paths).
 - Auth is httpOnly-cookie sessions: short-lived access JWT (`snagr_access`) + DB-backed rotating refresh token (`sessions` table, `snagr_refresh` cookie). JS never sees the token.
+
+## Writing code (house rules)
+
+This is FOSS: optimize for the next reader, who has zero context and wrote none of it. Boring and explicit beats clever.
+
+- **Match the neighbors.** ruff settles formatting; everything it can't see is settled by precedent. Before writing, open a sibling that does the same kind of job (the router next to your router, the test next to your test) and copy its idioms — naming, structure, how it's organized. New code should be indistinguishable from existing code. Keep diffs minimal and boring to review; don't churn lines you aren't otherwise changing.
+- **Smallest change that satisfies the contract.** No speculative abstraction — a helper, base class, or *sixth* service needs a second real caller before it exists (thin CRUD living in routers is deliberate, not debt). No new dependencies without asking first: every dep is something self-hosters install and maintainers audit.
+- **Every behavior change lands with a test.** Bug fix = reproduce with a failing test first, then fix. New endpoint = tests asserting status codes and `error.code` exactly as `handlers.ts` does — error paths included, not just the happy path. Backend tests run against the real throwaway DB, so don't mock the ORM; use the `conftest` fixtures (including the CSRF header). Where `handlers.ts` is silent on a case, mirror the closest existing endpoint and call the gap out — don't invent.
+- **Fail loudly.** No bare `except`, no catch-log-continue, no quiet fallbacks: `raise err(...)` for expected failures, let the unexpected propagate to the error envelope. If something must stay unfinished, keep the loud-stub convention (`NotImplementedError` → 404), never a silent fake. No stray TODOs — flag leftovers in your summary instead.
+- **Async end-to-end** in the backend request path: no sync DB calls, `requests`, or `time.sleep` inside an `async def`. Type hints on everything public.
+- **Comments earn their keep.** Explain *why* — domain rules, gotchas, decisions — never narrate what the code does. Preserve the `# + api` markers in `models.py`. Exception: docstrings in `agent/tools.py` are prompts the model reads (see Agent internals) — hold them to the same review bar as code and update them whenever tool behavior changes.
+- **No drive-by fixes.** Unrelated problems get mentioned, not silently changed.
+
+**Definition of done** — don't claim a change works until:
+- Python (backend & agent alike): `./venv/bin/ruff check` and `./venv/bin/ruff format --check` pass;
+- backend: `./venv/bin/pytest` green, plus `./venv/bin/alembic check` if models moved;
+- frontend: `npm run build` (the type gate) and `npm run lint` green; UI changes verified through `frontend:verify`;
+- the diff reads like it was written by whoever wrote the file it touches.
 
 ## Agent internals
 
