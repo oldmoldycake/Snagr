@@ -1,5 +1,16 @@
 """Agent orchestration: builds the LLM agent (model + Playwright MCP browser
-tools + database tools) and runs one search per (watch, site) pair."""
+tools + database tools) and runs one search per (watch, site) pair.
+
+TODO (Phase 3, D3 — become the run-queue consumer): today this is a bare batch
+job with no notion of agent_runs. It still needs to:
+  - claim a queued agent_runs row (SELECT ... FOR UPDATE SKIP LOCKED) and limit
+    the two passes below to that run's scope/scope_id;
+  - write run_events rows + keep status/stats/last_seq updated as it works;
+  - re-check the run's status between listings / (watch, site) pairs and abort
+    once the API has flipped it to 'cancelled' — cancel_run() in
+    backend/app/services/runs.py only flips the row (cancellation is
+    cooperative), and bailing early is what stops mid-run LLM token burn.
+"""
 
 import logging
 
