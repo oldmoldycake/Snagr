@@ -91,15 +91,11 @@ async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_
 async def create_site(
     body: SiteCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    name = body.name
-    base_url = body.base_url
-
-    if not name:
-        raise err(422, "validation_error", "Name is required", fields={"name": "Name is requeired"})
-    if not base_url:
-        raise err(
-            422, "validation_error", "Name is required", fields={"base_url": "Base URL is required"}
-        )
+    # mock parity: trim both fields, drop one trailing slash, then reject blanks
+    name = body.name.strip()
+    base_url = body.base_url.strip().removesuffix("/")
+    if not name or not base_url:
+        raise err(422, "validation_error", "Name and base URL are required")
 
     try:
         site = Sites(name=name, base_url=base_url)
@@ -107,18 +103,11 @@ async def create_site(
         await db.flush()
         await db.refresh(site)
         await db.commit()
-
-        return Site(
-            id=site.id,
-            name=site.name,
-            base_url=site.base_url,
-            created_at=site.created_at.isoformat(),
-            category_ids=[],
-            listing_count=0,
-            last_checked_at=None,
-        )
+        # a brand-new site has no listings/categories/checks — empty lookups
+        # give _site_out the right zeros without querying
+        return _site_out(site, {}, {}, {})
     except SQLAlchemyError as e:
-        raise err(503, "validation_error", "Could not reach the database") from e
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.patch("/{site_id}", response_model=Site, dependencies=[Depends(csrf_guard)])

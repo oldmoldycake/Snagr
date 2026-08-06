@@ -15,6 +15,7 @@ its own session — uncommitted rows would be invisible to the endpoint under te
 from contextlib import asynccontextmanager
 from datetime import datetime
 
+import pytest
 from app.models import SiteCategories, User
 
 from tests.conftest import CSRF
@@ -210,6 +211,81 @@ async def test_aggregates_do_not_bleed_between_sites(client, db_session):
     assert sites["Rivalmart"]["listing_count"] == 1
     assert datetime.fromisoformat(sites["TestBay"]["last_checked_at"]) == testbay_ts
     assert datetime.fromisoformat(sites["Rivalmart"]["last_checked_at"]) == rival_ts
+
+
+# --- POST /api/sites ----------------------------------------------------------
+
+
+async def test_create_site_requires_a_session(client):
+    res = await client.post(
+        "/api/sites", json={"name": "X", "base_url": "https://x.test"}, headers=CSRF
+    )
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "unauthenticated"
+
+
+async def test_create_site_requires_the_csrf_header(client):
+    await _sign_in(client)
+    res = await client.post("/api/sites", json={"name": "X", "base_url": "https://x.test"})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "csrf"
+
+
+async def test_create_site_returns_the_new_site_with_zeroed_aggregates(client):
+    """A brand-new site can't have listings/categories/checks yet — 0 / [] / null."""
+    await _sign_in(client)
+
+    res = await client.post(
+        "/api/sites", json={"name": "NewBay", "base_url": "https://newbay.test"}, headers=CSRF
+    )
+
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["name"] == "NewBay"
+    assert body["base_url"] == "https://newbay.test"
+    assert body["listing_count"] == 0
+    assert body["category_ids"] == []
+    assert body["last_checked_at"] is None
+    datetime.fromisoformat(body["created_at"])  # ISO-8601, or this raises
+
+    # and it shows up in the list
+    sites = await _sites_by_name(client)
+    assert sites["NewBay"]["id"] == body["id"]
+
+
+async def test_create_site_normalizes_inputs_like_the_mock(client):
+    """toSite parity: both fields trimmed, base_url loses one trailing slash."""
+    await _sign_in(client)
+
+    res = await client.post(
+        "/api/sites",
+        json={"name": "  Padded  ", "base_url": "  https://padded.test/  "},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 201, res.text
+    assert res.json()["name"] == "Padded"
+    assert res.json()["base_url"] == "https://padded.test"
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"name": ""},
+        {"name": "   "},
+        {"base_url": ""},
+        {"base_url": "   "},
+    ],
+)
+async def test_create_site_rejects_blank_fields(client, overrides):
+    """The mock 422s on empty OR whitespace-only — it trims before checking."""
+    await _sign_in(client)
+    body = {"name": "Valid", "base_url": "https://valid.test"} | overrides
+
+    res = await client.post("/api/sites", json=body, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    assert res.json()["error"]["code"] == "validation_error"
 
 
 # --- PATCH /api/sites/{site_id} -----------------------------------------------
