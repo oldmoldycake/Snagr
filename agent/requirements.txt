@@ -1,11 +1,14 @@
 # Dev
 ruff
-
+asyncpg
 langgraph==1.2.6
 sqlalchemy
 dotenv
 langchain
 langchain-mcp-adapters
+
+# Observability (optional at runtime; langsmith itself ships with langchain-core)
+langfuse
 
 # AI providers (init_chat_model "provider:model" support)
 langchain-ollama

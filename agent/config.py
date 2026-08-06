@@ -15,3 +15,7 @@ AI_API_KEY = os.getenv("AI_API_KEY", None)
 
 # MCP
 PLAYWRIGHT_MCP_URL = os.getenv("PLAYWRIGHT_MCP_URL")
+
+# Observability (both optional). LangSmith is read by langchain itself from LANGSMITH_*;
+# Langfuse only needs an on/off signal here — its SDK reads its own vars.
+LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))

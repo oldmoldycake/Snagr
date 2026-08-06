@@ -3,15 +3,21 @@ tools + database tools) and runs one search per (watch, site) pair."""
 
 import logging
 
-from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, PLAYWRIGHT_MCP_URL
+from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, LANGFUSE_ENABLED, PLAYWRIGHT_MCP_URL
 from database import get_checked_urls, get_listed_items, get_watched_item_list
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langfuse import get_client
+from langfuse.langchain import CallbackHandler
 from prompt import generate_prompt, generate_recheck_prompt
 from tools import disable_listing, log_listing_check, save_listing, save_price_check
 
 log = logging.getLogger(__name__)
+
+# LangSmith traces globally on its own when LANGSMITH_TRACING/LANGSMITH_API_KEY are
+# set; Langfuse hooks in per-call, so only build its handler when keys are configured.
+callbacks = [CallbackHandler()] if LANGFUSE_ENABLED else []
 
 assert PLAYWRIGHT_MCP_URL is not None, "PLAYWRIGHT_MCP_URL not set"
 
@@ -73,6 +79,7 @@ async def run():
         try:
             async for step in agent.astream(
                 {"messages": [{"role": "user", "content": prompt}]},
+                config={"callbacks": callbacks},
                 stream_mode="values",
             ):
                 step["messages"][-1].pretty_print()
@@ -131,6 +138,7 @@ async def run():
         try:
             async for step in agent.astream(
                 {"messages": [{"role": "user", "content": prompt}]},
+                config={"callbacks": callbacks},
                 stream_mode="values",
             ):
                 step["messages"][-1].pretty_print()
@@ -138,3 +146,8 @@ async def run():
         except Exception as e:
             log.error(f"Item {item_name} on site {site_name} failed: {e}")
             continue
+
+    # Langfuse queues events on a background thread; flush before this batch
+    # job exits or the tail of the run's traces is silently dropped.
+    if LANGFUSE_ENABLED:
+        get_client().flush()
