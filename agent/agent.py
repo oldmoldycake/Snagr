@@ -13,6 +13,7 @@ job with no notion of agent_runs. It still needs to:
 """
 
 import logging
+import uuid
 
 from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, LANGFUSE_ENABLED, PLAYWRIGHT_MCP_URL
 from database import get_checked_urls, get_listed_items, get_watched_item_list
@@ -38,6 +39,30 @@ else:
     llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL)
 
 
+def agent_config(session_id: str, user_id: int) -> dict:
+    """
+    Build the per-call runnable config for one watch's agent invocation.
+
+    Every trace from a single job invocation shares session_id and carries the
+    owning user's id, so runs group together in the tracing UI and cost/latency
+    can be broken down per user. Langfuse reads the `langfuse_*` metadata keys;
+    the unprefixed copies are what LangSmith filters on.
+
+    Args:
+      session_id: Identifier for the whole job run, shared by every call.
+      user_id: Owner of the watch this call is working on.
+    """
+    return {
+        "callbacks": callbacks,
+        "metadata": {
+            "session_id": session_id,
+            "user_id": str(user_id),
+            "langfuse_session_id": session_id,
+            "langfuse_user_id": str(user_id),
+        },
+    }
+
+
 async def run():
     """
     Run one full scrape job: connect to the Playwright MCP server, build the
@@ -45,6 +70,9 @@ async def run():
     generate a prompt and stream the agent through the search. A failure on
     one pair is logged and skipped so the remaining pairs still run.
     """
+    session_id = str(uuid.uuid4())
+    log.info(f"Job session {session_id}")
+
     client = MultiServerMCPClient(
         {
             "playwright": {
@@ -67,6 +95,7 @@ async def run():
         listing_id = int(row["listing_id"])
         listing_url = row["listing_url"]
         watch_id = row["watch_id"]
+        user_id = int(row["user_id"])
         site_id = row["site_id"]
         site_name = row["site_name"]
         item_id = row["item_id"]
@@ -74,7 +103,7 @@ async def run():
 
         log.info(
             f"Rechecking listing {listing_id} for item {item_id} ({item_name}) "
-            f"on site {site_id} ({site_name})"
+            f"on site {site_id} ({site_name}) for user {user_id}"
         )
 
         prompt = await generate_recheck_prompt(
@@ -90,7 +119,7 @@ async def run():
         try:
             async for step in agent.astream(
                 {"messages": [{"role": "user", "content": prompt}]},
-                config={"callbacks": callbacks},
+                config=agent_config(session_id, user_id),
                 stream_mode="values",
             ):
                 step["messages"][-1].pretty_print()
@@ -111,6 +140,7 @@ async def run():
     watch_site_list = await get_watched_item_list()
     for row in watch_site_list:
         watch_id = row["watch_id"]
+        user_id = int(row["user_id"])
         site_id = row["site_id"]
         site_name = row["site_name"]
         item_id = row["item_id"]
@@ -122,8 +152,8 @@ async def run():
         allow_reproductions = bool(row["allow_reproductions"])
 
         log.info(
-            f"Starting search for watch {watch_id}: item {item_id} ({item_name}) "
-            f"on site {site_id} ({site_name}) at {base_url}"
+            f"Starting search for watch {watch_id} (user {user_id}): "
+            f"item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}"
         )
 
         checked_urls_list = await get_checked_urls(watch_id, site_id)
@@ -145,11 +175,10 @@ async def run():
             known_urls=current_listing_urls,
             rejected_checks=rejected_checks,
         )
-
         try:
             async for step in agent.astream(
                 {"messages": [{"role": "user", "content": prompt}]},
-                config={"callbacks": callbacks},
+                config=agent_config(session_id, user_id),
                 stream_mode="values",
             ):
                 step["messages"][-1].pretty_print()

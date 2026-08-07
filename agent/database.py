@@ -186,7 +186,7 @@ async def get_watched_item_list() -> Sequence[RowMapping]:
     criteria/selection_mode/max_listings/allow_reproductions.
 
     Returns:
-      A sequence of row mappings with keys watch_id, criteria,
+      A sequence of row mappings with keys watch_id, user_id, criteria,
       selection_mode, max_listings, allow_reproductions, item_id, item_name,
       site_id, site_name, base_url. Returns an empty sequence if the query
       fails, so a DB hiccup skips this run's searches instead of crashing it.
@@ -196,6 +196,7 @@ async def get_watched_item_list() -> Sequence[RowMapping]:
             stmt = (
                 select(
                     Watches.id.label("watch_id"),
+                    Watches.user_id.label("user_id"),
                     Watches.criteria.label("criteria"),
                     Watches.selection_mode.label("selection_mode"),
                     Watches.max_listings.label("max_listings"),
@@ -226,9 +227,9 @@ async def get_listed_items() -> Sequence[RowMapping]:
 
     Returns:
       A sequence of row mappings with keys listing_id, listing_url, watch_id,
-      site_id, site_name, item_id, item_name. Returns an empty sequence if
-      the query fails, so a DB hiccup skips this run's rechecks instead of
-      crashing it.
+      user_id, site_id, site_name, item_id, item_name. Returns an empty
+      sequence if the query fails, so a DB hiccup skips this run's rechecks
+      instead of crashing it.
     """
     try:
         async with AsyncSessionLocal() as session:
@@ -237,6 +238,7 @@ async def get_listed_items() -> Sequence[RowMapping]:
                     Listings.id.label("listing_id"),
                     Listings.url.label("listing_url"),
                     Watches.id.label("watch_id"),
+                    Watches.user_id.label("user_id"),
                     Sites.id.label("site_id"),
                     Sites.name.label("site_name"),
                     Items.id.label("item_id"),
