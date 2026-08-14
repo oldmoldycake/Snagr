@@ -16,7 +16,7 @@ import logging
 import uuid
 
 from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, LANGFUSE_ENABLED, PLAYWRIGHT_MCP_URL
-from database import get_checked_urls, get_listed_items, get_watched_item_list
+from database import get_checked_urls, get_listed_items, get_market_price, get_watched_item_list
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -138,6 +138,7 @@ async def run():
 
     agent = create_agent(llm, tools)
     watch_site_list = await get_watched_item_list()
+    markets: dict[int, dict | None] = {}
     for row in watch_site_list:
         watch_id = row["watch_id"]
         user_id = int(row["user_id"])
@@ -147,9 +148,15 @@ async def run():
         item_name = row["item_name"]
         base_url = row["base_url"]
         criteria = row["criteria"]
+        expected_price = row["expected_price"]
+        condition_hint = row["condition_hint"]
         selection_mode = row["selection_mode"]
         max_listings = int(row["max_listings"])
         allow_reproductions = bool(row["allow_reproductions"])
+
+        if item_id not in markets:
+            market_row = await get_market_price(item_id)
+            markets[item_id] = dict(market_row) if market_row else None
 
         log.info(
             f"Starting search for watch {watch_id} (user {user_id}): "
@@ -174,6 +181,9 @@ async def run():
             allow_reproductions=allow_reproductions,
             known_urls=current_listing_urls,
             rejected_checks=rejected_checks,
+            market=markets[item_id],
+            expected_price=str(expected_price) if expected_price is not None else None,
+            condition_hint=condition_hint,
         )
         try:
             async for step in agent.astream(
