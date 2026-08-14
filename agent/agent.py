@@ -22,6 +22,7 @@ from langchain.chat_models import init_chat_model
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
+from pricing import ground_stale
 from prompt import generate_prompt, generate_recheck_prompt
 from tools import disable_listing, log_listing_check, save_listing, save_price_check
 
@@ -72,6 +73,14 @@ async def run():
     """
     session_id = str(uuid.uuid4())
     log.info(f"Job session {session_id}")
+
+    # Grounding pre-pass: refresh stale market prices first so this run's
+    # scan prompts read stats from minutes ago, not last night's. Isolation
+    # per the spec: grounding failure must never block the scrape.
+    try:
+        await ground_stale()
+    except Exception as e:
+        log.error(f"Grounding pre-pass failed, scraping ungrounded: {e}")
 
     client = MultiServerMCPClient(
         {
