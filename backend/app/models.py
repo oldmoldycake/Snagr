@@ -65,6 +65,9 @@ class Categories(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    condition_tiers: Mapped[list | None] = mapped_column(JSONB)
+    price_sources: Mapped[list | None] = mapped_column(JSONB)
+    pinned_sources: Mapped[list | None] = mapped_column(JSONB)
 
 
 class SiteCategories(Base):
