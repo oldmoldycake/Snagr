@@ -65,6 +65,9 @@ class Categories(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     slug: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    condition_tiers: Mapped[list | None] = mapped_column(JSONB)
+    price_sources: Mapped[list | None] = mapped_column(JSONB)
+    pinned_sources: Mapped[list | None] = mapped_column(JSONB)
 
 
 class SiteCategories(Base):
@@ -85,6 +88,8 @@ class Items(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), index=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    search_aliases: Mapped[list | None] = mapped_column(JSONB)
+    guide_pages: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -104,6 +109,8 @@ class Listings(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     match_score: Mapped[int | None] = mapped_column()
     match_summary: Mapped[str | None] = mapped_column(Text)
+    signals: Mapped[dict | None] = mapped_column(JSONB)
+    verdict: Mapped[str | None] = mapped_column(Text)  # auto_ok | needs_review
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
@@ -124,6 +131,23 @@ class PriceChecks(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class MarketPrices(Base):
+    """Search-sourced per-tier market stats for an item, written by the
+    agent's grounding pass."""
+
+    __tablename__ = "market_prices"
+
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id"), primary_key=True)
+    currency: Mapped[str] = mapped_column(Text, default="USD")
+    tiers: Mapped[dict | None] = mapped_column(JSONB)
+    observations: Mapped[list | None] = mapped_column(JSONB)
+    confidence: Mapped[str | None] = mapped_column(Text)  # high | medium | low
+    confidence_reasons: Mapped[list | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(Text, default="insufficient")  # ok | insufficient
+    as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Watches(Base):
     """One user's relationship to a shared item: their criteria, target price,
     and notification preferences."""
@@ -134,6 +158,8 @@ class Watches(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id"))
     target_price: Mapped[float | None] = mapped_column(Numeric(precision=10, scale=2))
+    expected_price: Mapped[float | None] = mapped_column(Numeric(precision=10, scale=2))
+    condition_hint: Mapped[str | None] = mapped_column(Text)
     notify: Mapped[bool] = mapped_column(Boolean, default=True)
     criteria: Mapped[str | None] = mapped_column(Text)
     selection_mode: Mapped[str] = mapped_column(Text, default="cheapest")

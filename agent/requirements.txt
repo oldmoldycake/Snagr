@@ -1,5 +1,6 @@
 # Dev
 ruff
+pytest
 asyncpg
 langgraph==1.2.6
 sqlalchemy
