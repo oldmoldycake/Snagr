@@ -155,6 +155,35 @@ class TestCollectObservations:
         assert searched == []
         assert len(observations) == 1
 
+    def test_quarantined_price_does_not_prop_up_a_thin_guide_pass(self, monkeypatch):
+        # The guide page had no aggregated figure of its own, just three live
+        # marketplace rows - and one of those is a transcription error. Two real
+        # prices are not a guide answer, so the snippets still have to fly.
+        searched = []
+
+        def marketplace(price):
+            return Observation(
+                price=Decimal(price),
+                tier="loose",
+                condition_raw=None,
+                sold_or_asking="sold",
+                source_url="https://guide.com/x",
+                source_type="marketplace",
+                origin="guide",
+            )
+
+        async def fake_gather(item_id, item_name, category_id, tiers):
+            return [marketplace("100"), marketplace("110"), marketplace("9000")]
+
+        async def fake_search(item, base_url=None):
+            searched.append(item)
+            return {}
+
+        monkeypatch.setattr(pricing, "gather_guide_observations", fake_gather)
+        monkeypatch.setattr(pricing, "search_searxng_queries", fake_search)
+        asyncio.run(pricing.collect_observations(1, "Pokemon Emerald", 1, ["loose"]))
+        assert searched == ["Pokemon Emerald"]
+
     def test_falls_back_to_broad_snippets_when_guides_are_dry(self, monkeypatch):
         searched = []
 

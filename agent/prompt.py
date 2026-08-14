@@ -262,7 +262,8 @@ def market_price_block(
             anchor = ", guide-anchored" if stat["basis"] == "guide" else ""
             lines.append(
                 f"    {tier_name}: median ${stat['median']} "
-                f"(n={stat['n']}{anchor}, range ${stat['low']}-${stat['high']})"
+                f"(from {stat['basis_n']} of {stat['n']} observations{anchor}, "
+                f"range ${stat['low']}-${stat['high']})"
             )
         hint_line = (
             f'  The watch is for "{condition_hint}" condition - weigh that tier most.\n'

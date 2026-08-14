@@ -100,6 +100,11 @@ SOURCE_FETCH_TIMEOUT_S = 15
 # once published "loose $137" while the real loose market sat around $226.
 MIN_TIER_SAMPLE = 3
 
+# How far above its own tier's median a price has to sit before it reads as a
+# transcription error rather than an expensive copy. Deliberately loose: graded
+# copies span an order of magnitude by grade, and a tier that wide is normal.
+OUTLIER_RATIO = 20
+
 
 async def search_searxng(
     queries: list[str], base_url: str = "http://localhost:8888", pages: int = SEARCH_PAGES
@@ -224,7 +229,9 @@ class Observation:
     from, and condition_raw so the wording the page used survives even when it
     did not map onto one of the category's tiers. origin is set by code from
     where the text was fetched, never by the model - a hostile snippet can
-    claim to be a price guide, but not to have been fetched from one."""
+    claim to be a price guide, but not to have been fetched from one. excluded
+    names why a price was kept out of the stats, and is None for the ones that
+    count."""
 
     price: Decimal
     tier: str
@@ -233,6 +240,7 @@ class Observation:
     source_url: str
     source_type: str = "other"
     origin: str = "search"  # search | guide
+    excluded: str | None = None
 
 
 async def extract_observations(
@@ -504,8 +512,14 @@ async def collect_observations(
     """The fallback ladder deciding where an item's prices come from: when the
     guide pass alone produces reportable stats, the broad template shotgun
     stays unfired - it is the fallback, not the method, and skipping it keeps
-    SearXNG well under its suspension threshold."""
-    observations = await gather_guide_observations(item_id, item_name, category_id, tiers)
+    SearXNG well under its suspension threshold.
+
+    Outliers are quarantined before that call is made, so a transcription error
+    cannot pad a tier over MIN_TIER_SAMPLE and talk the ladder out of a fallback
+    the real prices needed."""
+    observations = flag_outliers(
+        await gather_guide_observations(item_id, item_name, category_id, tiers)
+    )
     if build_market_price(tier_stats(observations), observations)["status"] == "ok":
         return observations
 
@@ -517,6 +531,49 @@ async def collect_observations(
     return observations
 
 
+def flag_outliers(observations: list[Observation]) -> list[Observation]:
+    """Mark prices too far above their own tier to be real. Extraction reads
+    prices out of prose, and a dropped decimal point turns $44.99 into $4499
+    while leaving everything else about the observation intact - source, tier
+    and condition wording all still look right, so distance from the tier's own
+    median is the only signal left. Measured: one retailer page yielded both
+    figures for the same cartridge, and the bad one set the published range.
+
+    Only the high side is judged. A price far below its tier is a damaged copy
+    or the deal we exist to find - one measured pool held a legitimate loose
+    price 15x under its median - so a symmetric rule would throw away the
+    findings this system is for. A tier needs MIN_TIER_SAMPLE prices before its
+    median means enough to measure against; below that there is no way to tell
+    which of two prices is the anomaly.
+
+    Judged fresh every call, because the pool grows: the guide pass weighs its
+    own observations, then the snippet fallback adds more and the whole pool is
+    weighed again. A price the smaller pool called extreme has to be able to
+    come back once the median catches up to it."""
+    by_tier: dict[str, list[Observation]] = {}
+    for observation in observations:
+        if observation.excluded == "outlier":
+            observation.excluded = None
+        by_tier.setdefault(observation.tier, []).append(observation)
+
+    for tier_observations in by_tier.values():
+        if len(tier_observations) < MIN_TIER_SAMPLE:
+            continue
+        middle = median(sorted(observation.price for observation in tier_observations))
+        if middle <= 0:
+            continue
+        for observation in tier_observations:
+            if observation.price / middle >= OUTLIER_RATIO:
+                log.info(
+                    f"Quarantining {observation.price} in tier {observation.tier}: "
+                    f"{observation.price / middle:.0f}x the tier median {middle} "
+                    f"({observation.source_url})"
+                )
+                observation.excluded = "outlier"
+
+    return observations
+
+
 def tier_stats(observations: list[Observation]) -> dict[str, dict]:
     """Describe each condition tier on its own: pooled stats describe nothing
     that exists when the same cartridge is $24 loose and $14,499 graded, and
@@ -525,8 +582,10 @@ def tier_stats(observations: list[Observation]) -> dict[str, dict]:
     available: guide observations when any exist (an aggregated market
     statistic a pile of asking prices never outvotes by weight of numbers),
     else sold prices once there are enough (asking skews high), else all."""
+    counted = [observation for observation in observations if not observation.excluded]
+
     by_tier: dict[str, list[Observation]] = {}
-    for observation in observations:
+    for observation in counted:
         by_tier.setdefault(observation.tier, []).append(observation)
 
     stats = {}
@@ -557,6 +616,7 @@ def tier_stats(observations: list[Observation]) -> dict[str, dict]:
             "n": len(prices),
             "sold_n": len(sold),
             "basis": basis,
+            "basis_n": len(basis_prices),
             "low": prices[0],
             "high": prices[-1],
             "prices": prices,
@@ -565,13 +625,13 @@ def tier_stats(observations: list[Observation]) -> dict[str, dict]:
     summary = ", ".join(
         f"{tier} n={stat['n']} ({stat['sold_n']} sold)" for tier, stat in stats.items()
     )
-    log.info(f"Tier stats over {len(observations)} observations: {summary or 'none'}")
+    log.info(f"Tier stats over {len(counted)} observations: {summary or 'none'}")
 
     unknown = stats.get("unknown", {}).get("n", 0)
     if unknown:
         # A high unknown rate means this category's vocabulary does not describe
         # what the sources actually say, and is the signal to regenerate it.
-        log.info(f"{unknown}/{len(observations)} observations had no tier of this category")
+        log.info(f"{unknown}/{len(counted)} observations had no tier of this category")
 
     return stats
 
@@ -598,7 +658,7 @@ def build_market_price(stats: dict[str, dict], observations: list[Observation]) 
     kept in full in the audit trail, which is what it is actually good for."""
     cents = Decimal("0.01")
     reportable = {tier: stat for tier, stat in stats.items() if tier != "unknown"}
-    classified = [entry for entry in observations if entry.tier != "unknown"]
+    classified = [entry for entry in observations if entry.tier != "unknown" and not entry.excluded]
 
     tiers = {}
     for tier, stat in reportable.items():
@@ -612,6 +672,7 @@ def build_market_price(stats: dict[str, dict], observations: list[Observation]) 
             "n": stat["n"],
             "sold_n": stat["sold_n"],
             "basis": stat["basis"],
+            "basis_n": stat["basis_n"],
         }
 
     reasons = []
@@ -696,7 +757,7 @@ async def ground_item(item_id: int, item_name: str, category_id: int) -> dict:
     market_prices payload, and write it. Returns the payload so callers can
     log or serve it without re-reading the row."""
     tiers = await resolve_condition_tiers(category_id)
-    observations = await collect_observations(item_id, item_name, category_id, tiers)
+    observations = flag_outliers(await collect_observations(item_id, item_name, category_id, tiers))
     payload = build_market_price(tier_stats(observations), observations)
     await upsert_market_price(
         item_id,
