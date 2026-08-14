@@ -20,15 +20,16 @@ def market(tiers, status="ok", confidence="high"):
     }
 
 
-def tier(median, n, basis="guide"):
+def tier(median, n, basis="guide", basis_n=None, low=None, high=None):
     return {
         "median": median,
         "mean": median,
-        "low": median,
-        "high": median,
+        "low": low or median,
+        "high": high or median,
         "n": n,
         "sold_n": n,
         "basis": basis,
+        "basis_n": n if basis_n is None else basis_n,
     }
 
 
@@ -50,11 +51,25 @@ class TestMarketPriceBlock:
             expected_price=None,
             condition_hint=None,
         )
-        assert "loose" in block and "226.00" in block and "n=9" in block
-        assert "cib" in block and "700.00" in block and "n=5" in block
+        assert "loose" in block and "226.00" in block and "9 of 9" in block
+        assert "cib" in block and "700.00" in block and "5 of 5" in block
         assert "guide-anchored" in block
         assert "medium confidence" in block
         assert "Aug 13, 2026" in block
+
+    def test_median_says_how_many_prices_it_came_from(self):
+        # Measured: one guide value anchored a tier whose other six prices ran
+        # from $14, so "median $225.68" beside "n=7" read as seven prices
+        # agreeing on $225.68 when only one of them said so.
+        block = market_price_block(
+            market(
+                {"loose": tier("225.68", 7, basis_n=1, low="14.00", high="225.99")},
+            ),
+            expected_price=None,
+            condition_hint=None,
+        )
+        assert "1 of 7" in block
+        assert "$14.00-$225.99" in block
 
     def test_condition_hint_tier_is_emphasized(self):
         block = market_price_block(

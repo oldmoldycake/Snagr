@@ -104,6 +104,34 @@ class TestGroundItem:
         assert upserted["tiers"] == payload["tiers"]
         assert len(upserted["observations"]) == 2
 
+    def test_an_implausible_price_never_reaches_the_published_tiers(self, monkeypatch):
+        upserted = {}
+
+        async def fake_resolve_tiers(category_id):
+            return ["loose"]
+
+        async def fake_collect(item_id, item_name, category_id, tiers):
+            return [
+                observation("100"),
+                observation("110"),
+                observation("120"),
+                observation("9000"),
+            ]
+
+        async def fake_upsert(item_id, **kwargs):
+            upserted.update(kwargs)
+            return True
+
+        monkeypatch.setattr(pricing, "resolve_condition_tiers", fake_resolve_tiers)
+        monkeypatch.setattr(pricing, "collect_observations", fake_collect)
+        monkeypatch.setattr(pricing, "upsert_market_price", fake_upsert)
+
+        asyncio.run(pricing.ground_item(7, "Pokemon Emerald", 1))
+
+        assert upserted["tiers"]["loose"]["high"] == "120.00"
+        assert upserted["tiers"]["loose"]["n"] == 3
+        assert [o["excluded"] for o in upserted["observations"]] == [None, None, None, "outlier"]
+
 
 class TestGroundStale:
     def wire(self, monkeypatch, candidates, fail_ids=()):
