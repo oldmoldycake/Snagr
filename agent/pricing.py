@@ -587,10 +587,21 @@ def build_market_price(stats: dict[str, dict], observations: list[Observation]) 
     MIN_TIER_SAMPLE on its own. Without a guide anchor the demotions stack:
     snippet-only stats start at medium, and a total pool below MIN_TIER_SAMPLE
     or one with no sold prices at all (asking skews high) drops them to low.
-    "insufficient" means nothing was reportable and the caller escalates."""
+    "insufficient" means nothing was reportable and the caller escalates.
+
+    "unknown" is not one of those tiers. It is where extraction parks a price
+    whose condition the source never stated, so it describes no state anything
+    can be bought in: publishing it hands the agent a reference price for a
+    condition that does not exist, and letting it vote on confidence grades the
+    whole payload off a bucket no stat is drawn from. It is dropped from both,
+    at both altitudes - the tier summary and the observations behind it - and
+    kept in full in the audit trail, which is what it is actually good for."""
     cents = Decimal("0.01")
+    reportable = {tier: stat for tier, stat in stats.items() if tier != "unknown"}
+    classified = [entry for entry in observations if entry.tier != "unknown"]
+
     tiers = {}
-    for tier, stat in stats.items():
+    for tier, stat in reportable.items():
         if stat["basis"] != "guide" and stat["n"] < MIN_TIER_SAMPLE:
             continue
         tiers[tier] = {
@@ -604,11 +615,11 @@ def build_market_price(stats: dict[str, dict], observations: list[Observation]) 
         }
 
     reasons = []
-    if not any(stat["basis"] == "guide" for stat in stats.values()):
+    if not any(stat["basis"] == "guide" for stat in reportable.values()):
         reasons.append("no_guide_anchor")
-        if len(observations) < MIN_TIER_SAMPLE:
-            reasons.append(f"n={len(observations)}")
-        if not any(observation.sold_or_asking == "sold" for observation in observations):
+        if len(classified) < MIN_TIER_SAMPLE:
+            reasons.append(f"n={len(classified)}")
+        if not any(observation.sold_or_asking == "sold" for observation in classified):
             reasons.append("all_asking")
 
     if not reasons:

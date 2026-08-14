@@ -119,3 +119,58 @@ class TestBuildMarketPrice:
         recorded = payload["observations"]
         assert {o["price"] for o in recorded} == {"1234.5", "99"}
         assert {o["origin"] for o in recorded} == {"guide", "search"}
+
+
+class TestUnknownTierIsNotAPrice:
+    """Extraction parks a price whose condition the source never stated in
+    "unknown" - a quarantine bucket, not a tier of the category. It must never
+    be published as one, and must never vote on confidence."""
+
+    def test_unknown_tier_is_never_reported(self):
+        observations = [
+            obs("226", origin="guide", source_type="price_guide"),
+            obs("30", tier="unknown", sold_or_asking="sold"),
+            obs("32", tier="unknown", sold_or_asking="sold"),
+            obs("34", tier="unknown", sold_or_asking="sold"),
+        ]
+        payload = build_market_price(tier_stats(observations), observations)
+        assert "unknown" not in payload["tiers"]
+        assert payload["tiers"]["loose"]["median"] == "226.00"
+
+    def test_pool_of_only_unknown_observations_is_insufficient(self):
+        # The Mini PC case: plenty of prices, none of them attributable to a
+        # condition, so there is nothing this item can honestly be said to cost.
+        observations = [
+            obs("100", tier="unknown", sold_or_asking="sold"),
+            obs("120", tier="unknown", sold_or_asking="sold"),
+            obs("140", tier="unknown", sold_or_asking="sold"),
+        ]
+        payload = build_market_price(tier_stats(observations), observations)
+        assert payload["status"] == "insufficient"
+        assert payload["tiers"] == {}
+
+    def test_unknown_observations_stay_in_the_audit_trail(self):
+        observations = [
+            obs("226", origin="guide", source_type="price_guide"),
+            obs("30", tier="unknown", sold_or_asking="sold"),
+            obs("32", tier="unknown", sold_or_asking="sold"),
+            obs("34", tier="unknown", sold_or_asking="sold"),
+        ]
+        payload = build_market_price(tier_stats(observations), observations)
+        assert "unknown" not in payload["tiers"]
+        assert [o["price"] for o in payload["observations"]] == ["226", "30", "32", "34"]
+        assert {o["tier"] for o in payload["observations"]} == {"loose", "unknown"}
+
+    def test_unknown_guide_bucket_does_not_anchor_confidence(self):
+        # A guide page priced something without saying what condition it was in.
+        # That cannot vouch for the tiers that ARE reportable.
+        observations = [
+            obs("30", sold_or_asking="sold"),
+            obs("32", sold_or_asking="sold"),
+            obs("34", sold_or_asking="sold"),
+            obs("500", tier="unknown", origin="guide", source_type="price_guide"),
+        ]
+        payload = build_market_price(tier_stats(observations), observations)
+        assert payload["tiers"]["loose"]["basis"] == "sold"
+        assert payload["confidence"] == "medium"
+        assert payload["confidence_reasons"] == ["no_guide_anchor"]
