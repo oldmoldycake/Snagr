@@ -1,4 +1,4 @@
-"""HTTP layer for /api/runs — everything except triggerRun (still a loud stub).
+"""HTTP layer for /api/runs.
 
 Run history is instance-wide (agent_runs has no user_id): any signed-in user
 sees the same rows, so there are no ownership tests here — just auth, filters,
@@ -6,14 +6,17 @@ ordering, pagination, and the serialized shape.
 
 Seeding COMMITS through `db_session` because each request runs on its own
 session. Runs hang off nothing (no user/item graph), so rows are inserted
-directly instead of via Scenario.
+directly instead of via Scenario — except the trigger_run scope-resolution
+tests, which need real categories/sites/items.
 """
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
-from app.models import AgentRuns, RunEvents
+from app.models import AgentRuns, RunEvents, User
 
 from tests.conftest import CSRF
+from tests.factories import Scenario
 
 OWNER = {"email": "runs@example.com", "password": "hunter2hunter2"}
 
@@ -21,8 +24,20 @@ NOW = datetime.now(UTC)
 
 
 async def _sign_in(client, creds=OWNER):
+    """Register (which also signs in) and return the new user's id."""
     res = await client.post("/api/auth/register", json=creds, headers=CSRF)
     assert res.status_code == 201, res.text
+    return res.json()["user"]["id"]
+
+
+@asynccontextmanager
+async def _seed_for(db_session, user_id):
+    """Scenario bound to an already-registered user, committed on exit."""
+    async with db_session() as session:
+        scenario = Scenario(session)
+        scenario._user = await session.get(User, user_id)
+        yield scenario
+        await session.commit()
 
 
 def _run(days_ago: float, **overrides) -> AgentRuns:
@@ -167,6 +182,167 @@ async def test_scope_filter(client, db_session):
     body = (await client.get("/api/runs?scope=item")).json()
     assert body["meta"]["total"] == 1
     assert [r["scope"] for r in body["data"]] == ["item"]
+
+
+# --- trigger_run ----------------------------------------------------------------
+
+
+async def test_trigger_requires_the_csrf_header(client):
+    res = await client.post("/api/runs", json={"scope": "global"})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "csrf"
+
+
+async def test_trigger_requires_a_session(client):
+    res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "unauthenticated"
+
+
+async def test_trigger_global_returns_202_with_a_queued_run(client):
+    await _sign_in(client)
+
+    res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
+    assert res.status_code == 202, res.text
+    body = res.json()
+    assert list(body) == ["run"]
+    run = body["run"]
+    assert run["scope"] == "global"
+    assert run["scope_id"] is None
+    assert run["scope_label"] == "Everything"
+    assert run["status"] == "queued"
+    assert run["started_at"] is None
+    assert run["finished_at"] is None
+    assert run["stats"] is None
+    assert run["error"] is None
+    assert run["last_seq"] == 0
+
+    # the row is durable, not just echoed — the detail endpoint must see it
+    persisted = (await client.get(f"/api/runs/{run['id']}")).json()
+    assert persisted["status"] == "queued"
+    assert persisted["scope_label"] == "Everything"
+
+
+async def test_trigger_while_a_run_is_running_is_409_with_its_id(client, db_session):
+    (active_id,) = await _seed(db_session, _run(0, status="running", started_at=NOW))
+    await _sign_in(client)
+
+    res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
+    assert res.status_code == 409
+    error = res.json()["error"]
+    assert error["code"] == "run_in_progress"
+    assert error["run_id"] == active_id
+
+
+async def test_a_queued_run_also_blocks_new_triggers(client, db_session):
+    await _seed(db_session, _run(0, status="queued"))
+    await _sign_in(client)
+
+    res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "run_in_progress"
+
+
+async def test_active_check_wins_over_scope_validation(client, db_session):
+    # handlers.ts checks hasActiveRun() before even reading the body — a busy
+    # instance answers 409, never 404, no matter how broken the scope is
+    await _seed(db_session, _run(0, status="running", started_at=NOW))
+    await _sign_in(client)
+
+    res = await client.post(
+        "/api/runs", json={"scope": "category", "scope_id": 999999}, headers=CSRF
+    )
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "run_in_progress"
+
+
+async def test_trigger_unknown_category_is_404(client):
+    await _sign_in(client)
+    res = await client.post(
+        "/api/runs", json={"scope": "category", "scope_id": 999999}, headers=CSRF
+    )
+    assert res.status_code == 404
+    error = res.json()["error"]
+    assert error["code"] == "not_found"
+    assert error["message"] == "Category 999999 does not exist"
+
+
+async def test_trigger_unknown_site_is_404(client):
+    await _sign_in(client)
+    res = await client.post("/api/runs", json={"scope": "site", "scope_id": 999999}, headers=CSRF)
+    assert res.status_code == 404
+    error = res.json()["error"]
+    assert error["code"] == "not_found"
+    assert error["message"] == "Site 999999 does not exist"
+
+
+async def test_trigger_unknown_item_is_404(client):
+    await _sign_in(client)
+    res = await client.post("/api/runs", json={"scope": "item", "scope_id": 999999}, headers=CSRF)
+    assert res.status_code == 404
+    error = res.json()["error"]
+    assert error["code"] == "not_found"
+    assert error["message"] == "Item 999999 does not exist"
+
+
+async def test_scoped_trigger_without_a_scope_id_is_404(client):
+    # code only: the mock says "Category undefined does not exist", we say
+    # "Category None…" — status + error.code match, the message text can't
+    await _sign_in(client)
+    res = await client.post("/api/runs", json={"scope": "category"}, headers=CSRF)
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
+
+
+async def test_trigger_category_scope_builds_the_label(client, db_session):
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.post(
+        "/api/runs", json={"scope": "category", "scope_id": category_id}, headers=CSRF
+    )
+    assert res.status_code == 202, res.text
+    run = res.json()["run"]
+    assert run["scope_label"] == "Category: Cameras"
+    assert run["scope_id"] == category_id
+
+
+async def test_trigger_site_scope_builds_the_label(client, db_session):
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.post("/api/runs", json={"scope": "site", "scope_id": site_id}, headers=CSRF)
+    assert res.status_code == 202, res.text
+    assert res.json()["run"]["scope_label"] == "Site: TestBay"
+
+
+async def test_trigger_item_scope_resolves_the_shared_catalog(client, db_session):
+    # the mock resolves the caller's watch list, but runs are instance-wide
+    # (agent_runs has no user_id) — the backend resolves the shared catalog,
+    # so an item nobody watches is still a valid scope target
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        item_id = (await sc.item()).id
+
+    res = await client.post("/api/runs", json={"scope": "item", "scope_id": item_id}, headers=CSRF)
+    assert res.status_code == 202, res.text
+    assert res.json()["run"]["scope_label"] == "Item: Alpha"
+
+
+async def test_trigger_after_a_finished_run_succeeds(client, db_session):
+    # only queued/running block — a full history of terminal runs doesn't
+    await _seed(
+        db_session,
+        _run(3, status="succeeded"),
+        _run(2, status="failed"),
+        _run(1, status="cancelled"),
+    )
+    await _sign_in(client)
+
+    res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
+    assert res.status_code == 202, res.text
 
 
 # --- get_run --------------------------------------------------------------------

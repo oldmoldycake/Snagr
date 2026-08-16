@@ -49,14 +49,18 @@ def build_agent_run(run: AgentRuns) -> AgentRun:
 @router.post(
     "",
     response_model=RunEnvelope,
-    status_code=status.HTTP_201_CREATED,
+    # 202, not 201 — handlers.ts returns 202 and the mock is the oracle
+    status_code=status.HTTP_202_ACCEPTED,
     dependencies=[Depends(csrf_guard)],
 )
 async def trigger_run(
     body: RunCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    # 409 run_in_progress (error.run_id = active run) if one is queued/running
-    raise NotImplementedError
+    try:
+        run = await runs_service.enqueue_run(db, body.scope, body.scope_id)
+        return RunEnvelope(run=build_agent_run(run))
+    except SQLAlchemyError as e:
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.get("", response_model=Paginated[AgentRun])
