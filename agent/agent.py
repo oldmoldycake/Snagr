@@ -3,11 +3,11 @@ tools + database tools) and runs one search per (watch, site) pair.
 
 Runs are recorded in agent_runs (Phase 3, D3): the scheduled sweep (run())
 inserts its own global row; consume() claims API-enqueued rows oldest-first
-and limits both passes to the claimed run's scope. Progress lands in
-run_events, totals in agent_runs.stats, and cancellation is cooperative —
-the run's status is re-checked between units of work because the API's
-cancel only flips the row, and bailing early is what stops mid-run LLM
-token burn.
+— or, when the queue is empty, fires a due run_schedules row — and limits
+both passes to the claimed run's scope. Progress lands in run_events,
+totals in agent_runs.stats, and cancellation is cooperative — the run's
+status is re-checked between units of work because the API's cancel only
+flips the row, and bailing early is what stops mid-run LLM token burn.
 """
 
 import logging
@@ -16,6 +16,7 @@ import uuid
 from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, LANGFUSE_ENABLED, PLAYWRIGHT_MCP_URL
 from database import (
     append_run_event,
+    claim_due_schedule,
     claim_queued_run,
     create_global_run,
     finish_run,
@@ -208,7 +209,10 @@ async def execute_run(run: dict) -> dict | None:
 
     reset_run_stats()
     errors = 0
-    await append_run_event(run_id, "info", "run_started", f"Run started — {run['scope_label']}")
+    origin = " (scheduled)" if run.get("scheduled") else ""
+    await append_run_event(
+        run_id, "info", "run_started", f"Run started — {run['scope_label']}{origin}"
+    )
 
     # Grounding pre-pass: refresh stale market prices first so this run's
     # scan prompts read stats from minutes ago, not last night's. Global runs
@@ -325,12 +329,15 @@ async def run() -> None:
 
 async def consume() -> None:
     """
-    One run-queue tick: claim the oldest queued run and execute it, or exit
-    immediately when the queue is empty. Cron this every few minutes so runs
-    triggered from the UI start promptly.
+    One run-queue tick: claim the oldest queued run — user clicks beat
+    schedules — else fire the most-overdue due run_schedules row as a fresh
+    run; exit immediately when neither exists. Cron this every minute so
+    UI-triggered runs start promptly and schedules fire on time.
     """
     claimed = await claim_queued_run()
     if claimed is None:
-        log.info("No queued runs to consume")
+        claimed = await claim_due_schedule()
+    if claimed is None:
+        log.info("No queued runs or due schedules")
         return
     await _drive(claimed)

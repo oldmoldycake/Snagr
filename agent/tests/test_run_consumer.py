@@ -6,9 +6,11 @@ cancellation, terminal writes — not SQL (that's test_run_queue_db.py) and
 not the LLM."""
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 import tools
+from database import roll_forward
 
 import agent
 
@@ -33,10 +35,16 @@ def pair_row(n):
     }
 
 
+def schedule_row(run_id=1, scope="global", scope_id=None, label="Everything"):
+    """A claim_due_schedule result — a run_row plus the provenance marker."""
+    return run_row(run_id, scope, scope_id, label) | {"scheduled": True}
+
+
 def wire(
     monkeypatch,
     *,
     claim=None,
+    claim_schedule=None,
     listings=(),
     pairs=(),
     statuses=None,
@@ -60,11 +68,16 @@ def wire(
         "scan_units": [],
         "grounded": [],
         "built": [],
+        "schedule_claims": [],
     }
     status_script = list(statuses or ["running"])
 
     async def fake_claim():
         return dict(claim) if claim else None
+
+    async def fake_claim_schedule():
+        seen["schedule_claims"].append(True)
+        return dict(claim_schedule) if claim_schedule else None
 
     async def fake_create_global():
         seen["created"].append(True)
@@ -117,6 +130,7 @@ def wire(
         tools.run_stats["new_listings"] += 1
 
     monkeypatch.setattr(agent, "claim_queued_run", fake_claim)
+    monkeypatch.setattr(agent, "claim_due_schedule", fake_claim_schedule)
     monkeypatch.setattr(agent, "create_global_run", fake_create_global)
     monkeypatch.setattr(agent, "get_run_status", fake_status)
     monkeypatch.setattr(agent, "append_run_event", fake_append)
@@ -252,3 +266,74 @@ class TestNightlySweep:
         assert seen["created"] == [True]
         assert seen["queries"] == [("listed", "global", None), ("watched", "global", None)]
         assert [f[1] for f in seen["finishes"]] == ["succeeded"]
+
+
+class TestScheduledRuns:
+    def test_a_queued_run_beats_a_due_schedule(self, monkeypatch):
+        seen = wire(monkeypatch, claim=run_row(run_id=7), claim_schedule=schedule_row(run_id=9))
+        asyncio.run(agent.consume())
+        assert [f[0] for f in seen["finishes"]] == [7]
+        assert seen["schedule_claims"] == []  # queue hit — the schedule is never consulted
+
+    def test_a_due_schedule_fires_when_the_queue_is_empty(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            claim=None,
+            claim_schedule=schedule_row(run_id=9, scope="site", scope_id=3, label="Site: GameBay"),
+        )
+        asyncio.run(agent.consume())
+        assert seen["queries"] == [("listed", "site", 3), ("watched", "site", 3)]
+        assert [f[:2] for f in seen["finishes"]] == [(9, "succeeded")]
+
+    def test_an_idle_tick_with_nothing_due_is_a_noop(self, monkeypatch):
+        seen = wire(monkeypatch, claim=None, claim_schedule=None)
+        asyncio.run(agent.consume())
+        assert seen["schedule_claims"] == [True]  # consulted, empty
+        assert seen["built"] == []
+        assert seen["events"] == []
+        assert seen["finishes"] == []
+
+    def test_a_scheduled_runs_start_event_carries_the_marker(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            claim_schedule=schedule_row(run_id=9, scope="site", scope_id=3, label="Site: GameBay"),
+        )
+        asyncio.run(agent.consume())
+        assert seen["events"][0] == (
+            "info",
+            "run_started",
+            "Run started — Site: GameBay (scheduled)",
+        )
+
+
+class TestRollForward:
+    NOW = datetime(2026, 8, 14, 10, 5, tzinfo=UTC)
+
+    def test_barely_overdue_steps_exactly_once(self):
+        due = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+        assert roll_forward(due, 60, self.NOW) == datetime(2026, 8, 14, 11, 0, tzinfo=UTC)
+
+    def test_downtime_collapses_to_the_first_future_boundary(self):
+        # Monday 02:00 due, daily, woken Thursday 13:37 → Friday 02:00: the
+        # 02:00 anchor survives and the missed days never re-fire
+        due = datetime(2026, 8, 10, 2, 0, tzinfo=UTC)
+        now = datetime(2026, 8, 13, 13, 37, tzinfo=UTC)
+        assert roll_forward(due, 1440, now) == datetime(2026, 8, 14, 2, 0, tzinfo=UTC)
+
+    def test_a_boundary_now_rolls_strictly_past_it(self):
+        due = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+        now = datetime(2026, 8, 14, 11, 0, tzinfo=UTC)  # exactly due + interval
+        assert roll_forward(due, 60, now) == datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+
+    def test_now_equal_to_due_steps_once(self):
+        due = datetime(2026, 8, 14, 10, 0, tzinfo=UTC)
+        assert roll_forward(due, 60, due) == datetime(2026, 8, 14, 11, 0, tzinfo=UTC)
+
+    def test_a_future_due_time_still_steps_once(self):
+        # defensive: a mis-seeded future due_at must not roll backwards
+        due = datetime(2026, 8, 15, 10, 0, tzinfo=UTC)
+        assert roll_forward(due, 60, self.NOW) == datetime(2026, 8, 15, 11, 0, tzinfo=UTC)
+
+    def test_an_every_minute_interval_steps_correctly(self):
+        due = datetime(2026, 8, 14, 10, 4, tzinfo=UTC)
+        assert roll_forward(due, 1, self.NOW) == datetime(2026, 8, 14, 10, 6, tzinfo=UTC)
