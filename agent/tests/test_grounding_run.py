@@ -163,7 +163,10 @@ class TestGroundStale:
         assert grounded == [2]
 
     def test_noops_when_everything_is_fresh(self, monkeypatch):
-        fresh = candidate(1, as_of=hours_ago(1), last_attempt_at=hours_ago(1))
+        # ground_stale reads the real clock, so freshness must be anchored to
+        # it — the pinned NOW ages out of the TTL as wall time moves on
+        an_hour_ago = datetime.now(UTC) - timedelta(hours=1)
+        fresh = candidate(1, as_of=an_hour_ago, last_attempt_at=an_hour_ago)
         grounded = self.wire(monkeypatch, [fresh])
         assert asyncio.run(pricing.ground_stale()) == 0
         assert grounded == []
