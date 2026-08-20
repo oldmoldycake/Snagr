@@ -4,7 +4,7 @@ tracker schema, and the query helpers the agent uses to plan its runs."""
 import logging
 import os
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from dotenv import load_dotenv
 from sqlalchemy import (
@@ -234,6 +234,25 @@ class RunEvents(Base):
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_run_seq"),)
+
+
+class RunSchedules(Base):
+    """User-defined scheduled runs — mirrors backend/app/models.py (the
+    backend owns the schema, D1). Recurring rows (interval_minutes set) roll
+    next_due_at forward anchored when fired; one-shots (interval_minutes
+    NULL) flip enabled off and keep the row."""
+
+    __tablename__ = "run_schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
+    scope_id: Mapped[int | None] = mapped_column()
+    scope_label: Mapped[str] = mapped_column(Text)
+    next_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    interval_minutes: Mapped[int | None] = mapped_column()  # NULL = one-shot
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 async def get_watched_item_list(
@@ -778,6 +797,84 @@ async def claim_queued_run() -> dict | None:
         }
         await session.commit()
         log.info(f"Claimed run {claimed['id']} ({claimed['scope_label']})")
+        return claimed
+
+
+def roll_forward(due_at: datetime, interval_minutes: int, now: datetime) -> datetime:
+    """First due_at + k*interval (k >= 1) strictly after now. Anchored: steps
+    from the original due time, so "daily at 02:00" stays at 02:00 after
+    downtime, and missed periods collapse into the one fire that just happened."""
+    step = timedelta(minutes=interval_minutes)
+    return due_at + max((now - due_at) // step + 1, 1) * step
+
+
+async def claim_due_schedule() -> dict | None:
+    """
+    Fire the most-overdue due schedule, if the instance is free: insert a
+    running agent_runs row carrying the schedule's scope, stamp
+    last_fired_at, and roll next_due_at forward (recurring) or flip enabled
+    off (one-shot) — all in one transaction, so a crash can't fire twice or
+    roll without firing. Returns the same dict claim_queued_run does, plus
+    "scheduled": True, or None when nothing is due or a run is already
+    queued/running (a busy skip rolls back, leaving the schedule due for the
+    next free tick — a one-shot drop fires late-but-once).
+
+    The API can enqueue a run between this transaction's active-run check
+    and its commit; the queued row then just waits behind the scheduled run,
+    exactly like clicking Run during the nightly sweep. Failures PROPAGATE
+    like claim_queued_run's — a swallowed failure would silently stop every
+    schedule.
+    """
+    async with AsyncSessionLocal() as session:
+        now = datetime.now(UTC)
+        stmt = (
+            select(RunSchedules)
+            .where(RunSchedules.enabled)
+            .where(RunSchedules.next_due_at <= now)
+            .order_by(RunSchedules.next_due_at)
+            .limit(1)
+            .with_for_update(skip_locked=True)
+        )
+        schedule = (await session.execute(stmt)).scalar_one_or_none()
+        if schedule is None:
+            return None
+
+        active = (
+            await session.execute(
+                select(AgentRuns.id).where(AgentRuns.status.in_(("queued", "running"))).limit(1)
+            )
+        ).scalar_one_or_none()
+        if active is not None:
+            log.info(f"Schedule {schedule.id} due but run {active} is active; skipping this tick")
+            return None
+
+        run = AgentRuns(
+            scope=schedule.scope,
+            scope_id=schedule.scope_id,
+            scope_label=schedule.scope_label,
+            status="running",
+            started_at=now,
+        )
+        session.add(run)
+        await session.flush()
+
+        schedule.last_fired_at = now
+        if schedule.interval_minutes is not None:
+            schedule.next_due_at = roll_forward(
+                schedule.next_due_at, schedule.interval_minutes, now
+            )
+        else:
+            schedule.enabled = False
+
+        claimed = {
+            "id": run.id,
+            "scope": run.scope,
+            "scope_id": run.scope_id,
+            "scope_label": run.scope_label,
+            "scheduled": True,
+        }
+        await session.commit()
+        log.info(f"Fired schedule for run {claimed['id']} ({claimed['scope_label']})")
         return claimed
 
 

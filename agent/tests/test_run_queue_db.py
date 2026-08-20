@@ -1,7 +1,7 @@
 """The run-queue DB helpers against a real Postgres: the claim's FOR UPDATE
 SKIP LOCKED, the locked last_seq bump behind uq_run_seq, terminal writes, the
-scope-filtered planning queries, and the tools tally — SQL that the seam
-tests in test_run_consumer.py can't exercise.
+schedule-firing claim, the scope-filtered planning queries, and the tools
+tally — SQL that the seam tests in test_run_consumer.py can't exercise.
 
 Needs the same reachable Postgres the backend suite uses. conftest.py
 force-rewrites DATABASE_URL to the throwaway `snagr_test` database, so live
@@ -29,11 +29,13 @@ from database import (
     Items,
     Listings,
     RunEvents,
+    RunSchedules,
     SiteCategories,
     Sites,
     User,
     Watches,
     append_run_event,
+    claim_due_schedule,
     claim_queued_run,
     create_global_run,
     engine,
@@ -120,12 +122,40 @@ async def read_run(run_id: int) -> dict:
     async with AsyncSessionLocal() as session:
         run = await session.get(AgentRuns, run_id)
         return {
+            "scope": run.scope,
+            "scope_id": run.scope_id,
+            "scope_label": run.scope_label,
             "status": run.status,
             "started_at": run.started_at,
             "finished_at": run.finished_at,
             "stats": run.stats,
             "error": run.error,
             "last_seq": run.last_seq,
+        }
+
+
+def due_schedule(minutes_overdue=5.0, **overrides):
+    """A recurring hourly schedule due `minutes_overdue` ago; override any column."""
+    fields = {
+        "scope": "global",
+        "scope_id": None,
+        "scope_label": "Everything",
+        "next_due_at": NOW - timedelta(minutes=minutes_overdue),
+        "interval_minutes": 60,
+        "enabled": True,
+        **overrides,
+    }
+    return RunSchedules(**fields)
+
+
+async def read_schedule(schedule_id: int) -> dict:
+    async with AsyncSessionLocal() as session:
+        row = await session.get(RunSchedules, schedule_id)
+        return {
+            "next_due_at": row.next_due_at,
+            "interval_minutes": row.interval_minutes,
+            "enabled": row.enabled,
+            "last_fired_at": row.last_fired_at,
         }
 
 
@@ -344,6 +374,118 @@ class TestCreateGlobalRun:
         assert created["scope_label"] == "Everything"
         assert row["status"] == "running"
         assert row["started_at"] is not None
+
+
+class TestClaimDueSchedule:
+    def test_an_empty_table_returns_none(self):
+        assert db(claim_due_schedule()) is None
+
+    def test_a_not_yet_due_schedule_is_ignored(self):
+        async def scenario():
+            (sid,) = await seed(due_schedule(minutes_overdue=-10))
+            return await claim_due_schedule(), await read_schedule(sid)
+
+        claimed, row = db(scenario())
+        assert claimed is None
+        assert row["enabled"] is True
+        assert row["last_fired_at"] is None
+
+    def test_a_disabled_schedule_never_fires(self):
+        async def scenario():
+            (sid,) = await seed(due_schedule(enabled=False))
+            return await claim_due_schedule(), await read_schedule(sid)
+
+        claimed, row = db(scenario())
+        assert claimed is None
+        assert row["last_fired_at"] is None
+
+    def test_fires_the_most_overdue_schedule_first(self):
+        async def scenario():
+            _, newer_id = await seed(
+                due_schedule(minutes_overdue=60, scope_label="older"),
+                due_schedule(minutes_overdue=5, scope_label="newer"),
+            )
+            return await claim_due_schedule(), await read_schedule(newer_id)
+
+        claimed, newer = db(scenario())
+        assert claimed["scope_label"] == "older"
+        assert newer["last_fired_at"] is None  # still due, untouched
+
+    def test_firing_creates_a_running_run_with_the_schedules_scope(self):
+        async def scenario():
+            await seed(due_schedule(scope="category", scope_id=4, scope_label="Category: Games"))
+            claimed = await claim_due_schedule()
+            return claimed, await read_run(claimed["id"])
+
+        claimed, run = db(scenario())
+        assert set(claimed) == {"id", "scope", "scope_id", "scope_label", "scheduled"}
+        assert claimed["scheduled"] is True
+        assert run["scope"] == "category"
+        assert run["scope_id"] == 4
+        assert run["scope_label"] == "Category: Games"
+        assert run["status"] == "running"
+        assert run["started_at"] is not None
+
+    def test_a_recurring_fire_rolls_forward_anchored_past_downtime(self):
+        async def scenario():
+            (sid,) = await seed(due_schedule(minutes_overdue=3 * 1440 + 7, interval_minutes=1440))
+            old_due = (await read_schedule(sid))["next_due_at"]
+            claimed = await claim_due_schedule()
+            second = await claim_due_schedule()
+            return claimed, second, old_due, await read_schedule(sid)
+
+        claimed, second, old_due, row = db(scenario())
+        assert claimed is not None
+        # busy with the fired run, and rolled into the future anyway
+        assert second is None
+        interval = timedelta(minutes=1440)
+        # anchor preserved: the new due time is a whole number of periods on
+        assert (row["next_due_at"] - old_due) % interval == timedelta(0)
+        # caught up in ONE step: strictly future, at most one period out
+        assert row["last_fired_at"] < row["next_due_at"] <= row["last_fired_at"] + interval
+        assert row["enabled"] is True
+
+    def test_a_one_shot_fires_once_then_deactivates(self):
+        async def scenario():
+            (sid,) = await seed(due_schedule(interval_minutes=None))
+            old_due = (await read_schedule(sid))["next_due_at"]
+            claimed = await claim_due_schedule()
+            second = await claim_due_schedule()
+            return claimed, second, old_due, await read_schedule(sid)
+
+        claimed, second, old_due, row = db(scenario())
+        assert claimed is not None
+        assert second is None
+        assert row["enabled"] is False
+        assert row["last_fired_at"] is not None
+        assert row["next_due_at"] == old_due  # one-shots keep their aim time
+
+    @pytest.mark.parametrize("status", ["queued", "running"])
+    def test_a_busy_instance_skips_without_rolling(self, status):
+        async def scenario():
+            overrides = {"status": status, "started_at": NOW if status == "running" else None}
+            _, sid = await seed(queued_run(**overrides), due_schedule())
+            return await claim_due_schedule(), await read_schedule(sid)
+
+        claimed, row = db(scenario())
+        assert claimed is None
+        # fully untouched — still due, so it fires on the next free tick
+        assert row["enabled"] is True
+        assert row["last_fired_at"] is None
+        assert row["next_due_at"] == NOW - timedelta(minutes=5)
+
+    def test_concurrent_fires_have_exactly_one_winner(self):
+        # SKIP LOCKED: the loser skips the locked row and finds nothing due
+        async def scenario():
+            await seed(due_schedule())
+            results = await asyncio.gather(claim_due_schedule(), claim_due_schedule())
+            async with AsyncSessionLocal() as session:
+                run_ids = (await session.execute(select(AgentRuns.id))).all()
+            return results, len(run_ids)
+
+        results, run_count = db(scenario())
+        assert sorted(r is None for r in results) == [False, True]
+        assert run_count == 1
 
 
 class TestScopedQueries:
