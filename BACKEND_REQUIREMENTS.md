@@ -451,6 +451,19 @@ database and the agent's logs directly. Known soft edges, accepted deliberately:
 - `Listing.discovered_by_run_id` can point at a run its owner cannot fetch (the run
   page shows "Run not found").
 
+#### Event-emission audit (why the payload references suffice)
+
+Every place a `run_events` row is written, and how the predicate classifies it:
+
+| # | Emitter | Payload refs | Verdict |
+|---|---------|--------------|---------|
+| 1 | agent `run_started` | none; message embeds `scope_label` | Neutral-with-run-gated content: the label is run-row metadata already gated by run visibility (a user's run is hidden entirely; a system run's label was operator-chosen). |
+| 2 | agent recheck failure | `{listing_id}` | Resolves to the listing's sole owner; the raw-exception message (may embed a URL) is therefore owner-only. |
+| 3 | agent `item_started` | `{item_id, site_id}` | Shared-catalog rule: visible to all watchers of the item + admin. |
+| 4 | agent discovery failure | `{item_id, site_id}` | Same as 3. |
+| 5 | agent `run_finished` | none | Neutral. Success text is aggregate counts; failure text is infra-level by construction — per-item exceptions are caught at 2/4 and never bubble to the run-level handler. |
+| 6 | backend cancel (`run_finished`) | none | Neutral ("Run cancelled"). |
+
 ### Per-item pipeline (criteria + slots)
 
 For each item in scope:
