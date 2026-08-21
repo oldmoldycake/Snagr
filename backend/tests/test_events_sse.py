@@ -1,6 +1,8 @@
 """The SSE pipeline: migration 007's pg_notify triggers, the hub in
 services/events.py, and GET /api/events — including one end-to-end pass
-(SQL insert -> trigger -> LISTEN -> broadcast).
+(SQL insert -> trigger -> LISTEN -> broadcast) and the per-viewer filtering
+matrix (run envelopes gated by run_visible, run.event by event_visible,
+per-client snapshots).
 
 The wire format is pinned by mocks/sse.ts; handlers.ts has no SSE cases, so
 auth mirrors the closest normal endpoint (401 unauthenticated envelope).
@@ -13,11 +15,13 @@ from datetime import UTC, datetime
 
 import asyncpg
 import pytest
+from app.config import settings
 from app.database import _sessionmaker
-from app.models import AgentRuns, RunEvents
+from app.models import AgentRuns, RunEvents, User
 from app.services import events as events_service
 
 from tests.conftest import CSRF
+from tests.factories import Scenario
 
 OWNER = {"email": "sse@example.com", "password": "hunter2hunter2"}
 
@@ -70,12 +74,18 @@ async def listen():
     await conn.close()
 
 
+def _viewer(user_id: int, role: str = "user") -> User:
+    """A detached User stub carrying just what register_client reads."""
+    return User(id=user_id, email=f"viewer{user_id}@hub.local", role=role)
+
+
 @pytest.fixture
 def mailbox():
-    """A registered hub client queue, unregistered afterwards."""
-    queue = events_service.register_client()
-    yield queue
-    events_service.unregister_client(queue)
+    """A registered hub client queue (admin viewer — sees everything, like the
+    pre-privacy hub), unregistered afterwards."""
+    client = events_service.register_client(_viewer(999, role="admin"))
+    yield client.queue
+    events_service.unregister_client(client)
 
 
 async def _next(queue: asyncio.Queue, timeout: float = 5.0):
@@ -121,20 +131,21 @@ class TestNotifyTriggers:
 
 class TestHub:
     async def test_broadcast_reaches_every_registered_client(self):
-        a, b = events_service.register_client(), events_service.register_client()
+        a = events_service.register_client(_viewer(1))
+        b = events_service.register_client(_viewer(2))
         try:
             events_service.broadcast({"event": "run.event", "data": "{}"})
-            assert (await _next(a))["event"] == "run.event"
-            assert (await _next(b))["event"] == "run.event"
+            assert (await _next(a.queue))["event"] == "run.event"
+            assert (await _next(b.queue))["event"] == "run.event"
         finally:
             events_service.unregister_client(a)
             events_service.unregister_client(b)
 
     async def test_an_unregistered_client_stops_receiving(self):
-        queue = events_service.register_client()
-        events_service.unregister_client(queue)
+        client = events_service.register_client(_viewer(1))
+        events_service.unregister_client(client)
         events_service.broadcast({"event": "run.event", "data": "{}"})
-        assert queue.empty()
+        assert client.queue.empty()
 
     async def test_snapshot_lists_only_active_runs(self):
         await _seed(
@@ -142,7 +153,7 @@ class TestHub:
             _run(status="running", scope_label="Site: TestBay"),
             _run(status="queued", started_at=None),
         )
-        message = await events_service.snapshot_message()
+        message = await events_service.snapshot_message(1, False)
         assert message["event"] == "run.snapshot"
         active = json.loads(message["data"])["active_runs"]
         assert [r["status"] for r in active] == ["running", "queued"]
@@ -294,6 +305,188 @@ class TestStreamEndpoint:
 
         await conn.disconnect()
         assert len(events_service._clients) == before
+
+
+# --- per-viewer filtering -------------------------------------------------------
+
+
+async def _privacy_fixture() -> dict:
+    """Users A and B, a watch each, one item BOTH watch, and A's listing —
+    the ownership graph the event predicate keys on. Returns the ids."""
+    async with _sessionmaker()() as session:
+        sc = Scenario(session)
+        a = User(email="a@hub.local")
+        b = User(email="b@hub.local")
+        session.add_all([a, b])
+        await session.flush()
+        item_a = await sc.item("Alpha")
+        item_b = await sc.item("Beta")
+        shared = await sc.item("Shared")
+        watch_a = await sc.watch(item_a, user=a)
+        await sc.watch(item_b, user=b)
+        await sc.watch(shared, user=a)
+        await sc.watch(shared, user=b)
+        listing_a = await sc.listing(watch_a, item_a)
+        ids = {
+            "a": a.id,
+            "b": b.id,
+            "item_a": item_a.id,
+            "item_b": item_b.id,
+            "shared": shared.id,
+            "listing_a": listing_a.id,
+        }
+        await session.commit()
+    return ids
+
+
+class TestPerViewerFiltering:
+    """run.event frames pass run_visible AND event_visible per client; the
+    lifecycle envelopes and snapshots pass run_visible — same predicate as
+    the REST surface (services/runs.py), asserted here on the push channel."""
+
+    @pytest.fixture
+    async def graph(self):
+        ids = await _privacy_fixture()
+        clients = {
+            "a": events_service.register_client(_viewer(ids["a"])),
+            "b": events_service.register_client(_viewer(ids["b"])),
+            "admin": events_service.register_client(_viewer(999, role="admin")),
+        }
+        yield ids, clients
+        for client in clients.values():
+            events_service.unregister_client(client)
+
+    async def _notify_event(self, run_id: int, seq: int) -> None:
+        payload = json.dumps({"kind": "event", "run_id": run_id, "seq": seq})
+        await events_service._handle_notification(payload)
+
+    async def test_item_events_reach_watchers_and_admin_only(self, graph):
+        ids, clients = graph
+        (run_id,) = await _seed(_run())  # system run: everyone sees the run itself
+        await _seed(_event(run_id, seq=1, payload={"item_id": ids["item_a"]}))
+        await self._notify_event(run_id, 1)
+        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        assert clients["b"].queue.empty()
+        assert (await _next(clients["admin"].queue))["event"] == "run.event"
+
+    async def test_a_shared_item_event_reaches_both_watchers(self, graph):
+        ids, clients = graph
+        (run_id,) = await _seed(_run())
+        await _seed(_event(run_id, seq=1, payload={"item_id": ids["shared"]}))
+        await self._notify_event(run_id, 1)
+        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        assert (await _next(clients["b"].queue))["event"] == "run.event"
+
+    async def test_a_listing_event_reaches_only_its_owner(self, graph):
+        ids, clients = graph
+        (run_id,) = await _seed(_run())
+        await _seed(_event(run_id, seq=1, payload={"listing_id": ids["listing_a"]}))
+        await self._notify_event(run_id, 1)
+        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        assert clients["b"].queue.empty()
+        assert (await _next(clients["admin"].queue))["event"] == "run.event"
+
+    async def test_a_neutral_event_reaches_every_viewer_of_the_run(self, graph):
+        ids, clients = graph
+        (run_id,) = await _seed(_run())
+        await _seed(_event(run_id, seq=1, payload=None))
+        await self._notify_event(run_id, 1)
+        for client in clients.values():
+            assert (await _next(client.queue))["event"] == "run.event"
+
+    async def test_a_hidden_runs_events_never_stream(self, graph):
+        # A's own run names the item B ALSO watches — the run gate wins:
+        # B gets nothing, on the push channel exactly as on REST
+        ids, clients = graph
+        (run_id,) = await _seed(_run(user_id=ids["a"]))
+        await _seed(_event(run_id, seq=1, payload={"item_id": ids["shared"]}))
+        await self._notify_event(run_id, 1)
+        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        assert clients["b"].queue.empty()
+        assert (await _next(clients["admin"].queue))["event"] == "run.event"
+
+    async def test_lifecycle_envelopes_are_gated_by_run_visibility(self, graph):
+        ids, clients = graph
+        (run_id,) = await _seed(_run(user_id=ids["a"]))
+        payload = json.dumps({"kind": "status", "run_id": run_id, "status": "running"})
+        await events_service._handle_notification(payload)
+        assert (await _next(clients["a"].queue))["event"] == "run.started"
+        assert clients["b"].queue.empty()
+        assert (await _next(clients["admin"].queue))["event"] == "run.started"
+
+    async def test_snapshots_are_per_viewer(self, graph):
+        ids, _ = graph
+        await _seed(_run(scope_label="system sweep"), _run(user_id=ids["a"], scope_label="A's run"))
+
+        a_runs = json.loads((await events_service.snapshot_message(ids["a"], False))["data"])
+        assert [r["scope_label"] for r in a_runs["active_runs"]] == ["system sweep", "A's run"]
+
+        b_runs = json.loads((await events_service.snapshot_message(ids["b"], False))["data"])
+        assert [r["scope_label"] for r in b_runs["active_runs"]] == ["system sweep"]
+
+        admin_runs = json.loads((await events_service.snapshot_message(999, True))["data"])
+        assert len(admin_runs["active_runs"]) == 2
+
+
+class TestFilteredReconvergence:
+    async def test_filtered_viewer_converges_via_authoritative_backfill(
+        self, client, make_client, monkeypatch
+    ):
+        """D-P5 end to end: a filtered viewer reconnects mid-system-run, sees
+        the global last_seq in their snapshot, refetches the backfill, gets
+        exactly their visible subset, keeps streaming filtered live events —
+        and a repeat backfill from their max visible seq returns nothing new
+        (convergence, no spinning)."""
+        monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+        await client.post("/api/auth/register", json=OWNER, headers=CSRF)
+        b_client = await make_client()
+        res = await b_client.post(
+            "/api/auth/register",
+            json={"email": "b@example.com", "password": "hunter2hunter2"},
+            headers=CSRF,
+        )
+        b_id = res.json()["user"]["id"]
+
+        async with _sessionmaker()() as session:
+            sc = Scenario(session)
+            b = await session.get(User, b_id)
+            item_b = await sc.item("Beta")
+            other = await sc.item("Alpha")
+            await sc.watch(item_b, user=b)
+            run = await sc.run(status="running", started_at=sc.now, days_ago=0)
+            await sc.run_event(run, 1, message="Run started", event_type="run_started")
+            await sc.run_event(run, 2, payload={"item_id": other.id})
+            await sc.run_event(run, 3, payload={"item_id": item_b.id})
+            run_id, item_b_id = run.id, item_b.id
+            await sc.commit()
+
+        conn = _SseConnection(dict(b_client.cookies))
+        await conn.start()
+        try:
+            first = await conn.next_event()
+            assert first["event"] == "run.snapshot"
+            (entry,) = json.loads(first["data"])["active_runs"]
+            assert entry["id"] == run_id
+            assert entry["last_seq"] == 3  # the GLOBAL cursor — metadata, never compared
+
+            # the authoritative backfill: exactly B's visible subset
+            res = await b_client.get(f"/api/runs/{run_id}/events?after_seq=0")
+            assert [e["seq"] for e in res.json()["data"]] == [1, 3]
+
+            # live continuation stays filtered by the same predicate
+            await _seed(_event(run_id, seq=4, payload={"item_id": item_b_id}))
+            await events_service._handle_notification(
+                json.dumps({"kind": "event", "run_id": run_id, "seq": 4})
+            )
+            frame = await conn.next_event()
+            assert frame["event"] == "run.event"
+            assert json.loads(frame["data"])["seq"] == 4
+
+            # convergence: from B's max visible seq there is nothing left
+            res = await b_client.get(f"/api/runs/{run_id}/events?after_seq=4")
+            assert res.json()["data"] == []
+        finally:
+            await conn.disconnect()
 
 
 class TestEndToEnd:
