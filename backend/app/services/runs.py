@@ -32,6 +32,7 @@ def build_agent_run(run: AgentRuns) -> AgentRun:
     """One agent_runs row -> AgentRun. Shared by routers/runs.py and the SSE hub."""
     return AgentRun(
         id=run.id,
+        user_id=run.user_id,
         scope=run.scope,
         scope_id=run.scope_id,
         scope_label=run.scope_label,
@@ -78,12 +79,15 @@ async def resolve_scope(db: AsyncSession, scope: str, scope_id: int | None) -> s
     return f"{noun}: {target.name}"
 
 
-async def enqueue_run(db: AsyncSession, scope: str, scope_id: int | None) -> AgentRuns:
-    """Insert a queued agent_runs row for the agent consumer to claim.
+async def enqueue_run(
+    db: AsyncSession, scope: str, scope_id: int | None, user_id: int
+) -> AgentRuns:
+    """Insert a queued agent_runs row, owned by the caller, for the agent to claim.
 
     Raises 409 run_in_progress (with error.run_id) if any run is queued or
-    running — one active run at a time, instance-wide. Commits on success and
-    returns the new row.
+    running — one active run at a time, instance-wide (there is a single agent
+    worker), even when the active run belongs to someone else. Commits on
+    success and returns the new row.
     """
     # active check before scope validation — handlers.ts checks hasActiveRun()
     # before even reading the body
@@ -99,7 +103,7 @@ async def enqueue_run(db: AsyncSession, scope: str, scope_id: int | None) -> Age
     # claims oldest-first anyway. A DB-level guard needs a partial unique index
     # (= a migration) — not worth it for a button double-click.
     label = await resolve_scope(db, scope, scope_id)
-    run = AgentRuns(scope=scope, scope_id=scope_id, scope_label=label)
+    run = AgentRuns(user_id=user_id, scope=scope, scope_id=scope_id, scope_label=label)
     db.add(run)
     await db.commit()
     # created_at is a server default; the async ORM can't lazy-fetch it later

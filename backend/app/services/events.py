@@ -82,6 +82,7 @@ async def snapshot_message() -> dict:
         active_runs=[
             RunSnapshotEntry(
                 id=run.id,
+                user_id=run.user_id,
                 status=run.status,
                 scope=run.scope,
                 scope_label=run.scope_label,

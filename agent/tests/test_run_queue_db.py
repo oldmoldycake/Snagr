@@ -122,6 +122,7 @@ async def read_run(run_id: int) -> dict:
     async with AsyncSessionLocal() as session:
         run = await session.get(AgentRuns, run_id)
         return {
+            "user_id": run.user_id,
             "scope": run.scope,
             "scope_id": run.scope_id,
             "scope_label": run.scope_label,
@@ -372,6 +373,7 @@ class TestCreateGlobalRun:
         assert created["scope"] == "global"
         assert created["scope_id"] is None
         assert created["scope_label"] == "Everything"
+        assert row["user_id"] is None  # the nightly sweep is a system run
         assert row["status"] == "running"
         assert row["started_at"] is not None
 
@@ -425,6 +427,25 @@ class TestClaimDueSchedule:
         assert run["scope_label"] == "Category: Games"
         assert run["status"] == "running"
         assert run["started_at"] is not None
+
+    def test_firing_copies_the_schedules_owner_onto_the_run(self):
+        async def scenario():
+            (uid,) = await seed(User(email="owner@test.local"))
+            await seed(due_schedule(user_id=uid))
+            claimed = await claim_due_schedule()
+            return uid, await read_run(claimed["id"])
+
+        uid, run = db(scenario())
+        assert run["user_id"] == uid
+
+    def test_a_system_schedule_fires_a_system_run(self):
+        async def scenario():
+            await seed(due_schedule())  # user_id stays NULL
+            claimed = await claim_due_schedule()
+            return await read_run(claimed["id"])
+
+        run = db(scenario())
+        assert run["user_id"] is None
 
     def test_a_recurring_fire_rolls_forward_anchored_past_downtime(self):
         async def scenario():

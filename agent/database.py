@@ -203,6 +203,8 @@ class AgentRuns(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = system run (schedule fire, nightly sweep, deleted owner) — visible to all
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
     scope_id: Mapped[int | None] = mapped_column()
     scope_label: Mapped[str] = mapped_column(Text)
@@ -245,6 +247,8 @@ class RunSchedules(Base):
     __tablename__ = "run_schedules"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = system schedule; claim_due_schedule copies this onto the run it fires
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
     scope_id: Mapped[int | None] = mapped_column()
     scope_label: Mapped[str] = mapped_column(Text)
@@ -849,6 +853,7 @@ async def claim_due_schedule() -> dict | None:
             return None
 
         run = AgentRuns(
+            user_id=schedule.user_id,
             scope=schedule.scope,
             scope_id=schedule.scope_id,
             scope_label=schedule.scope_label,

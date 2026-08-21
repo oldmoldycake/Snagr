@@ -121,6 +121,7 @@ async def test_runs_serialize_every_field(client, db_session):
     (run,) = (await client.get("/api/runs")).json()["data"]
     assert run == {
         "id": run["id"],
+        "user_id": None,
         "scope": "site",
         "scope_id": 7,
         "scope_label": "Site: TestBay",
@@ -200,13 +201,14 @@ async def test_trigger_requires_a_session(client):
 
 
 async def test_trigger_global_returns_202_with_a_queued_run(client):
-    await _sign_in(client)
+    user_id = await _sign_in(client)
 
     res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
     assert res.status_code == 202, res.text
     body = res.json()
     assert list(body) == ["run"]
     run = body["run"]
+    assert run["user_id"] == user_id  # the caller owns the run they trigger
     assert run["scope"] == "global"
     assert run["scope_id"] is None
     assert run["scope_label"] == "Everything"

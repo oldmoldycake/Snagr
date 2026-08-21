@@ -232,6 +232,8 @@ class AgentRuns(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = system run (schedule fire, nightly sweep, deleted owner) — visible to all
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
     scope_id: Mapped[int | None] = mapped_column()
     scope_label: Mapped[str] = mapped_column(Text)
@@ -273,6 +275,8 @@ class RunSchedules(Base):
     __tablename__ = "run_schedules"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = system schedule; the consume tick copies this onto the run it fires
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
     scope_id: Mapped[int | None] = mapped_column()
     scope_label: Mapped[str] = mapped_column(Text)

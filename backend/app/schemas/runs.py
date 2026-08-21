@@ -35,6 +35,7 @@ class RunStats(BaseModel):
 
 class AgentRun(BaseModel):
     id: int
+    user_id: int | None  # owner; None = system run, visible to every user
     scope: RunScope
     scope_id: int | None
     scope_label: str  # "Everything" | "Category: X" | "Site: Y" | "Item: Z"
@@ -79,6 +80,7 @@ class RunSnapshotEntry(BaseModel):
     """One active run in the connect snapshot (a subset of AgentRun)."""
 
     id: int
+    user_id: int | None
     status: RunStatus
     scope: RunScope
     scope_label: str

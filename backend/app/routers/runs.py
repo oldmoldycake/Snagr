@@ -41,7 +41,7 @@ async def trigger_run(
     body: RunCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
     try:
-        run = await runs_service.enqueue_run(db, body.scope, body.scope_id)
+        run = await runs_service.enqueue_run(db, body.scope, body.scope_id, user.id)
         return RunEnvelope(run=build_agent_run(run))
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e

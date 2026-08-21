@@ -147,7 +147,7 @@ class TestHub:
         active = json.loads(message["data"])["active_runs"]
         assert [r["status"] for r in active] == ["running", "queued"]
         # the exact subset mocks/sse.ts sends — the client casts it to AgentRun
-        assert set(active[0]) == {"id", "status", "scope", "scope_label", "last_seq"}
+        assert set(active[0]) == {"id", "user_id", "status", "scope", "scope_label", "last_seq"}
         assert active[0]["scope_label"] == "Site: TestBay"
 
     async def test_an_event_notification_broadcasts_the_row(self, mailbox):
