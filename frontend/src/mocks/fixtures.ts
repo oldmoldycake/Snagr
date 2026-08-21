@@ -87,12 +87,14 @@ export interface MockCheck {
 export interface MockWatch {
   id: number
   item_id: number
+  user_id: number
   notify: boolean
   target_cents: number | null
 }
 
 export interface MockRun {
   id: number
+  user_id: number | null
   scope: 'global' | 'category' | 'site' | 'item'
   scope_id: number | null
   scope_label: string
@@ -289,6 +291,16 @@ function seed() {
     ntfy_topic: 'snagr-demo-8f3a',
     created_at: NOW - 200 * DAY,
   })
+  // second, non-admin account for the runs-privacy surfaces (see seedGuestWatches)
+  store.users.push({
+    id: 2,
+    email: 'guest@snagr.dev',
+    password: 'snagr',
+    role: 'user',
+    is_active: true,
+    ntfy_topic: null,
+    created_at: NOW - 100 * DAY,
+  })
 
   store.sites = SITES.map(([name, base_url], i) => ({
     id: i + 1,
@@ -321,7 +333,7 @@ function seed() {
         site_ids: null,
         created_at: NOW - Math.floor(30 + rng() * 150) * DAY,
       })
-      store.watches.push({ id: newId(), item_id: itemId, notify: rng() > 0.3, target_cents: null })
+      store.watches.push({ id: newId(), item_id: itemId, user_id: 1, notify: rng() > 0.3, target_cents: null })
 
       // spread listings across the category's sites; >4 wraps with ebay dupes
       const VARIANTS = ['', ' (New)', ' (Open Box)', ' (Renewed)', ' — Used, Like New', ' — Used, Good', ' (Refurbished)']
@@ -350,7 +362,23 @@ function seed() {
 
   seedRetroGames(itemId, listingId)
 
+  seedGuestWatches()
+
   seedHistoricalRuns()
+}
+
+/**
+ * The guest's watches, for the runs-privacy demo: one item of their own plus a
+ * shared watch on an item the demo user also tracks. Only the runs/SSE
+ * surfaces are per-user in this mock — items/watches endpoints stay
+ * single-user, so the guest's items pages still show everything.
+ */
+function seedGuestWatches() {
+  const own = store.items.find((i) => i.name === 'Sony WH-1000XM5')!
+  store.watches.find((w) => w.item_id === own.id)!.user_id = 2
+
+  const shared = store.items.find((i) => i.name === 'RTX 4070 Super')!
+  store.watches.push({ id: newId(), item_id: shared.id, user_id: 2, notify: true, target_cents: null })
 }
 
 /**
@@ -386,7 +414,7 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
     site_ids: [EBAY_ID],
     created_at: NOW - 45 * DAY,
   })
-  store.watches.push({ id: newId(), item_id: emeraldId, notify: true, target_cents: null })
+  store.watches.push({ id: newId(), item_id: emeraldId, user_id: 1, notify: true, target_cents: null })
 
   const EMERALD_LISTINGS: {
     title: string
@@ -460,7 +488,7 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
     site_ids: null,
     created_at: NOW - 60 * DAY,
   })
-  store.watches.push({ id: newId(), item_id: itemId, notify: false, target_cents: null })
+  store.watches.push({ id: newId(), item_id: itemId, user_id: 1, notify: false, target_cents: null })
 
   const gcSites = [EBAY_ID, AMAZON_ID]
   for (const [i, siteId] of gcSites.entries()) {
@@ -485,8 +513,9 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
 
 function seedHistoricalRuns() {
   // a couple of finished historical runs for the runs page
-  const historicalRun = (idOffset: number, daysAgo: number, scope_label: string): MockRun => ({
+  const historicalRun = (idOffset: number, daysAgo: number, scope_label: string, user_id: number | null): MockRun => ({
     id: 900 + idOffset,
+    user_id,
     scope: idOffset % 2 === 0 ? 'global' : 'category',
     scope_id: idOffset % 2 === 0 ? null : 1,
     scope_label,
@@ -503,10 +532,84 @@ function seedHistoricalRuns() {
     created_at: NOW - daysAgo * DAY,
     last_seq: 0,
   })
-  store.runs.push(historicalRun(0, 1, 'Everything'), historicalRun(1, 2, 'Category: GPUs'), historicalRun(2, 4, 'Everything'))
+  const system = historicalRun(0, 1, 'Everything', null)
+  store.runs.push(system, historicalRun(1, 2, 'Category: GPUs', 1), historicalRun(2, 4, 'Everything', 2))
+  seedSystemRunEvents(system)
+}
+
+/**
+ * The system run's event log — mixed-ownership references so each viewer's
+ * filtered slice differs: the guest sees the lifecycle rows plus their own
+ * and the shared item; the demo admin sees all six.
+ */
+function seedSystemRunEvents(run: MockRun) {
+  const item = (name: string) => store.items.find((i) => i.name === name)!
+  const listingOf = (itemId: number) => store.listings.find((l) => l.item_id === itemId)!
+  const siteName = (siteId: number) => store.sites.find((s) => s.id === siteId)!.name
+
+  const demoOnly = item('Steam Deck OLED 512GB') // watched by the demo user only
+  const guestOwn = item('Sony WH-1000XM5') // the guest's watch
+  const shared = item('RTX 4070 Super') // watched by both users
+  const demoListing = listingOf(demoOnly.id)
+  const priceCents = latestCheck(demoListing.id)?.price_cents ?? 52999
+
+  const push = (
+    seq: number,
+    level: MockRunEvent['level'],
+    event_type: string,
+    message: string,
+    payload: Record<string, unknown> | null = null,
+  ) => store.runEvents.push({ run_id: run.id, seq, ts: run.started_at! + seq * 30_000, level, event_type, message, payload })
+
+  push(1, 'info', 'run_started', `Run started — ${run.scope_label}`)
+  push(2, 'info', 'item_started', `Searching ${siteName(demoListing.site_id)} for "${demoOnly.name}"…`, {
+    item_id: demoOnly.id,
+    site_id: demoListing.site_id,
+  })
+  push(3, 'success', 'price_found', `${siteName(demoListing.site_id)} — ${demoOnly.name}: $${(priceCents / 100).toFixed(2)} ✓`, {
+    listing_id: demoListing.id,
+    item_id: demoOnly.id,
+    price: (priceCents / 100).toFixed(2),
+  })
+  push(4, 'info', 'item_started', `Searching ${siteName(listingOf(guestOwn.id).site_id)} for "${guestOwn.name}"…`, {
+    item_id: guestOwn.id,
+    site_id: listingOf(guestOwn.id).site_id,
+  })
+  push(5, 'info', 'item_started', `Searching ${siteName(listingOf(shared.id).site_id)} for "${shared.name}"…`, {
+    item_id: shared.id,
+    site_id: listingOf(shared.id).site_id,
+  })
+  const s = run.stats!
+  push(6, 'success', 'run_finished', `Run complete — ${s.listings_checked} checked, ${s.prices_found} prices, ${s.new_listings} new listings, ${s.errors} errors`)
+  run.last_seq = 6
 }
 
 seed()
+
+// --- per-user run visibility (runs/SSE surfaces only) -----------------------------
+
+/** A viewer sees their own runs, system runs (user_id null), and — as admin — everything. */
+export function runVisible(run: MockRun, user: MockUser): boolean {
+  return user.role === 'admin' || run.user_id === null || run.user_id === user.id
+}
+
+/**
+ * Event-level predicate, applied within a visible run: payload-less events show
+ * to everyone; item references show to that item's watchers; listing references
+ * only to the listing's owner. MockListing has no watch_id, so a listing
+ * resolves through its item — same observable behavior while mock listings map
+ * 1:1 to a single watch per item.
+ */
+export function eventVisible(event: MockRunEvent, user: MockUser): boolean {
+  if (user.role === 'admin') return true
+  const itemId = event.payload?.item_id
+  const listingId = event.payload?.listing_id
+  if (itemId == null && listingId == null) return true
+  const watches = (id: number) => store.watches.some((w) => w.item_id === id && w.user_id === user.id)
+  if (typeof itemId === 'number' && watches(itemId)) return true
+  const listing = typeof listingId === 'number' ? store.listings.find((l) => l.id === listingId) : undefined
+  return listing != null && watches(listing.item_id)
+}
 
 // --- shared query helpers (used by handlers) --------------------------------------
 

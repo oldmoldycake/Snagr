@@ -1,32 +1,42 @@
 /**
- * Mock SSE: a broadcast hub feeding every open /api/events stream, plus the
+ * Mock SSE: a per-viewer hub feeding every open /api/events stream, plus the
  * scripted "demo run" that plays out an agent run in real time, writing real
- * price checks into the fixture store as it goes.
+ * price checks into the fixture store as it goes. Every frame is gated by the
+ * run-privacy predicate (runVisible / eventVisible in fixtures.ts), mirroring
+ * the backend hub.
  */
 
 import {
   activeListings,
+  eventVisible,
   latestCheck,
   newId,
+  runVisible,
   store,
   type MockItem,
   type MockListing,
   type MockRun,
+  type MockRunEvent,
+  type MockUser,
 } from './fixtures'
 import { toRun, toRunEvent } from './serializers'
 
-type StreamClient = { enqueue: (chunk: string) => void }
+export type StreamClient = { user: MockUser; enqueue: (chunk: string) => void }
 
 const clients = new Set<StreamClient>()
 
 export function addClient(client: StreamClient) {
   clients.add(client)
-  // snapshot on every (re)connect — the client backfills gaps from it
-  const active = store.runs.filter((r) => r.status === 'queued' || r.status === 'running')
+  // per-viewer snapshot on every (re)connect — the client refetches the
+  // backfill from it (the filtered response is authoritative; no gap inference)
+  const active = store.runs.filter(
+    (r) => (r.status === 'queued' || r.status === 'running') && runVisible(r, client.user),
+  )
   client.enqueue(
     encode('run.snapshot', {
       active_runs: active.map((r) => ({
         id: r.id,
+        user_id: r.user_id,
         status: r.status,
         scope: r.scope,
         scope_label: r.scope_label,
@@ -44,9 +54,20 @@ function encode(event: string, data: unknown, id?: string): string {
   return `event: ${event}\n${id ? `id: ${id}\n` : ''}data: ${JSON.stringify(data)}\n\n`
 }
 
-function broadcast(event: string, data: unknown, id?: string) {
-  const chunk = encode(event, data, id)
-  for (const client of clients) client.enqueue(chunk)
+/** Lifecycle envelopes (run.started / run.finished) go to viewers of the run. */
+function broadcastRun(event: string, run: MockRun) {
+  const chunk = encode(event, { run: toRun(run) })
+  for (const client of clients) {
+    if (runVisible(run, client.user)) client.enqueue(chunk)
+  }
+}
+
+/** run.event frames apply the full composed predicate per viewer. */
+function broadcastEvent(run: MockRun, event: MockRunEvent) {
+  const chunk = encode('run.event', toRunEvent(event), `${run.id}:${event.seq}`)
+  for (const client of clients) {
+    if (runVisible(run, client.user) && eventVisible(event, client.user)) client.enqueue(chunk)
+  }
 }
 
 // --- demo run script ----------------------------------------------------------
@@ -63,7 +84,7 @@ export function cancelDemoRun(run: MockRun) {
   run.status = 'cancelled'
   run.finished_at = Date.now()
   emit(run, 'warn', 'run_finished', 'Run cancelled')
-  broadcast('run.finished', { run: toRun(run) })
+  broadcastRun('run.finished', run)
 }
 
 function emit(
@@ -84,7 +105,7 @@ function emit(
     payload,
   }
   store.runEvents.push(event)
-  broadcast('run.event', toRunEvent(event), `${run.id}:${event.seq}`)
+  broadcastEvent(run, event)
 }
 
 function scopeListings(run: MockRun): MockListing[] {
@@ -152,7 +173,7 @@ export function startDemoRun(run: MockRun) {
   at(clock, () => {
     run.status = 'running'
     run.started_at = Date.now()
-    broadcast('run.started', { run: toRun(run) })
+    broadcastRun('run.started', run)
     emit(run, 'info', 'run_started', `Run started — ${run.scope_label}`)
   })
 
@@ -350,7 +371,7 @@ export function startDemoRun(run: MockRun) {
       'run_finished',
       `Run complete — ${stats.listings_checked} checked, ${stats.prices_found} prices, ${stats.new_listings} new listing${stats.new_listings === 1 ? '' : 's'}, ${stats.errors} error${stats.errors === 1 ? '' : 's'}`,
     )
-    broadcast('run.finished', { run: toRun(run) })
+    broadcastRun('run.finished', run)
     timers.delete(run.id)
   })
 }

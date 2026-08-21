@@ -24,9 +24,11 @@ import {
   cents,
   checksFor,
   downsample,
+  eventVisible,
   itemListings,
   newId,
   NOW,
+  runVisible,
   store,
   targetMet,
   type MockCategory,
@@ -45,7 +47,7 @@ import {
   toSite,
   toUser,
 } from './serializers'
-import { addClient, cancelDemoRun, hasActiveRun, removeClient, startDemoRun } from './sse'
+import { addClient, cancelDemoRun, hasActiveRun, removeClient, startDemoRun, type StreamClient } from './sse'
 
 const DAY = 86_400_000
 const SESSION_KEY = 'snagr:mock-session'
@@ -404,7 +406,7 @@ export const handlers = [
   }),
 
   http.post('/api/items', async ({ request }) => {
-    requireUser()
+    const user = requireUser()
     const body = (await request.json()) as ItemCreateRequest
     if (!body.name?.trim()) {
       return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
@@ -427,7 +429,7 @@ export const handlers = [
       created_at: Date.now(),
     }
     store.items.push(item)
-    store.watches.push({ id: newId(), item_id: item.id, notify: true, target_cents: null })
+    store.watches.push({ id: newId(), item_id: item.id, user_id: user.id, notify: true, target_cents: null })
     return HttpResponse.json(toItemSummary(item), { status: 201 })
   }),
 
@@ -715,7 +717,9 @@ export const handlers = [
 
   // ---- runs ----
   http.post('/api/runs', async ({ request }) => {
-    requireUser()
+    const user = requireUser()
+    // instance-wide, deliberately: one agent, one active run — even when the
+    // active run belongs to someone else (the bare run_id leaks no metadata)
     const active = hasActiveRun()
     if (active) {
       return err(409, 'run_in_progress', 'A run is already active', { run_id: active.id })
@@ -738,6 +742,7 @@ export const handlers = [
 
     const run: MockRun = {
       id: newId(),
+      user_id: user.id,
       scope: body.scope,
       scope_id: body.scope_id ?? null,
       scope_label: label,
@@ -755,13 +760,13 @@ export const handlers = [
   }),
 
   http.get('/api/runs', async ({ request }) => {
-    requireUser()
+    const user = requireUser()
     await wait()
     const url = new URL(request.url)
     const status = url.searchParams.get('status')
     const page = intParam(request, 'page', 1)
     const perPage = intParam(request, 'per_page', 25)
-    let runs = [...store.runs].sort((a, b) => b.created_at - a.created_at)
+    let runs = store.runs.filter((r) => runVisible(r, user)).sort((a, b) => b.created_at - a.created_at)
     if (status) runs = runs.filter((r) => r.status === status)
     const total = runs.length
     runs = runs.slice((page - 1) * perPage, page * perPage)
@@ -769,27 +774,36 @@ export const handlers = [
   }),
 
   http.get('/api/runs/:id', async ({ params }) => {
-    requireUser()
+    const user = requireUser()
     const run = store.runs.find((r) => r.id === Number(params.id))
-    if (!run) return err(404, 'not_found', `Run ${params.id} does not exist`)
+    // hidden ≡ nonexistent: another user's run 404s exactly like an unknown id
+    if (!run || !runVisible(run, user)) return err(404, 'not_found', `Run ${params.id} does not exist`)
     return HttpResponse.json(toRun(run))
   }),
 
   http.get('/api/runs/:id/events', async ({ params, request }) => {
-    requireUser()
+    const user = requireUser()
+    const run = store.runs.find((r) => r.id === Number(params.id))
+    if (!run || !runVisible(run, user)) return err(404, 'not_found', `Run ${params.id} does not exist`)
     const afterSeq = intParam(request, 'after_seq', 0)
     const limit = intParam(request, 'limit', 500)
+    // filter-then-limit: up to `limit` VISIBLE events, so a filtered viewer
+    // can always make progress from their last visible seq
     const events = store.runEvents
-      .filter((e) => e.run_id === Number(params.id) && e.seq > afterSeq)
+      .filter((e) => e.run_id === run.id && e.seq > afterSeq && eventVisible(e, user))
       .sort((a, b) => a.seq - b.seq)
       .slice(0, limit)
     return HttpResponse.json({ data: events.map(toRunEvent) })
   }),
 
   http.post('/api/runs/:id/cancel', async ({ params }) => {
-    requireUser()
+    const user = requireUser()
     const run = store.runs.find((r) => r.id === Number(params.id))
-    if (!run) return err(404, 'not_found', `Run ${params.id} does not exist`)
+    if (!run || !runVisible(run, user)) return err(404, 'not_found', `Run ${params.id} does not exist`)
+    // permission before state: "you may never cancel this" holds regardless of status
+    if (run.user_id === null && user.role !== 'admin') {
+      return err(403, 'forbidden', 'Only an admin can cancel a system run')
+    }
     if (run.status !== 'queued' && run.status !== 'running') {
       return err(409, 'not_active', 'This run has already finished')
     }
@@ -802,12 +816,13 @@ export const handlers = [
     const user = sessionUser()
     if (!user) return err(401, 'unauthenticated', 'Not signed in')
 
-    let client: { enqueue: (chunk: string) => void }
+    let client: StreamClient
     let heartbeat: ReturnType<typeof setInterval>
     const encoder = new TextEncoder()
     const stream = new ReadableStream({
       start(controller) {
         client = {
+          user,
           enqueue: (chunk: string) => {
             try {
               controller.enqueue(encoder.encode(chunk))

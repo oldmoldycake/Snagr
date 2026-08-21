@@ -80,7 +80,10 @@ export function RunsPage() {
                       <TD>
                         <RunStatusDot status={run.status} withLabel />
                       </TD>
-                      <TD className="font-medium text-ink">{run.scope_label}</TD>
+                      <TD className="font-medium text-ink">
+                        {run.scope_label}
+                        {run.user_id === null ? <span className="ml-2 text-xs font-normal text-ink-3">system</span> : null}
+                      </TD>
                       <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(run.created_at)}</TD>
                       <TD className="hidden font-mono text-xs text-ink-2 tnum sm:table-cell">
                         {run.started_at ? formatDuration(run.started_at, run.finished_at) : '—'}
