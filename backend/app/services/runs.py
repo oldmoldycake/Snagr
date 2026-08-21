@@ -25,6 +25,37 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
 from app.models import AgentRuns, Categories, Items, RunEvents, Sites
+from app.schemas.runs import AgentRun, RunEvent
+
+
+def build_agent_run(run: AgentRuns) -> AgentRun:
+    """One agent_runs row -> AgentRun. Shared by routers/runs.py and the SSE hub."""
+    return AgentRun(
+        id=run.id,
+        scope=run.scope,
+        scope_id=run.scope_id,
+        scope_label=run.scope_label,
+        status=run.status,
+        started_at=run.started_at.isoformat() if run.started_at is not None else None,
+        finished_at=run.finished_at.isoformat() if run.finished_at is not None else None,
+        stats=run.stats,
+        error=run.error,
+        created_at=run.created_at.isoformat(),
+        last_seq=run.last_seq,
+    )
+
+
+def build_run_event(event: RunEvents) -> RunEvent:
+    """One run_events row -> RunEvent. Shared by routers/runs.py and the SSE hub."""
+    return RunEvent(
+        run_id=event.run_id,
+        seq=event.seq,
+        ts=event.ts.isoformat(),
+        level=event.level,
+        event_type=event.event_type,
+        message=event.message,
+        payload=event.payload,
+    )
 
 
 async def resolve_scope(db: AsyncSession, scope: str, scope_id: int | None) -> str:

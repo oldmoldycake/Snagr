@@ -34,6 +34,51 @@ CSRF = {"X-Snagr-Csrf": "1"}
 
 _ALL_TABLES = ", ".join(t.name for t in Base.metadata.sorted_tables)
 
+# create_all knows nothing about triggers, so the pg_notify plumbing the SSE
+# hub listens to is installed here by hand — keep in sync with
+# migrations/versions/007_run_notify_triggers.py
+_NOTIFY_DDL = [
+    """
+    CREATE OR REPLACE FUNCTION notify_run_event() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify(
+            'snagr_run_events',
+            json_build_object('kind', 'event', 'run_id', NEW.run_id, 'seq', NEW.seq)::text
+        );
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    CREATE OR REPLACE FUNCTION notify_run_status() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify(
+            'snagr_run_events',
+            json_build_object('kind', 'status', 'run_id', NEW.id, 'status', NEW.status)::text
+        );
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    CREATE TRIGGER run_events_notify
+        AFTER INSERT ON run_events
+        FOR EACH ROW EXECUTE FUNCTION notify_run_event()
+    """,
+    """
+    CREATE TRIGGER agent_runs_insert_notify
+        AFTER INSERT ON agent_runs
+        FOR EACH ROW EXECUTE FUNCTION notify_run_status()
+    """,
+    """
+    CREATE TRIGGER agent_runs_status_notify
+        AFTER UPDATE OF status ON agent_runs
+        FOR EACH ROW
+        WHEN (OLD.status IS DISTINCT FROM NEW.status)
+        EXECUTE FUNCTION notify_run_status()
+    """,
+]
+
 
 def _engine():
     return _sessionmaker().kw["bind"]
@@ -45,6 +90,8 @@ async def _schema():
     async with _engine().begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)  # clear leftovers from a crashed run
         await conn.run_sync(Base.metadata.create_all)
+        for ddl in _NOTIFY_DDL:
+            await conn.execute(text(ddl))
     yield
     async with _engine().begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

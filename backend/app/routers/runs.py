@@ -25,25 +25,9 @@ from app.schemas.runs import (
     RunListParams,
 )
 from app.services import runs as runs_service
+from app.services.runs import build_agent_run, build_run_event
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
-
-
-def build_agent_run(run: AgentRuns) -> AgentRun:
-    """One agent_runs row -> AgentRun. Shared by every endpoint in this router."""
-    return AgentRun(
-        id=run.id,
-        scope=run.scope,
-        scope_id=run.scope_id,
-        scope_label=run.scope_label,
-        status=run.status,
-        started_at=run.started_at.isoformat() if run.started_at is not None else None,
-        finished_at=run.finished_at.isoformat() if run.finished_at is not None else None,
-        stats=run.stats,
-        error=run.error,
-        created_at=run.created_at.isoformat(),
-        last_seq=run.last_seq,
-    )
 
 
 @router.post(
@@ -135,20 +119,7 @@ async def get_run_events(
         )
         rows = (await db.execute(stmt)).scalars().all()
 
-        return DataList(
-            data=[
-                RunEvent(
-                    run_id=event.run_id,
-                    seq=event.seq,
-                    ts=event.ts.isoformat(),
-                    level=event.level,
-                    event_type=event.event_type,
-                    message=event.message,
-                    payload=event.payload,
-                )
-                for event in rows
-            ]
-        )
+        return DataList(data=[build_run_event(event) for event in rows])
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
