@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
-from app.models import AgentRuns, Categories, Items, RunEvents, Sites
+from app.models import AgentRuns, Categories, Items, Listings, RunEvents, Sites, User, Watches
 from app.schemas.runs import AgentRun, RunEvent
 
 
@@ -59,6 +59,53 @@ def build_run_event(event: RunEvents) -> RunEvent:
     )
 
 
+# --- visibility (per-user run privacy) ----------------------------------------
+# ONE predicate for every surface: routers/runs.py (list/detail/backfill/cancel)
+# and the SSE hub (services/events.py) both call these — the REST and push
+# channels must never disagree about what a viewer may see. Composition rule:
+# run_visible gates first; event_visible filters only WITHIN a visible run.
+
+
+def run_visible(run: AgentRuns, viewer_id: int, is_admin: bool) -> bool:
+    """A viewer sees their own runs, system runs (user_id NULL), and — as
+    admin — everything. A hidden run must behave exactly like a nonexistent
+    one (404, absent from lists) so its existence never leaks."""
+    return is_admin or run.user_id is None or run.user_id == viewer_id
+
+
+async def load_viewer_refs(db: AsyncSession, viewer_id: int) -> tuple[set[int], set[int]]:
+    """The viewer's (watched item_ids, owned listing_ids) — the two sets
+    event_visible keys on. Two small indexed queries; callers load once per
+    request/notification rather than caching (household scale)."""
+    items = (
+        await db.execute(select(Watches.item_id).where(Watches.user_id == viewer_id))
+    ).scalars()
+    listings = (
+        await db.execute(
+            select(Listings.id)
+            .join(Watches, Listings.watch_id == Watches.id)
+            .where(Watches.user_id == viewer_id)
+        )
+    ).scalars()
+    return set(items), set(listings)
+
+
+def event_visible(
+    event: RunEvents, watched_item_ids: set[int], owned_listing_ids: set[int]
+) -> bool:
+    """Event-level rule, applied only within runs the viewer can already see:
+    a payload with no item/listing reference (lifecycle, sweep counts) shows to
+    every viewer of the run; an item reference shows to that item's watchers
+    (a shared catalog item legitimately has several); a listing reference only
+    to the listing's owner (listings are per-watch). Admins skip this check."""
+    payload = event.payload or {}
+    item_id = payload.get("item_id")
+    listing_id = payload.get("listing_id")
+    if item_id is None and listing_id is None:
+        return True
+    return item_id in watched_item_ids or listing_id in owned_listing_ids
+
+
 async def resolve_scope(db: AsyncSession, scope: str, scope_id: int | None) -> str:
     """Validate the scope target exists and build the human scope_label.
 
@@ -68,8 +115,8 @@ async def resolve_scope(db: AsyncSession, scope: str, scope_id: int | None) -> s
     if scope == "global":
         return "Everything"
 
-    # `item` resolves the shared catalog, not the caller's watches — runs are
-    # instance-wide (agent_runs has no user_id), unlike the mock's per-user store
+    # `item` resolves the shared catalog, not the caller's watches — any user
+    # may target any catalog item; the run itself is stamped with its creator
     kinds = {"category": (Categories, "Category"), "site": (Sites, "Site"), "item": (Items, "Item")}
     model, noun = kinds[scope]
     # db.get() rejects a None ident, so a missing scope_id is a missing target
@@ -111,17 +158,24 @@ async def enqueue_run(
     return run
 
 
-async def cancel_run(db: AsyncSession, run_id: int) -> AgentRuns:
+async def cancel_run(db: AsyncSession, run_id: int, viewer: User) -> AgentRuns:
     """Mark a queued/running run cancelled and append its terminal run_events row.
 
-    Raises 404 not_found / 409 not_active (matching handlers.ts); commits on
+    Raises 404 not_found for unknown AND hidden runs (never confirm another
+    user's run exists), 403 forbidden for a system run and a non-admin caller,
+    409 not_active for finished runs (matching handlers.ts); commits on
     success and returns the updated row.
     """
     # FOR UPDATE serializes against the agent claiming/finishing this run —
     # otherwise the seq bump below could collide with the agent's (uq_run_seq)
     run = await db.get(AgentRuns, run_id, with_for_update=True)
-    if run is None:
+    is_admin = viewer.role == "admin"
+    if run is None or not run_visible(run, viewer.id, is_admin):
         raise err(404, "not_found", f"Run {run_id} does not exist")
+    # permission before state: "you may never cancel this" holds regardless of
+    # status. A visible non-system run is the caller's own (or they're admin).
+    if run.user_id is None and not is_admin:
+        raise err(403, "forbidden", "Only an admin can cancel a system run")
     if run.status not in ("queued", "running"):
         raise err(409, "not_active", "This run has already finished")
 

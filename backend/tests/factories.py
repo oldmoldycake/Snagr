@@ -27,7 +27,17 @@ writes those for sold/unavailable listings.
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
-from app.models import Categories, Items, Listings, PriceChecks, Sites, User, Watches
+from app.models import (
+    AgentRuns,
+    Categories,
+    Items,
+    Listings,
+    PriceChecks,
+    RunEvents,
+    Sites,
+    User,
+    Watches,
+)
 
 
 class Scenario:
@@ -159,6 +169,41 @@ class Scenario:
                 )
             )
         await self.db.flush()
+
+    async def run(self, user=None, status="succeeded", days_ago=1, **overrides) -> AgentRuns:
+        """An agent run; user=None makes a system run (visible to everyone)."""
+        fields = {
+            "user_id": user.id if user is not None else None,
+            "scope": "global",
+            "scope_id": None,
+            "scope_label": "Everything",
+            "status": status,
+            "created_at": self.ago(days_ago),
+            **overrides,
+        }
+        row = AgentRuns(**fields)
+        self.db.add(row)
+        await self.db.flush()
+        return row
+
+    async def run_event(self, run, seq, message=None, payload=None, **overrides) -> RunEvents:
+        """One run_events row; the payload's item_id/listing_id references are
+        what the visibility predicate keys on. Keeps run.last_seq honest."""
+        fields = {
+            "run_id": run.id,
+            "seq": seq,
+            "ts": self.now - timedelta(seconds=1000 - seq),
+            "level": "info",
+            "event_type": "listing_check",
+            "message": message or f"event {seq}",
+            "payload": payload,
+            **overrides,
+        }
+        row = RunEvents(**fields)
+        run.last_seq = max(run.last_seq, seq)
+        self.db.add(row)
+        await self.db.flush()
+        return row
 
     # --- convenience ---------------------------------------------------------
 
