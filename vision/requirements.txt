@@ -1,0 +1,29 @@
+# torch: CPU wheels only (D-V1 — CPU must work; GPU is a bonus an operator gets
+# by installing their own torch build). The extra index keeps the install small.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Web framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Model
+torch
+transformers
+huggingface_hub
+pillow
+numpy
+
+# Data / DB
+sqlalchemy
+psycopg[binary]
+pgvector
+python-dotenv
+
+# Object store / image fetching
+boto3
+httpx
+
+# Dev / test
+ruff
+pytest
