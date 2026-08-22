@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Plus } from 'lucide-react'
-import { createItem } from '@/api/endpoints'
+import { createItem, listCategories } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
+import { qk } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,27 +15,37 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 import { DEFAULT_TRACKING, TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
+/** Without a `categoryId` the dialog grows a category picker (dashboard use). */
 export function AddItemDialog({
   categoryId,
   categoryName,
   trigger,
 }: {
-  categoryId: number
-  categoryName: string
+  categoryId?: number
+  categoryName?: string
   trigger?: ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
   const [target, setTarget] = useState('')
+  const [pickedCategoryId, setPickedCategoryId] = useState<number | undefined>(undefined)
   const [tracking, setTracking] = useState<TrackingValue>(DEFAULT_TRACKING)
   const queryClient = useQueryClient()
+
+  const categories = useQuery({
+    queryKey: qk.categories,
+    queryFn: listCategories,
+    enabled: categoryId == null && open,
+  })
+  const effectiveCategoryId = categoryId ?? pickedCategoryId
 
   const create = useMutation({
     mutationFn: () =>
       createItem({
-        category_id: categoryId,
+        category_id: effectiveCategoryId!,
         name: name.trim(),
         target_price: target.trim() ? Number(target).toFixed(2) : null,
         ...trackingPayload(tracking),
@@ -45,6 +56,7 @@ export function AddItemDialog({
       setOpen(false)
       setName('')
       setTarget('')
+      setPickedCategoryId(undefined)
       setTracking(DEFAULT_TRACKING)
     },
   })
@@ -63,9 +75,9 @@ export function AddItemDialog({
         </Button>
       </DialogTrigger>
       <DialogContent>
-        <DialogTitle>Add item to {categoryName}</DialogTitle>
+        <DialogTitle>{categoryName ? `Add item to ${categoryName}` : 'Add item'}</DialogTitle>
         <DialogDescription>
-          The agent searches this category's sites for listings on its next run — no URLs needed.
+          The agent searches the category's sites for listings on its next run — no URLs needed.
         </DialogDescription>
         <form
           className="mt-4 space-y-3"
@@ -75,6 +87,22 @@ export function AddItemDialog({
           }}
         >
           {errorMessage ? <p className="text-xs text-rise">{errorMessage}</p> : null}
+          {categoryId == null ? (
+            <div>
+              <Label htmlFor="item-category">Category</Label>
+              <Select
+                ariaLabel="Category"
+                className="w-full"
+                placeholder="Pick a category"
+                value={pickedCategoryId != null ? String(pickedCategoryId) : undefined}
+                onValueChange={(v) => setPickedCategoryId(Number(v))}
+                options={(categories.data?.data ?? []).map((c) => ({
+                  value: String(c.id),
+                  label: c.name,
+                }))}
+              />
+            </div>
+          ) : null}
           <div>
             <Label htmlFor="item-name">Item name</Label>
             <Input
@@ -108,13 +136,19 @@ export function AddItemDialog({
             </p>
           </div>
 
-          <TrackingFields categoryId={categoryId} value={tracking} onChange={setTracking} />
+          {effectiveCategoryId != null ? (
+            <TrackingFields categoryId={effectiveCategoryId} value={tracking} onChange={setTracking} />
+          ) : null}
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={create.isPending || !name.trim()}>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={create.isPending || !name.trim() || effectiveCategoryId == null}
+            >
               {create.isPending ? <Loader2 className="animate-spin" /> : null}
               Add item
             </Button>
