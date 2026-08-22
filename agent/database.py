@@ -195,6 +195,23 @@ class ListingChecks(Base):
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class VisionScans(Base):
+    """Column-compatible SUBSET of backend/app/models.py's VisionScans (the
+    backend owns the schema, D1): just the columns save_listing's auto-reject
+    backstop reads. The embedding-bearing vision tables are deliberately not
+    mirrored — the agent never touches embeddings, which keeps this mirror
+    free of the pgvector dependency."""
+
+    __tablename__ = "vision_scans"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watches.id"))
+    listing_url: Mapped[str] = mapped_column(Text)
+    auto_reject: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    __table_args__ = (UniqueConstraint("watch_id", "listing_url", name="uq_vision_scan"),)
+
+
 class AgentRuns(Base):
     """One row per agent run — mirrors backend/app/models.py (the backend owns
     the schema, D1). Created status='queued' by the API; this agent claims and
