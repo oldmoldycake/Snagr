@@ -6,6 +6,8 @@ import type {
   ItemDetail,
   ItemSummary,
   Listing,
+  ReferenceImage,
+  ReviewQueueEntry,
   RunEvent,
   Site,
   User,
@@ -27,6 +29,8 @@ import {
   targetMet,
   type MockItem,
   type MockListing,
+  type MockQueueEntry,
+  type MockReference,
   type MockRun,
   type MockRunEvent,
   type MockUser,
@@ -40,6 +44,9 @@ export function toUser(u: MockUser): User {
     email: u.email,
     role: u.role,
     ntfy_topic: u.ntfy_topic,
+    vision_auto_reject_fake: u.vision_auto_reject_fake,
+    vision_auto_promote_real: u.vision_auto_promote_real,
+    vision_auto_promote_fake: u.vision_auto_promote_fake,
     created_at: iso(u.created_at)!,
   }
 }
@@ -152,9 +159,47 @@ export function toListing(l: MockListing): Listing {
     latest_status: lastAny?.status ?? null,
     match_score: l.match_score,
     match_summary: l.match_summary,
+    authenticity: l.authenticity
+      ? {
+          verdict: l.authenticity.verdict,
+          fake_confidence: l.authenticity.fake_confidence,
+          image_count: l.authenticity.image_count,
+          checked_at: iso(l.authenticity.checked_at)!,
+        }
+      : null,
     last_checked_at: iso(lastAny?.ts ?? null),
     created_at: iso(l.created_at)!,
     discovered_by_run_id: l.discovered_by_run_id,
+  }
+}
+
+export function toReference(r: MockReference, viewer: MockUser): ReferenceImage {
+  return {
+    id: r.id,
+    item_id: r.item_id,
+    label: r.label,
+    variant_tag: r.variant_tag,
+    provenance: r.provenance,
+    image_url: `/api/vision/images/${r.object_key}`,
+    // a reference's source listing is visible only to its capturer and admins (D-V11)
+    source_listing_url:
+      viewer.role === 'admin' || r.captured_by === viewer.id ? r.source_listing_url : null,
+    revoked: r.revoked,
+    created_at: iso(r.created_at)!,
+  }
+}
+
+export function toQueueEntry(e: MockQueueEntry): ReviewQueueEntry {
+  return {
+    id: e.id,
+    item_id: e.item_id,
+    item_name: store.items.find((i) => i.id === e.item_id)!.name,
+    image_url: `/api/vision/images/${e.object_key}`,
+    listing_url: e.listing_url,
+    suggested_label: e.suggested_label,
+    confidence: e.confidence,
+    llm_authenticity_read: e.llm_authenticity_read,
+    created_at: iso(e.created_at)!,
   }
 }
 

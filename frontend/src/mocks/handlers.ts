@@ -12,6 +12,7 @@ import type {
   LoginRequest,
   MeUpdateRequest,
   PasswordChangeRequest,
+  ReviewConfirmRequest,
   RunCreateRequest,
   SiteCreateRequest,
   SiteUpdateRequest,
@@ -31,6 +32,7 @@ import {
   runVisible,
   store,
   targetMet,
+  VISION_DEFAULTS,
   type MockCategory,
   type MockItem,
   type MockRun,
@@ -42,6 +44,8 @@ import {
   toItemDetail,
   toItemSummary,
   toListing,
+  toQueueEntry,
+  toReference,
   toRun,
   toRunEvent,
   toSite,
@@ -159,6 +163,7 @@ export const handlers = [
       ntfy_server_url: 'https://ntfy.example.com',
       registration_open: store.users.length === 0,
       oidc_provider_name: null,
+      vision_enabled: true,
     })
   }),
 
@@ -186,6 +191,7 @@ export const handlers = [
       role: 'admin' as const,
       is_active: true,
       ntfy_topic: null,
+      ...VISION_DEFAULTS,
       created_at: Date.now(),
     }
     store.users.push(user)
@@ -233,6 +239,7 @@ export const handlers = [
       role: 'user' as const,
       is_active: true,
       ntfy_topic: null,
+      ...VISION_DEFAULTS,
       created_at: Date.now(),
     }
     store.users.push(user)
@@ -245,8 +252,26 @@ export const handlers = [
   http.patch('/api/me', async ({ request }) => {
     const user = requireUser()
     const body = (await request.json()) as MeUpdateRequest
+    const thresholds = [
+      'vision_auto_reject_fake',
+      'vision_auto_promote_real',
+      'vision_auto_promote_fake',
+    ] as const
+    const fields: Record<string, string> = {}
+    for (const field of thresholds) {
+      const raw = body[field]
+      if (raw === undefined) continue
+      const n = Number(raw)
+      if (!Number.isFinite(n) || n < 0.5 || n > 1) fields[field] = 'Must be between 0.50 and 1.00'
+    }
+    if (Object.keys(fields).length > 0) {
+      return err(422, 'validation_error', 'Thresholds must be between 0.50 and 1.00', { fields })
+    }
     if (body.email !== undefined) user.email = body.email
     if (body.ntfy_topic !== undefined) user.ntfy_topic = body.ntfy_topic
+    for (const field of thresholds) {
+      if (body[field] !== undefined) user[field] = Number(body[field]).toFixed(2)
+    }
     return HttpResponse.json(toUser(user))
   }),
 
@@ -315,6 +340,9 @@ export const handlers = [
     const listingIds = new Set(store.listings.filter((l) => itemIds.has(l.item_id)).map((l) => l.id))
     store.listings = store.listings.filter((l) => !listingIds.has(l.id))
     store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
+    // deleting an item deletes its entire vision library (D-V12)
+    store.references = store.references.filter((r) => !itemIds.has(r.item_id))
+    store.visionQueue = store.visionQueue.filter((q) => !itemIds.has(q.item_id))
     return new HttpResponse(null, { status: 204 })
   }),
 
@@ -468,6 +496,9 @@ export const handlers = [
     const listingIds = new Set(store.listings.filter((l) => l.item_id === id).map((l) => l.id))
     store.listings = store.listings.filter((l) => l.item_id !== id)
     store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
+    // deleting an item deletes its entire vision library (D-V12)
+    store.references = store.references.filter((r) => r.item_id !== id)
+    store.visionQueue = store.visionQueue.filter((q) => q.item_id !== id)
     return new HttpResponse(null, { status: 204 })
   }),
 
@@ -515,6 +546,175 @@ export const handlers = [
         }
       })
     return HttpResponse.json({ data: checks })
+  }),
+
+  // ---- vision ----
+  // Contract gap, called out per house rules: this mock always reports
+  // vision_enabled: true and cannot exercise the disabled mode. The real
+  // backend answers 503 { error: { code: 'vision_unavailable' } } for every
+  // vision MUTATION when the sidecar is unconfigured (the two GET list
+  // routes return empty data instead) — covered by backend tests only.
+
+  http.get('/api/vision/review-queue', async ({ request }) => {
+    const user = requireUser()
+    await wait()
+    const itemId = new URL(request.url).searchParams.get('item_id')
+    const page = intParam(request, 'page', 1)
+    const perPage = intParam(request, 'per_page', 25)
+    // scoped to the capturing watch's owner — admins included (D-V11): you
+    // review what YOUR hunts captured
+    let entries = store.visionQueue
+      .filter((e) => e.user_id === user.id && e.review_state === 'suggested')
+      .sort((a, b) => b.created_at - a.created_at)
+    if (itemId) entries = entries.filter((e) => e.item_id === Number(itemId))
+    const total = entries.length
+    entries = entries.slice((page - 1) * perPage, page * perPage)
+    return HttpResponse.json({
+      data: entries.map(toQueueEntry),
+      meta: { page, per_page: perPage, total },
+    })
+  }),
+
+  http.post('/api/vision/review-queue/:id/confirm', async ({ params, request }) => {
+    const user = requireUser()
+    const entry = store.visionQueue.find((e) => e.id === Number(params.id))
+    // hidden ≡ nonexistent: another user's entry 404s exactly like an unknown id
+    if (!entry || entry.user_id !== user.id) {
+      return err(404, 'not_found', `Review entry ${params.id} does not exist`)
+    }
+    const body = (await request.json()) as ReviewConfirmRequest
+    if (body.label !== 'real' && body.label !== 'fake') {
+      return err(422, 'validation_error', 'Invalid label', {
+        fields: { label: "Must be 'real' or 'fake'" },
+      })
+    }
+    if (entry.review_state !== 'suggested') {
+      return err(409, 'already_reviewed', 'This entry has already been reviewed')
+    }
+    const reference = {
+      id: newId(),
+      item_id: entry.item_id,
+      label: body.label,
+      variant_tag: body.variant_tag?.trim() || null,
+      provenance: 'human' as const,
+      object_key: entry.object_key,
+      source_listing_url: entry.listing_url,
+      captured_by: user.id,
+      revoked: false,
+      created_at: Date.now(),
+    }
+    store.references.push(reference)
+    entry.review_state = 'confirmed'
+    return HttpResponse.json(toReference(reference, user), { status: 201 })
+  }),
+
+  http.delete('/api/vision/review-queue/:id', async ({ params }) => {
+    const user = requireUser()
+    const entry = store.visionQueue.find((e) => e.id === Number(params.id))
+    // an already-reviewed entry has left the queue — discarding it 404s too
+    if (!entry || entry.user_id !== user.id || entry.review_state !== 'suggested') {
+      return err(404, 'not_found', `Review entry ${params.id} does not exist`)
+    }
+    store.visionQueue = store.visionQueue.filter((e) => e.id !== entry.id)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  http.get('/api/items/:id/references', async ({ params }) => {
+    const user = requireUser()
+    await wait()
+    const id = Number(params.id)
+    // items are the viewer's watches (getItem scoping): no watch → 404
+    const watched = store.watches.some((w) => w.item_id === id && w.user_id === user.id)
+    if (!store.items.some((i) => i.id === id) || !watched) {
+      return err(404, 'not_found', `Item ${params.id} does not exist`)
+    }
+    const references = store.references
+      .filter((r) => r.item_id === id)
+      .sort((a, b) => b.created_at - a.created_at)
+    return HttpResponse.json({ data: references.map((r) => toReference(r, user)) })
+  }),
+
+  http.post('/api/items/:id/references', async ({ params, request }) => {
+    const user = requireUser()
+    const id = Number(params.id)
+    const watched = store.watches.some((w) => w.item_id === id && w.user_id === user.id)
+    if (!store.items.some((i) => i.id === id) || !watched) {
+      return err(404, 'not_found', `Item ${params.id} does not exist`)
+    }
+    const form = await request.formData()
+    const file = form.get('file')
+    const rawLabel = form.get('label')
+    const variantTag = form.get('variant_tag')
+    const label: 'real' | 'fake' | null =
+      rawLabel === 'real' || rawLabel === 'fake' ? rawLabel : null
+    if (!label) {
+      return err(422, 'validation_error', 'Invalid label', {
+        fields: { label: "Must be 'real' or 'fake'" },
+      })
+    }
+    if (!(file instanceof File) || !file.type.startsWith('image/')) {
+      return err(422, 'validation_error', 'Upload must be an image file', {
+        fields: { file: 'Must be an image file' },
+      })
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      return err(422, 'validation_error', 'Image must be 10 MB or smaller', {
+        fields: { file: 'Must be 10 MB or smaller' },
+      })
+    }
+    const reference = {
+      id: newId(),
+      item_id: id,
+      label,
+      variant_tag: typeof variantTag === 'string' && variantTag.trim() ? variantTag.trim() : null,
+      provenance: 'upload' as const,
+      object_key: `upload-${newId()}`,
+      source_listing_url: null,
+      captured_by: user.id,
+      revoked: false,
+      created_at: Date.now(),
+    }
+    store.references.push(reference)
+    return HttpResponse.json(toReference(reference, user), { status: 201 })
+  }),
+
+  http.delete('/api/vision/references/:id', async ({ params }) => {
+    const user = requireUser()
+    const reference = store.references.find((r) => r.id === Number(params.id))
+    // references are communal per item, so visibility = watching the item
+    const visible =
+      reference && store.watches.some((w) => w.item_id === reference.item_id && w.user_id === user.id)
+    if (!reference || !visible) {
+      return err(404, 'not_found', `Reference ${params.id} does not exist`)
+    }
+    // revoking an already-revoked reference is a harmless no-op
+    reference.revoked = true
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  http.post('/api/items/:id/references/revoke-auto', async ({ params }) => {
+    const user = requireUser()
+    const id = Number(params.id)
+    const watched = store.watches.some((w) => w.item_id === id && w.user_id === user.id)
+    if (!store.items.some((i) => i.id === id) || !watched) {
+      return err(404, 'not_found', `Item ${params.id} does not exist`)
+    }
+    const autos = store.references.filter((r) => r.item_id === id && r.provenance === 'auto' && !r.revoked)
+    for (const reference of autos) reference.revoked = true
+    return HttpResponse.json({ revoked: autos.length })
+  }),
+
+  // bytes for <img src> — not in endpoints.ts (same precedent as the SSE
+  // stream); the mock draws a deterministic placeholder per key
+  http.get('/api/vision/images/:key', async ({ params }) => {
+    const key = String(params.key)
+    const hue = [...key].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 360
+    const svg =
+      `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240">` +
+      `<rect width="320" height="240" fill="hsl(${hue} 40% 22%)"/>` +
+      `<text x="160" y="128" text-anchor="middle" fill="hsl(${hue} 60% 70%)" ` +
+      `font-family="monospace" font-size="14">${key.slice(0, 12)}</text></svg>`
+    return new HttpResponse(svg, { headers: { 'Content-Type': 'image/svg+xml' } })
   }),
 
   // ---- charts / aggregates ----
