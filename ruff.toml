@@ -1,4 +1,4 @@
-# Ruff config for all Python in the repo (backend/ and agent/).
+# Ruff config for all Python in the repo (backend/, agent/, and vision/).
 # Subdirectories inherit this file; venv/ dirs are excluded by default.
 target-version = "py314"
 line-length = 100
@@ -18,6 +18,7 @@ select = [
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query"]
 
 [lint.per-file-ignores]
-# Both must configure the environment before importing app.* — imports can't be at the top.
+# All must configure the environment before importing app.* — imports can't be at the top.
 "backend/tests/conftest.py" = ["E402"]
 "backend/migrations/env.py" = ["E402"]
+"vision/tests/conftest.py" = ["E402"]

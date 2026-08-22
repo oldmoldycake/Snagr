@@ -3,6 +3,7 @@ agent/.env
 frontend/.env
 frontend/.env.local
 backend/.env
+vision/.env
 
 # Logs
 *.log
