@@ -12,8 +12,6 @@ const badgeVariants = cva(
         rise: 'bg-rise/10 text-rise border border-rise/40',
         warn: 'bg-warn/10 text-warn border border-warn/40',
         lume: 'bg-lume-glow text-lume border border-lume/40',
-        /* transitional alias for `lume` while pages migrate off it */
-        accent: 'bg-lume-glow text-lume border border-lume/40',
         muted: 'bg-transparent text-ink-3 border border-hairline',
       },
     },

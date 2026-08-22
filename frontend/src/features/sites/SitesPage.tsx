@@ -7,6 +7,7 @@ import type { Site } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
   DialogContent,
@@ -107,6 +108,7 @@ function SiteDialog({
 export function SitesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Site | null>(null)
+  const [deleting, setDeleting] = useState<Site | null>(null)
   const queryClient = useQueryClient()
 
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
@@ -118,6 +120,7 @@ export function SitesPage() {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      setDeleting(null)
     },
   })
 
@@ -127,7 +130,7 @@ export function SitesPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="font-display text-lg font-semibold text-ink">Sites</h1>
+        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Sites</h1>
         <Button
           variant="primary"
           size="sm"
@@ -175,7 +178,7 @@ export function SitesPage() {
                         target="_blank"
                         rel="noreferrer"
                         title={site.base_url}
-                        className="inline-block max-w-[40vw] truncate align-middle text-xs text-accent hover:underline"
+                        className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
                       >
                         {site.base_url}
                       </a>
@@ -214,16 +217,7 @@ export function SitesPage() {
                               <Pencil /> Edit
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-rise"
-                              onSelect={() => {
-                                const warning =
-                                  site.listing_count > 0
-                                    ? `Delete ${site.name}? Its ${site.listing_count} listing${site.listing_count === 1 ? '' : 's'} will be deactivated.`
-                                    : `Delete ${site.name}?`
-                                if (window.confirm(warning)) remove.mutate(site)
-                              }}
-                            >
+                            <DropdownMenuItem className="text-rise" onSelect={() => setDeleting(site)}>
                               <Trash2 /> Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -246,6 +240,25 @@ export function SitesPage() {
           onOpenChange={setDialogOpen}
         />
       ) : null}
+      <ConfirmDialog
+        open={deleting != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null)
+        }}
+        title="Delete site"
+        description={
+          deleting
+            ? deleting.listing_count > 0
+              ? `${deleting.name} will be removed and its ${deleting.listing_count} listing${deleting.listing_count === 1 ? '' : 's'} deactivated.`
+              : `${deleting.name} will be removed.`
+            : ''
+        }
+        confirmLabel="Delete site"
+        pending={remove.isPending}
+        onConfirm={() => {
+          if (deleting) remove.mutate(deleting)
+        }}
+      />
     </div>
   )
 }
