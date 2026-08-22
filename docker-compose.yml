@@ -31,3 +31,49 @@ services:
       - "8081:80" # 8080 is taken by VS Code on this machine
     depends_on:
       - backend
+
+  # --- vision profile (opt-in): docker compose --profile vision up --build ------
+  # The visual-authenticity sidecar and its object store. Optional by design
+  # (D-V1): with VISION_SIDECAR_URL unset in backend/agent the feature is off
+  # and plain `docker compose up` is unchanged. LAN-INTERNAL, UNAUTHENTICATED —
+  # publish these ports to trusted interfaces only.
+  minio:
+    image: minio/minio
+    profiles: ["vision"]
+    command: server /data --console-address ":9001"
+    environment:
+      # must match S3_ACCESS_KEY / S3_SECRET_KEY in vision/.env
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-snagr-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-snagr-minio-secret}
+    volumes:
+      - minio-data:/data # image bytes persist here
+    # ports:
+    #   - "9001:9001" # minio web console — enable for debugging only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  vision:
+    build: ./vision
+    profiles: ["vision"]
+    env_file: vision/.env
+    environment:
+      S3_ENDPOINT: http://minio:9000 # in-network address overrides vision/.env
+    ports:
+      - "8100:8100" # host-run agent / backend dev servers reach it here
+    depends_on:
+      - minio
+    volumes:
+      - vision-hf-cache:/home/vision/.cache/huggingface # weights survive restarts
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s # first start may be downloading weights
+
+volumes:
+  minio-data:
+  vision-hf-cache:
