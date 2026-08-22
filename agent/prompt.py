@@ -15,6 +15,7 @@ async def generate_prompt(
     selection_mode: str,
     max_listings: int,
     allow_reproductions: bool,
+    vision_enabled: bool = False,
     known_urls: list[str] | None = None,
     rejected_checks: list | None = None,
     market: dict | None = None,
@@ -36,6 +37,11 @@ async def generate_prompt(
         max_listings:         How many listings to save for this watch (1-10).
         allow_reproductions:  Whether this watch's user has explicitly said
                               reproductions/replicas are acceptable for this item.
+        vision_enabled:       Whether the vision sidecar is configured (the
+                              check_images tool is registered); adds the photo
+                              authenticity block. Skipped when reproductions
+                              are allowed — repro-tolerant captures would
+                              poison the reference library (D-V9).
         known_urls:           URLs already tracked/checked — the agent should
                               skip these rather than re-evaluate them.
         rejected_checks:      Rows from get_checked_urls (with "url", "reason",
@@ -117,6 +123,33 @@ async def generate_prompt(
   condition fit; do not let a good price talk you into a lower authenticity bar.
   If you are uncertain whether a listing is authentic after checking the page,
   treat that uncertainty as a reason to lower the match_score sharply, not ignore it."""
+
+        if vision_enabled:
+            authenticity_block += f"""
+
+PHOTO AUTHENTICITY CHECK (after the text screening above)
+  For each candidate that passes the screening above, collect the direct URLs
+  of the photos on its listing page that actually depict the item itself —
+  skip packaging-only shots, hands/scale references, seller logos, stock
+  banners, and unrelated thumbnails. Then, before deciding to save or reject,
+  call `check_images` exactly once for that candidate with watch_id={watch_id},
+  item_id={item_id}, the listing's URL, those image URLs, and your own honest
+  verdict from the screening you already did ("looks_authentic", "suspect",
+  or "unsure"). Skip the call only when the listing has no usable photos.
+  Act on the reply:
+    - If it starts with "REJECT:", do NOT save the listing: call
+      log_listing_check with reason "authenticity", quote the reported
+      confidence in notes, and move on.
+    - "leans_fake" below the reject threshold: you may still save the listing
+      if it otherwise qualifies, but lower match_score and state the photo
+      concern in match_summary ("photos consistent with known fakes").
+    - "leans_real" means the photos match known-real references. That is weak
+      reassurance ONLY — scammers reuse photos of genuine items — so never
+      raise match_score because of it and never describe a listing as
+      verified authentic.
+    - "inconclusive", "no verdict", or an error: the check could not help;
+      rely entirely on your own text screening.
+  Mention the image verdict in match_summary for every candidate you save."""
 
     if known_urls:
         known_urls_list = "\n".join(f"    - {u}" for u in known_urls)
