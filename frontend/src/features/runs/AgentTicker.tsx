@@ -81,7 +81,9 @@ export function AgentTicker({ className }: { className?: string }) {
         │
       </span>
       <span className="min-w-0 flex-1 truncate text-ink-2">
-        {last == null ? (
+        {/* Pending is not "no runs" — stay blank until the query answers so the
+            empty-state copy can't flash on load. */}
+        {lastRun.isPending ? null : last == null ? (
           'No sweeps yet — run the agent to get eyes on your targets.'
         ) : last.status === 'failed' ? (
           <>
