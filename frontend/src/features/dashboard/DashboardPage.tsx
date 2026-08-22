@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Plus } from 'lucide-react'
-import { getDashboardStats, getPriceDrops, listItems } from '@/api/endpoints'
+import { getDashboardStats, getPriceDrops, listCategories, listItems } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { PriceDrop } from '@/api/types'
 import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
@@ -40,6 +40,7 @@ export function DashboardPage() {
     queryFn: () => listItems({ range, search, per_page: WATCH_PAGE_SIZE }),
     placeholderData: keepPreviousData,
   })
+  const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
 
   const rows = useMemo(() => sortByDistanceToTarget(items.data?.data ?? []), [items.data])
   const dropsByItem = useMemo(() => {
@@ -50,9 +51,16 @@ export function DashboardPage() {
     return map
   }, [drops.data])
 
-  const isEmpty = items.isSuccess && rows.length === 0 && !search
+  // Bootstrap only when there is truly nothing — with categories but no items,
+  // the page must still render (the chips line is the only category nav).
+  const isBootstrap =
+    items.isSuccess &&
+    categories.isSuccess &&
+    rows.length === 0 &&
+    categories.data.data.length === 0 &&
+    !search
 
-  if (isEmpty) {
+  if (isBootstrap) {
     return (
       <EmptyState
         title="Set your first target"
@@ -72,7 +80,7 @@ export function DashboardPage() {
 
   return (
     <div>
-      {search ? null : items.isLoading ? (
+      {search || (items.isSuccess && rows.length === 0) ? null : items.isLoading ? (
         <div className="space-y-3">
           <Skeleton className="h-3 w-40" />
           <Skeleton className="h-11 w-72" />
@@ -114,8 +122,15 @@ export function DashboardPage() {
               <Skeleton className="h-6" />
               <Skeleton className="h-6" />
             </div>
-          ) : rows.length === 0 ? (
+          ) : rows.length === 0 && search ? (
             <p className="px-4 py-6 text-[13px] text-ink-3">No items match this search.</p>
+          ) : rows.length === 0 ? (
+            <EmptyState
+              className="m-4 border-0"
+              title="Add an item to start tracking"
+              description="Pick a category, give the item a name and a target price — the agent searches the category's sites for listings."
+              action={<AddItemDialog />}
+            />
           ) : (
             <>
               <WatchList items={rows} drops={dropsByItem} showCategory />
