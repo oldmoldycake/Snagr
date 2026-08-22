@@ -23,7 +23,7 @@ export function RunButton({
   if (active) {
     return (
       <Button {...buttonProps} onClick={() => setPanelOpen(true)}>
-        <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-accent" />
+        <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-lume" />
         Running…
       </Button>
     )
