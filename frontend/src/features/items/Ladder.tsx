@@ -73,23 +73,38 @@ export function Ladder({
         <span className="absolute left-0 text-ink-3">
           {RANGE_LABELS[range]} high {formatMoney(high.toFixed(2), currency)}
         </span>
+        {/* Past 55% the positioned label would overprint the right-anchored one
+            (worst exactly when best ≈ target), so the pair collapses into a
+            single right-anchored phrase instead. */}
         {inRange ? (
-          <>
-            <span
-              className="absolute -translate-x-full whitespace-nowrap text-drop/60"
-              style={{ left: `${Math.max(targetPos, 42)}%` }}
-            >
-              ⌖ {formatMoney(target, currency)} ·
-            </span>
+          targetPos > 55 ? (
             <span className="absolute right-0 whitespace-nowrap text-drop">
+              <span className="text-drop/60">⌖ {formatMoney(target, currency)}{' · '}</span>
               now {formatMoney(best, currency)} ⌖
             </span>
-          </>
+          ) : (
+            <>
+              <span
+                className="absolute -translate-x-full whitespace-nowrap text-drop/60"
+                style={{ left: `${Math.max(targetPos, 42)}%` }}
+              >
+                ⌖ {formatMoney(target, currency)} ·
+              </span>
+              <span className="absolute right-0 whitespace-nowrap text-drop">
+                now {formatMoney(best, currency)} ⌖
+              </span>
+            </>
+          )
+        ) : markerPos > 55 ? (
+          <span className="absolute right-0 whitespace-nowrap">
+            <span className="text-lume">now {formatMoney(best, currency)}</span>
+            <span className="text-drop">{' · '}⌖ target {formatMoney(target, currency)}</span>
+          </span>
         ) : (
           <>
             <span
               className="absolute -translate-x-1/2 whitespace-nowrap text-lume"
-              style={{ left: `${Math.max(46, Math.min(markerPos, 76))}%` }}
+              style={{ left: `${Math.max(46, markerPos)}%` }}
             >
               now {formatMoney(best, currency)}
             </span>
