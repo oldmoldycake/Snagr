@@ -349,7 +349,9 @@ function seed() {
           url: `${site.base_url}/p/${slug}${l >= cat.sites.length ? `-${l}` : ''}`,
           title: `${seedItem.name}${VARIANTS[l] ?? ''}`,
           site_sku: `SKU-${String(listingId).padStart(5, '0')}`,
-          active: true,
+          // Items seeded past the 5-slot cap: cheapest mode keeps the cheapest
+          // copies tracked, so the pricey Used ones sit inactive.
+          active: seedItem.listings <= 5 || !(VARIANTS[l] ?? '').includes('Used'),
           match_score: null,
           match_summary: null,
           created_at: NOW - Math.floor(20 + rng() * 140) * DAY,
@@ -580,7 +582,12 @@ function seedSystemRunEvents(run: MockRun) {
     site_id: listingOf(shared.id).site_id,
   })
   const s = run.stats!
-  push(6, 'success', 'run_finished', `Run complete — ${s.listings_checked} checked, ${s.prices_found} prices, ${s.new_listings} new listings, ${s.errors} errors`)
+  push(
+    6,
+    'success',
+    'run_finished',
+    `Run complete — ${s.listings_checked} checked, ${s.prices_found} prices, ${s.new_listings} new listing${s.new_listings === 1 ? '' : 's'}, ${s.errors} error${s.errors === 1 ? '' : 's'}`,
+  )
   run.last_seq = 6
 }
 

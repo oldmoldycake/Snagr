@@ -9,11 +9,11 @@ export function MatchPill({ score, summary }: { score: number | null; summary: s
   if (score == null) return <span className="text-xs text-ink-3">—</span>
 
   const band =
-    score >= 75
+    score >= 85
       ? 'border-drop/40 bg-drop/10 text-drop'
-      : score >= 50
-        ? 'border-hairline bg-raised text-ink-2'
-        : 'border-rise/40 bg-rise/10 text-rise'
+      : score >= 70
+        ? 'border-lume/40 bg-lume-glow text-lume'
+        : 'border-hairline-strong bg-transparent text-ink-3'
 
   const pill = (
     <span

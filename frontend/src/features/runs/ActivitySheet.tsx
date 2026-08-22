@@ -3,38 +3,36 @@ import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ExternalLink } from 'lucide-react'
 import { cancelRun } from '@/api/endpoints'
-import type { RunEvent, RunEventLevel } from '@/api/types'
+import type { RunEvent } from '@/api/types'
+import { Radar } from '@/components/ui/radar'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
+import { TerminalLogLine } from '@/components/ui/terminal-log'
 import { useSession } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatDuration } from '@/lib/time'
 import { isRunActive, useRunEvents } from './RunEventsProvider'
 import { RunStatusDot } from './RunStatusDot'
 
-const LEVEL_GLYPHS: Record<RunEventLevel, { glyph: string; className: string }> = {
-  info: { glyph: '›', className: 'text-ink-3' },
-  success: { glyph: '✓', className: 'text-drop' },
-  warn: { glyph: '⚠', className: 'text-warn' },
-  error: { glyph: '✗', className: 'text-rise' },
-}
-
 function EventLine({ event }: { event: RunEvent }) {
-  const { glyph, className } = LEVEL_GLYPHS[event.level]
-  const time = new Date(event.ts).toLocaleTimeString('en-US', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  })
   return (
-    <div className="flex gap-2 px-4 py-1 font-mono text-xs leading-5">
-      <span className="shrink-0 text-ink-3/60 tnum">{time}</span>
-      <span aria-hidden className={cn('shrink-0', className)}>
-        {glyph}
-      </span>
-      <span className={cn('break-words', event.level === 'error' ? 'text-rise' : 'text-ink-2')}>
-        {event.message}
-      </span>
+    <div className="px-4 py-0.5">
+      <TerminalLogLine
+        line={{
+          key: `${event.run_id}:${event.seq}`,
+          time: new Date(event.ts).toLocaleTimeString('en-US', {
+            hour12: false,
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          level: event.level,
+          message: (
+            <span className={cn('break-words', event.level === 'error' ? 'text-rise' : undefined)}>
+              {event.message}
+            </span>
+          ),
+        }}
+      />
     </div>
   )
 }
@@ -81,9 +79,15 @@ export function ActivitySheet() {
     <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
       <SheetContent aria-describedby={undefined}>
         <div className="border-b border-hairline px-4 py-3">
-          <div className="flex items-center gap-2 pr-8">
-            {activeRun ? <RunStatusDot status={activeRun.status} /> : null}
-            <SheetTitle className="min-w-0 truncate font-display text-sm font-semibold text-ink">
+          <div className="flex items-center gap-2.5 pr-8">
+            {active ? (
+              <Radar size={22} />
+            ) : activeRun ? (
+              <RunStatusDot status={activeRun.status} />
+            ) : (
+              <Radar size={22} animate={false} />
+            )}
+            <SheetTitle className="min-w-0 truncate font-display text-[15px] font-semibold tracking-[0.06em] text-ink uppercase">
               {activeRun ? activeRun.scope_label : 'Agent activity'}
             </SheetTitle>
             {active && activeRun ? <ElapsedTimer startedAt={activeRun.started_at} /> : null}
@@ -121,7 +125,7 @@ export function ActivitySheet() {
           </SheetDescription>
         </div>
 
-        <div ref={logRef} onScroll={onScroll} className="relative flex-1 overflow-y-auto bg-page/60 py-2">
+        <div ref={logRef} onScroll={onScroll} className="relative flex-1 overflow-y-auto bg-well py-2">
           {events.length === 0 ? (
             <p className="px-4 py-6 font-mono text-xs text-ink-3">
               {active ? 'Waiting for the agent…' : 'No run activity yet. Start a run to watch it live.'}

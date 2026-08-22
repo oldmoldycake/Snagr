@@ -1,37 +1,36 @@
 import { useState } from 'react'
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ExternalLink, Pencil, Trash2 } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import {
   deleteItem,
   getItem,
-  getPriceHistory,
-  getPriceSummary,
   listPriceChecks,
   listSites,
   updateListing,
   updateWatch,
 } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { ItemDetail, Listing } from '@/api/types'
-import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
+import type { ItemDetail, Listing, PriceCheck } from '@/api/types'
+import { useRangeParam } from '@/components/charts/RangeSelector'
 import { Badge, SnaggedBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
 import { SimpleTooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { formatDateTime, relativeTime } from '@/lib/time'
 import { RunButton } from '@/features/runs/RunButton'
+import { ChartPanel } from './ChartPanel'
 import { EditItemDialog } from './EditItemDialog'
-import { AvgBestChart } from './AvgBestChart'
+import { Ladder } from './Ladder'
 import { MatchPill } from './MatchPill'
-import { PriceHistoryChart } from './PriceHistoryChart'
 
 function ListingRow({
   listing,
@@ -77,17 +76,20 @@ function ListingRow({
               href={listing.url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex max-w-52 items-center gap-1 text-[13px] text-ink hover:text-accent hover:underline sm:max-w-72"
+              className="inline-flex max-w-52 items-center gap-1 text-[13px] font-medium text-ink hover:text-lume hover:underline sm:max-w-80"
             >
               <span className="truncate">
                 {listing.title ?? listing.url.replace(/^https?:\/\/(www\.)?/, '')}
               </span>
               <ExternalLink className="size-3 shrink-0 text-ink-3" />
             </a>
-            <p className="text-xs text-ink-3">{listing.site_name}</p>
+            <p className="truncate font-mono text-[10.5px] text-ink-3">
+              {listing.site_name}
+              {listing.match_summary ? ` · ${listing.match_summary}` : ''}
+            </p>
           </div>
           {isBestMatch ? (
-            <Badge variant="accent" className="shrink-0">
+            <Badge variant="lume" className="shrink-0">
               Best match
             </Badge>
           ) : null}
@@ -96,7 +98,9 @@ function ListingRow({
       <TD className="hidden md:table-cell">
         <MatchPill score={listing.match_score} summary={listing.match_summary} />
       </TD>
-      <TD className="text-right font-mono text-ink tnum">{formatMoney(listing.latest_price)}</TD>
+      <TD className="text-right font-mono font-semibold text-ink tnum">
+        {formatMoney(listing.latest_price)}
+      </TD>
       <TD>
         {soldOrEnded ? (
           <Badge variant="warn">
@@ -105,7 +109,7 @@ function ListingRow({
         ) : listing.in_stock == null ? (
           <span className="text-xs text-ink-3">—</span>
         ) : (
-          <span className="flex items-center gap-1.5 text-xs text-ink-2">
+          <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-ink-2">
             <span
               aria-hidden
               className={cn('size-1.5 rounded-full', listing.in_stock ? 'bg-drop' : 'bg-rise')}
@@ -114,8 +118,10 @@ function ListingRow({
           </span>
         )}
       </TD>
-      <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(listing.last_checked_at)}</TD>
-      <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">
+      <TD className="hidden font-mono text-xs whitespace-nowrap text-ink-3 md:table-cell">
+        {relativeTime(listing.last_checked_at)}
+      </TD>
+      <TD className="hidden font-mono text-xs whitespace-nowrap text-ink-3 lg:table-cell">
         {listing.discovered_by_run_id != null ? (
           <Link to={`/runs/${listing.discovered_by_run_id}`} className="hover:text-ink hover:underline">
             {relativeTime(listing.created_at)}
@@ -139,6 +145,28 @@ function ListingRow({
   )
 }
 
+function checkLine(check: PriceCheck): LogLine {
+  const level =
+    check.status === 'ok'
+      ? 'success'
+      : check.status === 'error'
+        ? 'warn'
+        : check.status === 'sold' || check.status === 'ended'
+          ? 'error'
+          : 'info'
+  const message =
+    check.status === 'sold' || check.status === 'ended'
+      ? `${check.status} · ${check.site_name}`
+      : check.status === 'error'
+        ? `check failed · ${check.site_name}`
+        : `${formatMoney(check.price, check.currency)} · ${
+            check.in_stock == null ? 'stock unknown' : check.in_stock ? 'in stock' : 'out of stock'
+          } · ${check.site_name}`
+  return { key: check.id, time: formatDateTime(check.checked_at), level, message }
+}
+
+const CHECKS_PREVIEW = 8
+
 export function ItemDetailPage() {
   const { id = '' } = useParams()
   const itemId = Number(id)
@@ -146,23 +174,13 @@ export function ItemDetailPage() {
   const queryClient = useQueryClient()
   const [range, setRange] = useRangeParam()
   const [editOpen, setEditOpen] = useState(false)
-  const [logOpen, setLogOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [allChecks, setAllChecks] = useState(false)
 
   const item = useQuery({ queryKey: qk.item(itemId), queryFn: () => getItem(itemId) })
-  const history = useQuery({
-    queryKey: qk.itemHistory(itemId, range),
-    queryFn: () => getPriceHistory(itemId, range),
-    placeholderData: keepPreviousData,
-  })
-  const summary = useQuery({
-    queryKey: qk.itemSummary(itemId, range),
-    queryFn: () => getPriceSummary(itemId, range),
-    placeholderData: keepPreviousData,
-  })
   const checks = useQuery({
     queryKey: qk.itemChecks(itemId),
     queryFn: () => listPriceChecks(itemId, 50),
-    enabled: logOpen,
   })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
 
@@ -210,6 +228,7 @@ export function ItemDetailPage() {
 
   const detail = item.data
   const target = detail.watch.target_price ?? detail.target_price
+  const bestListing = detail.listings.find((l) => l.id === detail.best_listing_id) ?? null
 
   // badge the highest-scoring tracked listing (price breaks ties) in best_match mode
   const bestMatchListingId =
@@ -224,192 +243,231 @@ export function ItemDetailPage() {
       : null
 
   const trackedCount = detail.listings.filter((l) => l.active).length
+  const siteNames =
+    detail.site_ids == null
+      ? 'all category sites'
+      : (sites.data?.data ?? [])
+          .filter((s) => detail.site_ids!.includes(s.id))
+          .map((s) => s.name)
+          .join(', ') || `${detail.site_ids.length} sites`
+
+  const checkRows = checks.data?.data ?? []
+  const shownChecks = allChecks ? checkRows : checkRows.slice(0, CHECKS_PREVIEW)
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs text-ink-3">
-            <Link to={`/categories/${detail.category_slug}`} className="hover:text-ink-2 hover:underline">
-              {detail.category_name}
-            </Link>{' '}
-            /
-          </p>
-          <div className="mt-0.5 flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-lg font-semibold text-ink">{detail.name}</h1>
-            {detail.target_met ? <SnaggedBadge /> : null}
-            <Button variant="ghost" size="iconSm" aria-label="Edit item" onClick={() => setEditOpen(true)}>
-              <Pencil />
-            </Button>
-            <Button
-              variant="ghost"
-              size="iconSm"
-              aria-label="Delete item"
-              className="text-rise"
-              onClick={() => {
-                if (window.confirm(`Delete “${detail.name}” and its price history?`)) remove.mutate()
-              }}
-            >
-              <Trash2 />
-            </Button>
-          </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1">
-            <span className="font-mono text-sm tnum">
-              <span className={cn(detail.target_met ? 'text-drop' : 'text-ink')}>
-                {formatMoney(detail.best_price, detail.currency)}
-              </span>
-              <span className="text-ink-3"> best · {formatMoney(detail.avg_price, detail.currency)} avg</span>
-            </span>
-            <span className="font-mono text-sm text-ink-3 tnum">
-              target {formatMoney(target, detail.currency)}
-            </span>
-            <label className="flex items-center gap-1.5 text-xs text-ink-2">
-              <Switch
-                checked={detail.watch.notify}
-                onCheckedChange={(v) => notifyToggle.mutate(v)}
-                aria-label="Notify me when the target price is hit"
-              />
-              Notify at target
-            </label>
-          </div>
-          {detail.criteria ? (
-            <p className="mt-1.5 max-w-xl text-xs text-ink-2 italic">“{detail.criteria}”</p>
-          ) : null}
-          <div className="mt-1.5">
-            <Badge variant="muted">
-              {detail.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'} · {trackedCount}/
-              {detail.max_listings} slots
-              {' · '}
-              {detail.site_ids == null
-                ? 'all category sites'
-                : (sites.data?.data ?? [])
-                    .filter((s) => detail.site_ids!.includes(s.id))
-                    .map((s) => s.name)
-                    .join(', ') || `${detail.site_ids.length} sites`}
-            </Badge>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <RangeSelector value={range} onChange={setRange} />
-          <RunButton scope="item" scopeId={detail.id} label="Run agent on this item" variant="snag" size="sm" />
-        </div>
+    <div>
+      <p className="font-mono text-[11px] tracking-[0.06em] text-ink-3 uppercase">
+        <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
+          {detail.category_name}
+        </Link>{' '}
+        <span className="opacity-50">/</span> {detail.name}
+      </p>
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-3">
+        <h1 className="font-display text-[30px] leading-tight font-semibold tracking-[0.02em] text-ink">
+          {detail.name}
+        </h1>
+        {detail.target_met ? <SnaggedBadge /> : null}
+        <span className="flex-1" />
+        <RunButton scope="item" scopeId={detail.id} label="Run this item" size="sm" />
+        <Button size="sm" onClick={() => setEditOpen(true)}>
+          Edit
+        </Button>
       </div>
 
-      <Card className={cn(history.isFetching && 'opacity-60')}>
-        <CardHeader>
-          <CardTitle>Listing price history</CardTitle>
-        </CardHeader>
-        <CardBody className="px-2">
-          {history.isLoading ? (
-            <Skeleton className="m-2 h-56" />
-          ) : history.data ? (
-            <PriceHistoryChart data={history.data} range={range} />
-          ) : null}
-        </CardBody>
-      </Card>
-
-      <Card className={cn(summary.isFetching && 'opacity-60')}>
-        <CardHeader>
-          <CardTitle>Average vs best price</CardTitle>
-        </CardHeader>
-        <CardBody className="px-2">
-          {summary.isLoading ? (
-            <Skeleton className="m-2 h-48" />
-          ) : summary.data ? (
-            <AvgBestChart data={summary.data} range={range} />
-          ) : null}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Listings</CardTitle>
-        </CardHeader>
-        <CardBody className="px-0 pb-1">
-          {detail.listings.length === 0 ? (
-            <EmptyState
-              className="m-4 border-0"
-              title={detail.criteria ? 'No listings met your criteria' : 'No listings yet'}
-              description={
-                detail.criteria
-                  ? 'The agent left the slots empty rather than track poor matches. Loosen the criteria, or run it again to search for new candidates.'
-                  : "The agent finds listings by searching this category's sites — run it on this item to discover them."
-              }
-              action={<RunButton scope="item" scopeId={detail.id} label="Run agent on this item" variant="snag" size="sm" />}
-            />
-          ) : (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Listing</TH>
-                  <TH className="hidden md:table-cell">Match</TH>
-                  <TH className="text-right">Latest price</TH>
-                  <TH>Stock</TH>
-                  <TH className="hidden md:table-cell">Checked</TH>
-                  <TH className="hidden md:table-cell">Discovered</TH>
-                  <TH>Active</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {detail.listings.map((listing) => (
-                  <ListingRow
-                    key={listing.id}
-                    listing={listing}
-                    itemId={detail.id}
-                    isBestMatch={bestMatchListingId === listing.id}
-                  />
-                ))}
-              </TBody>
-            </Table>
+      <div className="mt-4 flex flex-wrap items-end gap-x-7 gap-y-4">
+        <div
+          className={cn(
+            'font-display text-[52px] leading-none font-bold tnum',
+            detail.target_met ? 'text-drop' : 'text-ink',
+            detail.best_price == null && 'text-ink-3',
           )}
-        </CardBody>
-      </Card>
+        >
+          {formatMoney(detail.best_price, detail.currency)}
+        </div>
+        <div className="pb-1">
+          <p className="font-mono text-[13px] text-ink-2 tnum">
+            target <span className="font-semibold text-ink">{formatMoney(target, detail.currency)}</span>
+            {' — '}best of {trackedCount} active {trackedCount === 1 ? 'listing' : 'listings'}
+          </p>
+          <p className="mt-1 font-mono text-[11px] text-ink-3">
+            avg {formatMoney(detail.avg_price, detail.currency)}
+            {detail.best_site_name ? ` · ${detail.best_site_name}` : ''}
+            {' · checked '}
+            {relativeTime(detail.last_checked_at)}
+            {bestListing ? (
+              <>
+                {' · '}
+                <a
+                  href={bestListing.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-ink-2 hover:text-lume"
+                >
+                  open listing ↗
+                </a>
+              </>
+            ) : null}
+          </p>
+        </div>
+        <Ladder
+          spark={detail.spark}
+          best={detail.best_price}
+          target={target}
+          currency={detail.currency}
+          range={range}
+          className="mb-1 ml-auto"
+        />
+      </div>
 
-      <Collapsible open={logOpen} onOpenChange={setLogOpen}>
-        <CollapsibleTrigger className="flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
-          {logOpen ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          Recent price checks
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <Card className="mt-2">
-            <CardBody className="px-0 py-1">
-              {checks.isLoading ? (
-                <div className="space-y-2 p-4">
-                  <Skeleton className="h-5" />
-                  <Skeleton className="h-5" />
-                </div>
+      <div className="mt-7 grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="min-w-0 space-y-6">
+          <ChartPanel itemId={itemId} range={range} onRangeChange={setRange} />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Listings</CardTitle>
+              <span className="font-mono text-[11px] text-ink-3 tnum">
+                {detail.listings.length} tracked · {trackedCount} active
+                {detail.selection_mode === 'best_match' ? ' · best match mode' : ''}
+              </span>
+            </CardHeader>
+            <CardBody className="px-0 pb-1">
+              {detail.listings.length === 0 ? (
+                <EmptyState
+                  className="m-4 border-0"
+                  title={detail.criteria ? 'No listings met your criteria' : 'No listings yet'}
+                  description={
+                    detail.criteria
+                      ? 'The agent left the slots empty rather than track poor matches. Loosen the criteria, or run it again to search for new candidates.'
+                      : "The agent finds listings by searching this category's sites — run it on this item to discover them."
+                  }
+                  action={<RunButton scope="item" scopeId={detail.id} label="Run this item" variant="snag" size="sm" />}
+                />
               ) : (
                 <Table>
                   <THead>
                     <TR>
-                      <TH>Time</TH>
-                      <TH>Site</TH>
+                      <TH>Listing</TH>
+                      <TH className="hidden md:table-cell">Match</TH>
                       <TH className="text-right">Price</TH>
                       <TH>Status</TH>
-                      <TH>Stock</TH>
+                      <TH className="hidden md:table-cell">Checked</TH>
+                      <TH className="hidden lg:table-cell">Found</TH>
+                      <TH>Active</TH>
                     </TR>
                   </THead>
                   <TBody>
-                    {(checks.data?.data ?? []).map((check) => (
-                      <TR key={check.id}>
-                        <TD className="font-mono text-xs whitespace-nowrap text-ink-3 tnum">
-                          {formatDateTime(check.checked_at)}
-                        </TD>
-                        <TD className="text-ink-2">{check.site_name}</TD>
-                        <TD className="text-right font-mono tnum">{formatMoney(check.price, check.currency)}</TD>
-                        <TD className="font-mono text-xs text-ink-3">{check.status ?? '—'}</TD>
-                        <TD className="text-xs text-ink-3">
-                          {check.in_stock == null ? '—' : check.in_stock ? 'in stock' : 'out of stock'}
-                        </TD>
-                      </TR>
+                    {detail.listings.map((listing) => (
+                      <ListingRow
+                        key={listing.id}
+                        listing={listing}
+                        itemId={detail.id}
+                        isBestMatch={bestMatchListingId === listing.id}
+                      />
                     ))}
                   </TBody>
                 </Table>
               )}
             </CardBody>
           </Card>
-        </CollapsibleContent>
-      </Collapsible>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent checks</CardTitle>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-[11px] text-ink-3 tnum">
+                  {shownChecks.length} of {checkRows.length}
+                </span>
+                {checkRows.length > CHECKS_PREVIEW ? (
+                  <Button variant="ghost" size="sm" onClick={() => setAllChecks((v) => !v)}>
+                    {allChecks ? 'Show fewer' : 'Show all'}
+                  </Button>
+                ) : null}
+              </div>
+            </CardHeader>
+            <div className="border-t border-hairline bg-well px-4 py-3">
+              {checks.isLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-5" />
+                  <Skeleton className="h-5" />
+                </div>
+              ) : checkRows.length === 0 ? (
+                <p className="py-2 font-mono text-[11px] text-ink-3">
+                  No checks yet — the log fills in as the agent sweeps.
+                </p>
+              ) : (
+                <TerminalLog lines={shownChecks.map(checkLine)} />
+              )}
+            </div>
+          </Card>
+        </div>
+
+        <div>
+          <Card className="p-4">
+            <CardTitle className="mb-2">Tracking</CardTitle>
+            <dl>
+              {[
+                ['Target', formatMoney(target, detail.currency)],
+                ['Mode', detail.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'],
+                ['Slots', `${trackedCount} of ${detail.max_listings} used`],
+                ['Sites', siteNames],
+                ['Reproductions', detail.allow_reproductions ? 'allowed' : 'not allowed'],
+              ].map(([key, value]) => (
+                <div
+                  key={key}
+                  className="flex items-center justify-between gap-3 border-b border-hairline py-2"
+                >
+                  <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">{key}</dt>
+                  <dd
+                    className={cn(
+                      'text-right font-mono text-xs text-ink tnum',
+                      key === 'Mode' && 'text-lume uppercase',
+                    )}
+                  >
+                    {value}
+                  </dd>
+                </div>
+              ))}
+              <div className="flex items-center justify-between gap-3 py-2">
+                <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">Notify</dt>
+                <dd>
+                  <Switch
+                    checked={detail.watch.notify}
+                    onCheckedChange={(v) => notifyToggle.mutate(v)}
+                    aria-label="Notify me when the target price is hit"
+                  />
+                </dd>
+              </div>
+            </dl>
+            {detail.criteria ? (
+              <blockquote className="mt-2 rounded-r-sm border-l-2 border-lume-deep bg-well px-3 py-2 text-xs text-ink-2 italic">
+                “{detail.criteria}”
+              </blockquote>
+            ) : null}
+            <Button className="mt-4 w-full" onClick={() => setEditOpen(true)}>
+              Edit tracking
+            </Button>
+            <button
+              type="button"
+              className="mt-3 block w-full text-center font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase hover:text-rise"
+              onClick={() => setDeleteOpen(true)}
+            >
+              Delete item
+            </button>
+          </Card>
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete item"
+        description={`“${detail.name}” and its price history will be permanently removed.`}
+        confirmLabel="Delete item"
+        pending={remove.isPending}
+        onConfirm={() => remove.mutate()}
+      />
 
       <EditItemDialog
         key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${(detail.site_ids ?? []).join(',')}`}

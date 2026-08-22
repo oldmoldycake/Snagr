@@ -7,6 +7,7 @@ import type { SelectionMode } from '@/api/types'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Segmented } from '@/components/ui/segmented'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/cn'
 
@@ -120,30 +121,18 @@ export function TrackingFields({
           </span>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-3 space-y-3 rounded-sm border border-hairline bg-page/40 p-3">
+          <div className="mt-3 space-y-3 rounded-sm border border-hairline bg-well p-3">
             <div>
               <Label>How to pick listings</Label>
-              <div role="group" aria-label="Selection mode" className="inline-flex overflow-hidden rounded-sm border border-hairline">
-                {(
-                  [
-                    ['cheapest', 'Cheapest'],
-                    ['best_match', 'Best match'],
-                  ] as const
-                ).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={value.selectionMode === mode}
-                    onClick={() => setMode(mode)}
-                    className={cn(
-                      'px-3 py-1 text-xs transition-colors',
-                      value.selectionMode === mode ? 'bg-raised text-ink' : 'text-ink-3 hover:text-ink-2',
-                    )}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                options={[
+                  { value: 'cheapest', label: 'Cheapest' },
+                  { value: 'best_match', label: 'Best match' },
+                ]}
+                value={value.selectionMode}
+                onChange={setMode}
+                ariaLabel="Selection mode"
+              />
               <p className="mt-1.5 text-xs text-ink-3">
                 {value.selectionMode === 'best_match'
                   ? value.criteria.trim()
@@ -191,7 +180,7 @@ export function TrackingFields({
                         className={cn(
                           'rounded-sm border px-2 py-1 text-xs transition-colors',
                           selected
-                            ? 'border-accent/50 bg-accent/15 text-accent'
+                            ? 'border-lume/50 bg-lume-glow text-lume'
                             : 'border-hairline text-ink-3 hover:text-ink-2',
                         )}
                       >

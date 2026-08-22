@@ -45,7 +45,7 @@ export function InvitePage() {
     const expired = invite.error instanceof ApiError && invite.error.status === 410
     return (
       <AuthLayout>
-        <h1 className="font-display text-base font-semibold text-ink">
+        <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">
           {expired ? 'Invite expired' : 'Invite not valid'}
         </h1>
         <p className="mt-2 text-[13px] text-ink-2">
@@ -54,7 +54,7 @@ export function InvitePage() {
             : 'This invite link is not valid. Check the link or ask your admin for a new invite.'}
         </p>
         <p className="mt-4 text-center text-xs text-ink-3">
-          <Link to="/login" className="text-accent hover:underline">
+          <Link to="/login" className="text-lume hover:underline">
             Back to sign in
           </Link>
         </p>
@@ -67,7 +67,7 @@ export function InvitePage() {
 
   return (
     <AuthLayout>
-      <h1 className="font-display text-base font-semibold text-ink">Join Snagr</h1>
+      <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">Join Snagr</h1>
       <p className="mt-1 text-xs text-ink-2">You've been invited. Set a password to finish creating your account.</p>
 
       <form

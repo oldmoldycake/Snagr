@@ -33,7 +33,7 @@ export const router = createBrowserRouter([
       },
       {
         path: '*',
-        element: <EmptyState title="Page not found" description="This page doesn't exist. Use the sidebar to get back on track." />,
+        element: <EmptyState title="Page not found" description="This page doesn't exist. Use the navigation to get back on track." />,
       },
     ],
   },

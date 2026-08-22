@@ -9,8 +9,8 @@ export function Switch({
   return (
     <SwitchPrimitive.Root
       className={cn(
-        'inline-flex h-4.5 w-8 shrink-0 items-center rounded-full border border-hairline bg-page transition-colors',
-        'data-[state=checked]:border-drop/50 data-[state=checked]:bg-drop/30',
+        'inline-flex h-4.5 w-8 shrink-0 items-center rounded-full border border-hairline-strong bg-well transition-colors',
+        'data-[state=checked]:border-lume/50 data-[state=checked]:bg-lume-glow',
         'disabled:cursor-not-allowed disabled:opacity-50',
         className,
       )}
@@ -19,7 +19,7 @@ export function Switch({
       <SwitchPrimitive.Thumb
         className={cn(
           'block size-3 translate-x-0.5 rounded-full bg-ink-3 transition-transform',
-          'data-[state=checked]:translate-x-4 data-[state=checked]:bg-drop',
+          'data-[state=checked]:translate-x-4 data-[state=checked]:bg-lume',
         )}
       />
     </SwitchPrimitive.Root>

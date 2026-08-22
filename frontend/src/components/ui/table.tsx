@@ -29,7 +29,7 @@ export function TR({ className, ...props }: HTMLAttributes<HTMLTableRowElement>)
 export function TH({ className, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={cn('h-8 px-3 text-left align-middle text-[11px] font-medium tracking-wide text-ink-3 uppercase', className)}
+      className={cn('h-8 px-3 text-left align-middle font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase', className)}
       {...props}
     />
   )

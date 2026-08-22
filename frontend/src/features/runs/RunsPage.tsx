@@ -1,25 +1,83 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { listRuns } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import { Card, CardBody } from '@/components/ui/card'
+import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
+import { Pagination } from '@/components/ui/pagination'
+import { Radar } from '@/components/ui/radar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { LOG_GLYPHS } from '@/components/ui/terminal-log'
 import { formatDuration, relativeTime } from '@/lib/time'
 import { isRunActive, useRunEvents } from './RunEventsProvider'
 import { RunButton } from './RunButton'
 import { RunStatusDot } from './RunStatusDot'
 
+/** The live sweep, compact: radar + state + latest event; the log lives on the run page. */
+function LiveSweepHero() {
+  const { activeRun, events, setPanelOpen } = useRunEvents()
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  if (!isRunActive(activeRun) || !activeRun) return null
+  const latest = events[events.length - 1]
+  const level = latest ? LOG_GLYPHS[latest.level] : null
+
+  return (
+    <div className="rounded-lg border border-lume/25 bg-surface p-4">
+      <div className="flex items-center gap-4">
+        <Radar size={44} glyph />
+        <div className="min-w-0 flex-1">
+          <p className="font-display text-[22px] leading-tight font-semibold tracking-[0.04em] text-lume uppercase">
+            Sweeping — {activeRun.scope_label}
+          </p>
+          <p className="mt-0.5 font-mono text-[11px] text-ink-3 tnum">
+            {activeRun.started_at
+              ? `${formatDuration(activeRun.started_at)} elapsed`
+              : 'queued — waiting for the agent'}
+            {latest && level ? (
+              <>
+                {' · '}
+                <span aria-hidden className={level.className}>
+                  {level.glyph}
+                </span>{' '}
+                <span className="text-ink-2">{latest.message}</span>
+              </>
+            ) : null}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setPanelOpen(true)}
+          className="shrink-0 font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+        >
+          Watch ↗
+        </button>
+        <Link
+          to={`/runs/${activeRun.id}`}
+          className="shrink-0 font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+        >
+          Open →
+        </Link>
+      </div>
+    </div>
+  )
+}
+
 export function RunsPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const { activeRun, setPanelOpen } = useRunEvents()
+  const [page, setPage] = useState(1)
 
   const runs = useQuery({
-    queryKey: qk.runs(),
-    queryFn: () => listRuns(),
+    queryKey: qk.runs({ page }),
+    queryFn: () => listRuns({ page }),
     placeholderData: keepPreviousData,
   })
 
@@ -36,36 +94,46 @@ export function RunsPage() {
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="font-display text-lg font-semibold text-ink">Runs</h1>
-        <RunButton scope="global" label="Run everything" variant="snag" size="sm" />
+        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
+          Runs
+        </h1>
+        <RunButton scope="global" label="Run everything" variant="primary" size="sm" />
+      </div>
+
+      <LiveSweepHero />
+
+      <div className="flex items-baseline gap-3">
+        <h2 className="font-display text-[17px] font-semibold tracking-[0.12em] text-ink-2 uppercase">
+          Previous sweeps
+        </h2>
+        {runs.data ? (
+          <span className="font-mono text-[11px] text-ink-3 tnum">{runs.data.meta.total} runs</span>
+        ) : null}
       </div>
 
       <Card>
-        <CardBody className="px-0 py-1">
-          {runs.isLoading ? (
-            <div className="space-y-2 p-4">
-              <Skeleton className="h-6" />
-              <Skeleton className="h-6" />
-            </div>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              className="m-4 border-0"
-              title="No runs yet"
-              description="Start a run to have the agent check prices and discover listings — you can watch it work live."
-              action={<RunButton scope="global" label="Run everything" variant="snag" size="sm" />}
-            />
-          ) : (
+        {runs.isLoading ? (
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-6" />
+            <Skeleton className="h-6" />
+          </div>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            className="m-4 border-0"
+            title="No runs yet"
+            description="Start a run to have the agent check prices and discover listings — you can watch it work live."
+            action={<RunButton scope="global" label="Run everything" variant="primary" size="sm" />}
+          />
+        ) : (
+          <>
             <Table>
               <THead>
                 <TR>
-                  <TH>Status</TH>
+                  <TH className="w-8" />
+                  <TH>When</TH>
                   <TH>Scope</TH>
-                  <TH>Started</TH>
-                  <TH className="hidden sm:table-cell">Duration</TH>
-                  <TH className="hidden text-right sm:table-cell">Checked</TH>
-                  <TH className="hidden text-right sm:table-cell">Prices</TH>
-                  <TH className="hidden text-right sm:table-cell">New</TH>
-                  <TH className="text-right">Errors</TH>
+                  <TH className="hidden sm:table-cell">Results</TH>
+                  <TH className="hidden text-right sm:table-cell">Duration</TH>
                 </TR>
               </THead>
               <TBody>
@@ -77,37 +145,57 @@ export function RunsPage() {
                       data-clickable="true"
                       onClick={() => (isActive ? setPanelOpen(true) : navigate(`/runs/${run.id}`))}
                     >
-                      <TD>
-                        <RunStatusDot status={run.status} withLabel />
+                      <TD className="pr-0">
+                        <RunStatusDot status={run.status} />
+                      </TD>
+                      <TD className="font-mono text-xs whitespace-nowrap text-ink-3">
+                        {relativeTime(run.created_at)}
                       </TD>
                       <TD className="font-medium text-ink">
                         {run.scope_label}
-                        {run.user_id === null ? <span className="ml-2 text-xs font-normal text-ink-3">system</span> : null}
+                        <span className="ml-2 font-mono text-[10.5px] font-normal text-ink-3">
+                          {run.user_id === null ? 'system' : ''}
+                        </span>
                       </TD>
-                      <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(run.created_at)}</TD>
                       <TD className="hidden font-mono text-xs text-ink-2 tnum sm:table-cell">
-                        {run.started_at ? formatDuration(run.started_at, run.finished_at) : '—'}
-                        {isActive ? <span className="ml-1 text-accent">live</span> : null}
-                      </TD>
-                      <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{run.stats?.listings_checked ?? '—'}</TD>
-                      <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{run.stats?.prices_found ?? '—'}</TD>
-                      <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{run.stats?.new_listings ?? '—'}</TD>
-                      <TD className="text-right font-mono tnum">
-                        {run.stats == null ? (
-                          <span className="text-ink-2">—</span>
-                        ) : run.stats.errors > 0 ? (
-                          <span className="text-rise">{run.stats.errors}</span>
+                        {run.status === 'failed' ? (
+                          <span className="text-rise">{run.error ?? 'failed'}</span>
+                        ) : run.status === 'cancelled' ? (
+                          <span className="text-ink-3">
+                            cancelled{run.stats ? ` — ${run.stats.listings_checked} checked` : ''}
+                          </span>
+                        ) : run.stats ? (
+                          <>
+                            {run.stats.listings_checked} checked · {run.stats.prices_found} prices
+                            {run.stats.new_listings > 0 ? ` · ${run.stats.new_listings} new` : ''}
+                            {run.stats.errors > 0 ? (
+                              <span className="text-rise">
+                                {' '}
+                                · {run.stats.errors} {run.stats.errors === 1 ? 'error' : 'errors'}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : isActive ? (
+                          <span className="text-lume">live</span>
                         ) : (
-                          <span className="text-ink-2">0</span>
+                          '—'
                         )}
+                      </TD>
+                      <TD className="hidden text-right font-mono text-xs text-ink-2 tnum sm:table-cell">
+                        {run.started_at ? formatDuration(run.started_at, run.finished_at) : '—'}
                       </TD>
                     </TR>
                   )
                 })}
               </TBody>
             </Table>
-          )}
-        </CardBody>
+            {runs.data && runs.data.meta.total > runs.data.meta.per_page ? (
+              <div className="flex justify-end border-t border-hairline bg-well px-4 py-2">
+                <Pagination meta={runs.data.meta} onPage={setPage} />
+              </div>
+            ) : null}
+          </>
+        )}
       </Card>
     </div>
   )

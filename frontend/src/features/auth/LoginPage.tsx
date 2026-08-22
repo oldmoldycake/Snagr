@@ -32,14 +32,14 @@ export function LoginPage() {
 
   return (
     <AuthLayout>
-      <h1 className="font-display text-base font-semibold text-ink">Sign in</h1>
+      <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">Sign in</h1>
 
       {MOCKS_ON ? (
-        <div className="mt-3 rounded-sm border border-accent/40 bg-accent/10 px-3 py-2">
+        <div className="mt-3 rounded-sm border border-lume/40 bg-lume-glow px-3 py-2">
           <p className="text-xs text-ink-2">
             Mock API is on — demo account:{' '}
-            <code className="font-mono text-accent">demo@snagr.dev</code> /{' '}
-            <code className="font-mono text-accent">snagr</code>
+            <code className="font-mono text-lume">demo@snagr.dev</code> /{' '}
+            <code className="font-mono text-lume">snagr</code>
           </p>
           <p className="mt-1 text-xs text-ink-3">
             Non-admin view: <code className="font-mono">guest@snagr.dev</code> /{' '}
@@ -119,7 +119,7 @@ export function LoginPage() {
       {instance?.registration_open ? (
         <p className="mt-4 text-center text-xs text-ink-3">
           New here?{' '}
-          <Link to="/register" className="text-accent hover:underline">
+          <Link to="/register" className="text-lume hover:underline">
             Create an account
           </Link>
         </p>

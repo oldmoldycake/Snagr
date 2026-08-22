@@ -5,10 +5,11 @@ import { Check, Copy, Loader2, MoreHorizontal, Plus, Trash2, UserX, UserCheck } 
 import { toast } from 'sonner'
 import { createInvite, deleteUser, listInvites, listUsers, revokeInvite, updateUser } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { Invite } from '@/api/types'
+import type { AdminUser, Invite } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
   DialogContent,
@@ -127,6 +128,7 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 
 export function AdminUsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [deleting, setDeleting] = useState<AdminUser | null>(null)
   const queryClient = useQueryClient()
   const { data: me } = useSession()
 
@@ -140,7 +142,10 @@ export function AdminUsersPage() {
 
   const removeUser = useMutation({
     mutationFn: (id: number) => deleteUser(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: qk.adminUsers }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.adminUsers })
+      setDeleting(null)
+    },
   })
 
   const revoke = useMutation({
@@ -152,7 +157,7 @@ export function AdminUsersPage() {
     <div className="max-w-3xl space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-lg font-semibold text-ink">Users & invites</h1>
+          <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Users & invites</h1>
           <p className="mt-0.5 text-xs text-ink-3">
             <Link to="/settings" className="hover:text-ink-2 hover:underline">
               ← Back to settings
@@ -193,7 +198,7 @@ export function AdminUsersPage() {
                       {user.id === me?.id ? <span className="ml-1.5 text-xs text-ink-3">(you)</span> : null}
                     </TD>
                     <TD>
-                      <Badge variant={user.role === 'admin' ? 'accent' : 'muted'}>{user.role}</Badge>
+                      <Badge variant={user.role === 'admin' ? 'lume' : 'muted'}>{user.role}</Badge>
                     </TD>
                     <TD>
                       {user.is_active ? (
@@ -227,18 +232,7 @@ export function AdminUsersPage() {
                               )}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-rise"
-                              onSelect={() => {
-                                if (
-                                  window.confirm(
-                                    `Delete ${user.email}? Their categories, items, and price history are removed permanently.`,
-                                  )
-                                ) {
-                                  removeUser.mutate(user.id)
-                                }
-                              }}
-                            >
+                            <DropdownMenuItem className="text-rise" onSelect={() => setDeleting(user)}>
                               <Trash2 /> Delete user
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -302,6 +296,23 @@ export function AdminUsersPage() {
       </Card>
 
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      <ConfirmDialog
+        open={deleting != null}
+        onOpenChange={(open) => {
+          if (!open) setDeleting(null)
+        }}
+        title="Delete user"
+        description={
+          deleting
+            ? `${deleting.email}'s account, categories, items, and price history are removed permanently.`
+            : ''
+        }
+        confirmLabel="Delete user"
+        pending={removeUser.isPending}
+        onConfirm={() => {
+          if (deleting) removeUser.mutate(deleting.id)
+        }}
+      />
     </div>
   )
 }

@@ -1,11 +1,11 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
-import type { ItemSummary } from '@/api/types'
+import type { ItemSummary, PriceDrop } from '@/api/types'
 import { Sparkline } from '@/components/charts/Sparkline'
-import { DeltaText } from '@/components/charts/DeltaText'
 import { SnaggedBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { MeterToTarget } from '@/components/ui/meter'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,11 +20,11 @@ import { formatMoney, toCents } from '@/lib/money'
 import { relativeTime } from '@/lib/time'
 import { ItemListingsPanel } from './ItemListingsPanel'
 
-export interface ItemsTableProps {
+export interface WatchListProps {
   items: ItemSummary[]
+  /** newest recent drop per item id — rendered as an inline ▼ chip */
+  drops?: Map<number, PriceDrop>
   showCategory?: boolean
-  showListings?: boolean
-  showLastChecked?: boolean
   /** rows expand to show the item's tracked listings inline */
   expandable?: boolean
   /** enables the per-row kebab (run / edit / delete) */
@@ -34,12 +34,25 @@ export interface ItemsTableProps {
   className?: string
 }
 
-/** Δ of best price vs effective target, as a signed percent. */
-function deltaToTarget(item: ItemSummary): number | null {
-  const best = toCents(item.best_price)
-  const target = toCents(item.watch.target_price ?? item.target_price)
-  if (best == null || target == null || target === 0) return null
-  return ((best - target) / target) * 100
+/** Effective target: the watch's per-user override, falling back to the item's. */
+export function effectiveTarget(item: ItemSummary): string | null {
+  return item.watch.target_price ?? item.target_price
+}
+
+/** Sort for the hunt: in-range first, then by how close the price is to target. */
+export function sortByDistanceToTarget(items: ItemSummary[]): ItemSummary[] {
+  const ratio = (item: ItemSummary): number => {
+    const best = toCents(item.best_price)
+    const target = toCents(effectiveTarget(item))
+    if (best == null || target == null || target <= 0) return Number.POSITIVE_INFINITY
+    return (best - target) / target
+  }
+  return [...items].sort((a, b) => {
+    if (a.target_met !== b.target_met) return a.target_met ? -1 : 1
+    const diff = ratio(a) - ratio(b)
+    if (diff !== 0) return diff
+    return a.name.localeCompare(b.name)
+  })
 }
 
 function CriteriaHint({ item }: { item: ItemSummary }) {
@@ -52,17 +65,27 @@ function CriteriaHint({ item }: { item: ItemSummary }) {
   )
 }
 
-export function ItemsTable({
+function DropChip({ drop }: { drop: PriceDrop }) {
+  const pct = Math.abs(Number(drop.pct_change))
+  if (!Number.isFinite(pct)) return null
+  const fresh = Date.now() - new Date(drop.checked_at).getTime() < 86_400_000
+  return (
+    <span className="shrink-0 rounded-full border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[10px] text-drop tnum">
+      <span aria-hidden>▼</span> {pct.toFixed(1)}%{fresh ? ' today' : ''}
+    </span>
+  )
+}
+
+export function WatchList({
   items,
+  drops,
   showCategory,
-  showListings,
-  showLastChecked,
   expandable,
   onEdit,
   onDelete,
   onRun,
   className,
-}: ItemsTableProps) {
+}: WatchListProps) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const hasActions = Boolean(onEdit || onDelete || onRun)
@@ -76,13 +99,7 @@ export function ItemsTable({
     })
   }
 
-  const columnCount =
-    5 +
-    (expandable ? 1 : 0) +
-    (showCategory ? 1 : 0) +
-    (showListings ? 1 : 0) +
-    (showLastChecked ? 1 : 0) +
-    (hasActions ? 1 : 0)
+  const columnCount = 6 + (expandable ? 1 : 0) + (hasActions ? 1 : 0)
 
   return (
     <Table className={className}>
@@ -90,20 +107,18 @@ export function ItemsTable({
         <TR>
           {expandable ? <TH className="w-8" /> : null}
           <TH>Item</TH>
-          {showCategory ? <TH className="hidden md:table-cell">Category</TH> : null}
-          <TH className="text-right">Best price</TH>
-          <TH className="hidden text-right md:table-cell">Target</TH>
-          <TH className="text-right">Δ target</TH>
-          {showListings ? <TH className="text-right">Listings</TH> : null}
           <TH className="hidden md:table-cell">Trend</TH>
-          {showLastChecked ? <TH className="hidden md:table-cell">Checked</TH> : null}
+          <TH className="text-right">Best</TH>
+          <TH className="hidden text-right md:table-cell">Target</TH>
+          <TH className="text-right">To target</TH>
+          <TH className="hidden text-right sm:table-cell">Checked</TH>
           {hasActions ? <TH className="w-10" /> : null}
         </TR>
       </THead>
       <TBody>
         {items.map((item) => {
-          const delta = deltaToTarget(item)
           const isExpanded = expanded.has(item.id)
+          const drop = drops?.get(item.id)
           return (
             <Fragment key={item.id}>
               <TR
@@ -111,7 +126,7 @@ export function ItemsTable({
                 onClick={() => navigate(`/items/${item.id}`)}
                 className={cn(
                   'border-l-2 border-l-transparent',
-                  item.target_met && 'border-l-drop',
+                  item.target_met && 'border-l-drop bg-linear-to-r from-drop-dim to-transparent to-60%',
                   isExpanded && 'border-b-0',
                 )}
               >
@@ -131,32 +146,42 @@ export function ItemsTable({
                 <TD>
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-ink">{item.name}</span>
-                    <CriteriaHint item={item} />
-                    {item.target_met ? <SnaggedBadge /> : null}
-                    {item.active_listing_count === 0 ? (
-                      <span className="text-xs text-ink-3">no listings yet</span>
+                    {showCategory ? (
+                      <span className="hidden shrink-0 font-mono text-[10.5px] text-ink-3 md:inline">
+                        {item.category_name}
+                      </span>
                     ) : null}
+                    <CriteriaHint item={item} />
+                    {drop && !item.target_met ? <DropChip drop={drop} /> : null}
                   </div>
                 </TD>
-                {showCategory ? <TD className="hidden text-ink-2 md:table-cell">{item.category_name}</TD> : null}
-                <TD className="text-right font-mono text-ink tnum">
+                <TD className="hidden md:table-cell">
+                  <Sparkline data={item.spark} width={80} height={22} />
+                </TD>
+                <TD
+                  className={cn(
+                    'text-right font-mono font-semibold tnum',
+                    item.target_met ? 'text-drop' : 'text-ink',
+                    item.best_price == null && 'font-normal text-ink-3',
+                  )}
+                >
                   {formatMoney(item.best_price, item.currency)}
                 </TD>
-                <TD className="hidden text-right font-mono text-ink-2 tnum md:table-cell">
-                  {formatMoney(item.watch.target_price ?? item.target_price, item.currency)}
+                <TD className="hidden text-right font-mono text-ink-3 tnum md:table-cell">
+                  {formatMoney(effectiveTarget(item), item.currency)}
                 </TD>
                 <TD className="text-right">
-                  <DeltaText value={delta == null ? null : delta.toFixed(1)} />
+                  {item.target_met ? (
+                    <SnaggedBadge />
+                  ) : item.active_listing_count === 0 ? (
+                    <span className="font-mono text-[11px] text-ink-3">no listings yet</span>
+                  ) : (
+                    <MeterToTarget best={item.best_price} target={effectiveTarget(item)} currency={item.currency} />
+                  )}
                 </TD>
-                {showListings ? (
-                  <TD className="text-right font-mono text-ink-2 tnum">{item.active_listing_count}</TD>
-                ) : null}
-                <TD className="hidden md:table-cell">
-                  <Sparkline data={item.spark} />
+                <TD className="hidden text-right font-mono text-xs whitespace-nowrap text-ink-3 sm:table-cell">
+                  {relativeTime(item.last_checked_at)}
                 </TD>
-                {showLastChecked ? (
-                  <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(item.last_checked_at)}</TD>
-                ) : null}
                 {hasActions ? (
                   <TD onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>

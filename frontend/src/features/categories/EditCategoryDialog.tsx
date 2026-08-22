@@ -89,7 +89,7 @@ export function EditCategoryDialog({
                       className={cn(
                         'rounded-sm border px-2 py-1 text-xs transition-colors',
                         selected
-                          ? 'border-accent/50 bg-accent/15 text-accent'
+                          ? 'border-lume/50 bg-lume-glow text-lume'
                           : 'border-hairline text-ink-3 hover:text-ink-2',
                       )}
                     >

@@ -22,7 +22,7 @@ export function RegisterPage() {
 
   return (
     <AuthLayout>
-      <h1 className="font-display text-base font-semibold text-ink">Create your account</h1>
+      <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">Create your account</h1>
       <p className="mt-1 text-xs text-ink-2">
         The first account on a fresh instance becomes the admin. After that, sign-up stays open
         while the instance allows it — otherwise new users join by invite.
@@ -73,7 +73,7 @@ export function RegisterPage() {
 
       <p className="mt-4 text-center text-xs text-ink-3">
         Already set up?{' '}
-        <Link to="/login" className="text-accent hover:underline">
+        <Link to="/login" className="text-lume hover:underline">
           Sign in
         </Link>
       </p>
