@@ -168,6 +168,7 @@ export function toItemDetail(item: MockItem, range: TimeRange = '30d'): ItemDeta
 export function toRun(r: MockRun): AgentRun {
   return {
     id: r.id,
+    user_id: r.user_id,
     scope: r.scope,
     scope_id: r.scope_id,
     scope_label: r.scope_label,

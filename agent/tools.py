@@ -14,6 +14,22 @@ from sqlalchemy.dialects.postgresql import insert
 
 log = logging.getLogger(__name__)
 
+# Per-run tally of successful writes, read by the orchestrator for the run's
+# terminal agent_runs.stats. A plain module dict, not a contextvar: one process
+# drives exactly one run at a time. `errors` is counted by the orchestrator.
+run_stats = {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
+
+
+def reset_run_stats() -> None:
+    """Zero the tally in place before a run starts."""
+    for key in run_stats:
+        run_stats[key] = 0
+
+
+def read_run_stats() -> dict:
+    """A copy of the tally, for the run's terminal stats write."""
+    return dict(run_stats)
+
 
 async def save_listing(
     watch_id: int,
@@ -67,8 +83,11 @@ async def save_listing(
                 .on_conflict_do_nothing(constraint="uq_watch_site_url")
             )
 
-            await session.execute(stmt)
+            result = await session.execute(stmt)
             await session.commit()
+            # rowcount 1 = a genuinely new row; 0 = the conflict target existed
+            if result.rowcount == 1:
+                run_stats["new_listings"] += 1
 
             stmt = (
                 select(Listings)
@@ -132,6 +151,9 @@ async def save_price_check(
 
             await session.execute(stmt)
             await session.commit()
+            run_stats["listings_checked"] += 1
+            if price is not None:
+                run_stats["prices_found"] += 1
 
             log.info(f"Successfully recorded listing {listing_id}")
             return f"Successfully recorded listing {listing_id}"

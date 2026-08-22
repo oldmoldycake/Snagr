@@ -47,7 +47,7 @@ backend/
 │   └── services/          # logic that's more than one query — routers stay thin
 │       ├── items.py        # the item↔watch↔watch_sites mapping + validation
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
-│       ├── runs.py         # run enqueue/scope-label/409-active-check
+│       ├── runs.py         # run enqueue/scope-label/409-active-check + visibility predicate
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       └── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
 ├── tests/
@@ -102,7 +102,7 @@ Find any `endpoints.ts` function here:
 
 ---
 
-## Three things that aren't obvious (read before Phase 1)
+## Four things that aren't obvious (read before Phase 1)
 
 1. **An API "item" is three tables.** `items` (shared name/category) + the caller's
    `watches` row (target_price, criteria, selection_mode, max_listings,
@@ -119,6 +119,22 @@ Find any `endpoints.ts` function here:
    plus `watch_sites`, `invites`, `sessions`, `agent_runs`, `run_events`. See
    "Schema Gaps" in the plan; apply via Alembic (getting-started step 2). `JobRuns`
    in the agent is dead — replaced by `agent_runs`.
+
+4. **Run visibility is per-user, enforced by ONE predicate** (`services/runs.py`):
+   `run_visible` gates the run row (own runs + system runs with `user_id NULL` +
+   admins see all; a hidden run 404s exactly like an unknown id), and — within a
+   visible run — `event_visible` filters each `run_events` row by payload
+   reference (`item_id` → that item's watchers, `listing_id` → the listing's sole
+   owner, no reference → every viewer of the run), with `load_viewer_refs`
+   fetching the two ownership sets. The same functions serve five surfaces:
+   `GET /api/runs` (the rule in SQL form for pagination totals), run detail, the
+   events backfill (filter **before** `limit`), cancel (404 → 403 for system
+   runs → 409, permission before state), and the SSE hub (envelopes + snapshots
+   gated per run row, `run.event` frames by the composed predicate). Reconnects
+   never infer gaps from seq arithmetic — filtered viewers legitimately hold
+   sparse seqs; the client refetches the backfill on every snapshot and the
+   filtered response is authoritative. This is **peer privacy only**: the
+   instance operator can read the DB (caveats in BACKEND_REQUIREMENTS.md §7).
 
 ---
 

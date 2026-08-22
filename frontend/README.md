@@ -52,5 +52,5 @@ src/
 └── styles/       globals.css — all design tokens
 ```
 
-The API contract the backend must implement is documented in `../docs/BACKEND_REQUIREMENTS.md`;
+The API contract the backend must implement is documented in `../BACKEND_REQUIREMENTS.md`;
 `src/api/types.ts` is its TypeScript mirror. Keep them in sync.

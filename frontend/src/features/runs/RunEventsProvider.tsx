@@ -2,9 +2,12 @@
  * One EventSource per session, shared app-wide. Feeds the activity slide-over,
  * the top-bar status pill, and query invalidation when runs finish.
  *
- * Reconnect contract: the server sends `run.snapshot` on every (re)connect;
- * we compare its last_seq with the highest seq we've rendered and backfill
- * the gap via GET /api/runs/:id/events?after_seq=N.
+ * Reconnect contract: the server sends `run.snapshot` on every (re)connect; we
+ * refetch GET /api/runs/:id/events?after_seq=<highest seq held> and merge by
+ * seq — the filtered response is authoritative. The stream is per-viewer, so a
+ * filtered viewer legitimately holds a sparse subset of seqs; never infer
+ * missed events from seq arithmetic (snapshot last_seq is the run's GLOBAL
+ * write cursor).
  */
 
 import {
@@ -94,9 +97,12 @@ export function RunEventsProvider({ children }: { children: ReactNode }) {
       if (!active) return
       switchToRun(active.id)
       setActiveRun((prev) => (prev?.id === active.id ? prev : ({ ...active } as AgentRun)))
-      if (active.last_seq > lastSeqRef.current) {
-        void getRunEvents(active.id, lastSeqRef.current).then((res) => appendEvents(res.data))
-      }
+      // always backfill: the filtered response is authoritative (comparing
+      // last_seq would be meaningless — filtered viewers hold sparse seqs)
+      void getRunEvents(active.id, lastSeqRef.current)
+        .then((res) => appendEvents(res.data))
+        // recovered by the next snapshot; the SSE reconnect is the retry loop
+        .catch(() => {})
     })
 
     source.addEventListener('run.started', (e: MessageEvent) => {

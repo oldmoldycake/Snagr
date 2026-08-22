@@ -41,6 +41,10 @@ export function LoginPage() {
             <code className="font-mono text-accent">demo@snagr.dev</code> /{' '}
             <code className="font-mono text-accent">snagr</code>
           </p>
+          <p className="mt-1 text-xs text-ink-3">
+            Non-admin view: <code className="font-mono">guest@snagr.dev</code> /{' '}
+            <code className="font-mono">snagr</code>
+          </p>
           <Button
             variant="primary"
             size="sm"

@@ -5,6 +5,7 @@ import { ArrowDown, ExternalLink } from 'lucide-react'
 import { cancelRun } from '@/api/endpoints'
 import type { RunEvent, RunEventLevel } from '@/api/types'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
+import { useSession } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatDuration } from '@/lib/time'
 import { isRunActive, useRunEvents } from './RunEventsProvider'
@@ -49,11 +50,14 @@ function ElapsedTimer({ startedAt }: { startedAt: string | null }) {
 
 export function ActivitySheet() {
   const { activeRun, events, connection, panelOpen, setPanelOpen } = useRunEvents()
+  const { data: me } = useSession()
   const queryClient = useQueryClient()
   const logRef = useRef<HTMLDivElement>(null)
   const [following, setFollowing] = useState(true)
 
   const active = isRunActive(activeRun)
+  // owners cancel their own runs; system runs (user_id null) are admin-only
+  const canCancel = me != null && (me.role === 'admin' || activeRun?.user_id === me.id)
 
   const cancelMutation = useMutation({
     mutationFn: (id: number) => cancelRun(id),
@@ -104,7 +108,7 @@ export function ActivitySheet() {
                 Open run page <ExternalLink className="size-3" />
               </Link>
             ) : null}
-            {active && activeRun ? (
+            {active && activeRun && canCancel ? (
               <button
                 type="button"
                 className="text-rise hover:underline disabled:opacity-50"

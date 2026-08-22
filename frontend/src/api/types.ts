@@ -1,6 +1,6 @@
 /**
  * TypeScript mirror of the Snagr API contract.
- * This file IS the contract — docs/BACKEND_REQUIREMENTS.md is written from it.
+ * This file IS the contract — BACKEND_REQUIREMENTS.md (repo root) is written from it.
  *
  * Conventions:
  * - Prices are decimal strings ("549.99"), never floats.
@@ -353,6 +353,15 @@ export interface PriceDrop {
 
 // ---------------------------------------------------------------------------
 // Agent runs
+//
+// Visibility (per-user run privacy): a viewer sees their own runs, system runs
+// (user_id null), and — as admin — everything. Another user's run is hidden
+// entirely: the list omits it and detail/events/cancel return 404 not_found
+// (hidden ≡ nonexistent). Within a visible run, events are filtered per viewer
+// by payload reference: item events show to watchers of that item, listing
+// events only to the listing's owner, payload-less events to everyone who can
+// see the run. GET /runs/:id/events returns up to `limit` VISIBLE events after
+// `after_seq` (filtered before the limit is applied).
 
 export type RunScope = 'global' | 'category' | 'site' | 'item'
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
@@ -366,6 +375,8 @@ export interface RunStats {
 
 export interface AgentRun {
   id: number
+  /** owner; null = a system run (scheduled/operator-created), visible to every user */
+  user_id: number | null
   scope: RunScope
   scope_id: number | null
   /** human label: "Everything", "Category: GPUs", "Site: newegg.com", "Item: RTX 4070" */
@@ -421,18 +432,22 @@ export interface RunListParams {
 // ---------------------------------------------------------------------------
 // SSE stream (GET /api/events)
 //
-// Named events on the stream:
+// Named events on the stream (all delivered per-viewer — runs and events the
+// viewer may not see are never sent):
 //   run.snapshot  → RunSnapshotData   (sent once on every connect/reconnect)
 //   run.started   → { run: AgentRun }
 //   run.event     → RunEvent
 //   run.finished  → { run: AgentRun }  (stats populated)
 //   run.failed    → { run: AgentRun }  (error populated)
 // Heartbeat: comment line `: ping` every 15s.
-// Reconnect contract: compare snapshot last_seq with the highest rendered seq
-// and backfill gaps via GET /api/runs/{id}/events?after_seq=N.
+// Reconnect contract: on every run.snapshot, refetch
+// GET /api/runs/{id}/events?after_seq=<highest seq held> and merge by seq —
+// the filtered response is authoritative. snapshot last_seq is the run's
+// GLOBAL write cursor; a filtered viewer legitimately holds a sparse subset
+// of seqs, so never infer missed events from seq arithmetic.
 
 export interface RunSnapshotData {
-  active_runs: Pick<AgentRun, 'id' | 'status' | 'scope' | 'scope_label' | 'last_seq'>[]
+  active_runs: Pick<AgentRun, 'id' | 'user_id' | 'status' | 'scope' | 'scope_label' | 'last_seq'>[]
 }
 
 // ---------------------------------------------------------------------------

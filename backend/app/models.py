@@ -232,6 +232,8 @@ class AgentRuns(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = system run (schedule fire, nightly sweep, deleted owner) — visible to all
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
     scope_id: Mapped[int | None] = mapped_column()
     scope_label: Mapped[str] = mapped_column(Text)
@@ -262,3 +264,24 @@ class RunEvents(Base):
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_run_seq"),)
+
+
+class RunSchedules(Base):
+    """+ api. User-defined scheduled runs. The agent's --consume tick fires a
+    due row by inserting a normal agent_runs row (scope copied verbatim):
+    recurring rows (interval_minutes set) roll next_due_at forward anchored;
+    one-shots (interval_minutes NULL) flip enabled off and keep the row."""
+
+    __tablename__ = "run_schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # NULL = system schedule; the consume tick copies this onto the run it fires
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
+    scope_id: Mapped[int | None] = mapped_column()
+    scope_label: Mapped[str] = mapped_column(Text)
+    next_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    interval_minutes: Mapped[int | None] = mapped_column()  # NULL = one-shot
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
