@@ -29,7 +29,10 @@ import type {
   PriceDrop,
   PriceHistoryResponse,
   PriceSummaryResponse,
+  ReferenceImage,
   RegisterRequest,
+  ReviewConfirmRequest,
+  ReviewQueueEntry,
   RunCreateRequest,
   RunEvent,
   RunListParams,
@@ -122,6 +125,32 @@ export const updateListing = (id: number, body: ListingUpdateRequest) =>
 
 export const listPriceChecks = (itemId: number, limit = 50) =>
   api<{ data: PriceCheck[] }>(`/api/items/${itemId}/price-checks`, { params: { limit } })
+
+// --- vision ----------------------------------------------------------------------
+// GET /api/vision/images/{key} serves bytes straight to <img src> and is
+// deliberately not listed here — same precedent as the SSE stream.
+
+export const listReviewQueue = (params: { item_id?: number; page?: number; per_page?: number } = {}) =>
+  api<Paginated<ReviewQueueEntry>>('/api/vision/review-queue', { params: { ...params } })
+
+export const confirmReviewEntry = (id: number, body: ReviewConfirmRequest) =>
+  api<ReferenceImage>(`/api/vision/review-queue/${id}/confirm`, { method: 'POST', body })
+
+export const discardReviewEntry = (id: number) =>
+  api<void>(`/api/vision/review-queue/${id}`, { method: 'DELETE' })
+
+export const listReferences = (itemId: number) =>
+  api<{ data: ReferenceImage[] }>(`/api/items/${itemId}/references`)
+
+/** form fields: file, label ('real' | 'fake'), variant_tag? */
+export const uploadReference = (itemId: number, form: FormData) =>
+  api<ReferenceImage>(`/api/items/${itemId}/references`, { method: 'POST', body: form })
+
+export const revokeReference = (id: number) =>
+  api<void>(`/api/vision/references/${id}`, { method: 'DELETE' })
+
+export const revokeAutoReferences = (itemId: number) =>
+  api<{ revoked: number }>(`/api/items/${itemId}/references/revoke-auto`, { method: 'POST' })
 
 // --- charts / aggregates -------------------------------------------------------
 

@@ -138,7 +138,7 @@ Known bugs to fix while you're in there:
 | 6 | GET | `/api/auth/me` | user | Current user |
 | 7 | GET | `/api/auth/invites/{token}` | public | Validate invite (404 invalid / 410 expired-or-used) |
 | 8 | POST | `/api/auth/invites/{token}/accept` | public | Create user from invite, log them in |
-| 9 | PATCH | `/api/me` | user | Update `email` / `ntfy_topic` |
+| 9 | PATCH | `/api/me` | user | Update `email` / `ntfy_topic` / vision thresholds (422 `validation_error` outside 0.50–1.00) |
 | 10 | POST | `/api/me/password` | user | Change password (`current_password`, `new_password`) |
 | 11 | POST | `/api/me/ntfy/test` | user | Send a test push to the user's topic (204; 422 `no_topic`) |
 | 12 | GET / POST | `/api/categories` | user | List (with stats) / create `{name}` |
@@ -167,6 +167,13 @@ Known bugs to fix while you're in there:
 | 35 | PATCH / DELETE | `/api/admin/users/{id}` | admin | `{is_active?, role?}` / delete user + their data |
 | 36 | GET / POST | `/api/admin/invites` | admin | List pending / create `{email?}` |
 | 37 | DELETE | `/api/admin/invites/{id}` | admin | Revoke invite |
+| 38 | GET | `/api/vision/review-queue` | user | Paged queue of captured photos awaiting review — ONLY entries from the viewer's own watches, admins included (§10); `?item_id&page&per_page` |
+| 39 | POST | `/api/vision/review-queue/{id}/confirm` | user | `{label, variant_tag?}` → 201 `ReferenceImage` (provenance `human`); 404 unknown/foreign, 422 bad label, 409 `already_reviewed` |
+| 40 | DELETE | `/api/vision/review-queue/{id}` | user | Discard the entry and its bytes (204); 404 unknown/foreign/already-reviewed |
+| 41 | GET / POST | `/api/items/{id}/references` | user | The item's communal gold library / multipart upload (`file`, `label`, `variant_tag?`) → 201 provenance `upload`; 422 non-image or >10 MB; both 404 when the viewer has no watch on the item |
+| 42 | DELETE | `/api/vision/references/{id}` | user | Soft-revoke a reference (204; re-revoking is a harmless no-op) |
+| 43 | POST | `/api/items/{id}/references/revoke-auto` | user | Revoke every live auto-promoted reference → `{revoked: n}` |
+| 44 | GET | `/api/vision/images/{key}` | user | Image bytes proxied from the vision sidecar — used by `<img src>`, deliberately not in `endpoints.ts` |
 
 `range` is one of `7d | 30d | 90d | 1y | all` (default `30d`). `points` is capped at 500.
 
@@ -174,7 +181,8 @@ Known bugs to fix while you're in there:
 
 `GET /api/instance`
 ```json
-{ "version": "0.1.0", "ntfy_server_url": "https://ntfy.example.com", "registration_open": false }
+{ "version": "0.1.0", "ntfy_server_url": "https://ntfy.example.com", "registration_open": false,
+  "vision_enabled": false }
 ```
 
 `POST /api/auth/login` ← `{"email": "nolan@example.com", "password": "…"}` → 200 + cookies:
@@ -521,3 +529,29 @@ For each item in scope:
   and a long `proxy-read-timeout`.
 - The frontend build accepts `VITE_USE_MOCKS` — `false` in production (set in the Dockerfile);
   `true` in dev until the backend exists.
+
+## 10. Visual authenticity (vision sidecar)
+
+The image-based second opinion on listing authenticity. Full type shapes live in
+`frontend/src/api/types.ts` (`AuthenticityRead`, `ReviewQueueEntry`, `ReferenceImage`, …);
+the design decisions are in `VISUAL_AUTHENTICITY_PLAN_PROMPT.md` (D-V1…D-V12).
+
+- **Optional feature.** `GET /api/instance` gains `vision_enabled` (true iff the operator set
+  `VISION_SIDECAR_URL`). When false: the two vision GET list routes return **empty data**, every
+  vision mutation returns **503 `vision_unavailable`**, and the UI hides all vision surfaces.
+- **`Listing.authenticity`** (`AuthenticityRead | null`): computed from the vision scan for
+  `(watch, listing url)` — null means never scanned (vision off, reproductions allowed, or
+  discovered before the feature). Copy is asymmetric on purpose: `leans_fake` = "photos
+  consistent with known fakes" (strong signal); `leans_real` = "photos match known-real
+  references" (weak reassurance ONLY — never "verified authentic").
+- **Per-user thresholds** on `User` / `PATCH /api/me`: `vision_auto_reject_fake` (default 0.85),
+  `vision_auto_promote_real` / `vision_auto_promote_fake` (default 0.90) — decimal strings,
+  bounds 0.50–1.00 (422 `validation_error` with a `fields` map outside them).
+- **Visibility (mirrors run privacy):** the review queue is scoped to the capturing watch's
+  owner — a user (admins included) reviews only what their own hunts captured; a foreign entry
+  404s exactly like an unknown id. Confirmed references are **communal per item** (anyone
+  watching the item sees the library), but a reference's `source_listing_url` is visible only
+  to its capturer and admins. The image proxy allows a key only when it backs a reference of an
+  item the viewer watches, or a capture of the viewer's own, or the viewer is admin.
+- **Deletion:** deleting an item deletes its entire library (references, captures, stored
+  bytes); the item-delete confirmation copy must say so.
