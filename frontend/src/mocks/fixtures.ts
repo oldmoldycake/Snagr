@@ -580,7 +580,12 @@ function seedSystemRunEvents(run: MockRun) {
     site_id: listingOf(shared.id).site_id,
   })
   const s = run.stats!
-  push(6, 'success', 'run_finished', `Run complete — ${s.listings_checked} checked, ${s.prices_found} prices, ${s.new_listings} new listings, ${s.errors} errors`)
+  push(
+    6,
+    'success',
+    'run_finished',
+    `Run complete — ${s.listings_checked} checked, ${s.prices_found} prices, ${s.new_listings} new listing${s.new_listings === 1 ? '' : 's'}, ${s.errors} error${s.errors === 1 ? '' : 's'}`,
+  )
   run.last_seq = 6
 }
 
