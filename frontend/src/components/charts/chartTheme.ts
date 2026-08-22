@@ -5,17 +5,17 @@
  */
 
 export const chart = {
-  surface: '#16191d',
-  grid: '#262b30',
-  ink: '#f2f4f5',
-  inkSecondary: '#a8b0b8',
-  inkMuted: '#6c7680',
-  drop: '#2fbf71',
-  rise: '#e5484d',
-  sparkDim: '#4a4f55',
+  surface: '#101812',
+  grid: '#202b23',
+  ink: '#e9f1e9',
+  inkSecondary: '#a6b5a7',
+  inkMuted: '#69796e',
+  drop: '#42d07c',
+  rise: '#f0565c',
+  sparkDim: '#4e5d53',
   /** categorical series — assigned by listing id, color follows the entity */
-  series: ['#3987e5', '#199e70', '#c98500', '#9085e9', '#d55181', '#d95926'],
-  othersGray: '#565d66',
+  series: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9'],
+  othersGray: '#5a685e',
 } as const
 
 /** Stable slot assignment: listings sorted by id, fixed order, never recycled. */

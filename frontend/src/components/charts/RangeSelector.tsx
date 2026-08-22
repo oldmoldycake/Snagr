@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom'
-import { cn } from '@/lib/cn'
+import { Segmented } from '@/components/ui/segmented'
 import { RANGE_LABELS, TIME_RANGES, type TimeRange } from '@/lib/time'
 
 /** Range state lives in the URL (?range=90d) so links share it. */
@@ -30,25 +30,12 @@ export function RangeSelector({
   className?: string
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Time range"
-      className={cn('inline-flex overflow-hidden rounded-sm border border-hairline', className)}
-    >
-      {TIME_RANGES.map((r) => (
-        <button
-          key={r}
-          type="button"
-          aria-pressed={value === r}
-          onClick={() => onChange(r)}
-          className={cn(
-            'px-2.5 py-1 font-mono text-xs transition-colors',
-            value === r ? 'bg-raised text-ink' : 'bg-transparent text-ink-3 hover:text-ink-2',
-          )}
-        >
-          {RANGE_LABELS[r]}
-        </button>
-      ))}
-    </div>
+    <Segmented
+      options={TIME_RANGES.map((r) => ({ value: r, label: RANGE_LABELS[r] }))}
+      value={value}
+      onChange={onChange}
+      ariaLabel="Time range"
+      className={className}
+    />
   )
 }

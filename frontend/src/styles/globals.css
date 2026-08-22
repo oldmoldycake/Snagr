@@ -1,42 +1,62 @@
+@import '@fontsource-variable/big-shoulders-display';
+@import '@fontsource-variable/ibm-plex-sans';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
 @import 'tailwindcss';
 @import 'tw-animate-css';
 
 @theme {
-  --font-display: 'Space Grotesk Variable', system-ui, sans-serif;
-  --font-sans: 'Inter Variable', system-ui, sans-serif;
+  --font-display: 'Big Shoulders Display Variable', 'Arial Narrow', sans-serif;
+  --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', monospace;
 
-  /* Surfaces */
-  --color-page: #111315;
-  --color-surface: #16191d;
-  --color-raised: #1c2025;
-  --color-overlay: #21262c;
-  --color-hairline: rgb(255 255 255 / 0.08);
-  --color-grid: #262b30;
+  /* Surfaces — green-cast night ramp */
+  --color-page: #0c120e;
+  --color-well: #0a0f0b; /* inset grounds: search, terminal logs, list footers */
+  --color-surface: #101812;
+  --color-raised: #16211a;
+  --color-overlay: #1c2820;
+  --color-hairline: rgb(193 255 208 / 0.09);
+  --color-hairline-strong: rgb(193 255 208 / 0.16);
+  --color-grid: #202b23;
 
   /* Ink */
-  --color-ink: #f2f4f5;
-  --color-ink-2: #a8b0b8;
-  --color-ink-3: #6c7680;
+  --color-ink: #e9f1e9;
+  --color-ink-2: #a6b5a7;
+  --color-ink-3: #69796e;
+
+  /* Identity — "lume", the illuminated reticle. Active/live/primary, never semantic. */
+  --color-lume: #ffb454;
+  --color-lume-deep: #e89a34;
+  --color-lume-glow: rgb(255 180 84 / 0.13);
 
   /* Semantics — always paired with a glyph (▲▼✓⌖), never color alone */
-  --color-drop: #2fbf71;
-  --color-rise: #e5484d;
-  --color-warn: #fab219;
-  --color-accent: #3987e5;
+  --color-drop: #42d07c;
+  --color-drop-dim: rgb(66 208 124 / 0.1);
+  --color-rise: #f0565c;
+  --color-warn: #e08a2e;
 
-  /* Chart series (validated for the #16191D surface) */
+  /* Chart series (validated for the #101812 surface) */
   --color-series-1: #3987e5;
-  --color-series-2: #199e70;
-  --color-series-3: #c98500;
-  --color-series-4: #9085e9;
+  --color-series-2: #d95926;
+  --color-series-3: #199e70;
+  --color-series-4: #c98500;
   --color-series-5: #d55181;
-  --color-series-6: #d95926;
-  --color-spark: #4a4f55;
+  --color-series-6: #9085e9;
+  --color-spark: #4e5d53;
 
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
+
+  --animate-sweep: sweep 3.2s linear infinite;
+}
+
+@keyframes sweep {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @layer base {
@@ -45,20 +65,23 @@
   }
 
   body {
-    @apply bg-page font-sans text-[13px] leading-normal text-ink antialiased;
+    @apply font-sans text-[13px] leading-normal text-ink antialiased;
+    background:
+      radial-gradient(900px 340px at 30% 0%, rgb(66 208 124 / 0.045), transparent 70%),
+      var(--color-page);
   }
 
   ::selection {
-    background: rgb(57 135 229 / 0.35);
+    background: rgb(255 180 84 / 0.3);
   }
 
   *:focus-visible {
-    @apply outline-2 outline-offset-2 outline-accent;
+    @apply outline-2 outline-offset-2 outline-lume;
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #2c3238 transparent;
+    scrollbar-color: #26332a transparent;
   }
 
   @media (prefers-reduced-motion: reduce) {
