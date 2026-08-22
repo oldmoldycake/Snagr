@@ -88,6 +88,17 @@ def _engine():
 async def _schema():
     """Create the full schema in snagr_test once, drop it when the run ends."""
     async with _engine().begin() as conn:
+        # pgvector is a project-wide prerequisite (migration 009). Dev test
+        # roles typically own snagr_test, so creating the extension here works;
+        # when it can't, fail with the migration's pointer — never skip silently.
+        try:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        except Exception as exc:
+            raise RuntimeError(
+                "Snagr tests require the pgvector extension in snagr_test and could not "
+                "create it. Run `CREATE EXTENSION vector;` there as your Postgres admin "
+                "(see README → Requirements), then re-run pytest."
+            ) from exc
         await conn.run_sync(Base.metadata.drop_all)  # clear leftovers from a crashed run
         await conn.run_sync(Base.metadata.create_all)
         for ddl in _NOTIFY_DDL:
