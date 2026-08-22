@@ -8,7 +8,9 @@ agent can read them and react."""
 import logging
 from datetime import datetime
 
-from database import AsyncSessionLocal, ListingChecks, Listings, PriceChecks
+import httpx
+from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
+from database import AsyncSessionLocal, ListingChecks, Listings, PriceChecks, VisionScans
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -57,9 +59,12 @@ async def save_listing(
       match_summary: One short line justifying the score, e.g. "dry battery ok, cart only,
         authentic per photos"
     Returns:
-      One of these two:
+      One of these three:
         listing_id: The internal ID for the listing. If it already exists, returns the
           existing listing_id instead.
+        REFUSED: A string starting with "REFUSED:" — this listing's photos crossed the
+          user's authenticity auto-reject threshold (see check_images). Do not retry;
+          call log_listing_check with reason "authenticity" instead and move on.
         Error: A string naming the site/item combo that errored and what the error was
     """
 
@@ -67,6 +72,25 @@ async def save_listing(
 
     async with AsyncSessionLocal() as session:
         try:
+            # Deterministic backstop for the vision gate (D-V2): the REJECT
+            # directive from check_images is prompt-mediated, so a scan that
+            # crossed the owner's threshold also refuses the save here.
+            auto_reject = (
+                await session.execute(
+                    select(VisionScans.auto_reject)
+                    .where(VisionScans.watch_id == watch_id)
+                    .where(VisionScans.listing_url == url)
+                    .limit(1)
+                )
+            ).scalar()
+            if auto_reject:
+                log.info(f"Refusing listing save for watch {watch_id}: vision auto-reject ({url})")
+                return (
+                    "REFUSED: this listing's photos crossed the user's authenticity "
+                    "auto-reject threshold (see check_images). Do not save it — call "
+                    "log_listing_check with reason 'authenticity' instead and move on."
+                )
+
             stmt = (
                 insert(Listings)
                 .values(
@@ -236,3 +260,116 @@ async def log_listing_check(
         except Exception as e:
             log.error(f"Error logging listing check for watch {watch_id} on site {site_id}: {e}")
             return f"Error logging listing check for watch {watch_id} on site {site_id}: {e}"
+
+
+async def check_images(
+    watch_id: int,
+    item_id: int,
+    listing_url: str,
+    image_urls: list[str],
+    llm_authenticity_read: str,
+) -> str:
+    """
+    Get an image-based second opinion on a listing's authenticity before you
+    decide to save or reject it: the listing's photos are compared against
+    this item's library of known-real and known-fake reference images.
+
+    Call this exactly once per candidate listing, after your own authenticity
+    screening and before save_listing / log_listing_check.
+
+    Args:
+      watch_id: The internal id of the watch (user+item) this search is being run for
+      item_id: The item id you have for the current item
+      listing_url: The URL of the candidate listing page you are evaluating
+      image_urls: Direct URLs of the photos on the listing page that actually
+        depict the item itself. Choose carefully: skip packaging-only shots,
+        hands/scale references, seller logos, stock banners, and unrelated
+        thumbnails. 1-6 images is typical. Do not call this with an empty
+        list — if the listing has no usable photos, skip the call entirely.
+      llm_authenticity_read: Your OWN verdict from the screening you already
+        did, exactly one of "looks_authentic", "suspect", "unsure". Report it
+        honestly — it is recorded for corroboration and does not change how
+        the images are scored.
+    Returns:
+      A report string with per-image scores and an overall verdict
+      ("leans_real", "leans_fake", or "inconclusive"), or an error string.
+      Act on it as follows:
+        - If it starts with "REJECT:", the fake confidence exceeded this
+          user's auto-reject threshold. Do NOT save the listing: call
+          log_listing_check with reason "authenticity", quote the reported
+          confidence in notes, and move on.
+        - "leans_fake" below the reject threshold: you may still save the
+          listing if it otherwise qualifies, but lower match_score and state
+          the photo concern in match_summary.
+        - "leans_real" is weak reassurance only — scammers reuse photos of
+          genuine items — so never raise match_score because of it and never
+          describe a listing as verified authentic.
+        - "inconclusive", "no verdict", or an error: the check could not help;
+          rely entirely on your own screening.
+    """
+
+    log.info(f"Checking {len(image_urls)} image(s) for watch {watch_id}: {listing_url}")
+    try:
+        async with httpx.AsyncClient(timeout=VISION_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                f"{VISION_SIDECAR_URL}/check-images",
+                json={
+                    "watch_id": watch_id,
+                    "item_id": item_id,
+                    "listing_url": listing_url,
+                    "image_urls": image_urls,
+                    "llm_authenticity_read": llm_authenticity_read,
+                },
+            )
+            response.raise_for_status()
+            result = response.json()
+    except Exception as e:
+        # Same isolation contract as the grounding pre-pass: a sidecar outage
+        # degrades to "no verdict", it never blocks the scrape (D-V2).
+        log.error(f"Vision sidecar unavailable for {listing_url}: {e}")
+        return f"No verdict: authenticity image check unavailable ({e})"
+
+    verdict = result["verdict"]
+    confidence = result["fake_confidence"]
+
+    if result["auto_reject"]:
+        return (
+            f"REJECT: fake confidence {confidence} meets this user's auto-reject "
+            f"threshold — do NOT save this listing. Call log_listing_check with reason "
+            f"'authenticity', quote the confidence in notes, and move on."
+        )
+
+    lines = [
+        f"Photo authenticity check for {listing_url}: verdict {verdict}"
+        + (f" (fake confidence {confidence})" if confidence is not None else "")
+    ]
+    for image in result["images"]:
+        image_confidence = image["fake_confidence"]
+        lines.append(
+            f"  - {image['image_url']}: "
+            + (
+                f"fake confidence {image_confidence}"
+                if image_confidence is not None
+                else "could not be scored"
+            )
+        )
+    if result["skipped"]:
+        lines.append(f"  Skipped (could not fetch): {', '.join(result['skipped'])}")
+    if verdict == "leans_fake":
+        lines.append(
+            "  Photos are consistent with known fakes, below the auto-reject threshold: "
+            "you may still save this listing if it otherwise qualifies, but lower "
+            "match_score and state the photo concern in match_summary."
+        )
+    elif verdict == "leans_real":
+        lines.append(
+            "  Photos match known-real references. Weak reassurance ONLY — scammers "
+            "reuse photos of genuine items — so do not raise match_score and never "
+            "describe the listing as verified authentic."
+        )
+    else:
+        lines.append(
+            "  The reference library could not judge these photos; rely entirely on "
+            "your own screening."
+        )
+    return "\n".join(lines)

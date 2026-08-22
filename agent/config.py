@@ -16,6 +16,12 @@ AI_API_KEY = os.getenv("AI_API_KEY", None)
 # MCP
 PLAYWRIGHT_MCP_URL = os.getenv("PLAYWRIGHT_MCP_URL")
 
+# Visual authenticity (vision sidecar). None = feature off: the check_images
+# tool is not registered and scan prompts are byte-identical to before.
+VISION_SIDECAR_URL = os.getenv("VISION_SIDECAR_URL")
+# Hard cap on one sidecar call — a wedged sidecar must never stall a run.
+VISION_TIMEOUT_SECONDS = int(os.getenv("VISION_TIMEOUT_SECONDS", "90"))
+
 # Market grounding. Prices in other currencies are recorded but never mixed
 # into stats - a $226/€208 blend is a number with no meaning.
 EXPECTED_CURRENCY = os.getenv("EXPECTED_CURRENCY", "USD")

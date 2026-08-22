@@ -13,7 +13,15 @@ flips the row, and bailing early is what stops mid-run LLM token burn.
 import logging
 import uuid
 
-from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, LANGFUSE_ENABLED, PLAYWRIGHT_MCP_URL
+from config import (
+    AI_API_KEY,
+    AI_MODEL,
+    AI_PROVIDER,
+    AI_URL,
+    LANGFUSE_ENABLED,
+    PLAYWRIGHT_MCP_URL,
+    VISION_SIDECAR_URL,
+)
 from database import (
     append_run_event,
     claim_due_schedule,
@@ -34,6 +42,7 @@ from langfuse.langchain import CallbackHandler
 from pricing import ground_stale
 from prompt import generate_prompt, generate_recheck_prompt
 from tools import (
+    check_images,
     disable_listing,
     log_listing_check,
     read_run_stats,
@@ -99,7 +108,12 @@ async def build_pass_agents() -> tuple:
     recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
 
     tools = await client.get_tools()
-    scan_agent = create_agent(llm, tools + [save_price_check, save_listing, log_listing_check])
+    scan_tools = tools + [save_price_check, save_listing, log_listing_check]
+    # Discovery pass only (D-V9), and only when the sidecar is configured —
+    # with the URL unset the agent must run exactly as before.
+    if VISION_SIDECAR_URL:
+        scan_tools.append(check_images)
+    scan_agent = create_agent(llm, scan_tools)
 
     return recheck_agent, scan_agent
 
@@ -177,6 +191,7 @@ async def scan_pair(agent, session_id: str, row, known_urls: list, market: dict 
         selection_mode=selection_mode,
         max_listings=max_listings,
         allow_reproductions=allow_reproductions,
+        vision_enabled=bool(VISION_SIDECAR_URL),
         known_urls=known_urls,
         rejected_checks=rejected_checks,
         market=market,
