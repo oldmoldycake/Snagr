@@ -28,8 +28,10 @@ frontend/dist-ssr/
 
 # AI planning artifacts — scratch, not repo documentation
 docs/superpowers/
+VISUAL_AUTHENTICITY_*.md
 
 # Editor directories and files
+.nodeterm/
 .vscode/*
 !.vscode/extensions.json
 .idea/
