@@ -12,6 +12,7 @@ flips the row, and bailing early is what stops mid-run LLM token burn.
 
 import logging
 import uuid
+from contextlib import asynccontextmanager
 
 from config import (
     AI_API_KEY,
@@ -36,7 +37,9 @@ from database import (
 )
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
+from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 from pricing import ground_stale
@@ -89,11 +92,17 @@ def agent_config(session_id: str, user_id: int) -> dict:
     }
 
 
-async def build_pass_agents() -> tuple:
+@asynccontextmanager
+async def build_pass_agents():
     """
     Connect to the Playwright MCP server and build the two per-pass agents:
     the recheck agent (price/availability tools only) and the scan agent
     (discovery tools too). The one seam for everything LLM/browser-shaped.
+
+    A context manager because the MCP session must span the whole run: tools
+    loaded without one open a fresh session per tool call, and those sessions
+    race for the server's single persistent browser profile ("Browser is
+    already in use for /profile").
     """
     client = MultiServerMCPClient(
         {
@@ -104,18 +113,31 @@ async def build_pass_agents() -> tuple:
         }
     )
 
-    tools = await client.get_tools()
-    recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
+    async with client.session("playwright") as session:
+        tools = await load_mcp_tools(session)
+        recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
+        scan_tools = tools + [save_price_check, save_listing, log_listing_check]
+        # Discovery pass only (D-V9), and only when the sidecar is configured —
+        # with the URL unset the agent must run exactly as before.
+        if VISION_SIDECAR_URL:
+            scan_tools.append(check_images)
+        scan_agent = create_agent(llm, scan_tools)
+        yield recheck_agent, scan_agent
 
-    tools = await client.get_tools()
-    scan_tools = tools + [save_price_check, save_listing, log_listing_check]
-    # Discovery pass only (D-V9), and only when the sidecar is configured —
-    # with the URL unset the agent must run exactly as before.
-    if VISION_SIDECAR_URL:
-        scan_tools.append(check_images)
-    scan_agent = create_agent(llm, scan_tools)
 
-    return recheck_agent, scan_agent
+def _require_browser_success(messages: list) -> None:
+    """
+    Raise when every browser_* tool call in a unit's transcript errored — the
+    model ends such a unit with a graceful "couldn't browse" summary, which
+    would otherwise count as a clean unit. Playwright MCP tools all share the
+    browser_ name prefix, so the DB tools never match; mixed results stay
+    non-fatal (a failed click the model recovered from is normal browsing).
+    """
+    results = [
+        m for m in messages if isinstance(m, ToolMessage) and (m.name or "").startswith("browser_")
+    ]
+    if results and all(m.status == "error" for m in results):
+        raise RuntimeError(f"every browser call failed: {results[0].content}")
 
 
 async def recheck_listing(agent, session_id: str, row) -> None:
@@ -145,12 +167,15 @@ async def recheck_listing(agent, session_id: str, row) -> None:
         item_name=item_name,
     )
 
+    final: dict = {}
     async for step in agent.astream(
         {"messages": [{"role": "user", "content": prompt}]},
         config=agent_config(session_id, user_id),
         stream_mode="values",
     ):
         step["messages"][-1].pretty_print()
+        final = step
+    _require_browser_success(final.get("messages", []))
 
 
 async def scan_pair(agent, session_id: str, row, known_urls: list, market: dict | None) -> None:
@@ -199,12 +224,15 @@ async def scan_pair(agent, session_id: str, row, known_urls: list, market: dict 
         condition_hint=condition_hint,
     )
 
+    final: dict = {}
     async for step in agent.astream(
         {"messages": [{"role": "user", "content": prompt}]},
         config=agent_config(session_id, user_id),
         stream_mode="values",
     ):
         step["messages"][-1].pretty_print()
+        final = step
+    _require_browser_success(final.get("messages", []))
 
 
 async def execute_run(run: dict) -> dict | None:
@@ -216,7 +244,8 @@ async def execute_run(run: dict) -> dict | None:
 
     Returns the run's stats on completion, or None if the run was cancelled —
     the API already wrote the terminal state in that case, so the caller must
-    not write another.
+    not write another. Raises when every attempted unit failed, so _drive
+    marks the run failed instead of succeeded-with-zeroed-stats.
     """
     run_id = run["id"]
     session_id = str(uuid.uuid4())
@@ -240,70 +269,77 @@ async def execute_run(run: dict) -> dict | None:
         except Exception as e:
             log.error(f"Grounding pre-pass failed, scraping ungrounded: {e}")
 
-    recheck_agent, scan_agent = await build_pass_agents()
+    units = 0
+    async with build_pass_agents() as (recheck_agent, scan_agent):
+        # Here we get the current listing for tracked listings and check if active and updateprice
+        log.info("Starting scan on current listings")
 
-    # Here we get the current listing for tracked listings and check if active and updateprice
-    log.info("Starting scan on current listings")
+        listed_items_list = await get_listed_items(run["scope"], run["scope_id"])
+        current_listing_urls = []
+        for row in listed_items_list:
+            if await get_run_status(run_id) == "cancelled":
+                log.info(f"Run {run_id} cancelled; stopping before listing {row['listing_id']}")
+                return None
 
-    listed_items_list = await get_listed_items(run["scope"], run["scope_id"])
-    current_listing_urls = []
-    for row in listed_items_list:
-        if await get_run_status(run_id) == "cancelled":
-            log.info(f"Run {run_id} cancelled; stopping before listing {row['listing_id']}")
-            return None
+            units += 1
+            try:
+                await recheck_listing(recheck_agent, session_id, row)
+                current_listing_urls.append(row["listing_url"])
+                log.info(f"Finished recheck for listing {row['listing_id']}")
+            except Exception as e:
+                log.error(f"Recheck failed for listing {row['listing_id']}: {e}")
+                errors += 1
+                await append_run_event(
+                    run_id,
+                    "error",
+                    "error",
+                    f"Recheck failed for listing {row['listing_id']}: {e}",
+                    {"listing_id": int(row["listing_id"])},
+                )
+                continue
 
-        try:
-            await recheck_listing(recheck_agent, session_id, row)
-            current_listing_urls.append(row["listing_url"])
-            log.info(f"Finished recheck for listing {row['listing_id']}")
-        except Exception as e:
-            log.error(f"Recheck failed for listing {row['listing_id']}: {e}")
-            errors += 1
+        # We scan the sites and ingore all the already seen and currently tracked listings
+        log.info("Starting scan for new items")
+
+        watch_site_list = await get_watched_item_list(run["scope"], run["scope_id"])
+        markets: dict[int, dict | None] = {}
+        for row in watch_site_list:
+            if await get_run_status(run_id) == "cancelled":
+                log.info(f"Run {run_id} cancelled; stopping before watch {row['watch_id']}")
+                return None
+
+            item_id = row["item_id"]
+            if item_id not in markets:
+                market_row = await get_market_price(item_id)
+                markets[item_id] = dict(market_row) if market_row else None
+
             await append_run_event(
                 run_id,
-                "error",
-                "error",
-                f"Recheck failed for listing {row['listing_id']}: {e}",
-                {"listing_id": int(row["listing_id"])},
-            )
-            continue
-
-    # We scan the sites and ingore all the already seen and currently tracked listings
-    log.info("Starting scan for new items")
-
-    watch_site_list = await get_watched_item_list(run["scope"], run["scope_id"])
-    markets: dict[int, dict | None] = {}
-    for row in watch_site_list:
-        if await get_run_status(run_id) == "cancelled":
-            log.info(f"Run {run_id} cancelled; stopping before watch {row['watch_id']}")
-            return None
-
-        item_id = row["item_id"]
-        if item_id not in markets:
-            market_row = await get_market_price(item_id)
-            markets[item_id] = dict(market_row) if market_row else None
-
-        await append_run_event(
-            run_id,
-            "info",
-            "item_started",
-            f'Searching {row["site_name"]} for "{row["item_name"]}"…',
-            {"item_id": int(item_id), "site_id": int(row["site_id"])},
-        )
-        try:
-            await scan_pair(scan_agent, session_id, row, current_listing_urls, markets[item_id])
-            log.info(f"Finished {row['item_name']} on site {row['site_name']}")
-        except Exception as e:
-            log.error(f"Item {row['item_name']} on site {row['site_name']} failed: {e}")
-            errors += 1
-            await append_run_event(
-                run_id,
-                "error",
-                "error",
-                f"Search for {row['item_name']} on {row['site_name']} failed: {e}",
+                "info",
+                "item_started",
+                f'Searching {row["site_name"]} for "{row["item_name"]}"…',
                 {"item_id": int(item_id), "site_id": int(row["site_id"])},
             )
-            continue
+            units += 1
+            try:
+                await scan_pair(scan_agent, session_id, row, current_listing_urls, markets[item_id])
+                log.info(f"Finished {row['item_name']} on site {row['site_name']}")
+            except Exception as e:
+                log.error(f"Item {row['item_name']} on site {row['site_name']} failed: {e}")
+                errors += 1
+                await append_run_event(
+                    run_id,
+                    "error",
+                    "error",
+                    f"Search for {row['item_name']} on {row['site_name']} failed: {e}",
+                    {"item_id": int(item_id), "site_id": int(row["site_id"])},
+                )
+                continue
+
+    # a run that attempted work and got nothing done is a failure, not a
+    # success with zeroed stats — the per-unit events carry the detail
+    if units and errors == units:
+        raise RuntimeError(f"every unit failed ({errors}/{units}) — see the run's events")
 
     stats = read_run_stats()
     stats["errors"] += errors

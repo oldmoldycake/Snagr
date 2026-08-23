@@ -6,11 +6,13 @@ cancellation, terminal writes — not SQL (that's test_run_queue_db.py) and
 not the LLM."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import pytest
 import tools
 from database import roll_forward
+from langchain_core.messages import ToolMessage
 
 import agent
 
@@ -107,11 +109,12 @@ def wire(
             raise RuntimeError("provider down")
         seen["grounded"].append(True)
 
+    @asynccontextmanager
     async def fake_build():
         if build_raises:
             raise RuntimeError("mcp down")
         seen["built"].append(True)
-        return ("recheck-agent", "scan-agent")
+        yield ("recheck-agent", "scan-agent")
 
     async def fake_market(item_id):
         return None
@@ -230,6 +233,84 @@ class TestUnitFailures:
         assert status == "succeeded"
         assert stats["errors"] == 1
         assert stats["listings_checked"] == 1
+
+    def test_a_run_where_every_unit_fails_is_marked_failed(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            claim=run_row(run_id=7),
+            listings=[listing_row(1)],
+            pairs=[pair_row(2)],
+            fail_recheck={1},
+            fail_scan={2},
+        )
+        with pytest.raises(RuntimeError, match="every unit failed"):
+            asyncio.run(agent.consume())
+        ((run_id, status, stats, error),) = seen["finishes"]
+        assert (run_id, status, stats) == (7, "failed", None)
+        assert "every unit failed (2/2)" in error
+
+    def test_a_run_with_no_units_at_all_still_succeeds(self, monkeypatch):
+        # an empty watchlist is not a failure — the all-failed rule needs
+        # at least one attempted unit
+        seen = wire(monkeypatch, claim=run_row(run_id=7))
+        asyncio.run(agent.consume())
+        assert [f[1] for f in seen["finishes"]] == ["succeeded"]
+
+
+class TestBrowserFailureDetection:
+    """_require_browser_success: a unit whose browsing never worked must raise
+    (and so be counted) instead of ending on the model's graceful summary."""
+
+    @staticmethod
+    def tool_msg(name, status="success"):
+        return ToolMessage(content="### Error\nboom", name=name, tool_call_id="t1", status=status)
+
+    def test_all_browser_calls_failing_raises(self):
+        msgs = [
+            self.tool_msg("browser_navigate", "error"),
+            self.tool_msg("browser_snapshot", "error"),
+        ]
+        with pytest.raises(RuntimeError, match="every browser call failed"):
+            agent._require_browser_success(msgs)
+
+    def test_a_partial_browser_failure_is_normal_browsing(self):
+        msgs = [self.tool_msg("browser_navigate", "error"), self.tool_msg("browser_navigate")]
+        agent._require_browser_success(msgs)
+
+    def test_db_tool_errors_do_not_trigger_it(self):
+        msgs = [self.tool_msg("save_price_check", "error"), self.tool_msg("browser_navigate")]
+        agent._require_browser_success(msgs)
+
+    def test_a_unit_with_no_browser_calls_passes(self):
+        agent._require_browser_success([])
+
+    def test_a_unit_whose_stream_ends_on_all_errors_raises_from_the_worker(self, monkeypatch):
+        # end-to-end through recheck_listing: the guard runs on the final
+        # transcript, so the orchestrator counts the unit as failed
+        class FakeAgent:
+            def __init__(self, messages):
+                self._messages = messages
+
+            async def astream(self, _input, config=None, stream_mode=None):
+                yield {"messages": self._messages}
+
+        async def fake_prompt(**kwargs):
+            return "prompt"
+
+        monkeypatch.setattr(agent, "generate_recheck_prompt", fake_prompt)
+        row = {
+            "listing_id": 1,
+            "listing_url": "https://example.test/l1",
+            "watch_id": 1,
+            "user_id": 1,
+            "site_id": 1,
+            "site_name": "TestBay",
+            "item_id": 1,
+            "item_name": "Item 1",
+        }
+        msgs = [self.tool_msg("browser_navigate", "error")]
+        with pytest.raises(RuntimeError, match="every browser call failed"):
+            asyncio.run(agent.recheck_listing(FakeAgent(msgs), "sess", row))
 
 
 class TestProgressEvents:
