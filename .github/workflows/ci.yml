@@ -88,7 +88,10 @@ jobs:
     timeout-minutes: 15
     services:
       postgres:
-        image: postgres:18 # match the live server's major version
+        # The official postgres image (major version matching the live server)
+        # plus the vector extension — a project-wide prerequisite since
+        # migration 009. conftest.py installs the extension itself.
+        image: pgvector/pgvector:pg18
         env:
           POSTGRES_USER: snagr
           POSTGRES_PASSWORD: snagr
@@ -128,7 +131,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:18
+        image: pgvector/pgvector:pg18 # same image story as backend-tests
         env:
           POSTGRES_USER: snagr
           POSTGRES_PASSWORD: snagr
@@ -164,7 +167,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:18
+        image: pgvector/pgvector:pg18 # same image story as backend-tests
         env:
           POSTGRES_USER: snagr
           POSTGRES_PASSWORD: snagr
@@ -188,6 +191,9 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
         working-directory: backend
+      # Migration 009 prechecks the vector extension and (rightly) won't
+      # create it — that needs superuser rights, which the CI service user has.
+      - run: docker exec ${{ job.services.postgres.id }} psql -U snagr -d snagr -c 'CREATE EXTENSION IF NOT EXISTS vector'
       - run: alembic upgrade head
         working-directory: backend
       - run: alembic check
