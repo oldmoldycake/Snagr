@@ -1,28 +1,18 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ExternalLink } from 'lucide-react'
-import {
-  deleteItem,
-  getItem,
-  listPriceChecks,
-  listSites,
-  updateListing,
-  updateWatch,
-} from '@/api/endpoints'
+import { deleteItem, getItem, listPriceChecks, listSites, updateWatch } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { ItemDetail, Listing, PriceCheck } from '@/api/types'
+import type { ItemDetail, PriceCheck } from '@/api/types'
 import { useRangeParam } from '@/components/charts/RangeSelector'
-import { Badge, SnaggedBadge } from '@/components/ui/badge'
+import { SnaggedBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
-import { SimpleTooltip } from '@/components/ui/tooltip'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { formatDateTime, relativeTime } from '@/lib/time'
@@ -30,120 +20,7 @@ import { RunButton } from '@/features/runs/RunButton'
 import { ChartPanel } from './ChartPanel'
 import { EditItemDialog } from './EditItemDialog'
 import { Ladder } from './Ladder'
-import { MatchPill } from './MatchPill'
-
-function ListingRow({
-  listing,
-  itemId,
-  isBestMatch,
-}: {
-  listing: Listing
-  itemId: number
-  isBestMatch: boolean
-}) {
-  const queryClient = useQueryClient()
-  const toggle = useMutation({
-    mutationFn: (active: boolean) => updateListing(listing.id, { active }),
-    // optimistic: flip immediately, roll back on error
-    onMutate: async (active) => {
-      await queryClient.cancelQueries({ queryKey: qk.item(itemId) })
-      const prev = queryClient.getQueryData<ItemDetail>(qk.item(itemId))
-      if (prev) {
-        queryClient.setQueryData<ItemDetail>(qk.item(itemId), {
-          ...prev,
-          listings: prev.listings.map((l) => (l.id === listing.id ? { ...l, active } : l)),
-        })
-      }
-      return { prev }
-    },
-    onError: (_err, _active, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(qk.item(itemId), ctx.prev)
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ['items'] })
-    },
-  })
-
-  const soldOrEnded =
-    !listing.active && (listing.latest_status === 'sold' || listing.latest_status === 'ended')
-
-  return (
-    <TR className={cn(!listing.active && 'opacity-45')}>
-      <TD>
-        <div className="flex items-center gap-2">
-          <div className="min-w-0">
-            <a
-              href={listing.url}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex max-w-52 items-center gap-1 text-[13px] font-medium text-ink hover:text-lume hover:underline sm:max-w-80"
-            >
-              <span className="truncate">
-                {listing.title ?? listing.url.replace(/^https?:\/\/(www\.)?/, '')}
-              </span>
-              <ExternalLink className="size-3 shrink-0 text-ink-3" />
-            </a>
-            <p className="truncate font-mono text-[10.5px] text-ink-3">
-              {listing.site_name}
-              {listing.match_summary ? ` · ${listing.match_summary}` : ''}
-            </p>
-          </div>
-          {isBestMatch ? (
-            <Badge variant="lume" className="shrink-0">
-              Best match
-            </Badge>
-          ) : null}
-        </div>
-      </TD>
-      <TD className="hidden md:table-cell">
-        <MatchPill score={listing.match_score} summary={listing.match_summary} />
-      </TD>
-      <TD className="text-right font-mono font-semibold text-ink tnum">
-        {formatMoney(listing.latest_price)}
-      </TD>
-      <TD>
-        {soldOrEnded ? (
-          <Badge variant="warn">
-            {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} · {relativeTime(listing.last_checked_at)}
-          </Badge>
-        ) : listing.in_stock == null ? (
-          <span className="text-xs text-ink-3">—</span>
-        ) : (
-          <span className="flex items-center gap-1.5 text-xs whitespace-nowrap text-ink-2">
-            <span
-              aria-hidden
-              className={cn('size-1.5 rounded-full', listing.in_stock ? 'bg-drop' : 'bg-rise')}
-            />
-            {listing.in_stock ? 'In stock' : 'Out of stock'}
-          </span>
-        )}
-      </TD>
-      <TD className="hidden font-mono text-xs whitespace-nowrap text-ink-3 md:table-cell">
-        {relativeTime(listing.last_checked_at)}
-      </TD>
-      <TD className="hidden font-mono text-xs whitespace-nowrap text-ink-3 lg:table-cell">
-        {listing.discovered_by_run_id != null ? (
-          <Link to={`/runs/${listing.discovered_by_run_id}`} className="hover:text-ink hover:underline">
-            {relativeTime(listing.created_at)}
-          </Link>
-        ) : (
-          relativeTime(listing.created_at)
-        )}
-      </TD>
-      <TD>
-        <SimpleTooltip content={listing.active ? 'Active — the agent checks this listing' : 'Inactive — skipped by the agent'}>
-          <span>
-            <Switch
-              checked={listing.active}
-              onCheckedChange={(active) => toggle.mutate(active)}
-              aria-label={`${listing.active ? 'Deactivate' : 'Activate'} ${listing.site_name} listing`}
-            />
-          </span>
-        </SimpleTooltip>
-      </TD>
-    </TR>
-  )
-}
+import { ListingsBoard } from './ListingsBoard'
 
 function checkLine(check: PriceCheck): LogLine {
   const level =
@@ -229,18 +106,6 @@ export function ItemDetailPage() {
   const detail = item.data
   const target = detail.watch.target_price ?? detail.target_price
   const bestListing = detail.listings.find((l) => l.id === detail.best_listing_id) ?? null
-
-  // badge the highest-scoring tracked listing (price breaks ties) in best_match mode
-  const bestMatchListingId =
-    detail.selection_mode === 'best_match'
-      ? [...detail.listings]
-          .filter((l) => l.active && l.match_score != null)
-          .sort(
-            (a, b) =>
-              (b.match_score ?? 0) - (a.match_score ?? 0) ||
-              Number(a.latest_price ?? Infinity) - Number(b.latest_price ?? Infinity),
-          )[0]?.id ?? null
-      : null
 
   const trackedCount = detail.listings.filter((l) => l.active).length
   const siteNames =
@@ -345,29 +210,7 @@ export function ItemDetailPage() {
                   action={<RunButton scope="item" scopeId={detail.id} label="Run this item" variant="snag" size="sm" />}
                 />
               ) : (
-                <Table>
-                  <THead>
-                    <TR>
-                      <TH>Listing</TH>
-                      <TH className="hidden md:table-cell">Match</TH>
-                      <TH className="text-right">Price</TH>
-                      <TH>Status</TH>
-                      <TH className="hidden md:table-cell">Checked</TH>
-                      <TH className="hidden lg:table-cell">Found</TH>
-                      <TH>Active</TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {detail.listings.map((listing) => (
-                      <ListingRow
-                        key={listing.id}
-                        listing={listing}
-                        itemId={detail.id}
-                        isBestMatch={bestMatchListingId === listing.id}
-                      />
-                    ))}
-                  </TBody>
-                </Table>
+                <ListingsBoard detail={detail} range={range} />
               )}
             </CardBody>
           </Card>

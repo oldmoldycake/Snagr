@@ -3,15 +3,24 @@ import { cn } from '@/lib/cn'
 
 /**
  * 0–100 criteria-fit score, tinted by band. The agent's one-line rationale
- * lives in the tooltip.
+ * lives in the tooltip. `quietMid` drops the amber 70–84 tint — the listings
+ * board only lets the top band glow.
  */
-export function MatchPill({ score, summary }: { score: number | null; summary: string | null }) {
+export function MatchPill({
+  score,
+  summary,
+  quietMid = false,
+}: {
+  score: number | null
+  summary: string | null
+  quietMid?: boolean
+}) {
   if (score == null) return <span className="text-xs text-ink-3">—</span>
 
   const band =
     score >= 85
       ? 'border-drop/40 bg-drop/10 text-drop'
-      : score >= 70
+      : score >= 70 && !quietMid
         ? 'border-lume/40 bg-lume-glow text-lume'
         : 'border-hairline-strong bg-transparent text-ink-3'
 
