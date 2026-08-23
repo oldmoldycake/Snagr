@@ -1,0 +1,269 @@
+# CI for all three components, plus image publishing to GHCR on main.
+#
+# Path gating happens INSIDE the workflow (the `changes` job) rather than via a
+# workflow-level `paths:` filter: an untriggered workflow never reports its
+# checks, which leaves branch-protection required checks stuck at "Expected"
+# forever. This way every check always reports — success or skipped, both of
+# which satisfy branch protection.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A superseding PR push cancels the in-flight run; main-push runs (which
+# publish images) always run to completion.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists PR files via the API
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      backend: ${{ steps.filter.outputs.backend }}
+      agent: ${{ steps.filter.outputs.agent }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7 # needed for push-event diffs
+      # `agent` includes the backend schema sources: agent/database.py is a
+      # hand-kept mirror of the backend models (Decision D1), so schema changes
+      # re-run the agent suite. The reverse edge is deliberately absent — the
+      # backend imports nothing from agent/.
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            shared: &shared
+              - '.github/workflows/**'
+              - 'ruff.toml'
+              - 'docker-compose.yml'
+            python:
+              - *shared
+              - 'backend/**'
+              - 'agent/**'
+            backend:
+              - *shared
+              - 'backend/**'
+            agent:
+              - *shared
+              - 'agent/**'
+              - 'backend/app/models.py'
+              - 'backend/migrations/**'
+            frontend:
+              - *shared
+              - 'frontend/**'
+
+  lint-python:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      # Pinned here rather than in requirements.txt so a new ruff release can't
+      # turn unrelated PRs red; bump deliberately (Dependabot doesn't track it).
+      - run: pip install ruff==0.16.2
+      # From the repo root: per-file-ignores in ruff.toml are root-relative.
+      - run: ruff check .
+      - run: ruff format --check .
+
+  backend-tests:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18 # match the live server's major version
+        env:
+          POSTGRES_USER: snagr
+          POSTGRES_PASSWORD: snagr
+          # tests/conftest.py rewrites DATABASE_URL's last path segment to
+          # /snagr_test and only ever connects there — snagr_test is the one
+          # database that must exist; the base /snagr DB is never touched.
+          POSTGRES_DB: snagr_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U snagr -d snagr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Must NOT already end in /snagr_test — conftest asserts its rewrite
+      # changed the URL, so the test DB can never equal the "live" one.
+      DATABASE_URL: postgresql+asyncpg://snagr:snagr@localhost:5432/snagr
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - run: python -m pytest
+        working-directory: backend
+
+  # Safe to run in parallel with backend-tests: the "don't run both suites at
+  # once" warning in agent/tests/test_run_queue_db.py is about a shared server,
+  # and each job here gets its own throwaway service container.
+  agent-tests:
+    needs: changes
+    if: needs.changes.outputs.agent == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: snagr
+          POSTGRES_PASSWORD: snagr
+          POSTGRES_DB: snagr_test # same rewrite story as backend-tests
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U snagr -d snagr_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://snagr:snagr@localhost:5432/snagr
+      # No AI_* vars: agent/tests/conftest.py stubs them — they only need to
+      # exist, not work.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: agent/requirements.txt
+      - run: pip install -r requirements.txt
+        working-directory: agent
+      - run: python -m pytest
+        working-directory: agent
+
+  # Proves a fresh database builds from zero through the whole migration chain,
+  # then that the models haven't drifted past the migrations.
+  migrations:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: snagr
+          POSTGRES_PASSWORD: snagr
+          POSTGRES_DB: snagr
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U snagr -d snagr"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Alembic connects to this URL as-is (migrations/env.py reads
+      # settings.DATABASE_URL) — no test-DB rewrite on this path.
+      DATABASE_URL: postgresql+asyncpg://snagr:snagr@localhost:5432/snagr
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+        working-directory: backend
+      - run: alembic upgrade head
+        working-directory: backend
+      - run: alembic check
+        working-directory: backend
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22' # match frontend/Dockerfile
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      # VITE_USE_MOCKS stays unset → the real-backend bundle, as in production.
+      - run: npm run build
+
+  # Builds images on every PR (validation) and publishes to GHCR on pushes to
+  # main. The agent image joins the matrix once agent/Dockerfile lands on main
+  # (it is committed empty today).
+  docker:
+    needs: [changes, lint-python, backend-tests, agent-tests, migrations, frontend]
+    # Run when nothing upstream FAILED — plain `needs` would also skip this job
+    # whenever any upstream was path-skipped. Images can never publish over
+    # failing tests.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    env:
+      # Main pushes build (and publish) every component so :latest / :sha-*
+      # stay a coherent set; a PR leg whose component didn't change no-ops in
+      # seconds. Legs always exist so required-check names stay stable.
+      BUILD: ${{ needs.changes.outputs[matrix.component] == 'true' || github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v7
+        if: env.BUILD == 'true'
+      - uses: docker/setup-buildx-action@v4
+        if: env.BUILD == 'true'
+      - uses: docker/login-action@v4
+        if: env.BUILD == 'true' && github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v6
+        if: env.BUILD == 'true'
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/snagr-${{ matrix.component }}
+          # sha-<shortsha> always; :latest only from the default branch.
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/build-push-action@v7
+        if: env.BUILD == 'true'
+        with:
+          # Build straight from the component dir — docker-compose.yml is local
+          # dev only and references gitignored env files.
+          context: ${{ matrix.component }}
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
