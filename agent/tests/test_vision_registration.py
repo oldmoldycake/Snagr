@@ -5,6 +5,7 @@ photo block — except for repro-tolerant watches, which skip the pipeline
 entirely."""
 
 import asyncio
+from contextlib import asynccontextmanager
 
 from prompt import generate_prompt
 from tools import check_images, disable_listing, save_price_check
@@ -58,20 +59,31 @@ class _FakeMCP:
     def __init__(self, *args, **kwargs):
         pass
 
-    async def get_tools(self):
-        return []
+    @asynccontextmanager
+    async def session(self, server_name):
+        yield None
+
+
+async def _no_tools(session):
+    return []
 
 
 def _built_toolsets(monkeypatch, url) -> list:
-    """Run build_pass_agents with the LLM/MCP seams faked; the tool lists
+    """Enter build_pass_agents with the LLM/MCP seams faked; the tool lists
     handed to create_agent, in call order (recheck first, scan second)."""
     toolsets = []
     monkeypatch.setattr(agent, "MultiServerMCPClient", _FakeMCP)
+    monkeypatch.setattr(agent, "load_mcp_tools", _no_tools)
     monkeypatch.setattr(
         agent, "create_agent", lambda llm, tools: toolsets.append(tools) or object()
     )
     monkeypatch.setattr(agent, "VISION_SIDECAR_URL", url)
-    asyncio.run(agent.build_pass_agents())
+
+    async def build():
+        async with agent.build_pass_agents():
+            pass
+
+    asyncio.run(build())
     return toolsets
 
 
