@@ -29,7 +29,7 @@ npm run build      # tsc -b + vite build; fails on type errors
 npm run lint       # oxlint
 ```
 
-**Docker**: `docker compose up --build` → frontend `:8081`, backend `:8000`. Postgres is external.
+**Docker**: `docker compose up --build` → frontend `:8081`, backend `:8000`, plus the agent ticker (checks the run queue every minute). Postgres and the Playwright MCP are external.
 
 ## The contract lives in the frontend
 

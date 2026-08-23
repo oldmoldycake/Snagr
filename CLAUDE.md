@@ -47,9 +47,9 @@ npm run lint       # oxlint
 ```
 To verify frontend changes in a real browser, use the **`frontend:verify`** skill (build + launch + drive), not the generic verify skill.
 
-**Agent** (from `agent/`): `./venv/bin/python main.py` — runs one full scrape pass and exits. Needs `PLAYWRIGHT_MCP_URL`, the `AI_*` provider vars, and `DATABASE_URL` (see `agent/.env.example`).
+**Agent** (from `agent/`): `./venv/bin/python main.py` — runs one full scrape pass and exits. `--consume` claims one API-enqueued run (or fires a due schedule) and exits; `--ground-only` only refreshes stale market prices. Needs `PLAYWRIGHT_MCP_URL`, the `AI_*` provider vars, and `DATABASE_URL` (see `agent/.env.example`).
 
-**Docker (dev)**: `docker compose up --build` → frontend on `:8081`, backend on `:8000`. Postgres is external. Editing `backend/app/**` hot-reloads; changing `requirements.txt` or frontend code needs `--build`.
+**Docker (dev)**: `docker compose up --build` → frontend on `:8081`, backend on `:8000`, plus the agent ticker (checks the run queue every minute — this is what makes UI-triggered runs actually execute). Postgres and the Playwright MCP are external. Editing `backend/app/**` hot-reloads; changing `requirements.txt`, frontend, or agent code needs `--build`.
 
 ## Testing model
 

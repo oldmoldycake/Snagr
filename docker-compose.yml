@@ -1,11 +1,13 @@
-# Dev stack: frontend (nginx) + backend (uvicorn --reload, source bind-mounted).
-# Postgres is NOT here — the backend uses the existing LAN DB the agent writes to
-# (DATABASE_URL in backend/.env, kept out of the image by .dockerignore).
+# Dev stack: frontend (nginx) + backend (uvicorn --reload, source bind-mounted)
+# + the agent's run-queue consumer ticker. Postgres is NOT here — every service
+# uses the existing LAN DB (DATABASE_URL in each .env, kept out of the images by
+# .dockerignore). The Playwright MCP the agent drives is external too
+# (PLAYWRIGHT_MCP_URL in agent/.env).
 #
 #   docker compose up --build      # frontend http://localhost:8081, API http://localhost:8000
 #
 # Editing backend/app/** hot-reloads inside the container. Changing
-# requirements.txt (or frontend code) needs a rebuild: docker compose up --build.
+# requirements.txt (or frontend/agent code) needs a rebuild: docker compose up --build.
 
 services:
   backend:
@@ -24,6 +26,27 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  agent:
+    build: ./agent
+    # agent/.env is written for host runs (127.0.0.1); the .docker overlay,
+    # loaded second, re-points the DB and Playwright MCP at container names.
+    env_file:
+      - agent/.env
+      - agent/.env.docker
+    restart: unless-stopped
+    # Checks the run queue every 60s: each --consume tick claims one queued run
+    # (or fires a due run_schedules row) and exits; an empty tick is a no-op.
+    # Every 15th tick also refreshes stale market prices (--ground-only).
+    # One-shot ticks + the loop mean a crashed pass never takes the ticker
+    # down — the next check happens a minute later regardless.
+    command: >
+      sh -c 'i=0; while :; do
+        python main.py --consume;
+        i=$$((i+1));
+        [ $$((i % 15)) -eq 0 ] && python main.py --ground-only;
+        sleep 60;
+      done'
 
   frontend:
     build: ./frontend

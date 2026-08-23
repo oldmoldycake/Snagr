@@ -1,5 +1,6 @@
 # Env files
 agent/.env
+agent/.env.docker
 frontend/.env
 frontend/.env.local
 backend/.env
