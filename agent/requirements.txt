@@ -3,7 +3,7 @@ ruff
 pytest
 asyncpg
 httpx
-langgraph==1.2.6
+langgraph==1.2.11
 sqlalchemy
 dotenv
 langchain
