@@ -1,0 +1,45 @@
+# Weekly grouped dependency PRs, one per ecosystem. Note pip only bumps
+# *pinned* lines — most of backend/ and agent/ requirements stay unpinned
+# until the planned pip-freeze pass. The chore(deps) prefix keeps Dependabot
+# titles passing the PR title lint.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      backend-python:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /agent
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      agent-python:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      frontend-npm:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      actions:
+        patterns: ["*"]
