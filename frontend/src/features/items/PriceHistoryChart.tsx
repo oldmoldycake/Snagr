@@ -9,23 +9,16 @@ import {
   YAxis,
 } from 'recharts'
 import type { ListingSeries, PriceHistoryResponse } from '@/api/types'
-import { axisTickStyle, chart, seriesColor } from '@/components/charts/chartTheme'
+import { axisTickStyle, chart } from '@/components/charts/chartTheme'
 import { TooltipFrame, TooltipRow, tooltipTimeLabel } from '@/components/charts/ChartTooltip'
 import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
-
-const MAX_SERIES = 6
+import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
 /** Listing title when the agent extracted one, else the site — multiple eBay listings need names. */
 function seriesLabel(series: ListingSeries): string {
   const label = series.title ?? series.site_name
   return label.length > 28 ? `${label.slice(0, 27)}…` : label
-}
-
-interface PreparedSeries {
-  listing: ListingSeries
-  color: string
-  points: { ts: number; price: number; in_stock: boolean }[]
 }
 
 /** Latest price at-or-before ts, step semantics (price holds until next check). */
@@ -40,26 +33,7 @@ function priceAt(series: PreparedSeries, ts: number): { price: number; in_stock:
 
 export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse; range: TimeRange }) {
   const { plotted, foldedCount, rows, yDomain } = useMemo(() => {
-    // Stable slot order: listing id ascending — color follows the entity.
-    const sorted = [...data.series].sort((a, b) => a.listing_id - b.listing_id)
-    const withColors: PreparedSeries[] = sorted.map((s, i) => ({
-      listing: s,
-      color: seriesColor(i),
-      points: s.points
-        .map((p) => ({ ts: new Date(p.ts).getTime(), price: Number(p.price), in_stock: p.in_stock }))
-        .sort((a, b) => a.ts - b.ts),
-    }))
-
-    // >6 listings: plot the 6 with the lowest latest price, fold the rest.
-    let plotted = withColors.filter((s) => s.points.length > 0)
-    let foldedCount = 0
-    if (plotted.length > MAX_SERIES) {
-      plotted = [...plotted]
-        .sort((a, b) => a.points[a.points.length - 1].price - b.points[b.points.length - 1].price)
-        .slice(0, MAX_SERIES)
-        .sort((a, b) => a.listing.listing_id - b.listing.listing_id)
-      foldedCount = withColors.length - MAX_SERIES
-    }
+    const { plotted, foldedCount } = prepareSeries(data)
 
     // Merge on the union of timestamps; carry-forward fills are legal because
     // a price is a step function — it holds until the next check.
