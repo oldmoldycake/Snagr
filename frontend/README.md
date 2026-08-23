@@ -74,5 +74,6 @@ together). Dark-only, by design.
   eyebrow, button label, log line).
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
   sentence; `Radar` sweeps only while a run is live; `MeterToTarget`/`Ladder` draw distance to
-  target (lume within 5%); `TerminalLog` is the one voice for agent/check logs; `Segmented`
-  is the one segmented control.
+  target (lume within 5%); `ListingsBoard` extends the ladder into a per-listing price rail
+  (right = closing on ⌖, drift marks from the chart's range); `TerminalLog` is the one voice
+  for agent/check logs; `Segmented` is the one segmented control.
