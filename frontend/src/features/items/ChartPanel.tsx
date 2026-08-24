@@ -30,17 +30,16 @@ export function ChartPanel({
 }) {
   const [tab, setTab] = useState<ChartTab>('listings')
 
+  // Both queries stay enabled so a tab switch renders from cache, never refetches.
   const history = useQuery({
     queryKey: qk.itemHistory(itemId, range),
     queryFn: () => getPriceHistory(itemId, range),
     placeholderData: keepPreviousData,
-    enabled: tab === 'listings',
   })
   const summary = useQuery({
     queryKey: qk.itemSummary(itemId, range),
     queryFn: () => getPriceSummary(itemId, range),
     placeholderData: keepPreviousData,
-    enabled: tab === 'summary',
   })
 
   const active = tab === 'listings' ? history : summary
@@ -56,7 +55,7 @@ export function ChartPanel({
       </CardHeader>
       <CardBody className="px-2 pt-3">
         {active.isLoading ? (
-          <Skeleton className="m-2 h-56" />
+          <Skeleton className="m-2 h-64" />
         ) : tab === 'listings' && history.data ? (
           <PriceHistoryChart data={history.data} range={range} />
         ) : tab === 'summary' && summary.data ? (
