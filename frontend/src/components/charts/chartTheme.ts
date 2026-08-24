@@ -13,8 +13,8 @@ export const chart = {
   drop: '#42d07c',
   rise: '#f0565c',
   sparkDim: '#4e5d53',
-  /** categorical series — assigned by listing id, color follows the entity */
-  series: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#9085e9'],
+  /** categorical series — "Embers", assigned by listing id, color follows the entity */
+  series: ['#c05a35', '#2aa08d', '#bd8a2b', '#5585c9', '#b25a78', '#86973a'],
   othersGray: '#5a685e',
 } as const
 
