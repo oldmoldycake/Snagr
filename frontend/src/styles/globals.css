@@ -37,13 +37,13 @@
   --color-rise: #f0565c;
   --color-warn: #e08a2e;
 
-  /* Chart series (validated for the #101812 surface) */
-  --color-series-1: #3987e5;
-  --color-series-2: #d95926;
-  --color-series-3: #199e70;
-  --color-series-4: #c98500;
-  --color-series-5: #d55181;
-  --color-series-6: #9085e9;
+  /* Chart series — "Embers" (validated for the #101812 and #0a0f0b surfaces) */
+  --color-series-1: #c05a35;
+  --color-series-2: #2aa08d;
+  --color-series-3: #bd8a2b;
+  --color-series-4: #5585c9;
+  --color-series-5: #b25a78;
+  --color-series-6: #86973a;
   --color-spark: #4e5d53;
 
   --radius-sm: 4px;

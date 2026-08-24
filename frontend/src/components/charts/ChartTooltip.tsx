@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/time'
 
 /** Shared tooltip chrome: raised panel, mono values, line-key strokes. */
@@ -16,16 +17,19 @@ export function TooltipRow({
   name,
   value,
   note,
+  under,
 }: {
   color: string
   name: string
   value: string
   note?: string
+  /** paint the value in drop — an under-target price */
+  under?: boolean
 }) {
   return (
     <div className="flex items-center gap-2 text-xs">
       <span aria-hidden className="h-0.5 w-3 shrink-0 rounded-full" style={{ background: color }} />
-      <span className="font-mono font-semibold text-ink tnum">{value}</span>
+      <span className={cn('font-mono font-semibold tnum', under ? 'text-drop' : 'text-ink')}>{value}</span>
       <span className="min-w-0 truncate text-ink-2">{name}</span>
       {note ? <span className="min-w-0 truncate text-ink-3">{note}</span> : null}
     </div>
