@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Snagr — a self-hosted price tracker. Three independently-deployed components in one repo, sharing **one Postgres database on the LAN** (not in `docker-compose.yml`; each component points at it via `DATABASE_URL`):
+Snagr — a self-hosted price tracker. Four independently-deployed components in one repo, sharing **one Postgres database on the LAN** (not in `docker-compose.yml`; each component points at it via `DATABASE_URL`):
 
 - **`agent/`** — the LLM price scraper. A batch job that drives a headless browser (Playwright MCP) via a LangChain agent to find and re-check marketplace listings, writing results to the DB. Run on a schedule, not a server.
 - **`backend/`** — FastAPI (async SQLAlchemy 2.0 / asyncpg) JSON API under `/api`. Serves the frontend and (per the plan) enqueues agent runs.
 - **`frontend/`** — React 19 + Vite + TS + Tailwind v4 SPA. Talks to the backend over same-origin `/api`.
+- **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, MinIO object store). Off unless `VISION_SIDECAR_URL` is set / the compose `vision` profile is up (D-V1).
 
 ## Read these first
 
