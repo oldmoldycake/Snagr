@@ -24,6 +24,7 @@ from app.routers import (
     me,
     runs,
     sites,
+    vision,
 )
 from app.services import events as events_service
 
@@ -53,5 +54,6 @@ for router in (
     runs.router,
     events.router,
     admin.router,
+    vision.router,
 ):
     app.include_router(router)

@@ -2,6 +2,7 @@
 fastapi==0.141.1
 uvicorn[standard]==0.52.4
 starlette==1.6.0
+python-multipart  # multipart parsing for the reference-upload endpoint
 
 # Data / DB
 sqlalchemy==2.0.52

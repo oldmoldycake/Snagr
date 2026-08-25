@@ -27,4 +27,5 @@ async def get_instance(db: AsyncSession = Depends(get_db)) -> InstanceInfo:
         ntfy_server_url=settings.NTFY_SERVER_URL or None,
         registration_open=settings.REGISTRATION_OPEN or (user_count or 0) == 0,
         oidc_provider_name=settings.OIDC_PROVIDER_NAME if settings.oidc_enabled else None,
+        vision_enabled=settings.vision_enabled,
     )

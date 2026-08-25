@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app.schemas.common import TimeRange
+from app.schemas.vision import AuthenticityRead
 
 SelectionMode = Literal["cheapest", "best_match"]
 ItemStatusFilter = Literal["all", "snagged", "above_target", "no_listings"]
@@ -62,6 +63,9 @@ class Listing(BaseModel):
     latest_status: str | None  # 'ok' | 'sold' | 'ended' | 'error'
     match_score: int | None
     match_summary: str | None
+    # image-based authenticity read; null = never scanned (vision off, repro
+    # allowed, or discovered before the feature)
+    authenticity: AuthenticityRead | None
     last_checked_at: str | None
     created_at: str
     discovered_by_run_id: int | None
