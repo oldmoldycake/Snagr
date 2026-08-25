@@ -59,12 +59,20 @@ async function doFetch(path: string, opts: RequestOptions): Promise<Response> {
   const method = opts.method ?? 'GET'
   const headers: Record<string, string> = {}
   if (method !== 'GET') headers['X-Snagr-Csrf'] = '1'
-  if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
+  // FormData passes through untouched — the browser sets the multipart
+  // boundary itself, and a forced Content-Type would break it
+  const isForm = opts.body instanceof FormData
+  if (opts.body !== undefined && !isForm) headers['Content-Type'] = 'application/json'
   return fetch(buildUrl(path, opts.params), {
     method,
     headers,
     credentials: 'same-origin',
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body:
+      opts.body === undefined
+        ? undefined
+        : opts.body instanceof FormData
+          ? opts.body
+          : JSON.stringify(opts.body),
     signal: opts.signal,
   })
 }

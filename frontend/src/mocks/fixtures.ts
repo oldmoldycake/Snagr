@@ -30,7 +30,18 @@ export interface MockUser {
   role: 'admin' | 'user'
   is_active: boolean
   ntfy_topic: string | null
+  /** vision thresholds as 0–1 decimal strings (always resolved) */
+  vision_auto_reject_fake: string
+  vision_auto_promote_real: string
+  vision_auto_promote_fake: string
   created_at: number
+}
+
+/** Shipped vision-threshold defaults — spread into every new user. */
+export const VISION_DEFAULTS = {
+  vision_auto_reject_fake: '0.85',
+  vision_auto_promote_real: '0.90',
+  vision_auto_promote_fake: '0.90',
 }
 
 export interface MockCategory {
@@ -61,6 +72,13 @@ export interface MockItem {
   created_at: number
 }
 
+export interface MockAuthenticity {
+  verdict: 'leans_real' | 'leans_fake' | 'inconclusive'
+  fake_confidence: string | null
+  image_count: number
+  checked_at: number
+}
+
 export interface MockListing {
   id: number
   item_id: number
@@ -71,8 +89,39 @@ export interface MockListing {
   active: boolean
   match_score: number | null
   match_summary: string | null
+  /** optional so existing fixtures default to "never scanned" (null) */
+  authenticity?: MockAuthenticity | null
   created_at: number
   discovered_by_run_id: number | null
+}
+
+export interface MockReference {
+  id: number
+  item_id: number
+  label: 'real' | 'fake'
+  variant_tag: string | null
+  provenance: 'human' | 'upload' | 'auto'
+  object_key: string
+  source_listing_url: string | null
+  captured_by: number | null
+  revoked: boolean
+  created_at: number
+}
+
+export interface MockQueueEntry {
+  id: number
+  item_id: number
+  /** owner of the capturing watch — the ONLY user whose queue shows it (D-V11) */
+  user_id: number
+  object_key: string
+  listing_url: string
+  suggested_label: 'real' | 'fake'
+  /** 0–1 decimal string backing the suggestion */
+  confidence: string
+  llm_authenticity_read: 'looks_authentic' | 'suspect' | 'unsure' | null
+  /** confirmed entries stay for the 409 already_reviewed case; discards delete */
+  review_state: 'suggested' | 'confirmed'
+  created_at: number
 }
 
 export interface MockCheck {
@@ -145,6 +194,8 @@ export const store = {
   runs: [] as MockRun[],
   runEvents: [] as MockRunEvent[],
   invites: [] as MockInvite[],
+  references: [] as MockReference[],
+  visionQueue: [] as MockQueueEntry[],
 }
 
 // --- seed data -------------------------------------------------------------------
@@ -289,6 +340,7 @@ function seed() {
     role: 'admin',
     is_active: true,
     ntfy_topic: 'snagr-demo-8f3a',
+    ...VISION_DEFAULTS,
     created_at: NOW - 200 * DAY,
   })
   // second, non-admin account for the runs-privacy surfaces (see seedGuestWatches)
@@ -299,6 +351,7 @@ function seed() {
     role: 'user',
     is_active: true,
     ntfy_topic: null,
+    ...VISION_DEFAULTS,
     created_at: NOW - 100 * DAY,
   })
 
@@ -367,6 +420,96 @@ function seed() {
   seedGuestWatches()
 
   seedHistoricalRuns()
+
+  seedVisionLibrary()
+}
+
+/**
+ * The vision showcase: Pokemon Emerald gets a lived-in reference library
+ * (mixed provenance, one variant tag, one revoked), pending review-queue
+ * entries for the demo user, and authenticity reads on a couple of its
+ * listings. The guest gets one queue entry of their own — invisible to the
+ * demo user, proving the D-V11 scoping. Everything else stays unscanned.
+ */
+function seedVisionLibrary() {
+  const emerald = store.items.find((i) => i.name === 'Pokemon Emerald (GBA)')!
+  const gamecube = store.items.find((i) => i.name === 'GameCube Controller (OEM)')!
+  const sony = store.items.find((i) => i.name === 'Sony WH-1000XM5')!
+  const ebay = store.sites.find((s) => s.name === 'ebay.com')!
+
+  const ref = (
+    item_id: number,
+    label: MockReference['label'],
+    provenance: MockReference['provenance'],
+    overrides: Partial<MockReference> = {},
+  ) => {
+    store.references.push({
+      id: newId(),
+      item_id,
+      label,
+      variant_tag: null,
+      provenance,
+      object_key: `k${(nextId * 2654435761) % 0xffffffff}`.padEnd(12, '0'),
+      source_listing_url:
+        provenance === 'upload' ? null : `${ebay.base_url}/itm/${170000000 + nextId * 91}`,
+      captured_by: 1,
+      revoked: false,
+      created_at: NOW - Math.floor(5 + rng() * 40) * DAY,
+      ...overrides,
+    })
+  }
+
+  ref(emerald.id, 'real', 'human')
+  ref(emerald.id, 'real', 'human', { variant_tag: "Player's Choice label" })
+  ref(emerald.id, 'real', 'upload')
+  ref(emerald.id, 'fake', 'human')
+  ref(emerald.id, 'fake', 'human')
+  ref(emerald.id, 'fake', 'auto')
+  ref(emerald.id, 'real', 'auto', { revoked: true })
+  ref(gamecube.id, 'real', 'upload')
+
+  const queue = (
+    item_id: number,
+    user_id: number,
+    suggested_label: MockQueueEntry['suggested_label'],
+    confidence: string,
+    llm: MockQueueEntry['llm_authenticity_read'],
+  ) => {
+    store.visionQueue.push({
+      id: newId(),
+      item_id,
+      user_id,
+      object_key: `q${(nextId * 2246822519) % 0xffffffff}`.padEnd(12, '0'),
+      listing_url: `${ebay.base_url}/itm/${190000000 + nextId * 53}`,
+      suggested_label,
+      confidence,
+      llm_authenticity_read: llm,
+      review_state: 'suggested',
+      created_at: NOW - Math.floor(rng() * 5) * DAY,
+    })
+  }
+
+  queue(emerald.id, 1, 'fake', '0.82', 'suspect')
+  queue(emerald.id, 1, 'real', '0.88', 'looks_authentic')
+  queue(sony.id, 2, 'fake', '0.86', 'unsure') // the guest's — never in demo's queue
+
+  // authenticity reads on the Emerald listings: the top match leans real,
+  // the CIB one leans fake just under the 0.85 auto-reject default
+  const emeraldListings = store.listings
+    .filter((l) => l.item_id === emerald.id)
+    .sort((a, b) => (b.match_score ?? 0) - (a.match_score ?? 0))
+  emeraldListings[0].authenticity = {
+    verdict: 'leans_real',
+    fake_confidence: '0.08',
+    image_count: 3,
+    checked_at: NOW - 2 * DAY,
+  }
+  emeraldListings.at(-1)!.authenticity = {
+    verdict: 'leans_fake',
+    fake_confidence: '0.72',
+    image_count: 2,
+    checked_at: NOW - 1 * DAY,
+  }
 }
 
 /**

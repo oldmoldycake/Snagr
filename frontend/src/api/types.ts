@@ -46,6 +46,8 @@ export interface InstanceInfo {
   registration_open: boolean
   /** SSO login-button label (e.g. "Authentik"); null when OIDC is not configured */
   oidc_provider_name: string | null
+  /** true when the operator has configured the vision sidecar (VISION_SIDECAR_URL) */
+  vision_enabled: boolean
 }
 
 export type UserRole = 'admin' | 'user'
@@ -55,6 +57,14 @@ export interface User {
   email: string
   role: UserRole
   ntfy_topic: string | null
+  /**
+   * Vision thresholds (0–1 decimal strings, always resolved — never null).
+   * auto_reject_fake: fake confidence at/above this auto-rejects a listing;
+   * auto_promote_*: min confidence for a suggestion to self-promote to gold.
+   */
+  vision_auto_reject_fake: string
+  vision_auto_promote_real: string
+  vision_auto_promote_fake: string
   created_at: string
 }
 
@@ -195,6 +205,9 @@ export interface Listing {
   match_score: number | null
   /** one-line rationale, e.g. "dry battery ✓, damaged case ✓, cart only" */
   match_summary: string | null
+  /** image-based authenticity read; null = never scanned (vision off, repro
+   *  allowed, or discovered before the feature) */
+  authenticity: AuthenticityRead | null
   last_checked_at: string | null
   created_at: string
   discovered_by_run_id: number | null
@@ -263,6 +276,68 @@ export interface PriceCheck {
   /** 'ok' | 'sold' | 'ended' | 'error' — 'sold'/'ended' is terminal for the listing */
   status: string | null
   checked_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Vision / authenticity
+//
+// The image-based second opinion on listing authenticity (per-item reference
+// libraries scored by the vision sidecar). Verdicts are asymmetric on
+// purpose: leans_fake = photos consistent with known fakes (a STRONG
+// signal — scam listings reuse stolen photos of genuine items, so matching
+// fakes condemns); leans_real = photos match known-real references (WEAK
+// reassurance only — never present it as "verified authentic").
+
+export type AuthenticityVerdict = 'leans_real' | 'leans_fake' | 'inconclusive'
+
+export interface AuthenticityRead {
+  /** leans_fake = photos consistent with known fakes (strong signal);
+   *  leans_real = photos match known-real references (weak reassurance ONLY) */
+  verdict: AuthenticityVerdict
+  /** 0–1 decimal string; null when the item's library couldn't score it */
+  fake_confidence: string | null
+  image_count: number
+  checked_at: string
+}
+
+export type ReferenceLabel = 'real' | 'fake'
+export type ReferenceProvenance = 'human' | 'upload' | 'auto'
+export type LlmAuthenticityRead = 'looks_authentic' | 'suspect' | 'unsure'
+
+/** A captured listing photo awaiting the owner's confirm/discard. The queue
+ *  is scoped to the capturing watch's owner — admins included (D-V11). */
+export interface ReviewQueueEntry {
+  id: number
+  item_id: number
+  item_name: string
+  /** same-origin backend proxy path: /api/vision/images/{key} */
+  image_url: string
+  listing_url: string
+  suggested_label: ReferenceLabel
+  /** 0–1 decimal string backing the suggestion */
+  confidence: string
+  llm_authenticity_read: LlmAuthenticityRead | null
+  created_at: string
+}
+
+export interface ReviewConfirmRequest {
+  /** may flip the suggestion */
+  label: ReferenceLabel
+  variant_tag?: string | null
+}
+
+/** One gold reference in an item's communal library. */
+export interface ReferenceImage {
+  id: number
+  item_id: number
+  label: ReferenceLabel
+  variant_tag: string | null
+  provenance: ReferenceProvenance
+  image_url: string
+  /** null unless the viewer captured it or is admin (D-V11) */
+  source_listing_url: string | null
+  revoked: boolean
+  created_at: string
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +531,10 @@ export interface RunSnapshotData {
 export interface MeUpdateRequest {
   email?: string
   ntfy_topic?: string | null
+  /** vision thresholds; 422 validation_error outside 0.50–1.00 */
+  vision_auto_reject_fake?: string
+  vision_auto_promote_real?: string
+  vision_auto_promote_fake?: string
 }
 
 export interface PasswordChangeRequest {
