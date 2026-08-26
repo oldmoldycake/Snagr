@@ -95,13 +95,11 @@ export function AgentTicker({ className }: { className?: string }) {
           </>
         ) : (
           <>
+            {/* Stats live in the hero's pulse line now — one bar, one job. */}
             <span aria-hidden className="text-drop">
               ✓
             </span>{' '}
-            {last.scope_label} — {relativeTime(last.finished_at)}
-            {last.stats
-              ? ` · ${last.stats.listings_checked} checked · ${last.stats.new_listings} new`
-              : ''}
+            {last.scope_label} finished — {relativeTime(last.finished_at)}
           </>
         )}
       </span>
