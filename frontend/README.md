@@ -73,7 +73,8 @@ together). Dark-only, by design.
   letter-spaced), IBM Plex Sans (body), IBM Plex Mono + `tnum` (every numeral, timestamp,
   eyebrow, button label, log line).
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
-  sentence; `Radar` sweeps only while a run is live; `MeterToTarget`/`Ladder` draw distance to
+  sentence plus one line of tonight's totals — aggregates only, since per-item facts appear
+  exactly once, in the watch table; `Radar` sweeps only while a run is live; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into a per-listing price rail
   (right = closing on ⌖, drift marks from the chart's range); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.

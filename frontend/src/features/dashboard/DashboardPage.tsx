@@ -87,7 +87,7 @@ export function DashboardPage() {
           <Skeleton className="h-5 w-96" />
         </div>
       ) : (
-        <VerdictHero items={rows} className={cn(items.isFetching && 'opacity-60')} />
+        <VerdictHero items={rows} drops={dropsByItem} className={cn(items.isFetching && 'opacity-60')} />
       )}
 
       {search ? null : <AgentTicker className="mt-9" />}
@@ -133,7 +133,7 @@ export function DashboardPage() {
             />
           ) : (
             <>
-              <WatchList items={rows} drops={dropsByItem} showCategory />
+              <WatchList items={rows} drops={dropsByItem} showCategory showSite />
               <div className="flex items-center justify-between border-t border-hairline bg-well px-4 py-2 font-mono text-[11px] text-ink-3">
                 <span>
                   {rows.length} {rows.length === 1 ? 'item' : 'items'} · sorted by distance to target
