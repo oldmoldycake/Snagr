@@ -11,7 +11,7 @@ python-multipart==0.0.32
 # torch is pinned without the +cpu local tag: version ordering still prefers
 # the extra index's 2.13.0+cpu wheel where one exists, and arm64 CPU wheels
 # (which carry no +cpu suffix) stay resolvable under the same pin.
-torch==2.13.0
+torch==2.13.0+cpu
 transformers==5.15.1
 huggingface_hub==1.28.0
 pillow==12.3.0
