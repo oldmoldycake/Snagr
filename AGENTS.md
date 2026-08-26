@@ -2,11 +2,12 @@
 
 ## Repo layout
 
-Three independently-deployed components sharing **one Postgres on the LAN** (not in `docker-compose.yml`; each points at it via `DATABASE_URL`):
+Four independently-deployed components sharing **one Postgres on the LAN** (not in `docker-compose.yml`; each points at it via `DATABASE_URL`):
 
 - `agent/` — headless-browser scraper (Playwright MCP + LangChain). One-shot batch job, not a server.
 - `backend/` — FastAPI async API (SQLAlchemy 2.0 + asyncpg). Entrypoint: `app.main:app`.
 - `frontend/` — React 19 + Vite + TS + Tailwind v4 SPA. Entrypoint: `src/`.
+- `vision/` — optional visual-authenticity sidecar (FastAPI + DINOv3, sync psycopg, MinIO). Off unless `VISION_SIDECAR_URL` is set.
 
 ## Environments & commands
 
