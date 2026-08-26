@@ -1,7 +1,7 @@
 # Weekly grouped dependency PRs, one per ecosystem. Note pip only bumps
-# *pinned* lines — most of backend/ and agent/ requirements stay unpinned
-# until the planned pip-freeze pass. The chore(deps) prefix keeps Dependabot
-# titles passing the PR title lint.
+# *pinned* lines — agent/ and vision/ are fully pinned; parts of backend/
+# stay unpinned until its pip-freeze pass. The chore(deps) prefix keeps
+# Dependabot titles passing the PR title lint.
 version: 2
 updates:
   - package-ecosystem: pip
@@ -22,6 +22,16 @@ updates:
       prefix: "chore(deps)"
     groups:
       agent-python:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /vision
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      vision-python:
         patterns: ["*"]
 
   - package-ecosystem: npm

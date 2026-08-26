@@ -3,27 +3,33 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Web framework
-fastapi
-uvicorn[standard]
-python-multipart
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
 
 # Model
-torch
-transformers
-huggingface_hub
-pillow
-numpy
+# torch is pinned without the +cpu local tag: version ordering still prefers
+# the extra index's 2.13.0+cpu wheel where one exists, and arm64 CPU wheels
+# (which carry no +cpu suffix) stay resolvable under the same pin.
+torch==2.13.0
+transformers==5.15.1
+huggingface_hub==1.28.0
+pillow==12.3.0
+numpy==2.5.2
 
 # Data / DB
-sqlalchemy
-psycopg[binary]
-pgvector
-python-dotenv
+sqlalchemy==2.0.52
+psycopg[binary]==3.3.4
+pgvector==0.5.0
+python-dotenv==1.2.3
 
 # Object store / image fetching
-boto3
-httpx
+boto3==1.43.79
+httpx==0.28.1
 
 # Dev / test
+# ruff stays unpinned on purpose: the lint version of record is pinned in
+# .github/workflows/ci.yml and bumped deliberately — a pin here would let
+# Dependabot drift the two apart.
 ruff
-pytest
+pytest==9.1.1

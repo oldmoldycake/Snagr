@@ -1,4 +1,4 @@
-# CI for all three components, plus image publishing to GHCR on main.
+# CI for all four components, plus image publishing to GHCR on main.
 #
 # Path gating happens INSIDE the workflow (the `changes` job) rather than via a
 # workflow-level `paths:` filter: an untriggered workflow never reports its
@@ -33,13 +33,14 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       backend: ${{ steps.filter.outputs.backend }}
       agent: ${{ steps.filter.outputs.agent }}
+      vision: ${{ steps.filter.outputs.vision }}
       frontend: ${{ steps.filter.outputs.frontend }}
     steps:
       - uses: actions/checkout@v7 # needed for push-event diffs
-      # `agent` includes the backend schema sources: agent/database.py is a
-      # hand-kept mirror of the backend models (Decision D1), so schema changes
-      # re-run the agent suite. The reverse edge is deliberately absent — the
-      # backend imports nothing from agent/.
+      # `agent` and `vision` include the backend schema sources: agent/database.py
+      # and vision/db.py are hand-kept mirrors of the backend models (Decision
+      # D1), so schema changes re-run both suites. The reverse edges are
+      # deliberately absent — the backend imports nothing from agent/ or vision/.
       - uses: dorny/paths-filter@v4
         id: filter
         with:
@@ -52,12 +53,18 @@ jobs:
               - *shared
               - 'backend/**'
               - 'agent/**'
+              - 'vision/**'
             backend:
               - *shared
               - 'backend/**'
             agent:
               - *shared
               - 'agent/**'
+              - 'backend/app/models.py'
+              - 'backend/migrations/**'
+            vision:
+              - *shared
+              - 'vision/**'
               - 'backend/app/models.py'
               - 'backend/migrations/**'
             frontend:
@@ -158,6 +165,45 @@ jobs:
       - run: python -m pytest
         working-directory: agent
 
+  # The embedder, object store, and network are always stubbed by
+  # vision/tests/conftest.py — CI never downloads DINOv3 weights and needs no
+  # minio or HF_TOKEN. Only Postgres (with pgvector) is real.
+  vision-tests:
+    needs: changes
+    if: needs.changes.outputs.vision == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # the torch CPU wheel dominates a cold install
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18 # same image story as backend-tests
+        env:
+          POSTGRES_USER: snagr
+          POSTGRES_PASSWORD: snagr
+          # vision/tests/conftest.py rewrites DATABASE_URL's last path segment
+          # to /snagr_test_vision and only ever connects there.
+          POSTGRES_DB: snagr_test_vision
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U snagr -d snagr_test_vision"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Must NOT already end in /snagr_test_vision — conftest asserts its
+      # rewrite changed the URL. Sync driver: the sidecar is psycopg (D-V3).
+      DATABASE_URL: postgresql+psycopg://snagr:snagr@localhost:5432/snagr
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+          cache: pip
+          cache-dependency-path: vision/requirements.txt
+      - run: pip install -r requirements.txt
+        working-directory: vision
+      - run: python -m pytest
+        working-directory: vision
+
   # Proves a fresh database builds from zero through the whole migration chain,
   # then that the models haven't drifted past the migrations.
   migrations:
@@ -219,11 +265,10 @@ jobs:
       # VITE_USE_MOCKS stays unset → the real-backend bundle, as in production.
       - run: npm run build
 
-  # Builds images on every PR (validation) and publishes to GHCR on pushes to
-  # main. The agent image joins the matrix once agent/Dockerfile lands on main
-  # (it is committed empty today).
+  # Builds every component image on every PR (validation) and publishes to
+  # GHCR on pushes to main.
   docker:
-    needs: [changes, lint-python, backend-tests, agent-tests, migrations, frontend]
+    needs: [changes, lint-python, backend-tests, agent-tests, vision-tests, migrations, frontend]
     # Run when nothing upstream FAILED — plain `needs` would also skip this job
     # whenever any upstream was path-skipped. Images can never publish over
     # failing tests.
@@ -236,7 +281,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [backend, frontend]
+        component: [backend, frontend, agent, vision]
     env:
       # Main pushes build (and publish) every component so :latest / :sha-*
       # stay a coherent set; a PR leg whose component didn't change no-ops in
