@@ -22,9 +22,10 @@ import { ItemListingsPanel } from './ItemListingsPanel'
 
 export interface WatchListProps {
   items: ItemSummary[]
-  /** newest recent drop per item id — rendered as an inline ▼ chip */
+  /** newest recent drop per item id — rendered as an inline ▼ chip + struck-through old price */
   drops?: Map<number, PriceDrop>
   showCategory?: boolean
+  showSite?: boolean
   /** rows expand to show the item's tracked listings inline */
   expandable?: boolean
   /** enables the per-row kebab (run / edit / delete) */
@@ -37,6 +38,11 @@ export interface WatchListProps {
 /** Effective target: the watch's per-user override, falling back to the item's. */
 export function effectiveTarget(item: ItemSummary): string | null {
   return item.watch.target_price ?? item.target_price
+}
+
+/** "Tonight" freshness — the window for the chip's "today" and the struck-through old price. */
+export function isFreshDrop(drop: PriceDrop): boolean {
+  return Date.now() - new Date(drop.checked_at).getTime() < 86_400_000
 }
 
 /** Sort for the hunt: in-range first, then by how close the price is to target. */
@@ -68,7 +74,7 @@ function CriteriaHint({ item }: { item: ItemSummary }) {
 function DropChip({ drop }: { drop: PriceDrop }) {
   const pct = Math.abs(Number(drop.pct_change))
   if (!Number.isFinite(pct)) return null
-  const fresh = Date.now() - new Date(drop.checked_at).getTime() < 86_400_000
+  const fresh = isFreshDrop(drop)
   return (
     <span className="shrink-0 rounded-full border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[10px] text-drop tnum">
       <span aria-hidden>▼</span> {pct.toFixed(1)}%{fresh ? ' today' : ''}
@@ -80,6 +86,7 @@ export function WatchList({
   items,
   drops,
   showCategory,
+  showSite,
   expandable,
   onEdit,
   onDelete,
@@ -99,7 +106,7 @@ export function WatchList({
     })
   }
 
-  const columnCount = 6 + (expandable ? 1 : 0) + (hasActions ? 1 : 0)
+  const columnCount = 6 + (showSite ? 1 : 0) + (expandable ? 1 : 0) + (hasActions ? 1 : 0)
 
   return (
     <Table className={className}>
@@ -109,6 +116,7 @@ export function WatchList({
           <TH>Item</TH>
           <TH className="hidden md:table-cell">Trend</TH>
           <TH className="text-right">Best</TH>
+          {showSite ? <TH className="hidden text-right md:table-cell">Site</TH> : null}
           <TH className="hidden text-right md:table-cell">Target</TH>
           <TH className="text-right">To target</TH>
           <TH className="hidden text-right sm:table-cell">Checked</TH>
@@ -119,6 +127,12 @@ export function WatchList({
         {items.map((item) => {
           const isExpanded = expanded.has(item.id)
           const drop = drops?.get(item.id)
+          // Struck-through old price only when it reads as a fall from what's shown —
+          // the drop may be on a different listing than the current best.
+          const oldCents = drop && isFreshDrop(drop) ? toCents(drop.old_price) : null
+          const bestCents = toCents(item.best_price)
+          const struckFrom =
+            oldCents != null && bestCents != null && oldCents > bestCents ? drop : undefined
           return (
             <Fragment key={item.id}>
               <TR
@@ -126,7 +140,8 @@ export function WatchList({
                 onClick={() => navigate(`/items/${item.id}`)}
                 className={cn(
                   'border-l-2 border-l-transparent',
-                  item.target_met && 'border-l-drop bg-linear-to-r from-drop-dim to-transparent to-60%',
+                  item.target_met &&
+                    'border-l-drop bg-linear-to-r from-drop-dim to-transparent to-60% [&>td]:py-3',
                   isExpanded && 'border-b-0',
                 )}
               >
@@ -145,7 +160,14 @@ export function WatchList({
                 ) : null}
                 <TD>
                   <div className="flex items-center gap-2">
-                    <span className="font-medium text-ink">{item.name}</span>
+                    {item.target_met ? (
+                      <span aria-hidden className="text-drop">
+                        ⌖
+                      </span>
+                    ) : null}
+                    <span className={cn('font-medium text-ink', item.target_met && 'text-sm font-semibold')}>
+                      {item.name}
+                    </span>
                     {showCategory ? (
                       <span className="hidden shrink-0 font-mono text-[10.5px] text-ink-3 md:inline">
                         {item.category_name}
@@ -165,8 +187,24 @@ export function WatchList({
                     item.best_price == null && 'font-normal text-ink-3',
                   )}
                 >
-                  {formatMoney(item.best_price, item.currency)}
+                  {struckFrom ? (
+                    <s className="block font-mono text-[11px] font-normal text-ink-3 sm:mr-1.5 sm:inline">
+                      {formatMoney(struckFrom.old_price, item.currency)}
+                    </s>
+                  ) : null}
+                  {item.target_met ? (
+                    <span className="font-display text-[17px] leading-none font-bold tracking-[0.01em] sm:text-[21px]">
+                      {formatMoney(item.best_price, item.currency)}
+                    </span>
+                  ) : (
+                    formatMoney(item.best_price, item.currency)
+                  )}
                 </TD>
+                {showSite ? (
+                  <TD className="hidden text-right font-mono text-[11.5px] text-ink-3 md:table-cell">
+                    {item.best_site_name ?? '—'}
+                  </TD>
+                ) : null}
                 <TD className="hidden text-right font-mono text-ink-3 tnum md:table-cell">
                   {formatMoney(effectiveTarget(item), item.currency)}
                 </TD>
