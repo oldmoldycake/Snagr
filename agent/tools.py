@@ -11,6 +11,7 @@ from datetime import datetime
 import httpx
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
 from database import AsyncSessionLocal, ListingChecks, Listings, PriceChecks, VisionScans
+from notify import notify_target_met
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -164,27 +165,38 @@ async def save_price_check(
     )
     async with AsyncSessionLocal() as session:
         try:
-            stmt = insert(PriceChecks).values(
-                listing_id=listing_id,
-                price=price,
-                currency=currency,
-                in_stock=in_stock,
-                status=status,
-                checked_at=datetime.now(),
+            stmt = (
+                insert(PriceChecks)
+                .values(
+                    listing_id=listing_id,
+                    price=price,
+                    currency=currency,
+                    in_stock=in_stock,
+                    status=status,
+                    checked_at=datetime.now(),
+                )
+                .returning(PriceChecks.id)
             )
 
-            await session.execute(stmt)
+            result = await session.execute(stmt)
+            check_id = result.scalar_one()
             await session.commit()
             run_stats["listings_checked"] += 1
             if price is not None:
                 run_stats["prices_found"] += 1
 
             log.info(f"Successfully recorded listing {listing_id}")
-            return f"Successfully recorded listing {listing_id}"
 
         except Exception as e:
             log.error(f"Error inserting price check for listing {listing_id}: {e}")
             return f"Error inserting price check for listing {listing_id}: {e}"
+
+    # Committed and the session closed before the push: a target-hit
+    # notification is a side effect of recording the price, never a
+    # precondition for it. A priceless or out-of-stock check can't be a snag.
+    if in_stock and price is not None and price > 0:
+        await notify_target_met(listing_id, check_id, price, currency)
+    return f"Successfully recorded listing {listing_id}"
 
 
 async def disable_listing(listing_id: int, reason: str) -> str:
