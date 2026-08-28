@@ -49,6 +49,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(Text, unique=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    ntfy_topic: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -415,6 +416,107 @@ async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
         except Exception as e:
             log.error(f"Error fetching checked urls for watch {watch_id} on site {site_id}: {e}")
             return []
+
+
+async def get_target_notification(listing_id: int, exclude_check_id: int) -> dict | None:
+    """
+    Return everything needed to judge and compose a target-hit push for a
+    listing that was just price-checked.
+
+    best_price_before is the watch's best price across its active listings
+    ignoring the check just written — the "was this watch already met?" half
+    of the edge trigger, answered in the same round trip as the rest so the
+    caller never has to reason about ordering.
+
+    Args:
+      listing_id: The listing the new price check belongs to.
+      exclude_check_id: The price_checks id just inserted, left out of
+        best_price_before so the new observation cannot mask the edge.
+    Returns:
+      A dict with keys watch_id, target_price, last_notified_at, ntfy_topic,
+      item_name, site_name, listing_url, best_price_before. Returns None when
+      this watch can never notify (notifications off, no target, or the owner
+      has no topic) and when the query fails — a DB hiccup drops the push,
+      never the price check that triggered it.
+    """
+
+    log.info(f"Fetching notification context for listing {listing_id}")
+    async with AsyncSessionLocal() as session:
+        try:
+            stmt = (
+                select(
+                    Listings.url.label("listing_url"),
+                    Watches.id.label("watch_id"),
+                    Watches.target_price.label("target_price"),
+                    Watches.last_notified_at.label("last_notified_at"),
+                    User.ntfy_topic.label("ntfy_topic"),
+                    Items.name.label("item_name"),
+                    Sites.name.label("site_name"),
+                )
+                .join(Watches, Watches.id == Listings.watch_id)
+                .join(User, User.id == Watches.user_id)
+                .join(Items, Items.id == Listings.item_id)
+                .join(Sites, Sites.id == Listings.site_id)
+                .where(Listings.id == listing_id)
+                .where(Watches.notify)
+                .where(Watches.target_price.is_not(None))
+                .where(User.ntfy_topic.is_not(None))
+                .limit(1)
+            )
+
+            results = await session.execute(stmt)
+            row = results.mappings().one_or_none()
+            if row is None:
+                return None
+
+            # Latest priced check per still-active listing on this watch; the
+            # cheapest of those is the price the UI would have called "best"
+            # a moment ago. price > 0 mirrors the API's own rollup filter.
+            latest_per_listing = (
+                select(PriceChecks.listing_id, PriceChecks.price)
+                .distinct(PriceChecks.listing_id)
+                .join(Listings, Listings.id == PriceChecks.listing_id)
+                .where(Listings.watch_id == row["watch_id"])
+                .where(Listings.active)
+                .where(PriceChecks.price > 0)
+                .where(PriceChecks.id != exclude_check_id)
+                .order_by(PriceChecks.listing_id, PriceChecks.checked_at.desc())
+                .subquery()
+            )
+            best_before = await session.scalar(select(func.min(latest_per_listing.c.price)))
+            return dict(row) | {"best_price_before": best_before}
+        except Exception as e:
+            log.error(f"Error fetching notification context for listing {listing_id}: {e}")
+            return None
+
+
+async def mark_watch_notified(watch_id: int) -> bool:
+    """
+    Stamp a watch as having just pushed a target-hit notification.
+
+    Written only after the push actually lands, so the cooldown measures time
+    since the owner was last told something — not since the last attempt.
+
+    Args:
+      watch_id: The internal id of the watch that was notified.
+    Returns:
+      True on success, False if the write failed — the cooldown then reads
+      stale and the next crossing may push again, which beats going silent.
+    """
+
+    log.info(f"Stamping watch {watch_id} as notified")
+    async with AsyncSessionLocal() as session:
+        try:
+            await session.execute(
+                update(Watches)
+                .where(Watches.id == watch_id)
+                .values(last_notified_at=datetime.now(UTC))
+            )
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error stamping watch {watch_id} as notified: {e}")
+            return False
 
 
 async def get_category_tiers(category_id: int) -> RowMapping | None:

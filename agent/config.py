@@ -31,6 +31,14 @@ SEARXNG_URL = os.getenv("SEAR_XNG_URL")
 MARKET_PRICE_TTL_HOURS = int(os.getenv("MARKET_PRICE_TTL_HOURS", "24"))
 MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_RUN", "10"))
 
+# Target-price notifications (ntfy). None = feature off: price checks are
+# recorded exactly as before and nothing is pushed. Point this at the same
+# server as the backend's NTFY_SERVER_URL — each component reads its own env.
+NTFY_SERVER_URL = os.getenv("NTFY_SERVER_URL")
+# Spam floor under the edge trigger: a watch that just pushed stays quiet this
+# long even if its price crosses the target again.
+NTFY_COOLDOWN_HOURS = int(os.getenv("NTFY_COOLDOWN_HOURS", "24"))
+
 # Observability (both optional). LangSmith is read by langchain itself from LANGSMITH_*;
 # Langfuse only needs an on/off signal here — its SDK reads its own vars.
 LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
