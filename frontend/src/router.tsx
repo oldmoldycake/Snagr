@@ -9,6 +9,7 @@ import { ItemDetailPage } from '@/features/items/ItemDetailPage'
 import { SitesPage } from '@/features/sites/SitesPage'
 import { RunsPage } from '@/features/runs/RunsPage'
 import { RunDetailPage } from '@/features/runs/RunDetailPage'
+import { ReviewQueuePage } from '@/features/vision/ReviewQueuePage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { AdminUsersPage } from '@/features/settings/AdminUsersPage'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
       { path: '/sites', element: <SitesPage /> },
       { path: '/runs', element: <RunsPage /> },
       { path: '/runs/:id', element: <RunDetailPage /> },
+      { path: '/review', element: <ReviewQueuePage /> },
       { path: '/settings', element: <SettingsPage /> },
       {
         element: <AdminGuard />,
