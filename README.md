@@ -69,7 +69,7 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 | File | The important ones |
 |---|---|
 | [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL` |
-| [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `EXPECTED_CURRENCY` |
+| [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `EXPECTED_CURRENCY`, `NTFY_SERVER_URL` |
 | [`vision/.env.example`](vision/.env.example) | `DATABASE_URL` (sync driver), `S3_*`, `HF_TOKEN` |
 
 ## Security posture
