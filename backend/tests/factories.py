@@ -26,6 +26,7 @@ writes those for sold/unavailable listings.
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from itertools import count
 
 from app.models import (
     AgentRuns,
@@ -36,8 +37,16 @@ from app.models import (
     RunEvents,
     Sites,
     User,
+    VisionListingImages,
+    VisionReferences,
+    VisionScans,
     Watches,
 )
+
+# any 384-wide vector will do — the API tests pin behavior, not scoring
+EMBEDDING = [0.1] * 384
+
+_KEYS = count(1)
 
 
 class Scenario:
@@ -201,6 +210,88 @@ class Scenario:
         }
         row = RunEvents(**fields)
         run.last_seq = max(run.last_seq, seq)
+        self.db.add(row)
+        await self.db.flush()
+        return row
+
+    # --- vision --------------------------------------------------------------
+
+    async def scan(
+        self,
+        watch,
+        item,
+        url=None,
+        verdict="inconclusive",
+        fake_confidence=None,
+        auto_reject=False,
+        llm_read=None,
+        days_ago=1,
+    ) -> VisionScans:
+        """One authenticity scan for (watch, listing url)."""
+        row = VisionScans(
+            item_id=item.id,
+            watch_id=watch.id,
+            listing_url=url or f"https://example.test/scan-{watch.id}-{item.id}",
+            llm_authenticity_read=llm_read,
+            verdict=verdict,
+            fake_confidence=Decimal(fake_confidence) if fake_confidence is not None else None,
+            auto_reject=auto_reject,
+            scored_at=self.ago(days_ago),
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return row
+
+    async def capture(
+        self,
+        scan,
+        object_key=None,
+        review_state="suggested",
+        suggested_label="fake",
+        fake_confidence="0.90",
+        days_ago=1,
+    ) -> VisionListingImages:
+        """One captured listing photo; defaults put it in the review queue."""
+        row = VisionListingImages(
+            scan_id=scan.id,
+            image_url=f"https://cdn.test/{object_key or 'capture'}.jpg",
+            object_key=object_key or f"cap{next(_KEYS)}",
+            embedding=EMBEDDING,
+            model_name="test-model",
+            fake_confidence=Decimal(fake_confidence) if fake_confidence is not None else None,
+            suggested_label=suggested_label,
+            review_state=review_state,
+            created_at=self.ago(days_ago),
+        )
+        self.db.add(row)
+        await self.db.flush()
+        return row
+
+    async def reference(
+        self,
+        item,
+        label="real",
+        provenance="human",
+        captured_by=None,
+        variant_tag=None,
+        revoked=False,
+        object_key=None,
+        source_listing_url=None,
+    ) -> VisionReferences:
+        """One gold reference in the item's communal library."""
+        row = VisionReferences(
+            item_id=item.id,
+            label=label,
+            variant_tag=variant_tag,
+            provenance=provenance,
+            embedding=EMBEDDING,
+            model_name="test-model",
+            object_key=object_key or f"ref{next(_KEYS)}",
+            source_listing_url=source_listing_url,
+            captured_by=captured_by,
+            confirmed_by=captured_by if provenance != "auto" else None,
+            revoked_at=self.now if revoked else None,
+        )
         self.db.add(row)
         await self.db.flush()
         return row

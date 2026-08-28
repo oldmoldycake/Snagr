@@ -37,6 +37,15 @@ class Settings(BaseSettings):
         """SSO is on only when the three OIDC_* essentials are all set."""
         return bool(self.OIDC_ISSUER and self.OIDC_CLIENT_ID and self.OIDC_CLIENT_SECRET)
 
+    # Visual authenticity: the vision sidecar's URL. Unset = the feature is off —
+    # vision list routes return empty data, vision mutations 503, UI hides it all.
+    VISION_SIDECAR_URL: str | None = None
+
+    @property
+    def vision_enabled(self) -> bool:
+        """Vision is on only when the sidecar URL is configured."""
+        return bool(self.VISION_SIDECAR_URL)
+
     # Instance / notifications
     APP_VERSION: str = "0.1.0"
     NTFY_SERVER_URL: str | None = None  # drives InstanceInfo.ntfy_server_url

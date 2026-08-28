@@ -1,5 +1,7 @@
 """Current-user self-service — /api/me  (Phase 2). All require auth + CSRF."""
 
+from decimal import Decimal, InvalidOperation
+
 import httpx
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
@@ -15,11 +17,37 @@ from app.schemas.auth import MeUpdateRequest, PasswordChangeRequest, User, user_
 
 router = APIRouter(prefix="/api/me", tags=["me"], dependencies=[Depends(csrf_guard)])
 
+_THRESHOLD_FIELDS = (
+    "vision_auto_reject_fake",
+    "vision_auto_promote_real",
+    "vision_auto_promote_fake",
+)
+
 
 @router.patch("", response_model=User)
 async def update_me(
     body: MeUpdateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    # vision thresholds: contract bounds 0.50–1.00; stored resolved (never null)
+    fields: dict[str, str] = {}
+    thresholds: dict[str, Decimal] = {}
+    for field in _THRESHOLD_FIELDS:
+        if field not in body.model_fields_set:
+            continue
+        try:
+            value = Decimal(getattr(body, field))
+        except InvalidOperation, TypeError:
+            fields[field] = "Must be between 0.50 and 1.00"
+            continue
+        if not Decimal("0.50") <= value <= Decimal("1.00"):
+            fields[field] = "Must be between 0.50 and 1.00"
+        else:
+            thresholds[field] = value.quantize(Decimal("0.01"))
+    if fields:
+        raise err(
+            422, "validation_error", "Thresholds must be between 0.50 and 1.00", fields=fields
+        )
+
     # PATCH semantics: only touch fields the client actually sent — that's what
     # model_fields_set tracks. ntfy_topic can be sent as null to clear it.
     if "email" in body.model_fields_set and body.email is not None and body.email != user.email:
@@ -33,6 +61,8 @@ async def update_me(
         user.email = body.email
     if "ntfy_topic" in body.model_fields_set:
         user.ntfy_topic = body.ntfy_topic or None
+    for field, value in thresholds.items():
+        setattr(user, field, value)
     await db.commit()
     return user_out(user)
 

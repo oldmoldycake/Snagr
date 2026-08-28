@@ -39,6 +39,7 @@ from app.schemas.items import (
     WatchUpdateRequest,
 )
 from app.services.aggregates import item_rollups
+from app.services.vision import authenticity_for_listings
 
 router = APIRouter(prefix="/api", tags=["items"])
 
@@ -261,6 +262,9 @@ async def get_item(item_id: int, user=Depends(current_user), db: AsyncSession = 
     )
 
     listing_rows = (await db.execute(listing_stmt)).all()
+    authenticity = await authenticity_for_listings(
+        db, watch.id, [listing.url for listing, _ in listing_rows]
+    )
     listings = []
     for listing, site_name in listing_rows:
         price, in_stock, latest_status, checked_at = await listing_latest_check(listing.id, db)
@@ -279,6 +283,7 @@ async def get_item(item_id: int, user=Depends(current_user), db: AsyncSession = 
                 latest_status=latest_status,
                 match_score=listing.match_score,
                 match_summary=listing.match_summary,
+                authenticity=authenticity.get(listing.url),
                 last_checked_at=checked_at,
                 created_at=listing.created_at.isoformat(),
                 discovered_by_run_id=None,
@@ -335,6 +340,9 @@ async def update_item(
         )
 
         listing_rows = (await db.execute(listing_stmt)).all()
+        authenticity = await authenticity_for_listings(
+            db, watch.id, [listing.url for listing, _ in listing_rows]
+        )
 
         listings = []
         for listing, site_name in listing_rows:
@@ -354,6 +362,7 @@ async def update_item(
                     latest_status=latest_status,
                     match_score=listing.match_score,
                     match_summary=listing.match_summary,
+                    authenticity=authenticity.get(listing.url),
                     last_checked_at=checked_at,
                     created_at=listing.created_at.isoformat(),
                     discovered_by_run_id=None,
@@ -450,6 +459,7 @@ async def update_listing(
         site_name = (
             await db.execute(select(Sites.name).where(Sites.id == listing.site_id))
         ).scalar_one_or_none()
+        authenticity = await authenticity_for_listings(db, listing.watch_id, [listing.url])
         return Listing(
             id=listing.id,
             site_id=listing.site_id,
@@ -463,6 +473,7 @@ async def update_listing(
             latest_status=latest_status,
             match_score=listing.match_score,
             match_summary=listing.match_summary,
+            authenticity=authenticity.get(listing.url),
             last_checked_at=checked_at,
             created_at=listing.created_at.isoformat(),
             discovered_by_run_id=None,
