@@ -9,7 +9,7 @@ sqlalchemy==2.0.52
 asyncpg
 alembic
 pgvector
-pydantic==2.13.4
+pydantic==2.13.5
 pydantic-settings
 python-dotenv
 email-validator
