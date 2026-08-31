@@ -1,0 +1,29 @@
+# Maintains the release PR (version bump + CHANGELOG from conventional PR
+# titles); merging that PR creates the vX.Y.Z tag and the GitHub release,
+# which triggers release.yml to publish the versioned images.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+# The PAT carries the real permissions; keep the workflow token inert.
+permissions: {}
+
+concurrency:
+  group: release-please
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: googleapis/release-please-action@v5
+        with:
+          # A PAT, not GITHUB_TOKEN: events created by the workflow token
+          # trigger no workflows, so the release PR would get zero CI (stuck
+          # unmergeable under branch protection) and the release tag would
+          # never fire release.yml.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
