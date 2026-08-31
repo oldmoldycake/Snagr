@@ -33,6 +33,12 @@ updates:
     groups:
       vision-python:
         patterns: ["*"]
+    ignore:
+      # torch is deliberately pinned without the +cpu local tag (see
+      # requirements.txt) — Dependabot reads 2.x.y+cpu from the extra index as
+      # an upgrade and would pin a tag that doesn't resolve on arm64. Bump
+      # torch by hand.
+      - dependency-name: torch
 
   - package-ecosystem: npm
     directory: /frontend

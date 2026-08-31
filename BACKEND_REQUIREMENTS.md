@@ -507,9 +507,13 @@ For each item in scope:
 - Instance-wide server URL from the env var `NTFY_SERVER_URL`; exposed read-only in
   `GET /api/instance` (`null` when unset — the frontend explains how to configure it).
 - Each user sets their own `ntfy_topic` (PATCH `/api/me`).
-- When a price check makes an item's `target_met` transition **false → true** and
-  `watch.notify` is true, POST to `{NTFY_SERVER_URL}/{user.ntfy_topic}` with item name, price,
-  site, and a link to the item page. Debounce per item so a flapping price doesn't spam.
+- **The agent sends the target-hit push, not the API** — it is the only writer of
+  `price_checks`, so `save_price_check` fires it (`agent/notify.py`). Give the agent the same
+  `NTFY_SERVER_URL`. When a price check makes a watch's `target_met` transition
+  **false → true** and `watch.notify` is true, it POSTs to
+  `{NTFY_SERVER_URL}/{user.ntfy_topic}` with item name, price, site, and target; the ntfy
+  `Click` header links to the listing. `watches.last_notified_at` is the debounce stamp
+  (`NTFY_COOLDOWN_HOURS`, default 24) so a flapping price doesn't spam.
 - `POST /api/me/ntfy/test` sends a test message through the same path (422 `no_topic` if the
   user hasn't set a topic).
 

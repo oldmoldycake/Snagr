@@ -303,10 +303,11 @@ jobs:
         id: meta
         with:
           images: ghcr.io/${{ github.repository_owner }}/snagr-${{ matrix.component }}
-          # sha-<shortsha> always; :latest only from the default branch.
+          # sha-<shortsha> always; :dev tracks the tip of main. :latest belongs
+          # to releases now (release.yml) so pulling it never rides main.
           tags: |
             type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=dev,enable={{is_default_branch}}
       - uses: docker/build-push-action@v7
         if: env.BUILD == 'true'
         with:
