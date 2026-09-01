@@ -246,10 +246,11 @@ async def log_listing_check(
       watch_id: The internal id of the watch (user+item) this search is being run for
       site_id: The internal id for the current site being searched
       url: The URL of the listing you evaluated and rejected
-      reason: Short category for the rejection, e.g. "poor_fit", "duplicate", "authenticity"
+      reason: Short category for the rejection, e.g. "poor_fit", "duplicate",
+        "authenticity", "auction"
       notes: Optional one-line detail on why, e.g. "no repro flags but price is 3x market"
     Returns:
-      A con efirmation string on success, or a string describing the error.
+      A confirmation string on success, or a string describing the error.
     """
 
     log.info(f"Logging listing check for watch id {watch_id}")

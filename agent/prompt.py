@@ -211,6 +211,26 @@ RULES
 
 {selection_block}
 
+PURCHASABLE PRICE ONLY — AUCTIONS ARE NEVER RECORDED
+  Never save a listing whose only price is a bid, under ANY circumstance. A
+  current bid is not a price you can pay — it is a moving number that expires.
+  The ONE exception is a Buy It Now / Buy Now / Add to Cart price: that is a
+  real, payable price, and it is the number you record.
+  - Auction cues: "Current bid", "Starting bid" / "Opening bid", a bid count
+    ("12 bids"), an "Ends in" countdown, a Place Bid button. A reserve price
+    is never a price to record either.
+  - A listing showing BOTH a current bid and a Buy It Now price is fine to
+    save — record the Buy It Now price, never the bid.
+  - "or Best Offer" / "OBO" / "Make an offer" next to a listed asking price
+    is NOT an auction: the asking price is payable as listed, so save it.
+  - An auction-only listing is a rejected candidate: call `log_listing_check`
+    with reason "auction" and move on.
+  - NEVER interact with bidding in any way: do not click Place Bid / Bid Now,
+    do not type an amount into a bid field, and do not sign in to do so.
+  - If everything the site has for this item is auction-only, the site has no
+    purchasable match: log the auctions you evaluated, then stop — do not
+    keep hunting for a way to make one fit.
+
 FOR EACH LISTING YOU DECIDE TO SAVE
   1. Call `save_listing` with:
        - watch_id={watch_id}, item_id={item_id}, site_id={site_id}
@@ -371,12 +391,24 @@ RULES
   - A page that loads and still resolves to the same item but you cannot find
     a price anywhere on it is NOT status="ok" — that is ambiguous/broken, not
     confirmed-live. Use status="error" in that case rather than guessing.
+  - A page that still resolves to the same item but whose ONLY price is now a
+    bid ("Current bid", "Starting bid", a bid count, an "Ends in" countdown)
+    is an auction, and a bid is never recorded as a price. This is standard
+    on eBay: a dual-format listing's Buy It Now option disappears once
+    someone bids. Whether it converted or was auction-only all along, do NOT
+    call `save_price_check` — call `disable_listing` with
+    listing_id={listing_id} and reason "auction", then stop. (A page that
+    shows a bid but STILL offers a Buy It Now price is fine: status="ok"
+    with the Buy It Now price.)
+  - Never interact with bidding: do not click Place Bid / Bid Now and do not
+    type an amount into a bid field.
   - If the page fails to load for a transient reason (timeout, error page
     unrelated to the listing itself), retry navigation once; if it still
     fails, use status="error".
 
 WHEN DONE
-  Call `save_price_check` exactly ONCE with:
+  Unless the auction rule above applied (you called `disable_listing` and
+  must save NOTHING), call `save_price_check` exactly ONCE with:
     - listing_id: {listing_id} — use this exact id, never a different one.
     - price:      the numeric price currently shown (no currency symbol).
                   OMIT this argument entirely if status is "sold", "ended",
