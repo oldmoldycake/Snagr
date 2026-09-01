@@ -16,7 +16,9 @@ import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { formatDateTime, relativeTime } from '@/lib/time'
+import { useInstance } from '@/features/auth/useSession'
 import { RunButton } from '@/features/runs/RunButton'
+import { ReferenceLibrary } from '@/features/vision/ReferenceLibrary'
 import { ChartPanel } from './ChartPanel'
 import { EditItemDialog } from './EditItemDialog'
 import { Ladder } from './Ladder'
@@ -54,6 +56,7 @@ export function ItemDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [allChecks, setAllChecks] = useState(false)
 
+  const { data: instance } = useInstance()
   const item = useQuery({ queryKey: qk.item(itemId), queryFn: () => getItem(itemId) })
   const checks = useQuery({
     queryKey: qk.itemChecks(itemId),
@@ -244,6 +247,8 @@ export function ItemDetailPage() {
               )}
             </div>
           </Card>
+
+          {instance?.vision_enabled ? <ReferenceLibrary itemId={itemId} /> : null}
         </div>
 
         <div>
@@ -306,7 +311,11 @@ export function ItemDetailPage() {
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
         title="Delete item"
-        description={`“${detail.name}” and its price history will be permanently removed.`}
+        description={`“${detail.name}” and its price history will be permanently removed.${
+          instance?.vision_enabled
+            ? ' Its photo-reference library and stored listing images are deleted with it.'
+            : ''
+        }`}
         confirmLabel="Delete item"
         pending={remove.isPending}
         onConfirm={() => remove.mutate()}

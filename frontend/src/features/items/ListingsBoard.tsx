@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/cn'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
+import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
 import { prepareSeries } from './seriesPrep'
 
@@ -305,6 +306,12 @@ function ExpandedRow({
           'not scored yet'
         )}
         <br />
+        {listing.authenticity ? (
+          <>
+            <AuthenticityLine read={listing.authenticity} />
+            <br />
+          </>
+        ) : null}
         {moved && startC != null && nowC != null ? (
           <>
             started <span className="text-ink-2 tnum">{formatMoney(fromCents(startC), detail.currency)}</span>
@@ -428,6 +435,7 @@ function BoardRow({
               {chip}
             </Badge>
           ) : null}
+          {listing.authenticity ? <AuthenticityChip read={listing.authenticity} /> : null}
         </div>
         <Track
           listing={listing}

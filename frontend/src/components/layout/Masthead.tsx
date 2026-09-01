@@ -5,7 +5,7 @@ import { LogOut, Menu, Plus, Search, User as UserIcon } from 'lucide-react'
 import { listCategories } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
-import { useLogout, useSession } from '@/features/auth/useSession'
+import { useInstance, useLogout, useSession } from '@/features/auth/useSession'
 import { isRunActive, useRunEvents } from '@/features/runs/RunEventsProvider'
 import { RunButton } from '@/features/runs/RunButton'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
@@ -19,12 +19,19 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-const NAV_ITEMS: readonly { to: string; label: string; end?: boolean }[] = [
+const NAV_ITEMS: readonly { to: string; label: string; end?: boolean; visionOnly?: boolean }[] = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/sites', label: 'Sites' },
   { to: '/runs', label: 'Runs' },
+  { to: '/review', label: 'Review', visionOnly: true },
   { to: '/settings', label: 'Settings' },
 ]
+
+/** The nav list, with the vision review queue hidden unless the sidecar is configured. */
+function useNavItems() {
+  const { data: instance } = useInstance()
+  return NAV_ITEMS.filter((item) => !item.visionOnly || instance?.vision_enabled)
+}
 
 function Wordmark() {
   return (
@@ -43,10 +50,11 @@ function Wordmark() {
 function MobileNav({ onNavigate }: { onNavigate: () => void }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const categories = data?.data ?? []
+  const navItems = useNavItems()
 
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-4">
-      {NAV_ITEMS.map((item) => (
+      {navItems.map((item) => (
         <NavLink
           key={item.to}
           to={item.to}
@@ -111,6 +119,7 @@ export function Masthead() {
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const navItems = useNavItems()
 
   // "/" focuses search from anywhere that isn't already a text field.
   useEffect(() => {
@@ -154,7 +163,7 @@ export function Masthead() {
         <Wordmark />
 
         <nav className="hidden h-full items-center gap-1 md:flex" aria-label="Main">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

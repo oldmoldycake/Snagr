@@ -20,6 +20,10 @@ export const qk = {
   itemHistory: (id: number, range: TimeRange) => ['items', 'detail', id, 'history', range] as const,
   itemSummary: (id: number, range: TimeRange) => ['items', 'detail', id, 'summary', range] as const,
   itemChecks: (id: number) => ['items', 'detail', id, 'checks'] as const,
+  // nested under the item detail so invalidating ['items'] refreshes the library too
+  itemReferences: (id: number) => ['items', 'detail', id, 'references'] as const,
+
+  visionQueue: (params: { page?: number } = {}) => ['vision', 'queue', params] as const,
 
   dashboard: (range: TimeRange) => ['dashboard', range] as const,
   dashboardDrops: (range: TimeRange) => ['dashboard', range, 'drops'] as const,
