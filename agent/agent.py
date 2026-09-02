@@ -29,6 +29,7 @@ from database import (
     claim_queued_run,
     create_global_run,
     finish_run,
+    get_active_listing_count,
     get_checked_urls,
     get_listed_items,
     get_market_price,
@@ -178,9 +179,12 @@ async def recheck_listing(agent, session_id: str, row) -> None:
     _require_browser_success(final.get("messages", []))
 
 
-async def scan_pair(agent, session_id: str, row, known_urls: list, market: dict | None) -> None:
-    """One pass-2 unit: search a site for new listings for one watch. Raises
-    on failure — the orchestrator counts it."""
+async def scan_pair(
+    agent, session_id: str, row, known_urls: list, market: dict | None, tracked_listings: int
+) -> None:
+    """One pass-2 unit: search a site for new listings for one watch, telling
+    the model how many of the watch's slots are already in use. Raises on
+    failure — the orchestrator counts it."""
     watch_id = row["watch_id"]
     user_id = int(row["user_id"])
     site_id = row["site_id"]
@@ -216,6 +220,7 @@ async def scan_pair(agent, session_id: str, row, known_urls: list, market: dict 
         selection_mode=selection_mode,
         max_listings=max_listings,
         allow_reproductions=allow_reproductions,
+        tracked_listings=tracked_listings,
         vision_enabled=bool(VISION_SIDECAR_URL),
         known_urls=known_urls,
         rejected_checks=rejected_checks,
@@ -313,6 +318,20 @@ async def execute_run(run: dict) -> dict | None:
                 market_row = await get_market_price(item_id)
                 markets[item_id] = dict(market_row) if market_row else None
 
+            # max_listings is one budget per watch across every site and run,
+            # and a scan only sees its own site — so the slots are metered
+            # here. Re-read right before each search: the previous site may
+            # have just filled the last slot, and a full watch should cost no
+            # browser time or tokens. Skipped pairs are not units: nothing was
+            # attempted, so they must not mask an all-failed run.
+            tracked = await get_active_listing_count(row["watch_id"])
+            if tracked >= int(row["max_listings"]):
+                log.info(
+                    f"Skipping {row['site_name']} for {row['item_name']}: "
+                    f"all {row['max_listings']} slots in use"
+                )
+                continue
+
             await append_run_event(
                 run_id,
                 "info",
@@ -322,7 +341,9 @@ async def execute_run(run: dict) -> dict | None:
             )
             units += 1
             try:
-                await scan_pair(scan_agent, session_id, row, current_listing_urls, markets[item_id])
+                await scan_pair(
+                    scan_agent, session_id, row, current_listing_urls, markets[item_id], tracked
+                )
                 log.info(f"Finished {row['item_name']} on site {row['site_name']}")
             except Exception as e:
                 log.error(f"Item {row['item_name']} on site {row['site_name']} failed: {e}")

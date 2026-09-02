@@ -40,6 +40,7 @@ from database import (
     create_global_run,
     engine,
     finish_run,
+    get_active_listing_count,
     get_listed_items,
     get_watched_item_list,
 )
@@ -545,6 +546,36 @@ class TestScopedQueries:
         assert out["category"] == [ids["watch_a"]]
         assert out["site"] == [ids["watch_b"]]
         assert out["item"] == [ids["watch_a"]]
+
+
+class TestActiveListingCount:
+    def test_counts_only_the_watch_s_active_listings_across_sites(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(
+                # a second site's listing still counts against the same watch
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_b"],
+                    url="https://cardbay.test/emerald",
+                ),
+                # a retired listing has freed its slot
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/sold",
+                    active=False,
+                ),
+            )
+            return (
+                await get_active_listing_count(ids["watch_a"]),
+                await get_active_listing_count(ids["watch_b"]),
+                await get_active_listing_count(99999),
+            )
+
+        assert db(scenario()) == (2, 1, 0)
 
 
 class TestRunStatsTally:
