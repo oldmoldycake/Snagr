@@ -29,7 +29,6 @@ export interface MockUser {
   password: string
   role: 'admin' | 'user'
   is_active: boolean
-  ntfy_topic: string | null
   /** vision thresholds as 0–1 decimal strings (always resolved) */
   vision_auto_reject_fake: string
   vision_auto_promote_real: string
@@ -354,7 +353,6 @@ function seed() {
     password: 'snagr',
     role: 'admin',
     is_active: true,
-    ntfy_topic: 'snagr-demo-8f3a',
     ...VISION_DEFAULTS,
     created_at: NOW - 200 * DAY,
   })
@@ -365,7 +363,6 @@ function seed() {
     password: 'snagr',
     role: 'user',
     is_active: true,
-    ntfy_topic: null,
     ...VISION_DEFAULTS,
     created_at: NOW - 100 * DAY,
   })

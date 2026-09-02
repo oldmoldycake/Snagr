@@ -40,7 +40,8 @@ export interface ApiErrorBody {
 
 export interface InstanceInfo {
   version: string
-  /** null when the admin hasn't configured NTFY_SERVER_URL */
+  /** the ntfy server notifications are pushed through, shown in the ntfy
+   *  channel form; null when the admin hasn't configured NTFY_SERVER_URL */
   ntfy_server_url: string | null
   /** true only while the instance has zero users (first-admin bootstrap) */
   registration_open: boolean
@@ -56,7 +57,6 @@ export interface User {
   id: number
   email: string
   role: UserRole
-  ntfy_topic: string | null
   /**
    * Vision thresholds (0–1 decimal strings, always resolved — never null).
    * auto_reject_fake: fake confidence at/above this auto-rejects a listing;
@@ -530,7 +530,6 @@ export interface RunSnapshotData {
 
 export interface MeUpdateRequest {
   email?: string
-  ntfy_topic?: string | null
   /** vision thresholds; 422 validation_error outside 0.50–1.00 */
   vision_auto_reject_fake?: string
   vision_auto_promote_real?: string

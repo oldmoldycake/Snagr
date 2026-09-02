@@ -45,7 +45,6 @@ export function toUser(u: MockUser): User {
     id: u.id,
     email: u.email,
     role: u.role,
-    ntfy_topic: u.ntfy_topic,
     vision_auto_reject_fake: u.vision_auto_reject_fake,
     vision_auto_promote_real: u.vision_auto_promote_real,
     vision_auto_promote_fake: u.vision_auto_promote_fake,

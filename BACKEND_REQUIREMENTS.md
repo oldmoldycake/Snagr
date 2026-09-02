@@ -64,7 +64,9 @@ Frontend behavior you must support: on any 401 (except `/api/auth/*`) it calls
 ## 3. Schema changes (vs current `agent/config.py`)
 
 1. `users` — add `password_hash TEXT NOT NULL`, `role TEXT NOT NULL DEFAULT 'user'`
-   (`admin` | `user`), `is_active BOOLEAN NOT NULL DEFAULT true`, `ntfy_topic TEXT NULL`.
+   (`admin` | `user`), `is_active BOOLEAN NOT NULL DEFAULT true`. (`ntfy_topic` lived here
+   until the notification-channels rework; migration 010 copies it into
+   `notification_channels` and 011 drops the column.)
    (`email_verified` is unused by the frontend v1 — keep or drop.)
 2. **New `invites`** — `id PK, token TEXT UNIQUE NOT NULL, email TEXT NULL,
    created_by INT FK users NOT NULL, expires_at timestamptz NOT NULL,
@@ -138,9 +140,11 @@ Known bugs to fix while you're in there:
 | 6 | GET | `/api/auth/me` | user | Current user |
 | 7 | GET | `/api/auth/invites/{token}` | public | Validate invite (404 invalid / 410 expired-or-used) |
 | 8 | POST | `/api/auth/invites/{token}/accept` | public | Create user from invite, log them in |
-| 9 | PATCH | `/api/me` | user | Update `email` / `ntfy_topic` / vision thresholds (422 `validation_error` outside 0.50–1.00) |
+| 9 | PATCH | `/api/me` | user | Update `email` / vision thresholds (422 `validation_error` outside 0.50–1.00) |
 | 10 | POST | `/api/me/password` | user | Change password (`current_password`, `new_password`) |
-| 11 | POST | `/api/me/ntfy/test` | user | Send a test push to the user's topic (204; 422 `no_topic`) |
+| 11a | GET / POST | `/api/me/channels` | user | List / create notification channels (`kind: ntfy\|webhook\|discord`; 201 echoes a webhook's signing `secret` exactly once; 422 `validation_error` / `no_server`) |
+| 11b | PATCH / DELETE | `/api/me/channels/{id}` | user | Edit (kind immutable) / delete a channel; 404 hides other users' channels |
+| 11c | POST | `/api/me/channels/{id}/test` | user | Send a test notification through the channel (204; 422 `no_server`; 502 `channel_failed`) |
 | 12 | GET / POST | `/api/categories` | user | List (with stats) / create `{name}` |
 | 13 | PATCH / DELETE | `/api/categories/{id}` | user | Rename / delete (cascades items+listings+checks) |
 | 14 | PUT | `/api/categories/{id}/sites` | user | Replace linked sites `{site_ids: [1,2]}` |
@@ -188,7 +192,7 @@ Known bugs to fix while you're in there:
 `POST /api/auth/login` ← `{"email": "nolan@example.com", "password": "…"}` → 200 + cookies:
 ```json
 { "user": { "id": 1, "email": "nolan@example.com", "role": "admin",
-            "ntfy_topic": "snagr-nolan-8f3a", "created_at": "2026-01-12T08:00:00Z" } }
+            "created_at": "2026-01-12T08:00:00Z" } }
 ```
 Failure: `401 {"error": {"code": "invalid_credentials", "message": "Email or password is incorrect"}}`
 
@@ -502,20 +506,68 @@ For each item in scope:
 6. Never reactivate a sold/ended listing; users may manually re-toggle `active` for listings
    they deactivated themselves.
 
-## 8. ntfy notifications
+## 8. Notifications
 
-- Instance-wide server URL from the env var `NTFY_SERVER_URL`; exposed read-only in
-  `GET /api/instance` (`null` when unset — the frontend explains how to configure it).
-- Each user sets their own `ntfy_topic` (PATCH `/api/me`).
-- **The agent sends the target-hit push, not the API** — it is the only writer of
-  `price_checks`, so `save_price_check` fires it (`agent/notify.py`). Give the agent the same
-  `NTFY_SERVER_URL`. When a price check makes a watch's `target_met` transition
-  **false → true** and `watch.notify` is true, it POSTs to
-  `{NTFY_SERVER_URL}/{user.ntfy_topic}` with item name, price, site, and target; the ntfy
-  `Click` header links to the listing. `watches.last_notified_at` is the debounce stamp
-  (`NTFY_COOLDOWN_HOURS`, default 24) so a flapping price doesn't spam.
-- `POST /api/me/ntfy/test` sends a test message through the same path (422 `no_topic` if the
-  user hasn't set a topic).
+**The agent detects, the backend delivers.** The agent (still the only writer of
+`price_checks`) writes one durable row per event into `notification_outbox`; a trigger
+`pg_notify`s `snagr_notifications`; the backend's dispatcher (a second app-lifetime LISTEN
+task beside the SSE hub) expands each event into one `notification_deliveries` row per
+matching enabled channel and sends, retrying with backoff (30s/5m/30m/2h, 5 attempts).
+pg_notify is only a wakeup — the on-connect sweep catches rows written while the backend
+was down, so notifications survive agent exit, backend downtime, and send failures.
+
+### Events
+
+- `target.hit` — a price check makes the watch's best price cross its target, top-down.
+  Edge-triggered, with `watches.last_notified_at` stamped at enqueue as the cooldown floor
+  (`NOTIFY_COOLDOWN_HOURS` on the agent, default 24).
+- `listing.new` — the scan pass saved a genuinely new listing for a watch. No price yet
+  (the price check happens after the listing is saved).
+
+Event payloads are frozen facts: entity ids plus `item_name`, `site_name`, `listing_url`,
+decimal-string prices. Zero matching channels → the event is recorded and marked `skipped`.
+
+### Channels (`/api/me/channels`, per-user)
+
+- `ntfy` — POSTs to `{NTFY_SERVER_URL}/{channel.topic}`; server URL is instance-wide env,
+  exposed read-only in `GET /api/instance` (`null` when unset; creating an ntfy channel then
+  422s `no_server`).
+- `discord` — POSTs a rich embed (`{"username": "Snagr", "embeds": [...]}`)
+  to a Discord incoming-webhook URL. Honors `Retry-After` on 429.
+- `webhook` — POSTs the versioned envelope below with an HMAC signature. The signing
+  secret is server-generated and returned exactly once, in the create response
+  (`has_secret: true` afterwards; rotation = delete + recreate).
+- `events` on a channel filters which events it receives; `null` = all (an empty or full
+  set normalizes to `null`, so channels pick up future events automatically).
+
+### Webhook envelope
+
+```json
+{ "version": 1, "id": 123, "event": "target.hit",
+  "occurred_at": "2026-09-01T05:12:00+00:00",
+  "data": { "watch_id": 4, "item_id": 12, "listing_id": 88, "site_id": 2,
+            "item_name": "…", "site_name": "…", "listing_url": "…",
+            "price": "449.99", "currency": "USD", "target_price": "500.00" } }
+```
+
+`id` is the outbox id — dedupe on it across retries. Headers: `X-Snagr-Event`,
+`X-Snagr-Delivery` (delivery id; `test` for test sends), `X-Snagr-Timestamp` (unix
+seconds), and `X-Snagr-Signature: sha256=<hex>` where
+
+```
+signature = HMAC_SHA256(secret, "{timestamp}." + raw_body_bytes)
+```
+
+Verify by recomputing over the exact received bytes, compare constant-time, and reject
+when `|now - timestamp| > 300s`. Ignore `event` values you don't recognize — the set grows.
+
+Destination URLs are user-supplied and POSTed from the backend without an IP blocklist —
+deliberate for a self-hosted instance where every account belongs to the operator's
+household.
+
+`POST /api/me/channels/{id}/test` sends a synthetic message through the same adapter
+(204; 422 `no_server` for ntfy without a server; 502 `channel_failed` when the destination
+rejects or times out).
 
 ## 9. CORS / dev / deployment
 

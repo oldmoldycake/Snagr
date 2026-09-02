@@ -76,8 +76,6 @@ export const updateMe = (body: MeUpdateRequest) =>
 export const changePassword = (body: PasswordChangeRequest) =>
   api<void>('/api/me/password', { method: 'POST', body })
 
-export const sendTestNotification = () => api<void>('/api/me/ntfy/test', { method: 'POST' })
-
 export const listChannels = () => api<{ data: NotificationChannel[] }>('/api/me/channels')
 
 export const createChannel = (body: NotificationChannelCreateRequest) =>

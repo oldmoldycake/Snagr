@@ -253,7 +253,6 @@ export const handlers = [
       password: body.password,
       role: 'admin' as const,
       is_active: true,
-      ntfy_topic: null,
       ...VISION_DEFAULTS,
       created_at: Date.now(),
     }
@@ -301,7 +300,6 @@ export const handlers = [
       password: body.password,
       role: 'user' as const,
       is_active: true,
-      ntfy_topic: null,
       ...VISION_DEFAULTS,
       created_at: Date.now(),
     }
@@ -331,7 +329,6 @@ export const handlers = [
       return err(422, 'validation_error', 'Thresholds must be between 0.50 and 1.00', { fields })
     }
     if (body.email !== undefined) user.email = body.email
-    if (body.ntfy_topic !== undefined) user.ntfy_topic = body.ntfy_topic
     for (const field of thresholds) {
       if (body[field] !== undefined) user[field] = Number(body[field]).toFixed(2)
     }
@@ -347,15 +344,6 @@ export const handlers = [
       })
     }
     user.password = body.new_password
-    return new HttpResponse(null, { status: 204 })
-  }),
-
-  http.post('/api/me/ntfy/test', async () => {
-    const user = requireUser()
-    await wait()
-    if (!user.ntfy_topic) {
-      return err(422, 'no_topic', 'Set a ntfy topic before sending a test notification')
-    }
     return new HttpResponse(null, { status: 204 })
   }),
 
