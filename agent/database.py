@@ -563,6 +563,68 @@ async def enqueue_notification(user_id: int, event: str, payload: dict) -> bool:
             return False
 
 
+async def enqueue_new_listing(
+    watch_id: int,
+    item_id: int,
+    site_id: int,
+    listing_id: int,
+    url: str,
+    title: str,
+    match_score: int,
+    match_summary: str,
+) -> bool:
+    """
+    Queue a "new listing" notification for a listing save_listing just
+    created. No notify gate here on purpose: the scan pass only exists for
+    notify-enabled watches (get_watched_item_list filters on Watches.notify),
+    so a second check would imply that one doesn't exist. No price either —
+    the first price check happens after the listing is saved.
+
+    Args:
+      watch_id: The watch the listing was found for.
+      item_id: The item the listing is of.
+      site_id: The site it was found on.
+      listing_id: The id of the freshly inserted listings row.
+      url: The listing's URL.
+      title: The listing's title as shown on the site.
+      match_score: The model's 0-100 criteria fit from save_listing.
+      match_summary: The one-line justification for that score.
+    Returns:
+      True on success, False if anything failed — a failed enqueue never
+      changes what save_listing returns to the model.
+    """
+
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(
+                select(Watches.user_id.label("user_id"), Items.name.label("item_name"))
+                .join(Items, Items.id == Watches.item_id)
+                .where(Watches.id == watch_id)
+            )
+            row = result.mappings().one_or_none()
+            site = await session.get(Sites, site_id)
+        except Exception as e:
+            log.error(f"Error reading notification context for watch {watch_id}: {e}")
+            return False
+    if row is None or site is None:
+        log.error(f"No notification context for watch {watch_id} / site {site_id}")
+        return False
+
+    payload = {
+        "watch_id": watch_id,
+        "item_id": item_id,
+        "listing_id": listing_id,
+        "site_id": site_id,
+        "item_name": row["item_name"],
+        "site_name": site.name,
+        "listing_url": url,
+        "title": title,
+        "match_score": match_score,
+        "match_summary": match_summary,
+    }
+    return await enqueue_notification(row["user_id"], "listing.new", payload)
+
+
 async def get_category_tiers(category_id: int) -> RowMapping | None:
     """
     Return a category's name and its stored condition-tier vocabulary.
