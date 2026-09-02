@@ -29,7 +29,6 @@ export interface MockUser {
   password: string
   role: 'admin' | 'user'
   is_active: boolean
-  ntfy_topic: string | null
   /** vision thresholds as 0–1 decimal strings (always resolved) */
   vision_auto_reject_fake: string
   vision_auto_promote_real: string
@@ -175,6 +174,20 @@ export interface MockInvite {
   created_at: number
 }
 
+export interface MockNotificationChannel {
+  id: number
+  user_id: number
+  kind: 'ntfy' | 'webhook' | 'discord'
+  name: string
+  url: string | null
+  topic: string | null
+  /** webhook signing secret; serialized only as has_secret (echoed once at create) */
+  secret: string | null
+  events: ('target.hit' | 'listing.new')[] | null
+  enabled: boolean
+  created_at: number
+}
+
 // --- store ---------------------------------------------------------------------
 
 export const NOW = Date.now()
@@ -194,6 +207,7 @@ export const store = {
   runs: [] as MockRun[],
   runEvents: [] as MockRunEvent[],
   invites: [] as MockInvite[],
+  notificationChannels: [] as MockNotificationChannel[],
   references: [] as MockReference[],
   visionQueue: [] as MockQueueEntry[],
 }
@@ -339,7 +353,6 @@ function seed() {
     password: 'snagr',
     role: 'admin',
     is_active: true,
-    ntfy_topic: 'snagr-demo-8f3a',
     ...VISION_DEFAULTS,
     created_at: NOW - 200 * DAY,
   })
@@ -350,10 +363,37 @@ function seed() {
     password: 'snagr',
     role: 'user',
     is_active: true,
-    ntfy_topic: null,
     ...VISION_DEFAULTS,
     created_at: NOW - 100 * DAY,
   })
+
+  // the demo account arrives with one channel of each push style configured
+  store.notificationChannels.push(
+    {
+      id: 1,
+      user_id: 1,
+      kind: 'ntfy',
+      name: 'ntfy',
+      url: null,
+      topic: 'snagr-demo-8f3a',
+      secret: null,
+      events: null,
+      enabled: true,
+      created_at: NOW - 60 * DAY,
+    },
+    {
+      id: 2,
+      user_id: 1,
+      kind: 'discord',
+      name: 'deals channel',
+      url: 'https://discord.com/api/webhooks/1234567890/mock-token',
+      topic: null,
+      secret: null,
+      events: ['target.hit'],
+      enabled: true,
+      created_at: NOW - 30 * DAY,
+    },
+  )
 
   store.sites = SITES.map(([name, base_url], i) => ({
     id: i + 1,

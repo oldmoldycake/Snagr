@@ -3,6 +3,7 @@ import type {
   AgentRun,
   Category,
   Invite,
+  NotificationChannel,
   ItemDetail,
   ItemSummary,
   Listing,
@@ -29,6 +30,7 @@ import {
   targetMet,
   type MockItem,
   type MockListing,
+  type MockNotificationChannel,
   type MockQueueEntry,
   type MockReference,
   type MockRun,
@@ -43,7 +45,6 @@ export function toUser(u: MockUser): User {
     id: u.id,
     email: u.email,
     role: u.role,
-    ntfy_topic: u.ntfy_topic,
     vision_auto_reject_fake: u.vision_auto_reject_fake,
     vision_auto_promote_real: u.vision_auto_promote_real,
     vision_auto_promote_fake: u.vision_auto_promote_fake,
@@ -246,6 +247,20 @@ export function toInvite(i: (typeof store.invites)[number]): Invite {
     email: i.email,
     expires_at: iso(i.expires_at)!,
     created_at: iso(i.created_at)!,
+  }
+}
+
+export function toNotificationChannel(c: MockNotificationChannel): NotificationChannel {
+  return {
+    id: c.id,
+    kind: c.kind,
+    name: c.name,
+    url: c.url,
+    topic: c.topic,
+    has_secret: c.secret != null,
+    events: c.events,
+    enabled: c.enabled,
+    created_at: iso(c.created_at)!,
   }
 }
 

@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { BellRing, Loader2, ScanSearch } from 'lucide-react'
+import { Loader2, ScanSearch } from 'lucide-react'
 import { toast } from 'sonner'
-import { changePassword, sendTestNotification, updateMe } from '@/api/endpoints'
+import { changePassword, updateMe } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
 import { Button } from '@/components/ui/button'
@@ -11,6 +11,7 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useInstance, useSession } from '@/features/auth/useSession'
+import { ChannelsCard } from '@/features/settings/ChannelsCard'
 
 export function SettingsPage() {
   const { data: user } = useSession()
@@ -18,7 +19,6 @@ export function SettingsPage() {
   const queryClient = useQueryClient()
 
   const [email, setEmail] = useState(user?.email ?? '')
-  const [topic, setTopic] = useState(user?.ntfy_topic ?? '')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [rejectFake, setRejectFake] = useState(user?.vision_auto_reject_fake ?? '0.85')
@@ -30,14 +30,6 @@ export function SettingsPage() {
     onSuccess: (updated) => {
       queryClient.setQueryData(qk.session, updated)
       toast.success('Profile saved')
-    },
-  })
-
-  const saveTopic = useMutation({
-    mutationFn: () => updateMe({ ntfy_topic: topic.trim() || null }),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(qk.session, updated)
-      toast.success('Notification topic saved')
     },
   })
 
@@ -66,13 +58,6 @@ export function SettingsPage() {
     },
   })
 
-  const test = useMutation({
-    mutationFn: sendTestNotification,
-    onSuccess: () => toast.success('Test notification sent — check your ntfy app'),
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not send the test notification'),
-  })
-
   const passwordError = password.error instanceof ApiError ? password.error.message : null
   const thresholdFields =
     saveThresholds.error instanceof ApiError ? (saveThresholds.error.fields ?? {}) : {}
@@ -80,7 +65,6 @@ export function SettingsPage() {
     rejectFake !== user?.vision_auto_reject_fake ||
     promoteReal !== user?.vision_auto_promote_real ||
     promoteFake !== user?.vision_auto_promote_fake
-  const suggestedTopic = `snagr-${(user?.email.split('@')[0] ?? 'me').replace(/[^a-z0-9]/gi, '').toLowerCase()}-${String(user?.id ?? 0).padStart(2, '0')}${Math.abs((user?.email ?? '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 97).toString(16)}`
 
   return (
     <div className="max-w-2xl space-y-5">
@@ -155,60 +139,7 @@ export function SettingsPage() {
         </CardBody>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <BellRing className="size-4 text-ink-3" /> Notifications
-          </CardTitle>
-        </CardHeader>
-        <CardBody className="space-y-3">
-          {instance?.ntfy_server_url == null ? (
-            <p className="text-[13px] text-ink-2">
-              Your admin hasn't configured a ntfy server yet. Set{' '}
-              <code className="rounded-sm bg-well px-1 py-0.5 font-mono text-xs break-all">NTFY_SERVER_URL</code> on the
-              backend to enable push notifications when a target price is hit.
-            </p>
-          ) : (
-            <>
-              <div>
-                <Label>ntfy server</Label>
-                <p className="font-mono text-[13px] text-ink-2">{instance.ntfy_server_url}</p>
-              </div>
-              <div>
-                <Label htmlFor="ntfy-topic">Your topic</Label>
-                <div className="flex gap-2">
-                  <Input
-                    id="ntfy-topic"
-                    placeholder={suggestedTopic}
-                    className="font-mono"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                  />
-                  <Button
-                    disabled={saveTopic.isPending || topic.trim() === (user?.ntfy_topic ?? '')}
-                    onClick={() => saveTopic.mutate()}
-                  >
-                    {saveTopic.isPending ? <Loader2 className="animate-spin" /> : null}
-                    Save
-                  </Button>
-                </div>
-                <p className="mt-1.5 text-xs text-ink-3">
-                  Subscribe to{' '}
-                  <code className="rounded-sm bg-well px-1 py-0.5 font-mono break-all">
-                    {instance.ntfy_server_url}/{topic.trim() || suggestedTopic}
-                  </code>{' '}
-                  in the ntfy app. You'll get a push when an item you watch hits its target — toggle
-                  "Notify at target" on each item.
-                </p>
-              </div>
-              <Button variant="snag" size="sm" disabled={test.isPending || !user?.ntfy_topic} onClick={() => test.mutate()}>
-                {test.isPending ? <Loader2 className="animate-spin" /> : <BellRing />}
-                Send test notification
-              </Button>
-            </>
-          )}
-        </CardBody>
-      </Card>
+      <ChannelsCard />
 
       {instance?.vision_enabled ? (
         <Card>

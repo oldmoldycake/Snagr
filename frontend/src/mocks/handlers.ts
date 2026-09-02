@@ -11,6 +11,9 @@ import type {
   ListingUpdateRequest,
   LoginRequest,
   MeUpdateRequest,
+  NotificationChannelCreateRequest,
+  NotificationChannelUpdateRequest,
+  NotificationEvent,
   PasswordChangeRequest,
   ReviewConfirmRequest,
   RunCreateRequest,
@@ -35,6 +38,7 @@ import {
   VISION_DEFAULTS,
   type MockCategory,
   type MockItem,
+  type MockNotificationChannel,
   type MockRun,
 } from './fixtures'
 import {
@@ -44,6 +48,7 @@ import {
   toItemDetail,
   toItemSummary,
   toListing,
+  toNotificationChannel,
   toQueueEntry,
   toReference,
   toRun,
@@ -152,6 +157,64 @@ function validateTracking(
   return { criteria, selection_mode, max_listings, allow_reproductions, site_ids }
 }
 
+const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
+
+interface ChannelFields {
+  name: string
+  url: string | null
+  topic: string | null
+  events: NotificationEvent[] | null
+}
+
+/**
+ * Normalize + validate the channel fields shared by create/update. `existing`
+ * supplies defaults on PATCH; kind is immutable, so it always comes from the
+ * existing row there. events must be a subset of the known events; empty/full
+ * set → null ("every event"), the site_ids convention.
+ */
+function validateChannel(
+  kind: MockNotificationChannel['kind'],
+  body: NotificationChannelCreateRequest | NotificationChannelUpdateRequest,
+  existing?: MockNotificationChannel,
+): ChannelFields | HttpResponse<DefaultBodyType> {
+  const name = body.name !== undefined ? body.name.trim() : (existing?.name ?? '')
+  if (!name) {
+    return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
+  }
+
+  let url = body.url !== undefined ? body.url.trim() || null : (existing?.url ?? null)
+  let topic = body.topic !== undefined ? body.topic.trim() || null : (existing?.topic ?? null)
+  if (kind === 'ntfy') {
+    url = null
+    if (!topic) {
+      return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
+    }
+  } else {
+    topic = null
+    if (!url || !/^https?:\/\//.test(url)) {
+      return err(422, 'validation_error', 'A valid URL is required', { fields: { url: 'Must be an http(s) URL' } })
+    }
+    if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
+      return err(422, 'validation_error', 'Not a Discord webhook URL', {
+        fields: { url: 'Must be a Discord incoming-webhook URL' },
+      })
+    }
+  }
+
+  let events = body.events !== undefined ? body.events : (existing?.events ?? null)
+  if (events != null) {
+    if (events.some((e) => !KNOWN_EVENTS.includes(e))) {
+      return err(422, 'validation_error', 'events must be a subset of the known events', {
+        fields: { events: 'Unknown event' },
+      })
+    }
+    // empty or the full set means "every event"
+    if (events.length === 0 || events.length === KNOWN_EVENTS.length) events = null
+  }
+
+  return { name, url, topic, events }
+}
+
 // --- handlers --------------------------------------------------------------------
 
 export const handlers = [
@@ -190,7 +253,6 @@ export const handlers = [
       password: body.password,
       role: 'admin' as const,
       is_active: true,
-      ntfy_topic: null,
       ...VISION_DEFAULTS,
       created_at: Date.now(),
     }
@@ -238,7 +300,6 @@ export const handlers = [
       password: body.password,
       role: 'user' as const,
       is_active: true,
-      ntfy_topic: null,
       ...VISION_DEFAULTS,
       created_at: Date.now(),
     }
@@ -268,7 +329,6 @@ export const handlers = [
       return err(422, 'validation_error', 'Thresholds must be between 0.50 and 1.00', { fields })
     }
     if (body.email !== undefined) user.email = body.email
-    if (body.ntfy_topic !== undefined) user.ntfy_topic = body.ntfy_topic
     for (const field of thresholds) {
       if (body[field] !== undefined) user[field] = Number(body[field]).toFixed(2)
     }
@@ -287,12 +347,70 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
-  http.post('/api/me/ntfy/test', async () => {
+  // ---- notification channels ----
+  http.get('/api/me/channels', async () => {
     const user = requireUser()
     await wait()
-    if (!user.ntfy_topic) {
-      return err(422, 'no_topic', 'Set a ntfy topic before sending a test notification')
+    return HttpResponse.json({
+      data: store.notificationChannels.filter((c) => c.user_id === user.id).map(toNotificationChannel),
+    })
+  }),
+
+  http.post('/api/me/channels', async ({ request }) => {
+    const user = requireUser()
+    const body = (await request.json()) as NotificationChannelCreateRequest
+    if (body.kind !== 'ntfy' && body.kind !== 'webhook' && body.kind !== 'discord') {
+      return err(422, 'validation_error', 'Unknown channel kind', { fields: { kind: 'Unknown channel kind' } })
     }
+    // mock-parity gap: the mock instance always has a ntfy server, so the 422
+    // no_server branch (ntfy kind while NTFY_SERVER_URL is unset) is backend-only
+    const fields = validateChannel(body.kind, body)
+    if (fields instanceof HttpResponse) return fields
+    const secret = body.kind === 'webhook' ? crypto.randomUUID().replace(/-/g, '') : null
+    const channel = {
+      id: newId(),
+      user_id: user.id,
+      kind: body.kind,
+      secret,
+      enabled: body.enabled ?? true,
+      created_at: Date.now(),
+      ...fields,
+    }
+    store.notificationChannels.push(channel)
+    // the one response the signing secret ever rides in
+    return HttpResponse.json({ ...toNotificationChannel(channel), secret }, { status: 201 })
+  }),
+
+  http.patch('/api/me/channels/:id', async ({ params, request }) => {
+    const user = requireUser()
+    const channel = store.notificationChannels.find(
+      (c) => c.id === Number(params.id) && c.user_id === user.id,
+    )
+    if (!channel) return err(404, 'not_found', `Channel ${params.id} does not exist`)
+    const body = (await request.json()) as NotificationChannelUpdateRequest
+    const fields = validateChannel(channel.kind, body, channel)
+    if (fields instanceof HttpResponse) return fields
+    Object.assign(channel, fields)
+    if (body.enabled !== undefined) channel.enabled = body.enabled
+    return HttpResponse.json(toNotificationChannel(channel))
+  }),
+
+  http.delete('/api/me/channels/:id', async ({ params }) => {
+    const user = requireUser()
+    const id = Number(params.id)
+    const channel = store.notificationChannels.find((c) => c.id === id && c.user_id === user.id)
+    if (!channel) return err(404, 'not_found', `Channel ${id} does not exist`)
+    store.notificationChannels = store.notificationChannels.filter((c) => c.id !== id)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  http.post('/api/me/channels/:id/test', async ({ params }) => {
+    const user = requireUser()
+    await wait()
+    const channel = store.notificationChannels.find(
+      (c) => c.id === Number(params.id) && c.user_id === user.id,
+    )
+    if (!channel) return err(404, 'not_found', `Channel ${params.id} does not exist`)
     return new HttpResponse(null, { status: 204 })
   }),
 
