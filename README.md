@@ -33,7 +33,22 @@ Four independently-deployed components in one repo, sharing one PostgreSQL datab
 | `agent/` | LangChain scraper batch job driving Playwright MCP | scheduled / queue-ticker, not a server |
 | `vision/` | optional visual-authenticity sidecar (DINOv3 embeddings, MinIO object store) | server on `:8100`, opt-in |
 
-External pieces: PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension, a [Playwright MCP](https://github.com/microsoft/playwright-mcp) endpoint for the agent, and an LLM API key (or a local model server).
+## Requirements
+
+- **PostgreSQL with the [pgvector](https://github.com/pgvector/pgvector) extension** — required since migration 009 whether or not the vision sidecar is enabled (the schema carries embedding columns either way). The drop-in [`pgvector/pgvector`](https://hub.docker.com/r/pgvector/pgvector) image ships it preinstalled; on an existing server, install the distro package (e.g. `postgresql-17-pgvector` on Debian/Ubuntu) and enable it once per database as a superuser:
+
+  ```sql
+  CREATE EXTENSION vector;
+  ```
+
+  **Upgrading an existing install?** `alembic upgrade head` stops at migration 009 with exactly this instruction:
+
+  > Snagr now requires the pgvector extension. Run `CREATE EXTENSION vector;` as your Postgres admin (see README → Requirements), then re-run `alembic upgrade head`.
+
+  Enabling the extension and re-running the migration is the whole upgrade — no data changes.
+
+- A [Playwright MCP](https://github.com/microsoft/playwright-mcp) endpoint the agent can reach.
+- An LLM API key — or a local model server — for any [LangChain `init_chat_model`](https://python.langchain.com/docs/how_to/chat_models_universal_init/) provider.
 
 ## Installing
 
