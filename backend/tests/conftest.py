@@ -35,8 +35,9 @@ CSRF = {"X-Snagr-Csrf": "1"}
 _ALL_TABLES = ", ".join(t.name for t in Base.metadata.sorted_tables)
 
 # create_all knows nothing about triggers, so the pg_notify plumbing the SSE
-# hub listens to is installed here by hand — keep in sync with
-# migrations/versions/007_run_notify_triggers.py
+# hub and the notification dispatcher listen to is installed here by hand —
+# keep in sync with migrations/versions/007_run_notify_triggers.py and
+# migrations/versions/010_notification_channels_outbox.py
 _NOTIFY_DDL = [
     """
     CREATE OR REPLACE FUNCTION notify_run_event() RETURNS trigger AS $$
@@ -76,6 +77,22 @@ _NOTIFY_DDL = [
         FOR EACH ROW
         WHEN (OLD.status IS DISTINCT FROM NEW.status)
         EXECUTE FUNCTION notify_run_status()
+    """,
+    """
+    CREATE OR REPLACE FUNCTION notify_outbox() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify(
+            'snagr_notifications',
+            json_build_object('outbox_id', NEW.id)::text
+        );
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    CREATE TRIGGER notification_outbox_notify
+        AFTER INSERT ON notification_outbox
+        FOR EACH ROW EXECUTE FUNCTION notify_outbox()
     """,
 ]
 

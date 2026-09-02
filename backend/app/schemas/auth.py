@@ -29,7 +29,6 @@ class User(BaseModel):
     id: int
     email: str
     role: UserRole
-    ntfy_topic: str | None
     # vision thresholds (D-V9): 0–1 decimal strings, always resolved — never null
     vision_auto_reject_fake: str
     vision_auto_promote_real: str
@@ -70,7 +69,6 @@ class InviteAcceptRequest(BaseModel):
 
 class MeUpdateRequest(BaseModel):
     email: EmailStr | None = None
-    ntfy_topic: str | None = None
     # plain strs so the 422 validation_error envelope (with a fields map)
     # applies — routers/me.py validates the 0.50–1.00 bounds itself
     vision_auto_reject_fake: str | None = None
@@ -121,7 +119,6 @@ def user_out(u) -> User:
         id=u.id,
         email=u.email,
         role=u.role,
-        ntfy_topic=u.ntfy_topic,
         vision_auto_reject_fake=f"{u.vision_auto_reject_fake:.2f}",
         vision_auto_promote_real=f"{u.vision_auto_promote_real:.2f}",
         vision_auto_promote_fake=f"{u.vision_auto_promote_fake:.2f}",

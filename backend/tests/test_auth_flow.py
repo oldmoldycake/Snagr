@@ -153,18 +153,14 @@ async def test_password_change(client, make_client):
     assert new.status_code == 200
 
 
-async def test_me_update_and_ntfy_guard(client):
+async def test_me_update_email(client):
     await _register(client)
-    res = await client.patch("/api/me", json={"ntfy_topic": "my-topic"}, headers=CSRF)
+    res = await client.patch("/api/me", json={"email": "renamed@example.com"}, headers=CSRF)
     assert res.status_code == 200
-    assert res.json()["ntfy_topic"] == "my-topic"
-
-    cleared = await client.patch("/api/me", json={"ntfy_topic": None}, headers=CSRF)
-    assert cleared.json()["ntfy_topic"] is None
-
-    no_topic = await client.post("/api/me/ntfy/test", headers=CSRF)
-    assert no_topic.status_code == 422
-    assert no_topic.json()["error"]["code"] == "no_topic"
+    assert res.json()["email"] == "renamed@example.com"
+    # ntfy_topic left the contract with the channels rework — a stale client
+    # still sending it is ignored, not an error
+    assert "ntfy_topic" not in res.json()
 
 
 # --- admin ----------------------------------------------------------------------

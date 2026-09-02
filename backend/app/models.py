@@ -299,6 +299,84 @@ class RunSchedules(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class NotificationChannels(Base):
+    """+ api. One per-user notification destination: a ntfy topic on the
+    instance's server, a Discord incoming webhook, or a generic signed
+    webhook. `events` filters what it receives (NULL = everything, so a
+    channel picks up future event kinds automatically). A webhook's signing
+    `secret` is stored recoverable on purpose — every delivery re-signs with
+    it — unlike the hashed refresh tokens in `sessions`."""
+
+    __tablename__ = "notification_channels"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(Text)  # ntfy | webhook | discord
+    name: Mapped[str] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(Text)  # webhook/discord destination; NULL for ntfy
+    topic: Mapped[str | None] = mapped_column(Text)  # ntfy topic; NULL otherwise
+    secret: Mapped[str | None] = mapped_column(Text)  # webhook HMAC key; NULL otherwise
+    events: Mapped[list | None] = mapped_column(JSONB)  # NULL = all events
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationOutbox(Base):
+    """+ api. Durable event queue: the agent (and any future writer) records
+    one row per notification-worthy event; migration 010's trigger announces
+    the insert on 'snagr_notifications' and the backend's dispatcher expands
+    it into per-channel deliveries. `payload` is display facts frozen at
+    enqueue — entity ids, names, decimal-string prices."""
+
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    event: Mapped[str] = mapped_column(Text)  # target.hit | listing.new
+    payload: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(
+        Text, server_default=text("'pending'")
+    )  # pending|processed|skipped
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_notification_outbox_pending", "id", postgresql_where=text("status = 'pending'")),
+    )
+
+
+class NotificationDeliveries(Base):
+    """+ api. One channel's send lifecycle for one outbox event. The
+    dispatcher claims due pending rows (FOR UPDATE SKIP LOCKED), sends, and
+    either marks delivered or spends an attempt and backs off; after
+    MAX_ATTEMPTS the row goes 'failed' and stays as the delivery log."""
+
+    __tablename__ = "notification_deliveries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbox_id: Mapped[int] = mapped_column(ForeignKey("notification_outbox.id", ondelete="CASCADE"))
+    channel_id: Mapped[int] = mapped_column(
+        ForeignKey("notification_channels.id", ondelete="CASCADE")
+    )
+    status: Mapped[str] = mapped_column(
+        Text, server_default=text("'pending'")
+    )  # pending|delivered|failed
+    attempts: Mapped[int] = mapped_column(server_default=text("0"))
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_error: Mapped[str | None] = mapped_column(Text)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index(
+            "ix_notification_deliveries_due",
+            "next_attempt_at",
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+
 class VisionReferences(Base):
     """+ api. Per-item gold library for the visual-authenticity check: the
     human-confirmed (or guardrail-auto-promoted) real/fake exemplars the

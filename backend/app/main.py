@@ -27,16 +27,23 @@ from app.routers import (
     vision,
 )
 from app.services import events as events_service
+from app.services import notifications as notifications_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """The SSE hub's LISTEN connection lives for the app's lifetime."""
-    listener = asyncio.create_task(events_service.listen_pg())
+    """The SSE hub's LISTEN connection and the notification dispatcher both
+    live for the app's lifetime."""
+    tasks = [
+        asyncio.create_task(events_service.listen_pg()),
+        asyncio.create_task(notifications_service.listen_pg()),
+    ]
     yield
-    listener.cancel()
-    with suppress(asyncio.CancelledError):
-        await listener
+    for task in tasks:
+        task.cancel()
+    for task in tasks:
+        with suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Snagr API", version="0.1.0", lifespan=lifespan)

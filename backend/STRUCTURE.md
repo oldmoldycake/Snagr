@@ -36,7 +36,7 @@ backend/
 │   ├── routers/           # one file per section of endpoints.ts — HTTP layer only
 │   │   ├── instance.py     # GET /api/instance                       ← build this first (Task 0)
 │   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, oidc login/callback)
-│   │   ├── me.py           # /api/me, /api/me/password, /api/me/ntfy/test
+│   │   ├── me.py           # /api/me, /api/me/password, /api/me/channels[/{id}][/test]
 │   │   ├── categories.py   # /api/categories[/{id}][/sites]
 │   │   ├── sites.py        # /api/sites[/{id}]
 │   │   ├── items.py        # /api/items[/{id}], /api/items/{id}/watch, /api/listings/{id}, price-checks
@@ -49,7 +49,8 @@ backend/
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
 │       ├── runs.py         # run enqueue/scope-label/409-active-check + visibility predicate
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
-│       └── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
+│       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
+│       └── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
 ├── tests/
 │   ├── conftest.py         # async httpx client + (todo) throwaway-DB session fixtures
 │   └── test_instance.py    # first test (in the plan) — copy its pattern per router
@@ -79,7 +80,7 @@ JSON in/out. **core** holds cross-cutting concerns (errors, auth, security).
 
 **Rule of thumb:** a thin CRUD route (list categories) can call the DB directly
 from the router. Reach for a `service` only when there's real logic — that's why
-only five services exist, not one per router.
+only seven services exist, not one per router.
 
 ---
 
@@ -91,7 +92,8 @@ Find any `endpoints.ts` function here:
 |---|---|---|
 | `getInstance` | `instance.py` | 0 |
 | `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` (+ refresh) | `auth.py` | 2 |
-| `updateMe` `changePassword` `sendTestNotification` | `me.py` | 2 |
+| `updateMe` `changePassword` | `me.py` | 2 |
+| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` | `me.py` | notifications |
 | `listCategories` `createCategory` `updateCategory` `deleteCategory` `setCategorySites` | `categories.py` | 1 / 3 |
 | `listSites` `createSite` `updateSite` `deleteSite` | `sites.py` | 1 / 3 |
 | `listItems` `createItem` `getItem` `updateItem` `deleteItem` `updateWatch` `updateListing` `listPriceChecks` | `items.py` | 1 / 3 |
