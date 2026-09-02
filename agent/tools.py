@@ -191,7 +191,7 @@ async def save_price_check(
             log.error(f"Error inserting price check for listing {listing_id}: {e}")
             return f"Error inserting price check for listing {listing_id}: {e}"
 
-    # Committed and the session closed before the push: a target-hit
+    # Committed and the session closed before the enqueue: a target-hit
     # notification is a side effect of recording the price, never a
     # precondition for it. A priceless or out-of-stock check can't be a snag.
     if in_stock and price is not None and price > 0:
