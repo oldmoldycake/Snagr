@@ -23,6 +23,10 @@ import type {
   ListingUpdateRequest,
   LoginRequest,
   MeUpdateRequest,
+  NotificationChannel,
+  NotificationChannelCreateRequest,
+  NotificationChannelCreated,
+  NotificationChannelUpdateRequest,
   Paginated,
   PasswordChangeRequest,
   PriceCheck,
@@ -73,6 +77,20 @@ export const changePassword = (body: PasswordChangeRequest) =>
   api<void>('/api/me/password', { method: 'POST', body })
 
 export const sendTestNotification = () => api<void>('/api/me/ntfy/test', { method: 'POST' })
+
+export const listChannels = () => api<{ data: NotificationChannel[] }>('/api/me/channels')
+
+export const createChannel = (body: NotificationChannelCreateRequest) =>
+  api<NotificationChannelCreated>('/api/me/channels', { method: 'POST', body })
+
+export const updateChannel = (id: number, body: NotificationChannelUpdateRequest) =>
+  api<NotificationChannel>(`/api/me/channels/${id}`, { method: 'PATCH', body })
+
+export const deleteChannel = (id: number) =>
+  api<void>(`/api/me/channels/${id}`, { method: 'DELETE' })
+
+export const testChannel = (id: number) =>
+  api<void>(`/api/me/channels/${id}/test`, { method: 'POST' })
 
 // --- categories -------------------------------------------------------------
 

@@ -542,6 +542,63 @@ export interface PasswordChangeRequest {
   new_password: string
 }
 
+export type ChannelKind = 'ntfy' | 'webhook' | 'discord'
+
+/**
+ * Events a notification channel can receive. Additive: channels with
+ * events: null pick up new members of this union automatically.
+ */
+export type NotificationEvent = 'target.hit' | 'listing.new'
+
+export interface NotificationChannel {
+  id: number
+  kind: ChannelKind
+  name: string
+  /** destination for webhook/discord; null for ntfy */
+  url: string | null
+  /** topic on the instance's ntfy server; null for other kinds */
+  topic: string | null
+  /** webhook only: an HMAC signing secret is stored (returned exactly once, at create) */
+  has_secret: boolean
+  /** events this channel receives; null = all (empty/full set normalizes to null) */
+  events: NotificationEvent[] | null
+  enabled: boolean
+  created_at: string
+}
+
+/**
+ * POST /api/me/channels response — `secret` is shown once and never again
+ * (webhook kind only; null otherwise).
+ */
+export interface NotificationChannelCreated extends NotificationChannel {
+  secret: string | null
+}
+
+/**
+ * 422 validation_error (+fields): name required; url required for
+ * webhook/discord (discord must be a discord.com/api/webhooks URL); topic
+ * required for ntfy; events must be a subset of the known events.
+ * 422 no_server: kind 'ntfy' while the instance has no ntfy server configured.
+ */
+export interface NotificationChannelCreateRequest {
+  kind: ChannelKind
+  name: string
+  url?: string
+  topic?: string
+  events?: NotificationEvent[] | null
+  /** default true */
+  enabled?: boolean
+}
+
+/** kind is immutable — delete and recreate to change a channel's kind. */
+export interface NotificationChannelUpdateRequest {
+  name?: string
+  url?: string
+  topic?: string
+  events?: NotificationEvent[] | null
+  enabled?: boolean
+}
+
 export interface AdminUser {
   id: number
   email: string
