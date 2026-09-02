@@ -26,14 +26,15 @@ def listing_row(n):
     return {"listing_id": n, "listing_url": f"https://example.test/l{n}"}
 
 
-def pair_row(n):
+def pair_row(n, site_id=1, max_listings=3):
     """A pass-2 row with only the keys the orchestrator itself reads."""
     return {
         "watch_id": n,
         "item_id": n,
         "item_name": f"Item {n}",
-        "site_id": 1,
+        "site_id": site_id,
         "site_name": "TestBay",
+        "max_listings": max_listings,
     }
 
 
@@ -54,12 +55,15 @@ def wire(
     fail_scan=(),
     ground_raises=False,
     build_raises=False,
+    tracked=None,
 ):
     """Point every seam at in-memory fakes; returns what the fakes saw.
 
     `statuses` scripts get_run_status answers in order, repeating the last one
-    (default: forever "running"). Successful fake units bump tools.run_stats
-    the way the real DB tools would.
+    (default: forever "running"). `tracked` is the fake active-listing count
+    per watch_id (default 0 — every slot open); a successful fake scan fills
+    one slot, the way a real save would. Successful fake units bump
+    tools.run_stats the way the real DB tools would.
     """
     seen = {
         "created": [],
@@ -68,6 +72,7 @@ def wire(
         "finishes": [],
         "recheck_units": [],
         "scan_units": [],
+        "scan_tracked": [],
         "grounded": [],
         "built": [],
         "schedule_claims": [],
@@ -126,10 +131,17 @@ def wire(
         tools.run_stats["listings_checked"] += 1
         tools.run_stats["prices_found"] += 1
 
-    async def fake_scan(pass_agent, session_id, row, known_urls, market):
+    slots_used = dict(tracked or {})
+
+    async def fake_count(watch_id):
+        return slots_used.get(watch_id, 0)
+
+    async def fake_scan(pass_agent, session_id, row, known_urls, market, tracked_listings):
         if row["watch_id"] in fail_scan:
             raise RuntimeError("timeout")
         seen["scan_units"].append(row["watch_id"])
+        seen["scan_tracked"].append(tracked_listings)
+        slots_used[row["watch_id"]] = tracked_listings + 1
         tools.run_stats["new_listings"] += 1
 
     monkeypatch.setattr(agent, "claim_queued_run", fake_claim)
@@ -143,6 +155,7 @@ def wire(
     monkeypatch.setattr(agent, "ground_stale", fake_ground)
     monkeypatch.setattr(agent, "build_pass_agents", fake_build)
     monkeypatch.setattr(agent, "get_market_price", fake_market)
+    monkeypatch.setattr(agent, "get_active_listing_count", fake_count)
     monkeypatch.setattr(agent, "recheck_listing", fake_recheck)
     monkeypatch.setattr(agent, "scan_pair", fake_scan)
     return seen
@@ -255,6 +268,56 @@ class TestUnitFailures:
         seen = wire(monkeypatch, claim=run_row(run_id=7))
         asyncio.run(agent.consume())
         assert [f[1] for f in seen["finishes"]] == ["succeeded"]
+
+
+class TestSlotBudget:
+    """max_listings is one budget per watch across every site and run; the
+    orchestrator meters it, because a scan only ever sees its own site."""
+
+    def test_a_full_watch_is_skipped_without_a_scan_or_an_event(self, monkeypatch):
+        seen = wire(monkeypatch, claim=run_row(run_id=7), pairs=[pair_row(1)], tracked={1: 3})
+        asyncio.run(agent.consume())
+        assert seen["scan_units"] == []
+        assert "item_started" not in [e[1] for e in seen["events"]]
+        ((_, status, stats, _),) = seen["finishes"]
+        assert status == "succeeded"
+        assert stats["new_listings"] == 0
+
+    def test_an_open_watch_is_scanned_with_its_used_slot_count(self, monkeypatch):
+        seen = wire(monkeypatch, claim=run_row(), pairs=[pair_row(1)], tracked={1: 2})
+        asyncio.run(agent.consume())
+        assert seen["scan_units"] == [1]
+        assert seen["scan_tracked"] == [2]
+
+    def test_the_count_is_re_read_before_every_site(self, monkeypatch):
+        # one slot left and two sites: the first site fills it, so the second
+        # must see a full watch — a count taken once per run would scan both
+        seen = wire(
+            monkeypatch,
+            claim=run_row(),
+            pairs=[pair_row(1, site_id=1), pair_row(1, site_id=2)],
+            tracked={1: 2},
+        )
+        asyncio.run(agent.consume())
+        assert seen["scan_units"] == [1]
+        assert seen["scan_tracked"] == [2]
+
+    def test_a_skipped_pair_is_not_a_unit(self, monkeypatch):
+        # the only attempted unit failed; the skip must not count as a success
+        # that hides it behind "succeeded with one error"
+        seen = wire(
+            monkeypatch,
+            claim=run_row(run_id=7),
+            listings=[listing_row(1)],
+            pairs=[pair_row(2)],
+            fail_recheck={1},
+            tracked={2: 3},
+        )
+        with pytest.raises(RuntimeError, match="every unit failed"):
+            asyncio.run(agent.consume())
+        ((_, status, _, error),) = seen["finishes"]
+        assert status == "failed"
+        assert "every unit failed (1/1)" in error
 
 
 class TestBrowserFailureDetection:

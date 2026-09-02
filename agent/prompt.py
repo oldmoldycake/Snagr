@@ -15,6 +15,7 @@ async def generate_prompt(
     selection_mode: str,
     max_listings: int,
     allow_reproductions: bool,
+    tracked_listings: int = 0,
     vision_enabled: bool = False,
     known_urls: list[str] | None = None,
     rejected_checks: list | None = None,
@@ -34,9 +35,13 @@ async def generate_prompt(
         base_url:             The site's base URL — where the agent starts browsing.
         criteria:             This watch's matching criteria (best_match only).
         selection_mode:       "best_match" or "cheapest" for this watch.
-        max_listings:         How many listings to save for this watch (1-10).
+        max_listings:         This watch's slot cap (1-10): how many listings it
+                              tracks in total, across every site and every run.
         allow_reproductions:  Whether this watch's user has explicitly said
                               reproductions/replicas are acceptable for this item.
+        tracked_listings:     How many active listings this watch already holds
+                              (on any site); the prompt caps new saves at
+                              max_listings minus this.
         vision_enabled:       Whether the vision sidecar is configured (the
                               check_images tool is registered); adds the photo
                               authenticity block. Skipped when reproductions
@@ -63,6 +68,22 @@ async def generate_prompt(
         criteria = f"Any genuine, reasonably-priced listing for: {item_name}."
     # target_price is a notify threshold only; it does NOT need to be met to save a listing.
 
+    # --- Slot budget: max_listings is one cap per watch, not per site. --------
+    # Each scan only sees its own site, so without this a watch with three
+    # sites filled 3x its cap, and every run added another round on top.
+    open_slots = max(max_listings - tracked_listings, 0)
+    slots_block = (
+        f"TRACKING SLOTS: {open_slots} open\n"
+        f"  This watch tracks at most {max_listings} listing(s) IN TOTAL — across every "
+        f"site and every run, not {max_listings} per site. {tracked_listings} slot(s) are "
+        f"already filled by listings saved on earlier runs or other sites, which leaves "
+        f"{open_slots} open. Save at most {open_slots} new listing(s) this run. This is a "
+        f"hard cap: once you have saved {open_slots}, stop saving even if more good "
+        f"candidates remain. Leftover good candidates are NOT rejections — do not log "
+        f"them with `log_listing_check`; a later run will find them again once a slot "
+        f"frees up."
+    )
+
     # --- Selection/ranking block: branches on selection_mode. -----------------
     if selection_mode == "best_match":
         selection_block = (
@@ -72,10 +93,10 @@ async def generate_prompt(
             f"Search the site thoroughly first and build a mental pool of every reasonable "
             f"candidate you find, then judge each candidate against the criteria and rank "
             f"them by how well they fit (best fit first); use price as a tiebreaker when two "
-            f"candidates fit equally well. Your target is to save exactly {max_listings} "
+            f"candidates fit equally well. Your target is to save exactly {open_slots} "
             f"listing(s) — keep searching until you have that many genuinely reasonable "
             f"candidates or you have exhausted what the site has to offer. Only save fewer "
-            f"than {max_listings} if the site genuinely does not have that many reasonable "
+            f"than {open_slots} if the site genuinely does not have that many reasonable "
             f"matches; do not pad the count with poor fits just to hit the target, but do not "
             f"settle for a single result when more good candidates are available either. "
             f"Do not save any candidate whose match_score would be below 50 — leave the "
@@ -85,7 +106,7 @@ async def generate_prompt(
         selection_block = (
             f"SELECTION MODE: cheapest.\n"
             f"Rank the candidate listings by price, lowest first, and keep the "
-            f"{max_listings} cheapest listing(s) that are genuinely the item described. "
+            f"{open_slots} cheapest listing(s) that are genuinely the item described. "
             f"Ignore the criteria for ranking; price is the only ranking signal."
         )
 
@@ -209,6 +230,8 @@ RULES
 
 {market_block}
 
+{slots_block}
+
 {selection_block}
 
 PURCHASABLE PRICE ONLY — AUCTIONS ARE NEVER RECORDED
@@ -278,7 +301,7 @@ FOR EACH CANDIDATE YOU EVALUATE BUT DO NOT SAVE
   and rejected — not to search-result pages or listings you never opened.
 
 WHEN DONE
-  Stop once you have saved the selected listings (up to {max_listings}), or once
+  Stop once you have saved the selected listings (up to {open_slots}), or once
   you are confident the site has no reasonable match. Do not loop endlessly.
 """
 
