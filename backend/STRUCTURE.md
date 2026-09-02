@@ -32,7 +32,8 @@ backend/
 │   │   ├── catalog.py      # Category*, Site*
 │   │   ├── items.py        # ItemSummary, ItemDetail, Listing, Watch, PriceCheck + requests
 │   │   ├── charts.py       # price-history/summary, dashboard stats, price-drops
-│   │   └── runs.py         # AgentRun, RunEvent, RunStats + requests
+│   │   ├── runs.py         # AgentRun, RunEvent, RunStats + requests
+│   │   └── vision.py       # ReviewQueueEntry, ReferenceImage, AuthenticityRead + requests
 │   ├── routers/           # one file per section of endpoints.ts — HTTP layer only
 │   │   ├── instance.py     # GET /api/instance                       ← build this first (Task 0)
 │   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, oidc login/callback)
@@ -43,13 +44,15 @@ backend/
 │   │   ├── charts.py       # /api/items/{id}/price-*, /api/categories/{id}/price-change, /api/dashboard/*
 │   │   ├── runs.py         # /api/runs[/{id}][/events|/cancel]
 │   │   ├── events.py       # GET /api/events (SSE) — opened via EventSource, not in endpoints.ts
-│   │   └── admin.py        # /api/admin/users, /api/admin/invites
+│   │   ├── admin.py        # /api/admin/users, /api/admin/invites
+│   │   └── vision.py       # /api/vision/* (review queue, references, image proxy) + /api/items/{id}/references*
 │   └── services/          # logic that's more than one query — routers stay thin
 │       ├── items.py        # the item↔watch↔watch_sites mapping + validation
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
 │       ├── runs.py         # run enqueue/scope-label/409-active-check + visibility predicate
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
-│       └── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
+│       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
+│       └── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
 ├── tests/
 │   ├── conftest.py         # async httpx client + (todo) throwaway-DB session fixtures
 │   └── test_instance.py    # first test (in the plan) — copy its pattern per router
@@ -79,7 +82,7 @@ JSON in/out. **core** holds cross-cutting concerns (errors, auth, security).
 
 **Rule of thumb:** a thin CRUD route (list categories) can call the DB directly
 from the router. Reach for a `service` only when there's real logic — that's why
-only five services exist, not one per router.
+only six services exist, not one per router.
 
 ---
 
@@ -99,10 +102,12 @@ Find any `endpoints.ts` function here:
 | `triggerRun` `listRuns` `getRun` `getRunEvents` `cancelRun` | `runs.py` | 3 |
 | *(EventSource `/api/events`)* | `events.py` | 3 |
 | `listUsers` `updateUser` `deleteUser` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
+| `listReviewQueue` `confirmReviewEntry` `discardReviewEntry` `listReferences` `uploadReference` `revokeReference` `revokeAutoReferences` | `vision.py` | vision |
+| *(`<img src>` `/api/vision/images/{key}`)* | `vision.py` | vision |
 
 ---
 
-## Four things that aren't obvious (read before Phase 1)
+## Five things that aren't obvious (read before Phase 1)
 
 1. **An API "item" is three tables.** `items` (shared name/category) + the caller's
    `watches` row (target_price, criteria, selection_mode, max_listings,
@@ -135,6 +140,19 @@ Find any `endpoints.ts` function here:
    sparse seqs; the client refetches the backfill on every snapshot and the
    filtered response is authoritative. This is **peer privacy only**: the
    instance operator can read the DB (caveats in BACKEND_REQUIREMENTS.md §7).
+
+5. **Vision visibility splits three ways (D-V11), enforced in three places.**
+   An item's reference *library* is communal — every watcher of the item reads
+   the same gold references — but the *review queue* is scoped to the capturing
+   watch's owner, **admins included**: you review what your own hunts captured,
+   and a foreign queue entry 404s exactly like an unknown id (`routers/vision.py`
+   queue routes). A reference's `source_listing_url` is nulled in serialization
+   unless the viewer captured it or is an admin (`schemas/vision.py` via the
+   router's serializer). The image proxy (`GET /api/vision/images/{key}`) gates
+   bytes with one EXISTS query: the key must belong to a non-revoked reference of
+   an item the viewer watches, to a listing-image whose scan's watch is the
+   viewer's, or the viewer is an admin. Don't "simplify" any of these into a
+   single ownership rule — the asymmetry is the design.
 
 ---
 
