@@ -44,7 +44,6 @@ class User(Base):
     )  # + api (OIDC subject; NULL = password-only)
     role: Mapped[str] = mapped_column(Text, default="user")  # + api ('admin' | 'user')
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # + api (admin can deactivate)
-    ntfy_topic: Mapped[str | None] = mapped_column(Text)  # + api
     vision_auto_reject_fake: Mapped[float] = mapped_column(
         Numeric(precision=3, scale=2), server_default=text("0.85")
     )  # + api (D-V9 threshold: fake confidence at/above this auto-rejects the listing)

@@ -10,7 +10,14 @@ from datetime import datetime
 
 import httpx
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
-from database import AsyncSessionLocal, ListingChecks, Listings, PriceChecks, VisionScans
+from database import (
+    AsyncSessionLocal,
+    ListingChecks,
+    Listings,
+    PriceChecks,
+    VisionScans,
+    enqueue_new_listing,
+)
 from notify import notify_target_met
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -111,7 +118,8 @@ async def save_listing(
             result = await session.execute(stmt)
             await session.commit()
             # rowcount 1 = a genuinely new row; 0 = the conflict target existed
-            if result.rowcount == 1:
+            is_new = result.rowcount == 1
+            if is_new:
                 run_stats["new_listings"] += 1
 
             stmt = (
@@ -126,6 +134,19 @@ async def save_listing(
             listing_id = results.scalar()
             if listing_id is not None:
                 log.info(f"Successfully created listing for item {item_id} on site {site_id}")
+                if is_new:
+                    # committed above, so this is a pure side effect — a failed
+                    # enqueue can't change what this tool returns
+                    await enqueue_new_listing(
+                        watch_id,
+                        item_id,
+                        site_id,
+                        int(listing_id.id),
+                        url,
+                        title,
+                        match_score,
+                        match_summary,
+                    )
                 return int(listing_id.id)
             else:
                 log.info(f"Unable to fetch the listing id for the item {item_id} on site {site_id}")
@@ -191,7 +212,7 @@ async def save_price_check(
             log.error(f"Error inserting price check for listing {listing_id}: {e}")
             return f"Error inserting price check for listing {listing_id}: {e}"
 
-    # Committed and the session closed before the push: a target-hit
+    # Committed and the session closed before the enqueue: a target-hit
     # notification is a side effect of recording the price, never a
     # precondition for it. A priceless or out-of-stock check can't be a snag.
     if in_stock and price is not None and price > 0:
