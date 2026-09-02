@@ -20,7 +20,7 @@ A self-hosted price tracker for secondhand-marketplace hunting. You describe wha
 - **Runs from the UI** — trigger a scrape pass from the browser, watch it live over SSE, or put runs on a schedule.
 - **Market-price grounding** — the agent periodically refreshes a reference market price per item so "is this a deal?" has a denominator.
 - **Visual authenticity (optional)** — a DINOv3 sidecar embeds listing photos and scores them against reference images, flagging stock-photo reposts and suspicious listings. Fully opt-in; the stack runs without it.
-- **Self-host-friendly auth** — httpOnly cookie sessions with rotating refresh tokens, optional OIDC SSO (Authentik, Keycloak, …), first registered user becomes admin. Notifications via your own [ntfy](https://ntfy.sh) server.
+- **Self-host-friendly auth** — httpOnly cookie sessions with rotating refresh tokens, optional OIDC SSO (Authentik, Keycloak, …), first registered user becomes admin. Notifications to your own [ntfy](https://ntfy.sh) server, Discord, or any webhook (HMAC-signed JSON, so other tools can build on top).
 
 ## Architecture
 
