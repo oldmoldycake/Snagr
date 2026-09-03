@@ -23,7 +23,7 @@ The backend is a **work in progress**; routers and schemas may still be stubs
 
 ## Commands
 
-Both `backend/` and `agent/` have their own `venv/` — invoke tools via `./venv/bin/<tool>` (don't assume a global install). Python style in both is enforced by **ruff**:
+`backend/`, `agent/`, and `vision/` each have their own `venv/` — invoke tools via `./venv/bin/<tool>` (don't assume a global install). Python style in all three is enforced by **ruff**:
 
 ```bash
 ./venv/bin/ruff check --fix && ./venv/bin/ruff format   # lint + autoformat — run on what you touched before calling it done
@@ -50,11 +50,18 @@ To verify frontend changes in a real browser, use the **`frontend:verify`** skil
 
 **Agent** (from `agent/`): `./venv/bin/python main.py` — runs one full scrape pass and exits. `--consume` claims one API-enqueued run (or fires a due schedule) and exits; `--ground-only` only refreshes stale market prices. Needs `PLAYWRIGHT_MCP_URL`, the `AI_*` provider vars, and `DATABASE_URL` (see `agent/.env.example`).
 
-**Docker (dev)**: `docker compose up --build` → frontend on `:8081`, backend on `:8000`, plus the agent ticker (checks the run queue every minute — this is what makes UI-triggered runs actually execute). Postgres and the Playwright MCP are external. Editing `backend/app/**` hot-reloads; changing `requirements.txt`, frontend, or agent code needs `--build`.
+**Vision** (from `vision/` — optional; the whole feature is off unless `VISION_SIDECAR_URL` is set in `backend/.env` + `agent/.env`):
+```bash
+./venv/bin/uvicorn app:app --port 8100   # dev server (sync handlers by design — not the backend's async rule)
+./venv/bin/pytest                         # tests: embedder + S3 stubbed, never downloads weights; needs Postgres
+```
+Real (non-degraded) scoring needs `HF_TOKEN` in `vision/.env` — the DINOv3 weights are license-gated and download on first start; `/health` reports `degraded` without them.
+
+**Docker (dev)**: `docker compose up --build` → frontend on `:8081`, backend on `:8000`, plus the agent ticker (checks the run queue every minute — this is what makes UI-triggered runs actually execute). `docker compose --profile vision up --build` adds the vision sidecar (`:8100`) and its MinIO — plain `up` is unchanged without the profile. Postgres and the Playwright MCP are external. Editing `backend/app/**` hot-reloads; changing `requirements.txt`, frontend, or agent code needs `--build`.
 
 ## Testing model
 
-`backend/tests/conftest.py` redirects `DATABASE_URL` to a throwaway `snagr_test` DB (same server, `/snagr_test` suffix) **before importing `app.*`**, so tests never touch live data — but they still need a reachable Postgres. Schema is built from `Base.metadata.create_all`; each test starts from truncated tables. `pytest.ini` sets `asyncio_mode=auto` (no `@pytest.mark.asyncio` needed). Mutating requests in tests must carry the `CSRF` header (exported from `conftest`).
+`backend/tests/conftest.py` redirects `DATABASE_URL` to a throwaway `snagr_test` DB (same server, `/snagr_test` suffix) **before importing `app.*`**, so tests never touch live data — but they still need a reachable Postgres. Schema is built from `Base.metadata.create_all` (after `CREATE EXTENSION IF NOT EXISTS vector` — the test role must own its DB); each test starts from truncated tables. `pytest.ini` sets `asyncio_mode=auto` (no `@pytest.mark.asyncio` needed). Mutating requests in tests must carry the `CSRF` header (exported from `conftest`). `vision/tests/conftest.py` mirrors the same pattern with a `snagr_test_vision` DB; the embedder and S3 store are stubbed there so CI never downloads weights.
 
 ## The contract is the frontend (backend builds *to* it, doesn't design it)
 
@@ -67,7 +74,7 @@ The frontend runs against a full MSW mock by default; set `VITE_USE_MOCKS=false`
 
 ## Backend architecture
 
-Request flow: **router** (HTTP, validation, status codes) → **service** (multi-step logic, only where non-trivial) → **models/database** (SQL). `schemas/` are the JSON shapes; `core/` holds cross-cutting concerns (error envelope, auth deps, hashing/tokens); `config.py` is the *only* place env vars are read (via the `settings` singleton — never `os.getenv`). Thin CRUD routes may call the DB directly; only five services exist, for real logic (item mapping, aggregation math, run lifecycle, SSE, OIDC login).
+Request flow: **router** (HTTP, validation, status codes) → **service** (multi-step logic, only where non-trivial) → **models/database** (SQL). `schemas/` are the JSON shapes; `core/` holds cross-cutting concerns (error envelope, auth deps, hashing/tokens); `config.py` is the *only* place env vars are read (via the `settings` singleton — never `os.getenv`). Thin CRUD routes may call the DB directly; only seven services exist, for real logic (item mapping, aggregation math, run lifecycle, SSE, OIDC login, the vision sidecar client + review/library flows, the notification outbox dispatcher).
 
 Two things that will trip you up if you skip STRUCTURE.md:
 
@@ -76,7 +83,7 @@ Two things that will trip you up if you skip STRUCTURE.md:
 
 ## Schema ownership (Decision D1)
 
-The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`). The agent (`agent/database.py`) keeps a **column-compatible subset** of the same ORM models — do not restructure it, and never run `Base.metadata.create_all()` from the agent against the live DB. Schema changes go through a new Alembic revision. `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema.
+The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`). The agent (`agent/database.py`) and the vision sidecar (`vision/db.py`) each keep a **column-compatible subset** of the same ORM models — do not restructure them, and never run `Base.metadata.create_all()` from either against the live DB. Schema changes go through a new Alembic revision. `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema. Since migration 009 the schema needs the **pgvector** extension (see README → Requirements); the migration prechecks `pg_extension` and fails with instructions rather than running `CREATE EXTENSION` itself (superuser-only).
 
 ## Cross-cutting invariants (from the contract; hold everywhere in the backend)
 
@@ -87,6 +94,7 @@ The **backend owns the canonical schema and all Alembic migrations** (`backend/a
 - **Mutations require the `X-Snagr-Csrf` header** (`csrf_guard`); reject with 403 if absent. The frontend always sends it.
 - **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop (`frontend/src/api/client.ts` refreshes once + retries on 401 for all *other* paths).
 - Auth is httpOnly-cookie sessions: short-lived access JWT (`snagr_access`) + DB-backed rotating refresh token (`sessions` table, `snagr_refresh` cookie). JS never sees the token.
+- **Vision routes are gated on `settings.vision_enabled`**: with `VISION_SIDECAR_URL` unset, mutations answer 503 `vision_unavailable`, the two GET lists return empty data, and `InstanceInfo.vision_enabled: false` hides every vision surface in the UI.
 
 ## Writing code (house rules)
 

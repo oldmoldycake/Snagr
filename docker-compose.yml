@@ -4,7 +4,10 @@
 # .dockerignore). The Playwright MCP the agent drives is external too
 # (PLAYWRIGHT_MCP_URL in agent/.env).
 #
-#   docker compose up --build      # frontend http://localhost:8081, API http://localhost:8000
+#   docker compose up --build                    # frontend http://localhost:8081, API http://localhost:8000
+#   docker compose --profile vision up --build   # + the visual-authenticity sidecar (:8100) and its minio
+#                                                #   (image bytes persist in the minio-data volume,
+#                                                #    DINOv3 weights cache in vision-hf-cache)
 #
 # Editing backend/app/** hot-reloads inside the container. Changing
 # requirements.txt (or frontend/agent code) needs a rebuild: docker compose up --build.

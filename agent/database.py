@@ -431,6 +431,34 @@ async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
             return []
 
 
+async def get_active_listing_count(watch_id: int) -> int:
+    """
+    Return how many active listings a watch holds across every site — the
+    slots already in use against its max_listings cap.
+
+    Unlike its neighbours this raises on a failed query instead of returning
+    a default, because there is no safe one: 0 would let the scan over-fill
+    the watch (the bug the cap exists to prevent) and "full" would silently
+    stop discovery. The orchestrator reads it outside its per-unit guard, so
+    a failure fails the run loudly.
+
+    Args:
+      watch_id: The internal id of the watch to count listings for.
+    Returns:
+      The number of listings rows for the watch with active = true.
+    """
+
+    log.info(f"Counting active listings for watch {watch_id}")
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(func.count())
+            .select_from(Listings)
+            .where(Listings.watch_id == watch_id)
+            .where(Listings.active)
+        )
+        return (await session.execute(stmt)).scalar_one()
+
+
 async def get_target_notification(listing_id: int, exclude_check_id: int) -> dict | None:
     """
     Return everything needed to judge and compose a target-hit notification
