@@ -49,7 +49,6 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(Text, unique=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    ntfy_topic: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -277,6 +276,20 @@ class RunSchedules(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class NotificationOutbox(Base):
+    """Durable notification queue — column-compatible SUBSET of
+    backend/app/models.py's NotificationOutbox (the backend owns the schema,
+    D1): just the columns the agent writes. status and created_at are server
+    defaults; the backend's dispatcher owns the rest of the lifecycle."""
+
+    __tablename__ = "notification_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    event: Mapped[str] = mapped_column(Text)  # target.hit | listing.new
+    payload: Mapped[dict] = mapped_column(JSONB)
+
+
 async def get_watched_item_list(
     scope: str = "global", scope_id: int | None = None
 ) -> Sequence[RowMapping]:
@@ -448,8 +461,8 @@ async def get_active_listing_count(watch_id: int) -> int:
 
 async def get_target_notification(listing_id: int, exclude_check_id: int) -> dict | None:
     """
-    Return everything needed to judge and compose a target-hit push for a
-    listing that was just price-checked.
+    Return everything needed to judge and compose a target-hit notification
+    for a listing that was just price-checked.
 
     best_price_before is the watch's best price across its active listings
     ignoring the check just written — the "was this watch already met?" half
@@ -461,10 +474,10 @@ async def get_target_notification(listing_id: int, exclude_check_id: int) -> dic
       exclude_check_id: The price_checks id just inserted, left out of
         best_price_before so the new observation cannot mask the edge.
     Returns:
-      A dict with keys watch_id, target_price, last_notified_at, ntfy_topic,
-      item_name, site_name, listing_url, best_price_before. Returns None when
-      this watch can never notify (notifications off, no target, or the owner
-      has no topic) and when the query fails — a DB hiccup drops the push,
+      A dict with keys watch_id, user_id, target_price, last_notified_at,
+      item_id, item_name, site_id, site_name, listing_url, best_price_before.
+      Returns None when this watch can never notify (notifications off, no
+      target) and when the query fails — a DB hiccup drops the notification,
       never the price check that triggered it.
     """
 
@@ -475,20 +488,20 @@ async def get_target_notification(listing_id: int, exclude_check_id: int) -> dic
                 select(
                     Listings.url.label("listing_url"),
                     Watches.id.label("watch_id"),
+                    Watches.user_id.label("user_id"),
                     Watches.target_price.label("target_price"),
                     Watches.last_notified_at.label("last_notified_at"),
-                    User.ntfy_topic.label("ntfy_topic"),
+                    Items.id.label("item_id"),
                     Items.name.label("item_name"),
+                    Sites.id.label("site_id"),
                     Sites.name.label("site_name"),
                 )
                 .join(Watches, Watches.id == Listings.watch_id)
-                .join(User, User.id == Watches.user_id)
                 .join(Items, Items.id == Listings.item_id)
                 .join(Sites, Sites.id == Listings.site_id)
                 .where(Listings.id == listing_id)
                 .where(Watches.notify)
                 .where(Watches.target_price.is_not(None))
-                .where(User.ntfy_topic.is_not(None))
                 .limit(1)
             )
 
@@ -520,10 +533,12 @@ async def get_target_notification(listing_id: int, exclude_check_id: int) -> dic
 
 async def mark_watch_notified(watch_id: int) -> bool:
     """
-    Stamp a watch as having just pushed a target-hit notification.
+    Stamp a watch as having just queued a target-hit notification.
 
-    Written only after the push actually lands, so the cooldown measures time
-    since the owner was last told something — not since the last attempt.
+    Written at enqueue, not delivery: the outbox owns retries, so "queued" is
+    the moment the owner counts as told — stamping on delivery instead would
+    let a second crossing enqueue again during an outage and double-notify
+    the owner when it ends.
 
     Args:
       watch_id: The internal id of the watch that was notified.
@@ -545,6 +560,97 @@ async def mark_watch_notified(watch_id: int) -> bool:
         except Exception as e:
             log.error(f"Error stamping watch {watch_id} as notified: {e}")
             return False
+
+
+async def enqueue_notification(user_id: int, event: str, payload: dict) -> bool:
+    """
+    Record one notification-worthy event for the backend's dispatcher to
+    deliver. Migration 010's trigger announces the committed insert, so
+    writing the row is the whole job — the agent never contacts a push
+    service.
+
+    Args:
+      user_id: The owner the notification is for.
+      event: The event name, e.g. "target.hit" or "listing.new".
+      payload: Display facts frozen at enqueue (entity ids, names,
+        decimal-string prices) — the dispatcher renders every channel from
+        these.
+    Returns:
+      True on success, False if the write failed — the price check or
+      listing that triggered the event is never lost to a failed enqueue.
+    """
+
+    log.info(f"Queueing {event} notification for user {user_id}")
+    async with AsyncSessionLocal() as session:
+        try:
+            session.add(NotificationOutbox(user_id=user_id, event=event, payload=payload))
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error queueing {event} notification for user {user_id}: {e}")
+            return False
+
+
+async def enqueue_new_listing(
+    watch_id: int,
+    item_id: int,
+    site_id: int,
+    listing_id: int,
+    url: str,
+    title: str,
+    match_score: int,
+    match_summary: str,
+) -> bool:
+    """
+    Queue a "new listing" notification for a listing save_listing just
+    created. No notify gate here on purpose: the scan pass only exists for
+    notify-enabled watches (get_watched_item_list filters on Watches.notify),
+    so a second check would imply that one doesn't exist. No price either —
+    the first price check happens after the listing is saved.
+
+    Args:
+      watch_id: The watch the listing was found for.
+      item_id: The item the listing is of.
+      site_id: The site it was found on.
+      listing_id: The id of the freshly inserted listings row.
+      url: The listing's URL.
+      title: The listing's title as shown on the site.
+      match_score: The model's 0-100 criteria fit from save_listing.
+      match_summary: The one-line justification for that score.
+    Returns:
+      True on success, False if anything failed — a failed enqueue never
+      changes what save_listing returns to the model.
+    """
+
+    async with AsyncSessionLocal() as session:
+        try:
+            result = await session.execute(
+                select(Watches.user_id.label("user_id"), Items.name.label("item_name"))
+                .join(Items, Items.id == Watches.item_id)
+                .where(Watches.id == watch_id)
+            )
+            row = result.mappings().one_or_none()
+            site = await session.get(Sites, site_id)
+        except Exception as e:
+            log.error(f"Error reading notification context for watch {watch_id}: {e}")
+            return False
+    if row is None or site is None:
+        log.error(f"No notification context for watch {watch_id} / site {site_id}")
+        return False
+
+    payload = {
+        "watch_id": watch_id,
+        "item_id": item_id,
+        "listing_id": listing_id,
+        "site_id": site_id,
+        "item_name": row["item_name"],
+        "site_name": site.name,
+        "listing_url": url,
+        "title": title,
+        "match_score": match_score,
+        "match_summary": match_summary,
+    }
+    return await enqueue_notification(row["user_id"], "listing.new", payload)
 
 
 async def get_category_tiers(category_id: int) -> RowMapping | None:

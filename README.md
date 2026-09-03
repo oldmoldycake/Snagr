@@ -6,7 +6,7 @@
 
 A self-hosted price tracker for secondhand-marketplace hunting. You describe what you're watching for and at what price; an LLM agent drives a real headless browser to find new listings and re-check known ones, and the web UI shows every hunt's state at a glance — current best price, drift against your target, price history, and live run progress.
 
-**Status: pre-release.** The whole stack runs end to end — the backend implements the full frontend contract, and every push to `main` publishes container images — but there are no versioned releases yet (version `0.1.0`; release-please is wired up and waiting for the first one). Expect rough edges. One known gap on `main` right now: Settings already shows the new per-user notification channels card (ntfy / webhook / Discord), but its backend and agent halves are still in open PRs (#33, #34), so that card doesn't work against a real backend yet.
+**Status: pre-release.** The whole stack runs end to end — the backend implements the full frontend contract, and every push to `main` publishes container images — but there are no versioned releases yet (version `0.1.0`; release-please is wired up and waiting for the first one). Expect rough edges.
 
 ![The dashboard: tonight's verdict, agent status, and every watched item with trend, best price, site, and drift to target](docs/screenshots/dashboard.png)
 
@@ -23,7 +23,7 @@ A self-hosted price tracker for secondhand-marketplace hunting. You describe wha
 - **Market-price grounding** — the agent periodically researches a reference market price per item and condition tier (price guides first, then a broad [SearXNG](https://docs.searxng.org) snippet search) so "is this a deal?" has a denominator.
 - **Visual authenticity (optional)** — a DINOv3 sidecar embeds listing photos and scores them against a per-item reference library of real and fake examples. Suspicious listings are flagged on the board, and their photos land in a review queue where confirming one grows the library. Fully opt-in; the stack runs without it.
 - **Self-host-friendly auth** — httpOnly cookie sessions with rotating refresh tokens, optional OIDC SSO (Authentik, Keycloak, …), first registered user becomes admin, and registration is invite-only after that unless you open it.
-- **Target-hit notifications** — when a watch's best price crosses its target, the agent pushes to your own [ntfy](https://ntfy.sh) server. It's edge-triggered with a cooldown, so a listing that merely stays cheap isn't re-announced every night.
+- **Notifications you own** — when a watch's best price crosses its target, or a genuinely new listing shows up, the agent queues an event and the backend delivers it to the channels you configure under Settings: your own [ntfy](https://ntfy.sh) server, a Discord channel, or any webhook (HMAC-signed JSON, so other tools can build on top). Target hits are edge-triggered with a cooldown, so a listing that merely stays cheap isn't re-announced every night.
 
 ## Architecture
 
@@ -102,7 +102,7 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 | File | The important ones |
 |---|---|
 | [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL` |
-| [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `SEAR_XNG_URL`, `EXPECTED_CURRENCY`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL`; optional LangSmith / Langfuse tracing |
+| [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `SEAR_XNG_URL`, `EXPECTED_CURRENCY`, `VISION_SIDECAR_URL`; optional LangSmith / Langfuse tracing |
 | [`vision/.env.example`](vision/.env.example) | `DATABASE_URL` (sync `postgresql+psycopg://` driver), `S3_*`, `HF_TOKEN`, `VISION_RETENTION_DAYS` |
 
 ## Security posture

@@ -33,6 +33,8 @@ from app.models import (
     Categories,
     Items,
     Listings,
+    NotificationChannels,
+    NotificationOutbox,
     PriceChecks,
     RunEvents,
     Sites,
@@ -191,6 +193,51 @@ class Scenario:
             **overrides,
         }
         row = AgentRuns(**fields)
+        self.db.add(row)
+        await self.db.flush()
+        return row
+
+    async def channel(self, user=None, kind="ntfy", **overrides) -> NotificationChannels:
+        """A notification channel for `user` (default: the scenario user),
+        with a plausible destination for its kind."""
+        owner = user if user is not None else await self.user()
+        defaults_by_kind = {
+            "ntfy": {"topic": "test-topic"},
+            "webhook": {"url": "https://example.com/hooks/snagr", "secret": "test-secret"},
+            "discord": {"url": "https://discord.com/api/webhooks/1/token"},
+        }
+        fields = {
+            "user_id": owner.id,
+            "kind": kind,
+            "name": kind,
+            "enabled": True,
+            **defaults_by_kind[kind],
+            **overrides,
+        }
+        row = NotificationChannels(**fields)
+        self.db.add(row)
+        await self.db.flush()
+        return row
+
+    async def outbox(self, user=None, event="target.hit", payload=None, **overrides):
+        """A pending notification_outbox row with a complete target.hit
+        payload unless one is given — the dispatcher renders from it."""
+        owner = user if user is not None else await self.user()
+        if payload is None:
+            payload = {
+                "watch_id": 1,
+                "item_id": 1,
+                "listing_id": 1,
+                "site_id": 1,
+                "item_name": "Widget",
+                "site_name": "TestBay",
+                "listing_url": "https://testbay.example/listing/1",
+                "price": "90.00",
+                "currency": "USD",
+                "target_price": "100.00",
+            }
+        fields = {"user_id": owner.id, "event": event, "payload": payload, **overrides}
+        row = NotificationOutbox(**fields)
         self.db.add(row)
         await self.db.flush()
         return row

@@ -22,12 +22,14 @@ authlib<2
 # Realtime (SSE)
 sse-starlette
 
+# Outbound HTTP — notification delivery, vision sidecar client, OIDC
+httpx
+
 # Dev / test
 ruff
 pytest
 pytest-asyncio
 asgi-lifespan
-httpx
 
 # After `pip install -r requirements.txt`, run `pip freeze > requirements.txt`
 # to pin the currently-unpinned lines to exact versions.

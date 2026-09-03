@@ -10,6 +10,7 @@ auth router.
 """
 
 import hashlib
+import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
 
@@ -73,3 +74,20 @@ def new_refresh_token() -> tuple[str, str]:
 def hash_refresh(raw: str) -> str:
     """sha256 of a raw refresh token — used to look the session row up on refresh."""
     return hashlib.sha256(raw.encode()).hexdigest()
+
+
+# --- webhook signing --------------------------------------------------------
+
+
+def new_channel_secret() -> str:
+    """Signing key for a webhook notification channel. Stored recoverable
+    (every delivery re-signs with it) — a deliberate departure from the hashed
+    refresh tokens above."""
+    return secrets.token_urlsafe(32)
+
+
+def sign_webhook(secret: str, timestamp: str, body: bytes) -> str:
+    """X-Snagr-Signature value: 'sha256=' + hex HMAC-SHA256 over the literal
+    timestamp header value, a dot, and the exact body bytes on the wire."""
+    digest = hmac.new(secret.encode(), f"{timestamp}.".encode() + body, hashlib.sha256).hexdigest()
+    return f"sha256={digest}"

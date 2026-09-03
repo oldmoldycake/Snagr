@@ -1,20 +1,19 @@
-"""The target-hit push that save_price_check fires against a real Postgres:
+"""The target-hit enqueue that save_price_check fires against a real Postgres:
 the edge trigger only fires on a crossing, every gate (notify flag, target,
-topic, stock, cooldown, unset server) stays silent, and a landed push stamps
-the watch.
+stock, cooldown) stays quiet, and a successful enqueue stamps the watch.
+
+The agent only writes notification_outbox rows now — the backend's dispatcher
+owns delivery — so these tests assert rows and payloads, not HTTP.
 
 Same harness rules as test_save_listing_backstop.py: conftest rewrites
 DATABASE_URL to the throwaway snagr_test, one module-wide event loop
 (asyncpg connections are loop-bound), schema built here as a test affordance
-(D1 still holds). Don't run concurrently with backend/tests. ntfy itself is
-faked at the HTTP layer via httpx.MockTransport, as in
-test_check_images_tool.py.
+(D1 still holds). Don't run concurrently with backend/tests.
 """
 
 import asyncio
 from datetime import UTC, datetime, timedelta
 
-import httpx
 import notify
 import pytest
 import tools
@@ -24,6 +23,7 @@ from database import (
     Categories,
     Items,
     Listings,
+    NotificationOutbox,
     PriceChecks,
     Sites,
     User,
@@ -32,7 +32,6 @@ from database import (
 )
 from sqlalchemy import select, text
 
-NTFY = "http://ntfy.test"
 LISTING_URL = "https://example.test/listing"
 
 _ALL_TABLES = ", ".join(t.name for t in Base.metadata.sorted_tables)
@@ -78,33 +77,9 @@ def _clean_tables():
     db(_truncate())
 
 
-@pytest.fixture(autouse=True)
-def _ntfy_url(monkeypatch):
-    monkeypatch.setattr(notify, "NTFY_SERVER_URL", NTFY)
-
-
-@pytest.fixture
-def pushes(monkeypatch):
-    """Route the push through a MockTransport and collect what was sent."""
-    sent: list[httpx.Request] = []
-    real_client = httpx.AsyncClient
-
-    def handler(request):
-        sent.append(request)
-        return httpx.Response(200)
-
-    def _factory(**kwargs):
-        kwargs["transport"] = httpx.MockTransport(handler)
-        return real_client(**kwargs)
-
-    monkeypatch.setattr(httpx, "AsyncClient", _factory)
-    return sent
-
-
 async def _seed(
     target_price: float | None = 100,
     notify_enabled: bool = True,
-    ntfy_topic: str | None = "snagr-owner",
     last_notified_at: datetime | None = None,
     prior_price: float | None = None,
     rival_price: float | None = None,
@@ -113,7 +88,7 @@ async def _seed(
     earlier check on that same listing; rival_price seeds a second active
     listing on the same watch. Returns the listing id to price-check."""
     async with AsyncSessionLocal() as session:
-        user = User(email="owner@test.local", ntfy_topic=ntfy_topic)
+        user = User(email="owner@test.local")
         category = Categories(name="Games", slug="games")
         site = Sites(name="TestBay", base_url="https://example.test")
         session.add_all([user, category, site])
@@ -170,128 +145,146 @@ def _check(listing_id: int, price: float | None = 90, in_stock: bool = True) -> 
     )
 
 
+async def _read_outbox() -> list[dict]:
+    async with AsyncSessionLocal() as session:
+        # the mirror model carries only what the agent writes — status and
+        # created_at are server-side, asserted in backend/tests instead
+        rows = (await session.execute(select(NotificationOutbox))).scalars().all()
+        return [{"user_id": r.user_id, "event": r.event, "payload": r.payload} for r in rows]
+
+
 async def _last_notified_at() -> datetime | None:
     async with AsyncSessionLocal() as session:
         return await session.scalar(select(Watches.last_notified_at))
 
 
-def test_first_price_under_target_pushes(pushes):
+def test_first_price_under_target_enqueues():
     listing_id = db(_seed())
 
     assert _check(listing_id).startswith("Successfully")
 
-    assert len(pushes) == 1
-    request = pushes[0]
-    assert str(request.url) == f"{NTFY}/snagr-owner"
-    assert request.headers["Click"] == LISTING_URL
-    assert request.content.decode() == "Widget — 90.00 USD on TestBay (target 100.00)"
+    (row,) = db(_read_outbox())
+    assert row == {
+        "user_id": 1,
+        "event": "target.hit",
+        "payload": {
+            "watch_id": 1,
+            "item_id": 1,
+            "listing_id": listing_id,
+            "site_id": 1,
+            "item_name": "Widget",
+            "site_name": "TestBay",
+            "listing_url": LISTING_URL,
+            "price": "90.00",
+            "currency": "USD",
+            "target_price": "100.00",
+        },
+    }
+    # the cooldown stamp lands at enqueue — no dispatcher ran here
     assert db(_last_notified_at()) is not None
 
 
-def test_crossing_down_from_above_target_pushes(pushes):
+def test_crossing_down_from_above_target_enqueues():
     listing_id = db(_seed(prior_price=120))
 
     _check(listing_id)
 
-    assert len(pushes) == 1
+    assert len(db(_read_outbox())) == 1
 
 
-def test_a_watch_already_at_target_stays_quiet(pushes):
+def test_a_watch_already_at_target_stays_quiet():
     # a second listing on the same watch is already under target, so this
     # check is not a crossing — the owner was told when that one landed
     listing_id = db(_seed(rival_price=95))
 
     _check(listing_id)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
     assert db(_last_notified_at()) is None
 
 
-def test_price_above_target_stays_quiet(pushes):
+def test_price_above_target_stays_quiet():
     listing_id = db(_seed())
 
     _check(listing_id, price=110)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
 
 
-def test_out_of_stock_bargain_stays_quiet(pushes):
+def test_out_of_stock_bargain_stays_quiet():
     listing_id = db(_seed())
 
     _check(listing_id, in_stock=False)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
 
 
-def test_priceless_check_stays_quiet(pushes):
+def test_priceless_check_stays_quiet():
     listing_id = db(_seed())
 
     _check(listing_id, price=None)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
 
 
-def test_notifications_off_for_the_watch_stays_quiet(pushes):
+def test_notifications_off_for_the_watch_stays_quiet():
     listing_id = db(_seed(notify_enabled=False))
 
     _check(listing_id)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
 
 
-def test_no_target_price_stays_quiet(pushes):
+def test_no_target_price_stays_quiet():
     listing_id = db(_seed(target_price=None))
 
     _check(listing_id)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
 
 
-def test_owner_without_a_topic_stays_quiet(pushes):
-    listing_id = db(_seed(ntfy_topic=None))
+def test_a_channelless_owner_still_enqueues():
+    # channel eligibility is the dispatcher's business, not the agent's: the
+    # event is recorded either way and a channel-less owner's row simply gets
+    # marked 'skipped' backend-side (the old owner-without-a-topic gate died
+    # with the ntfy port)
+    listing_id = db(_seed())
 
     _check(listing_id)
 
-    assert pushes == []
+    assert len(db(_read_outbox())) == 1
 
 
-def test_cooldown_suppresses_a_second_crossing(pushes):
+def test_cooldown_suppresses_a_second_crossing():
     listing_id = db(_seed(prior_price=120, last_notified_at=datetime.now(UTC) - timedelta(hours=1)))
 
     _check(listing_id)
 
-    assert pushes == []
+    assert db(_read_outbox()) == []
 
 
-def test_cooldown_elapsed_pushes_again(pushes):
+def test_cooldown_elapsed_enqueues_again():
     listing_id = db(_seed(prior_price=120, last_notified_at=datetime.now(UTC) - timedelta(days=2)))
 
     _check(listing_id)
 
-    assert len(pushes) == 1
+    assert len(db(_read_outbox())) == 1
 
 
-def test_unconfigured_server_never_calls_ntfy(pushes, monkeypatch):
-    monkeypatch.setattr(notify, "NTFY_SERVER_URL", None)
+def test_a_failing_enqueue_still_records_the_price_check(monkeypatch):
+    async def refuse(user_id, event, payload):
+        return False
+
+    monkeypatch.setattr(notify, "enqueue_notification", refuse)
     listing_id = db(_seed())
 
     assert _check(listing_id).startswith("Successfully")
 
-    assert pushes == []
-
-
-def test_a_failing_push_still_records_the_price_check(monkeypatch):
-    def handler(request):
-        raise httpx.ConnectError("ntfy is down")
-
-    real_client = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx,
-        "AsyncClient",
-        lambda **kwargs: real_client(**kwargs, transport=httpx.MockTransport(handler)),
-    )
-    listing_id = db(_seed())
-
-    assert _check(listing_id).startswith("Successfully")
-
+    # not told = not stamped: the next crossing may try again
     assert db(_last_notified_at()) is None
+
+    async def _count_checks():
+        async with AsyncSessionLocal() as session:
+            return len((await session.execute(select(PriceChecks))).scalars().all())
+
+    assert db(_count_checks()) == 1
