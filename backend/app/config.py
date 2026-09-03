@@ -47,7 +47,7 @@ class Settings(BaseSettings):
         return bool(self.VISION_SIDECAR_URL)
 
     # Instance / notifications
-    APP_VERSION: str = "0.1.0"  # x-release-please-version
+    APP_VERSION: str = "0.2.0"  # x-release-please-version
     NTFY_SERVER_URL: str | None = None  # drives InstanceInfo.ntfy_server_url
 
 
