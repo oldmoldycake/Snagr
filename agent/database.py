@@ -16,6 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    or_,
     select,
     update,
 )
@@ -178,6 +179,17 @@ class Watches(Base):
     __table_args__ = (UniqueConstraint("user_id", "item_id", name="uq_item_user"),)
 
 
+class WatchSites(Base):
+    """Per-watch site subset — the API's `site_ids`, mirrored from
+    backend/app/models.py (the backend owns the schema, D1). No rows for a
+    watch means "search all of the category's sites"."""
+
+    __tablename__ = "watch_sites"
+
+    watch_id: Mapped[int] = mapped_column(ForeignKey("watches.id"), primary_key=True)
+    site_id: Mapped[int] = mapped_column(ForeignKey("sites.id"), primary_key=True)
+
+
 class ListingChecks(Base):
     """Log of every listing the agent evaluated but did NOT save (poor fit,
     authenticity concerns, duplicate, etc.) so re-runs don't have to
@@ -296,7 +308,9 @@ async def get_watched_item_list(
     """
     Return the (watch, site) pairs to search: one row per site for every
     watch with notify enabled, carrying that watch's own
-    criteria/selection_mode/max_listings/allow_reproductions.
+    criteria/selection_mode/max_listings/allow_reproductions. A watch that
+    pinned a site subset (watch_sites — the API's site_ids) gets only those
+    sites; one with no rows gets every site its category is linked to.
 
     Args:
       scope: A run's scope — "global" (everything), "category", "site", or
@@ -333,6 +347,11 @@ async def get_watched_item_list(
                 .join(Sites, Sites.id == SiteCategories.site_id)
                 .where(Watches.notify)
             )
+            # The category join above yields every site the category is linked
+            # to; a watch's pins narrow that to its own subset. Correlated on
+            # the outer Watches row, so each watch is judged on its own pins.
+            pinned = select(WatchSites.site_id).where(WatchSites.watch_id == Watches.id)
+            stmt = stmt.where(or_(~pinned.exists(), Sites.id.in_(pinned)))
             if scope == "category":
                 stmt = stmt.where(Items.category_id == scope_id)
             elif scope == "site":
