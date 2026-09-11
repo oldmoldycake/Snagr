@@ -34,6 +34,7 @@ from database import (
     Sites,
     User,
     Watches,
+    WatchSites,
     append_run_event,
     claim_due_schedule,
     claim_queued_run,
@@ -110,11 +111,12 @@ def queued_run(days_ago=0.0, **overrides):
 
 
 async def seed(*rows) -> list[int]:
-    """Insert any model rows; returns their ids (captured before commit expires them)."""
+    """Insert any model rows; returns their ids (captured before commit expires
+    them; None for composite-key rows like watch_sites)."""
     async with AsyncSessionLocal() as session:
         session.add_all(rows)
         await session.flush()
-        ids = [row.id for row in rows]
+        ids = [getattr(row, "id", None) for row in rows]
         await session.commit()
     return ids
 
@@ -546,6 +548,58 @@ class TestScopedQueries:
         assert out["category"] == [ids["watch_a"]]
         assert out["site"] == [ids["watch_b"]]
         assert out["item"] == [ids["watch_a"]]
+
+
+def pairs_by_watch(rows) -> dict[int, list[int]]:
+    """{watch_id: sorted site_ids} from get_watched_item_list rows."""
+    out: dict[int, list[int]] = {}
+    for row in rows:
+        out.setdefault(row["watch_id"], []).append(row["site_id"])
+    return {watch_id: sorted(site_ids) for watch_id, site_ids in out.items()}
+
+
+class TestWatchSiteSubset:
+    """The API's site_ids: a watch may pin a subset of its category's sites,
+    stored as watch_sites rows. CardBay is linked to Games as well here so the
+    Games watch has two sites to choose between."""
+
+    async def _games_on_both_sites(self) -> dict:
+        ids = await seed_scope_graph()
+        await seed(SiteCategories(site_id=ids["site_b"], category_id=ids["cat_a"]))
+        return ids
+
+    def test_a_watch_with_no_pins_searches_every_site_in_its_category(self):
+        async def scenario():
+            ids = await self._games_on_both_sites()
+            return ids, pairs_by_watch(await get_watched_item_list())
+
+        ids, pairs = db(scenario())
+        assert pairs[ids["watch_a"]] == sorted([ids["site_a"], ids["site_b"]])
+        assert pairs[ids["watch_b"]] == [ids["site_b"]]
+
+    def test_a_watch_with_pins_searches_only_those_sites(self):
+        async def scenario():
+            ids = await self._games_on_both_sites()
+            await seed(WatchSites(watch_id=ids["watch_a"], site_id=ids["site_a"]))
+            return ids, pairs_by_watch(await get_watched_item_list())
+
+        ids, pairs = db(scenario())
+        assert pairs[ids["watch_a"]] == [ids["site_a"]]
+        # the other watch is unpinned and unaffected
+        assert pairs[ids["watch_b"]] == [ids["site_b"]]
+
+    def test_a_pin_on_a_site_outside_the_category_yields_no_pair(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            # GameBay does not carry Cards: the pin names a site the watch's
+            # category can't be searched on (the API forbids it; a later
+            # unlink could still leave the row behind)
+            await seed(WatchSites(watch_id=ids["watch_b"], site_id=ids["site_a"]))
+            return ids, pairs_by_watch(await get_watched_item_list())
+
+        ids, pairs = db(scenario())
+        assert ids["watch_b"] not in pairs
+        assert pairs[ids["watch_a"]] == [ids["site_a"]]
 
 
 class TestActiveListingCount:
