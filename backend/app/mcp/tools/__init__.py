@@ -1,0 +1,12 @@
+"""Tool registration — one module per section of endpoints.ts. Each module's
+register() defines its tools on the shared server; docstrings are the prompt
+the agent reads, held to the same bar as agent/tools.py."""
+
+from fastmcp import FastMCP
+
+from app.mcp.tools import catalog, charts, instance, items, runs, vision
+
+
+def register(mcp: FastMCP) -> None:
+    for module in (instance, catalog, items, charts, runs, vision):
+        module.register(mcp)

@@ -11,8 +11,11 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
+from fastmcp.utilities.lifespan import combine_lifespans
 
+from app.config import settings
 from app.core.errors import ApiError, api_error_handler
+from app.mcp.server import MCP_PATH, build_mcp_app
 from app.routers import (
     admin,
     auth,
@@ -46,9 +49,21 @@ async def lifespan(app: FastAPI):
             await task
 
 
-app = FastAPI(title="Snagr API", version="0.1.0", lifespan=lifespan)
+# The MCP endpoint is a Starlette sub-app with its own lifespan (the session
+# manager). It is registered as an exact-path route, not mounted — a Mount
+# 307-redirects /api/mcp to /api/mcp/, which not every client follows.
+mcp_app = build_mcp_app()
+
+app = FastAPI(
+    title="Snagr API",
+    version="0.1.0",
+    lifespan=combine_lifespans(lifespan, mcp_app.lifespan) if settings.MCP_ENABLED else lifespan,
+)
 
 app.add_exception_handler(ApiError, api_error_handler)
+
+if settings.MCP_ENABLED:
+    app.add_route(MCP_PATH, mcp_app, methods=["GET", "POST", "DELETE"])
 
 for router in (
     instance.router,

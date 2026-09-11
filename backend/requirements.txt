@@ -22,6 +22,9 @@ authlib<2
 # Realtime (SSE)
 sse-starlette
 
+# MCP server (POST /api/mcp) — pinned: it pulls ~40 transitive packages
+fastmcp==4.0.1
+
 # Outbound HTTP — notification delivery, vision sidecar client, OIDC
 httpx
 
