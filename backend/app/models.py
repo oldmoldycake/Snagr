@@ -236,6 +236,23 @@ class Sessions(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ApiTokens(Base):
+    """+ api. Personal access tokens — the bearer credential agents (MCP) and
+    scripts use. Only the sha256 is stored, like sessions.refresh_hash; the raw
+    `snagr_pat_…` value is shown once at creation. Revoking deletes the row."""
+
+    __tablename__ = "api_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True)
+    scopes: Mapped[list] = mapped_column(JSONB)  # subset of read | write | runs
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # NULL = never
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class AgentRuns(Base):
     """+ api. One row per agent run. Supersedes the agent's unused JobRuns.
     Created status='queued' by the API; the agent claims and drives it."""

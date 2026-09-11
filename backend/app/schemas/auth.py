@@ -20,6 +20,7 @@ class InstanceInfo(BaseModel):
     registration_open: bool
     oidc_provider_name: str | None  # null = SSO not configured
     vision_enabled: bool  # true iff the operator set VISION_SIDECAR_URL
+    mcp_enabled: bool  # false = the operator turned agent access off (MCP_ENABLED)
 
 
 # --- auth / identity --------------------------------------------------------

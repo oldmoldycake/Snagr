@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import csrf_guard, require_admin
+from app.core.deps import csrf_guard, reject_bearer, require_admin
 from app.core.errors import err
 from app.database import get_db
 from app.models import Invites, Sessions, User, Watches
@@ -24,7 +24,12 @@ from app.schemas.common import DataList
 
 INVITE_TTL_DAYS = 7
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(require_admin)])
+router = APIRouter(
+    prefix="/api/admin",
+    tags=["admin"],
+    # cookie-only: an API token never reaches admin surfaces, whoever owns it
+    dependencies=[Depends(reject_bearer), Depends(require_admin)],
+)
 
 
 async def _get_user(db: AsyncSession, user_id: int) -> User:
