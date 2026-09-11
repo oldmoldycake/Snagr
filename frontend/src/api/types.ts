@@ -49,6 +49,9 @@ export interface InstanceInfo {
   oidc_provider_name: string | null
   /** true when the operator has configured the vision sidecar (VISION_SIDECAR_URL) */
   vision_enabled: boolean
+  /** false when the operator turned agent access off (MCP_ENABLED): no MCP endpoint,
+   *  no bearer auth, and Settings hides the MCP & API tab */
+  mcp_enabled: boolean
 }
 
 export type UserRole = 'admin' | 'user'
@@ -596,6 +599,40 @@ export interface NotificationChannelUpdateRequest {
   topic?: string
   events?: NotificationEvent[] | null
   enabled?: boolean
+}
+
+/** read = every GET (and the SSE stream); write = mutations; runs = trigger/cancel a run */
+export type ApiTokenScope = 'read' | 'write' | 'runs'
+
+/**
+ * A personal access token — the bearer credential for the MCP endpoint and the
+ * REST API (`Authorization: Bearer snagr_pat_…`). Tokens act on the domain, never
+ * the account: /api/auth/*, /api/me/* and /api/admin/* answer 403 to one.
+ */
+export interface ApiToken {
+  id: number
+  name: string
+  /** always in canonical order: read, write, runs */
+  scopes: ApiTokenScope[]
+  /** null = never expires */
+  expires_at: string | null
+  /** null = never used; stamped at most once a minute */
+  last_used_at: string | null
+  created_at: string
+}
+
+/** POST /api/me/tokens response — `token` is shown once and never again. */
+export interface ApiTokenCreated extends ApiToken {
+  token: string
+}
+
+export interface ApiTokenCreateRequest {
+  /** 1–64 chars; 422 validation_error with fields.name otherwise */
+  name: string
+  /** non-empty subset of the known scopes; 422 with fields.scopes otherwise */
+  scopes: ApiTokenScope[]
+  /** omit/null = never expires; 422 with fields.expires_in_days below 1 */
+  expires_in_days?: number | null
 }
 
 export interface AdminUser {
