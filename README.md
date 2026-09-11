@@ -105,6 +105,18 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 | [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `SEAR_XNG_URL`, `EXPECTED_CURRENCY`, `VISION_SIDECAR_URL`; optional LangSmith / Langfuse tracing |
 | [`vision/.env.example`](vision/.env.example) | `DATABASE_URL` (sync `postgresql+psycopg://` driver), `S3_*`, `HF_TOKEN`, `VISION_RETENTION_DAYS` |
 
+## Connecting an agent (MCP)
+
+Snagr speaks the [Model Context Protocol](https://modelcontextprotocol.io): the same operations the web app uses are exposed as tools at `POST /api/mcp`, so Claude Code, Hermes, OpenClaw or any MCP client can browse your items, prices and runs on your behalf (the read tools today; writes and run triggers follow).
+
+1. **Settings → MCP & API → New token** — pick an access preset and copy the token; it is shown once.
+2. Paste the ready-made config for your client from the same page. For Claude Code:
+   ```bash
+   claude mcp add --transport http snagr https://snagr.example.com/api/mcp --header "Authorization: Bearer snagr_pat_…"
+   ```
+
+Tokens are scoped (`read` / `write` / `runs`), never reach account or admin routes, and double as a bearer credential on the REST API. `MCP_ENABLED=false` turns the whole surface off. claude.ai and Claude Desktop connectors need OAuth sign-in, which Snagr doesn't offer yet — use a client that sends a bearer header.
+
 ## Security posture
 
 Snagr is built to live on a trusted LAN behind your own reverse proxy:

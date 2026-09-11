@@ -47,8 +47,14 @@ backend/
 │   │   ├── events.py       # GET /api/events (SSE) — opened via EventSource, not in endpoints.ts
 │   │   ├── admin.py        # /api/admin/users, /api/admin/invites
 │   │   └── vision.py       # /api/vision/* (review queue, references, image proxy) + /api/items/{id}/references*
+│   ├── mcp/               # the MCP endpoint (POST /api/mcp): Snagr as tools for agents — BACKEND_REQUIREMENTS §11
+│   │   ├── server.py       # FastMCP instance, bearer verifier, the error-envelope conversion, app factory
+│   │   ├── refs.py         # category by id|slug and site by id|name (404 unknown, 422 ambiguous)
+│   │   ├── schemas.py      # MCP-only shapes (Whoami, RunDetail) — every other tool returns schemas/*
+│   │   └── tools/          # one module per section: instance, catalog, items, charts, runs, vision
 │   └── services/          # logic that's more than one query — routers stay thin
-│       ├── items.py        # the item↔watch↔watch_sites mapping + validation
+│       ├── items.py        # the item↔watch↔watch_sites mapping: reads + serializers (shared with mcp/); writes still in the router
+│       ├── catalog.py      # category/site serializers + list reads (shared by routers and mcp/)
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
 │       ├── runs.py         # run enqueue/scope-label/409-active-check + visibility predicate
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
@@ -109,6 +115,7 @@ Find any `endpoints.ts` function here:
 | `listUsers` `updateUser` `deleteUser` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
 | `listReviewQueue` `confirmReviewEntry` `discardReviewEntry` `listReferences` `uploadReference` `revokeReference` `revokeAutoReferences` | `vision.py` | vision |
 | *(`<img src>` `/api/vision/images/{key}`)* | `vision.py` | vision |
+| *(MCP tools over `POST /api/mcp` — same services, same shapes)* | `mcp/tools/*.py` | mcp |
 
 ---
 

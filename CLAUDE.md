@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Snagr — a self-hosted price tracker. Four independently-deployed components in one repo, sharing **one Postgres database on the LAN** (not in `docker-compose.yml`; each component points at it via `DATABASE_URL`):
 
 - **`agent/`** — the LLM price scraper. A batch job that drives a headless browser (Playwright MCP) via a LangChain agent to find and re-check marketplace listings, writing results to the DB. Run on a schedule, not a server.
-- **`backend/`** — FastAPI (async SQLAlchemy 2.0 / asyncpg) JSON API under `/api`. Serves the frontend and (per the plan) enqueues agent runs.
+- **`backend/`** — FastAPI (async SQLAlchemy 2.0 / asyncpg) JSON API under `/api`. Serves the frontend, enqueues agent runs, and exposes the same operations to agents as MCP tools at `POST /api/mcp` (`app/mcp/`).
 - **`frontend/`** — React 19 + Vite + TS + Tailwind v4 SPA. Talks to the backend over same-origin `/api`.
 - **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, MinIO object store). Off unless `VISION_SIDECAR_URL` is set / the compose `vision` profile is up (D-V1).
 
@@ -74,7 +74,7 @@ The frontend runs against a full MSW mock by default; set `VITE_USE_MOCKS=false`
 
 ## Backend architecture
 
-Request flow: **router** (HTTP, validation, status codes) → **service** (multi-step logic, only where non-trivial) → **models/database** (SQL). `schemas/` are the JSON shapes; `core/` holds cross-cutting concerns (error envelope, auth deps, hashing/tokens); `config.py` is the *only* place env vars are read (via the `settings` singleton — never `os.getenv`). Thin CRUD routes may call the DB directly; only seven services exist, for real logic (item mapping, aggregation math, run lifecycle, SSE, OIDC login, the vision sidecar client + review/library flows, the notification outbox dispatcher).
+Request flow: **router** (HTTP, validation, status codes) → **service** (multi-step logic, only where non-trivial) → **models/database** (SQL). `schemas/` are the JSON shapes; `core/` holds cross-cutting concerns (error envelope, auth deps, hashing/tokens); `config.py` is the *only* place env vars are read (via the `settings` singleton — never `os.getenv`). Thin CRUD routes may call the DB directly; only nine services exist, for real logic (item mapping + the read serializers, catalog serializers, aggregation math, run lifecycle, SSE, OIDC login, the vision sidecar client + review/library flows, the notification outbox dispatcher, the API-token lookup) — the last few exist because the REST routers and the MCP tools in `app/mcp/` are two callers of the same logic.
 
 Two things that will trip you up if you skip STRUCTURE.md:
 
@@ -95,6 +95,7 @@ The **backend owns the canonical schema and all Alembic migrations** (`backend/a
 - **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop (`frontend/src/api/client.ts` refreshes once + retries on 401 for all *other* paths).
 - Auth is httpOnly-cookie sessions: short-lived access JWT (`snagr_access`) + DB-backed rotating refresh token (`sessions` table, `snagr_refresh` cookie). JS never sees the token.
 - **Vision routes are gated on `settings.vision_enabled`**: with `VISION_SIDECAR_URL` unset, mutations answer 503 `vision_unavailable`, the two GET lists return empty data, and `InstanceInfo.vision_enabled: false` hides every vision surface in the UI.
+- **API tokens are the second credential** (`Authorization: Bearer snagr_pat_…`, minted in Settings → MCP & API, sha256 at rest): `current_user` accepts them next to the cookie, they are exempt from the CSRF header, scoped `read` (GET) / `write` (other methods) / `runs` (trigger + cancel), and never reach `/api/auth/me`, `/api/me/*`, `/api/admin/*` (403 `forbidden`). `POST /api/mcp` is bearer-only; its tools (`app/mcp/tools/`) call the same services as the routers and return the same schemas, with an `ApiError` surfacing as a tool error carrying the REST envelope. `MCP_ENABLED=false` switches all of it off.
 
 ## Writing code (house rules)
 
