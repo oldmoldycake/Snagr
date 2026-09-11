@@ -12,7 +12,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import csrf_guard, current_user
+from app.core.deps import csrf_guard, current_user, require_scope
 from app.core.errors import err
 from app.database import get_db
 from app.models import AgentRuns, RunEvents
@@ -35,7 +35,8 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
     response_model=RunEnvelope,
     # 202, not 201 — handlers.ts returns 202 and the mock is the oracle
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(csrf_guard)],
+    # a run costs LLM money, so API tokens need the dedicated `runs` scope
+    dependencies=[Depends(csrf_guard), Depends(require_scope("runs"))],
 )
 async def trigger_run(
     body: RunCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
@@ -138,7 +139,11 @@ async def get_run_events(
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
-@router.post("/{run_id}/cancel", response_model=AgentRun, dependencies=[Depends(csrf_guard)])
+@router.post(
+    "/{run_id}/cancel",
+    response_model=AgentRun,
+    dependencies=[Depends(csrf_guard), Depends(require_scope("runs"))],
+)
 async def cancel_run(run_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     try:
         run = await runs_service.cancel_run(db, run_id, user)

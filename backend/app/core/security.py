@@ -76,6 +76,23 @@ def hash_refresh(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+# --- API tokens -------------------------------------------------------------
+
+API_TOKEN_PREFIX = "snagr_pat_"  # so humans and secret scanners recognise one on sight
+
+
+def new_api_token() -> tuple[str, str]:
+    """Return (raw_token_shown_once, sha256_for_api_tokens.token_hash).
+    The refresh-token scheme: only the hash is ever persisted."""
+    raw = API_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    return raw, hash_api_token(raw)
+
+
+def hash_api_token(raw: str) -> str:
+    """sha256 of a raw API token — the lookup key into api_tokens.token_hash."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 # --- webhook signing --------------------------------------------------------
 
 
