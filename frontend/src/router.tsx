@@ -11,6 +11,7 @@ import { RunsPage } from '@/features/runs/RunsPage'
 import { RunDetailPage } from '@/features/runs/RunDetailPage'
 import { ReviewQueuePage } from '@/features/vision/ReviewQueuePage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
+import { ApiSettingsPage } from '@/features/settings/ApiSettingsPage'
 import { AdminUsersPage } from '@/features/settings/AdminUsersPage'
 import { EmptyState } from '@/components/ui/empty-state'
 
@@ -29,6 +30,7 @@ export const router = createBrowserRouter([
       { path: '/runs/:id', element: <RunDetailPage /> },
       { path: '/review', element: <ReviewQueuePage /> },
       { path: '/settings', element: <SettingsPage /> },
+      { path: '/settings/api', element: <ApiSettingsPage /> },
       {
         element: <AdminGuard />,
         children: [{ path: '/settings/users', element: <AdminUsersPage /> }],
