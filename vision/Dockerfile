@@ -33,8 +33,13 @@ WORKDIR /app
 COPY --from=build /opt/venv /opt/venv
 COPY *.py ./
 
-# Run as a non-root user
-RUN useradd --create-home --uid 1000 vision && chown -R vision:vision /app
+# Run as a non-root user. The HF cache dir must exist owned by that user
+# BEFORE compose mounts the weights volume there — a mountpoint docker has to
+# create itself is root-owned, and the first weight download then dies with
+# PermissionError.
+RUN useradd --create-home --uid 1000 vision \
+    && mkdir -p /home/vision/.cache/huggingface \
+    && chown -R vision:vision /app /home/vision/.cache
 USER vision
 
 EXPOSE 8100

@@ -12,6 +12,10 @@ python-multipart==0.0.32
 # the extra index's 2.13.0+cpu wheel where one exists, and arm64 CPU wheels
 # (which carry no +cpu suffix) stay resolvable under the same pin.
 torch==2.13.0+cpu
+# transformers v5 image processors are torchvision-backed (DINOv3 ships only
+# the fast processor) — without this, weights load fails and the sidecar sits
+# in degraded mode even with a valid HF_TOKEN. 0.28 is the torch-2.13 pair.
+torchvision==0.28.0
 transformers==5.16.1
 huggingface_hub==1.30.0
 pillow==12.3.0
