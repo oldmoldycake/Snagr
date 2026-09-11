@@ -24,8 +24,8 @@ backend/
 │   ├── models.py          # ALL ORM models (owns the schema; mirrors agent/database.py + new tables)
 │   ├── core/
 │   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handler  ← raise err(404, ...)
-│   │   ├── security.py     # password hashing (argon2) + JWT/refresh-token minting (no DB, no FastAPI)
-│   │   └── deps.py         # FastAPI deps: current_user, require_admin, csrf_guard
+│   │   ├── security.py     # password hashing (argon2) + JWT/refresh/API-token minting (no DB, no FastAPI)
+│   │   └── deps.py         # FastAPI deps: current_user (cookie OR bearer), reject_bearer, require_scope, require_admin, csrf_guard
 │   ├── schemas/           # Pydantic models — one file per contract section, mirror types.ts
 │   │   ├── common.py       # Paginated[T], PageMeta
 │   │   ├── auth.py         # InstanceInfo, User, login/register/invite, me-update, password
@@ -33,11 +33,12 @@ backend/
 │   │   ├── items.py        # ItemSummary, ItemDetail, Listing, Watch, PriceCheck + requests
 │   │   ├── charts.py       # price-history/summary, dashboard stats, price-drops
 │   │   ├── runs.py         # AgentRun, RunEvent, RunStats + requests
+│   │   ├── tokens.py       # ApiToken, ApiTokenCreated + create request (Settings → MCP & API)
 │   │   └── vision.py       # ReviewQueueEntry, ReferenceImage, AuthenticityRead + requests
 │   ├── routers/           # one file per section of endpoints.ts — HTTP layer only
 │   │   ├── instance.py     # GET /api/instance                       ← build this first (Task 0)
 │   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, oidc login/callback)
-│   │   ├── me.py           # /api/me, /api/me/password, /api/me/channels[/{id}][/test]
+│   │   ├── me.py           # /api/me, /api/me/password, /api/me/channels[/{id}][/test], /api/me/tokens[/{id}] — cookie-only
 │   │   ├── categories.py   # /api/categories[/{id}][/sites]
 │   │   ├── sites.py        # /api/sites[/{id}]
 │   │   ├── items.py        # /api/items[/{id}], /api/items/{id}/watch, /api/listings/{id}, price-checks
@@ -53,7 +54,8 @@ backend/
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
 │       ├── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
-│       └── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
+│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
+│       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
 │   ├── conftest.py         # async httpx client + (todo) throwaway-DB session fixtures
 │   └── test_instance.py    # first test (in the plan) — copy its pattern per router
@@ -97,6 +99,7 @@ Find any `endpoints.ts` function here:
 | `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` (+ refresh) | `auth.py` | 2 |
 | `updateMe` `changePassword` | `me.py` | 2 |
 | `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` | `me.py` | notifications |
+| `listTokens` `createToken` `revokeToken` | `me.py` | mcp |
 | `listCategories` `createCategory` `updateCategory` `deleteCategory` `setCategorySites` | `categories.py` | 1 / 3 |
 | `listSites` `createSite` `updateSite` `deleteSite` | `sites.py` | 1 / 3 |
 | `listItems` `createItem` `getItem` `updateItem` `deleteItem` `updateWatch` `updateListing` `listPriceChecks` | `items.py` | 1 / 3 |
