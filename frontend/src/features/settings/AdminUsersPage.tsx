@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
 import { Check, Copy, Loader2, MoreHorizontal, Plus, Trash2, UserX, UserCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { createInvite, deleteUser, listInvites, listUsers, revokeInvite, updateUser } from '@/api/endpoints'
@@ -30,6 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { relativeTime } from '@/lib/time'
 import { useSession } from '@/features/auth/useSession'
+import { SettingsTabs } from '@/features/settings/SettingsTabs'
 
 function inviteUrl(invite: Invite): string {
   return `${window.location.origin}/invite/${invite.token}`
@@ -155,18 +155,9 @@ export function AdminUsersPage() {
 
   return (
     <div className="max-w-3xl space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Users & invites</h1>
-          <p className="mt-0.5 text-xs text-ink-3">
-            <Link to="/settings" className="hover:text-ink-2 hover:underline">
-              ← Back to settings
-            </Link>
-          </p>
-        </div>
-        <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
-          <Plus /> Invite user
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Settings</h1>
+        <SettingsTabs />
       </div>
 
       <Card>
@@ -250,6 +241,9 @@ export function AdminUsersPage() {
       <Card>
         <CardHeader>
           <CardTitle>Pending invites</CardTitle>
+          <Button variant="primary" size="sm" onClick={() => setInviteOpen(true)}>
+            <Plus /> Invite user
+          </Button>
         </CardHeader>
         <CardBody className="px-0 py-1">
           {(invites.data?.data.length ?? 0) === 0 ? (

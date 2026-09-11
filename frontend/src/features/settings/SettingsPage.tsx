@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
 import { Loader2, ScanSearch } from 'lucide-react'
 import { toast } from 'sonner'
 import { changePassword, updateMe } from '@/api/endpoints'
@@ -12,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useInstance, useSession } from '@/features/auth/useSession'
 import { ChannelsCard } from '@/features/settings/ChannelsCard'
+import { SettingsTabs } from '@/features/settings/SettingsTabs'
 
 export function SettingsPage() {
   const { data: user } = useSession()
@@ -68,13 +68,9 @@ export function SettingsPage() {
 
   return (
     <div className="max-w-2xl space-y-5">
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Settings</h1>
-        {user?.role === 'admin' ? (
-          <Link to="/settings/users" className="text-xs text-lume hover:underline">
-            Manage users & invites →
-          </Link>
-        ) : null}
+        <SettingsTabs />
       </div>
 
       <Card>
