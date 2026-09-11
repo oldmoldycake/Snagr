@@ -19,13 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.core.errors import err
 from app.models import (
+    Items,
     User,
     VisionListingImages,
     VisionReferences,
     VisionScans,
     Watches,
 )
-from app.schemas.vision import AuthenticityRead, ReviewConfirmRequest, confidence_str
+from app.schemas.common import PageMeta, Paginated
+from app.schemas.vision import (
+    AuthenticityRead,
+    ReferenceImage,
+    ReviewConfirmRequest,
+    ReviewQueueEntry,
+    confidence_str,
+    queue_entry_out,
+    reference_out,
+)
 
 log = logging.getLogger(__name__)
 
@@ -208,3 +218,61 @@ async def forward_upload(
             return resp.json()
     except httpx.HTTPError as e:
         raise err(503, "vision_unavailable", "The vision service is unavailable") from e
+
+
+# --- reads (shared by routers/vision.py and the MCP tools) ---------------------
+
+
+async def list_review_queue(
+    db: AsyncSession, user: User, item_id: int | None, page: int, per_page: int
+) -> Paginated[ReviewQueueEntry]:
+    """Captured photos awaiting the viewer's review, newest first. Off-mode
+    (D-V9) is an empty page, not an error."""
+    if not settings.vision_enabled:
+        return Paginated(data=[], meta=PageMeta(page=page, per_page=per_page, total=0))
+
+    # scoped to the capturing watch's owner — admins included (D-V11): you
+    # review what YOUR hunts captured
+    stmt = (
+        select(VisionListingImages, VisionScans, Items.name)
+        .join(VisionScans, VisionScans.id == VisionListingImages.scan_id)
+        .join(Watches, Watches.id == VisionScans.watch_id)
+        .join(Items, Items.id == VisionScans.item_id)
+        .where(VisionListingImages.review_state == "suggested")
+        .where(Watches.user_id == user.id)
+    )
+    if item_id is not None:
+        stmt = stmt.where(VisionScans.item_id == item_id)
+
+    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
+    rows = (
+        await db.execute(
+            stmt.order_by(VisionListingImages.created_at.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+        )
+    ).all()
+    return Paginated(
+        data=[queue_entry_out(image, scan, item_name) for image, scan, item_name in rows],
+        meta=PageMeta(page=page, per_page=per_page, total=total or 0),
+    )
+
+
+async def list_references(db: AsyncSession, user: User, item_id: int) -> list[ReferenceImage]:
+    """The item's communal gold library, newest first; 404 unless the viewer
+    watches the item. Off-mode is an empty list."""
+    if not settings.vision_enabled:
+        return []
+    await require_watched_item(db, user, item_id)
+    references = (
+        (
+            await db.execute(
+                select(VisionReferences)
+                .where(VisionReferences.item_id == item_id)
+                .order_by(VisionReferences.created_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [reference_out(r, user) for r in references]

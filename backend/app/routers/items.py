@@ -1,7 +1,9 @@
 """Items, listings & watches — (GET Phase 1, writes Phase 3). Auth required.
 
-An API "item" = items row + the caller's watch + watch_sites (services/items.py).
-prefix is /api because this router owns both /api/items/* and /api/listings/*.
+An API "item" = items row + the caller's watch + watch_sites. The reads and
+the serializers live in services/items.py (shared with the MCP tools); the
+writes are still inline here. prefix is /api because this router owns both
+/api/items/* and /api/listings/*.
 """
 
 from decimal import Decimal
@@ -25,7 +27,7 @@ from app.models import (
     Watches,
     WatchSites,
 )
-from app.schemas.common import DataList, PageMeta, Paginated
+from app.schemas.common import DataList, Paginated
 from app.schemas.items import (
     ItemCreateRequest,
     ItemDetail,
@@ -38,88 +40,11 @@ from app.schemas.items import (
     Watch,
     WatchUpdateRequest,
 )
-from app.services.aggregates import item_rollups
+from app.services import items as items_service
+from app.services.items import build_item_summary, listing_out, load_listings
 from app.services.vision import authenticity_for_listings
 
 router = APIRouter(prefix="/api", tags=["items"])
-
-
-async def build_item_summary(
-    watch: Watches, item: Items, category: Categories, db: AsyncSession, range: str = "30d"
-) -> ItemSummary:
-    """One (watch, item, category) row -> ItemSummary.
-
-    Stored/joined fields are real; the price rollups are PLACEHOLDERS until
-    services/aggregates.py::item_rollups() exists — swap the block below for a
-    call into it (Pass 2).
-    """
-    # site_ids = the watch's chosen subset; no rows means "all category sites" (null)
-    site_ids = (
-        (await db.execute(select(WatchSites.site_id).where(WatchSites.watch_id == watch.id)))
-        .scalars()
-        .all()
-    )
-
-    # prices are decimal STRINGS, never floats/0; null for unknown
-    target_price = str(watch.target_price) if watch.target_price is not None else None
-
-    return ItemSummary(
-        id=item.id,
-        name=item.name,
-        category_id=category.id,
-        category_name=category.name,
-        category_slug=category.slug,
-        target_price=target_price,
-        currency="USD",
-        criteria=watch.criteria,
-        selection_mode=watch.selection_mode,
-        max_listings=watch.max_listings,
-        allow_reproductions=watch.allow_reproductions,
-        site_ids=list(site_ids) or None,
-        # computed rollups (best/avg/target/pct/spark) — services/aggregates.item_rollups
-        **await item_rollups(db, watch.user_id, item, watch, range),
-        created_at=item.created_at.isoformat(),
-        watch=Watch(id=watch.id, notify=watch.notify, target_price=target_price),
-    )
-
-
-async def listing_latest_check(
-    listing_id: int, db: AsyncSession
-) -> tuple[str | None, bool | None, str | None, str | None]:
-    """Latest price/status observations for one listing.
-
-    Two different "latest" rows, matching the contract (see mocks/serializers.ts):
-      - price/in_stock come from the newest check THAT HAS A PRICE
-      - status/checked_at come from the newest check of ANY kind, so a sold/ended
-        listing still reports its terminal status and when we saw it.
-
-    Returns (price, in_stock, status, checked_at) — all None-safe, price as a
-    decimal string and checked_at as ISO-8601.
-
-    NOTE: 2 queries per listing (N+1). Folds into services/aggregates.py in Pass 2.
-    """
-    priced_stmt = (
-        select(PriceChecks.price, PriceChecks.in_stock)
-        .where(PriceChecks.price.isnot(None))
-        .where(PriceChecks.listing_id == listing_id)
-        .order_by(PriceChecks.checked_at.desc())
-        .limit(1)
-    )
-    with_price_check = (await db.execute(priced_stmt)).first()
-
-    latest_stmt = (
-        select(PriceChecks.status, PriceChecks.checked_at)
-        .where(PriceChecks.listing_id == listing_id)
-        .order_by(PriceChecks.checked_at.desc())
-        .limit(1)
-    )
-    general_latest = (await db.execute(latest_stmt)).first()
-
-    price = str(with_price_check.price) if with_price_check is not None else None
-    in_stock = with_price_check.in_stock if with_price_check is not None else None
-    status = general_latest.status if general_latest is not None else None
-    checked_at = general_latest.checked_at.isoformat() if general_latest is not None else None
-    return price, in_stock, status, checked_at
 
 
 @router.get("/items", response_model=Paginated[ItemSummary])
@@ -128,53 +53,8 @@ async def list_items(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # scope to the caller's watches; apply filters/search/sort/pagination
     try:
-        page = filters.page or 1
-        per_page = filters.per_page or 50
-
-        # the caller's watches, joined to the shared item + its category
-        stmt = (
-            select(Watches, Items, Categories)
-            .join(Items, Items.id == Watches.item_id)
-            .join(Categories, Categories.id == Items.category_id)
-            .where(Watches.user_id == user.id)
-        )
-        if filters.category_id is not None:
-            stmt = stmt.where(Items.category_id == filters.category_id)
-        if filters.search:
-            stmt = stmt.where(Items.name.ilike(f"%{filters.search}%"))
-        if filters.site_id is not None:
-            # only items with an active tracked listing on this site
-            stmt = stmt.where(
-                select(Listings.id)
-                .where(Listings.watch_id == Watches.id)
-                .where(Listings.site_id == filters.site_id)
-                .where(Listings.active.is_(True))
-                .exists()
-            )
-
-        rows = (await db.execute(stmt.order_by(Items.name))).all()
-        summaries = [
-            await build_item_summary(w, i, c, db, filters.range or "30d") for (w, i, c) in rows
-        ]
-
-        # status filter runs AFTER serialize — it reads the computed fields
-        if filters.status == "snagged":
-            summaries = [s for s in summaries if s.target_met]
-        elif filters.status == "above_target":
-            summaries = [s for s in summaries if not s.target_met and s.active_listing_count > 0]
-        elif filters.status == "no_listings":
-            summaries = [s for s in summaries if s.active_listing_count == 0]
-
-        total = len(summaries)
-        start = (page - 1) * per_page
-        summaries = summaries[start : start + per_page]
-
-        return Paginated(
-            data=summaries,
-            meta=PageMeta(page=page, per_page=per_page, total=total),
-        )
+        return await items_service.list_items(db, user.id, filters)
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
@@ -239,58 +119,7 @@ async def create_item(
 
 @router.get("/items/{item_id}", response_model=ItemDetail)
 async def get_item(item_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
-    stmt = (
-        select(Watches, Items, Categories)
-        .join(Items, Items.id == Watches.item_id)
-        .join(Categories, Categories.id == Items.category_id)
-        .where(Watches.item_id == item_id, Watches.user_id == user.id)
-    )
-    row = (await db.execute(stmt)).first()
-
-    if row is None:
-        raise err(404, "not_found", f"Item {item_id} does not exist")
-
-    watch, item, category = row
-
-    summary = await build_item_summary(watch, item, category, db)
-
-    listing_stmt = (
-        select(Listings, Sites.name)
-        .join(Sites, Sites.id == Listings.site_id)
-        .where(Listings.watch_id == watch.id)
-        .order_by(Listings.created_at)
-    )
-
-    listing_rows = (await db.execute(listing_stmt)).all()
-    authenticity = await authenticity_for_listings(
-        db, watch.id, [listing.url for listing, _ in listing_rows]
-    )
-    listings = []
-    for listing, site_name in listing_rows:
-        price, in_stock, latest_status, checked_at = await listing_latest_check(listing.id, db)
-
-        listings.append(
-            Listing(
-                id=listing.id,
-                site_id=listing.site_id,
-                site_name=site_name,
-                url=listing.url,
-                title=listing.title,
-                site_sku=listing.site_sku,
-                active=listing.active,
-                latest_price=price,
-                in_stock=in_stock,
-                latest_status=latest_status,
-                match_score=listing.match_score,
-                match_summary=listing.match_summary,
-                authenticity=authenticity.get(listing.url),
-                last_checked_at=checked_at,
-                created_at=listing.created_at.isoformat(),
-                discovered_by_run_id=None,
-            )
-        )
-
-    return ItemDetail(**summary.model_dump(), listings=listings)
+    return await items_service.get_item_detail(db, user.id, item_id)
 
 
 @router.patch("/items/{item_id}", response_model=ItemDetail, dependencies=[Depends(csrf_guard)])
@@ -331,45 +160,7 @@ async def update_item(
 
         await db.commit()
         summary = await build_item_summary(watch, item, cat, db)
-
-        listing_stmt = (
-            select(Listings, Sites.name)
-            .join(Sites, Sites.id == Listings.site_id)
-            .where(Listings.watch_id == watch.id)
-            .order_by(Listings.created_at)
-        )
-
-        listing_rows = (await db.execute(listing_stmt)).all()
-        authenticity = await authenticity_for_listings(
-            db, watch.id, [listing.url for listing, _ in listing_rows]
-        )
-
-        listings = []
-        for listing, site_name in listing_rows:
-            price, in_stock, latest_status, checked_at = await listing_latest_check(listing.id, db)
-
-            listings.append(
-                Listing(
-                    id=listing.id,
-                    site_id=listing.site_id,
-                    site_name=site_name,
-                    url=listing.url,
-                    title=listing.title,
-                    site_sku=listing.site_sku,
-                    active=listing.active,
-                    latest_price=price,
-                    in_stock=in_stock,
-                    latest_status=latest_status,
-                    match_score=listing.match_score,
-                    match_summary=listing.match_summary,
-                    authenticity=authenticity.get(listing.url),
-                    last_checked_at=checked_at,
-                    created_at=listing.created_at.isoformat(),
-                    discovered_by_run_id=None,
-                )
-            )
-
-        return ItemDetail(**summary.model_dump(), listings=listings)
+        return ItemDetail(**summary.model_dump(), listings=await load_listings(db, watch))
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach database") from e
 
@@ -455,29 +246,11 @@ async def update_listing(
         listing.active = body.active
         await db.commit()
 
-        price, in_stock, latest_status, checked_at = await listing_latest_check(listing_id, db)
         site_name = (
             await db.execute(select(Sites.name).where(Sites.id == listing.site_id))
         ).scalar_one_or_none()
         authenticity = await authenticity_for_listings(db, listing.watch_id, [listing.url])
-        return Listing(
-            id=listing.id,
-            site_id=listing.site_id,
-            site_name=site_name,
-            url=listing.url,
-            title=listing.title,
-            site_sku=listing.site_sku,
-            active=listing.active,
-            latest_price=price,
-            in_stock=in_stock,
-            latest_status=latest_status,
-            match_score=listing.match_score,
-            match_summary=listing.match_summary,
-            authenticity=authenticity.get(listing.url),
-            last_checked_at=checked_at,
-            created_at=listing.created_at.isoformat(),
-            discovered_by_run_id=None,
-        )
+        return await listing_out(db, listing, site_name, authenticity)
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
@@ -486,48 +259,7 @@ async def update_listing(
 async def list_price_checks(
     item_id: int, limit: int = 50, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-
     try:
-        # join through Watches so a caller only ever sees their OWN listings' checks
-        stmt = (
-            select(
-                PriceChecks.id.label("price_check_id"),
-                Listings.id.label("listing_id"),
-                Sites.name.label("site_name"),
-                PriceChecks.price.label("price"),
-                PriceChecks.currency.label("currency"),
-                PriceChecks.in_stock.label("in_stock"),
-                PriceChecks.status.label("status"),
-                PriceChecks.checked_at.label("checked_at"),
-            )
-            .join(Listings, Listings.id == PriceChecks.listing_id)
-            .join(Sites, Sites.id == Listings.site_id)
-            .join(Watches, Watches.id == Listings.watch_id)
-            .where(Listings.item_id == item_id)
-            .where(Watches.user_id == user.id)
-            .order_by(PriceChecks.checked_at.desc())
-            .limit(limit)
-        )
-
-        # .all(), NOT .scalars().all() — this is a multi-column select
-        price_check_rows = (await db.execute(stmt)).all()
-
-        price_check_list = []
-        for price_check in price_check_rows:
-            price_check_list.append(
-                PriceCheck(
-                    id=price_check.price_check_id,
-                    listing_id=price_check.listing_id,
-                    site_name=price_check.site_name,
-                    price=str(price_check.price) if price_check.price is not None else None,
-                    currency=price_check.currency,
-                    in_stock=price_check.in_stock,
-                    status=price_check.status,
-                    checked_at=price_check.checked_at.isoformat(),
-                )
-            )
-
-        return DataList(data=price_check_list)
-
+        return DataList(data=await items_service.list_price_checks(db, user.id, item_id, limit))
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e

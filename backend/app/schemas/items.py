@@ -75,6 +75,16 @@ class ItemDetail(ItemSummary):
     listings: list[Listing]
 
 
+class ListingRow(Listing):
+    """A listing outside its item — the MCP `list_listings` tool's row. Not in
+    types.ts: REST has no cross-item listing route (the UI only ever shows
+    listings inside an item), so this is the one shape the contract doesn't
+    mirror. It lives here because services/items.py builds it."""
+
+    item_id: int
+    item_name: str
+
+
 class ItemCreateRequest(BaseModel):
     category_id: int
     name: str

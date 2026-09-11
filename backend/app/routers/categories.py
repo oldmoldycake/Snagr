@@ -1,12 +1,13 @@
 """Categories — /api/categories  (GET Phase 1, writes Phase 3). Auth required.
 
-item_count / snagged_count / site_ids are computed (services/aggregates.py).
+item_count / snagged_count / site_ids are computed at query time
+(services/catalog.py, shared with the MCP tools).
 """
 
 import re
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy import delete, distinct, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,65 +32,16 @@ from app.schemas.catalog import (
     SetCategorySitesRequest,
 )
 from app.schemas.common import DataList
+from app.services import catalog as catalog_service
+from app.services.catalog import build_category
 
 router = APIRouter(prefix="/api/categories", tags=["categories"])
-
-
-async def cat_build(id: int, name: str, slug: str, db: AsyncSession) -> Category:
-
-    stmt = select(SiteCategories.site_id).where(SiteCategories.category_id == id)
-
-    sites_rows = await db.execute(stmt)
-    sites_rows = list(sites_rows.scalars().all())
-
-    # FETCH DAT ITEM COUNT BROTHA
-    stmt = select(func.count()).select_from(Items).where(Items.category_id == id)
-
-    item_rows = await db.execute(stmt)
-    item_count = item_rows.scalar()
-    assert item_count is not None, 0
-
-    stmt = (
-        select(func.count(distinct(Listings.item_id)))
-        .select_from(PriceChecks)
-        .join(Listings, Listings.id == PriceChecks.listing_id)
-        .join(Watches, Watches.id == Listings.watch_id)
-        .join(Items, Items.id == Listings.item_id)
-        .where(Items.category_id == id)
-        .where(PriceChecks.price < Watches.target_price)
-    )
-    snag_rows = await db.execute(stmt)
-    snag_count = snag_rows.scalar()
-    assert snag_count is not None, 0
-
-    return Category(
-        id=id,
-        name=name,
-        slug=slug,
-        site_ids=sites_rows,
-        item_count=item_count,
-        snagged_count=snag_count,
-    )
 
 
 @router.get("", response_model=DataList[Category])
 async def list_categories(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     try:
-        # Categoiers == Obtained (or somethibng is WRONG)
-        # SWAG == TRUE
-        stmt = select(Categories)
-        cat_rows = await db.execute(stmt)
-        cat_rows = cat_rows.scalars().all()
-
-        cats = []
-        for cat in cat_rows:
-            id = cat.id
-            name = cat.name
-            slug = cat.slug
-
-            cats.append(await cat_build(id=id, name=name, slug=slug, db=db))
-        return DataList(data=cats)
-
+        return DataList(data=await catalog_service.list_categories(db))
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
@@ -148,7 +100,7 @@ async def update_category(
 
         await db.commit()
 
-        return await cat_build(id=cat.id, name=cat.name, slug=cat.slug, db=db)
+        return await build_category(db, cat)
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
@@ -206,4 +158,4 @@ async def set_category_sites(
         db.add(SiteCategories(category_id=category_id, site_id=site_id))
     await db.commit()
 
-    return await cat_build(id=cat.id, name=cat.name, slug=cat.slug, db=db)
+    return await build_category(db, cat)
