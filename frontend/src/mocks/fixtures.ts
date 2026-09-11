@@ -188,6 +188,18 @@ export interface MockNotificationChannel {
   created_at: number
 }
 
+/** The raw token is never stored — the mock, like the backend, only ever echoes
+ *  it in the create response. */
+export interface MockApiToken {
+  id: number
+  user_id: number
+  name: string
+  scopes: ('read' | 'write' | 'runs')[]
+  expires_at: number | null
+  last_used_at: number | null
+  created_at: number
+}
+
 // --- store ---------------------------------------------------------------------
 
 export const NOW = Date.now()
@@ -208,6 +220,7 @@ export const store = {
   runEvents: [] as MockRunEvent[],
   invites: [] as MockInvite[],
   notificationChannels: [] as MockNotificationChannel[],
+  tokens: [] as MockApiToken[],
   references: [] as MockReference[],
   visionQueue: [] as MockQueueEntry[],
 }
@@ -394,6 +407,17 @@ function seed() {
       created_at: NOW - 30 * DAY,
     },
   )
+
+  // and one agent already connected, so the MCP & API tab isn't empty
+  store.tokens.push({
+    id: 1,
+    user_id: 1,
+    name: 'claude code (laptop)',
+    scopes: ['read', 'write'],
+    expires_at: null,
+    last_used_at: NOW - 2 * 3_600_000,
+    created_at: NOW - 12 * DAY,
+  })
 
   store.sites = SITES.map(([name, base_url], i) => ({
     id: i + 1,

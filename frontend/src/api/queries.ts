@@ -16,6 +16,7 @@ export const qk = {
   sites: ['sites'] as const,
 
   channels: ['channels'] as const,
+  tokens: ['tokens'] as const,
 
   items: (params: ItemListParams = {}) => ['items', 'list', params] as const,
   item: (id: number) => ['items', 'detail', id] as const,

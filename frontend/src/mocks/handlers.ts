@@ -2,6 +2,8 @@ import { http, HttpResponse, type DefaultBodyType, type StrictRequest } from 'ms
 import type { TimeRange } from '@/lib/time'
 import { rangeToMs, TIME_RANGES } from '@/lib/time'
 import type {
+  ApiTokenCreateRequest,
+  ApiTokenScope,
   CategoryCreateRequest,
   CategoryUpdateRequest,
   InviteAcceptRequest,
@@ -48,6 +50,7 @@ import {
   toItemDetail,
   toItemSummary,
   toListing,
+  toApiToken,
   toNotificationChannel,
   toQueueEntry,
   toReference,
@@ -59,6 +62,7 @@ import {
 import { addClient, cancelDemoRun, hasActiveRun, removeClient, startDemoRun, type StreamClient } from './sse'
 
 const DAY = 86_400_000
+const TOKEN_SCOPES: ApiTokenScope[] = ['read', 'write', 'runs']
 const SESSION_KEY = 'snagr:mock-session'
 
 // --- helpers -------------------------------------------------------------------
@@ -227,6 +231,7 @@ export const handlers = [
       registration_open: store.users.length === 0,
       oidc_provider_name: null,
       vision_enabled: true,
+      mcp_enabled: true,
     })
   }),
 
@@ -411,6 +416,56 @@ export const handlers = [
       (c) => c.id === Number(params.id) && c.user_id === user.id,
     )
     if (!channel) return err(404, 'not_found', `Channel ${params.id} does not exist`)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  // ---- API tokens (Settings → MCP & API) ----
+  http.get('/api/me/tokens', async () => {
+    const user = requireUser()
+    await wait()
+    return HttpResponse.json({
+      data: store.tokens.filter((t) => t.user_id === user.id).map(toApiToken),
+    })
+  }),
+
+  http.post('/api/me/tokens', async ({ request }) => {
+    const user = requireUser()
+    const body = (await request.json()) as ApiTokenCreateRequest
+    const fields: Record<string, string> = {}
+    const name = (body.name ?? '').trim()
+    if (!name) fields.name = 'Name is required'
+    else if (name.length > 64) fields.name = 'Must be 64 characters or fewer'
+    const scopes = body.scopes ?? []
+    if (scopes.length === 0) fields.scopes = 'Pick at least one scope'
+    else if (scopes.some((s) => !TOKEN_SCOPES.includes(s))) fields.scopes = 'Unknown scope'
+    if (body.expires_in_days != null && body.expires_in_days < 1) {
+      fields.expires_in_days = 'Must be at least 1 day'
+    }
+    if (Object.keys(fields).length > 0) {
+      return err(422, 'validation_error', 'Check the token details', { fields })
+    }
+    const token = {
+      id: newId(),
+      user_id: user.id,
+      name,
+      // canonical order, whatever order the client sent them in
+      scopes: TOKEN_SCOPES.filter((s) => scopes.includes(s)),
+      expires_at: body.expires_in_days != null ? Date.now() + body.expires_in_days * DAY : null,
+      last_used_at: null,
+      created_at: Date.now(),
+    }
+    store.tokens.push(token)
+    // the one response the raw token ever rides in
+    const raw = `snagr_pat_${crypto.randomUUID().replace(/-/g, '')}`
+    return HttpResponse.json({ ...toApiToken(token), token: raw }, { status: 201 })
+  }),
+
+  http.delete('/api/me/tokens/:id', async ({ params }) => {
+    const user = requireUser()
+    const id = Number(params.id)
+    const token = store.tokens.find((t) => t.id === id && t.user_id === user.id)
+    if (!token) return err(404, 'not_found', `Token ${id} does not exist`)
+    store.tokens = store.tokens.filter((t) => t.id !== id)
     return new HttpResponse(null, { status: 204 })
   }),
 
