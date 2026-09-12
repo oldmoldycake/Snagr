@@ -1,4 +1,4 @@
-"""Notification dispatch — the seventh service, for the delivery loop no router owns.
+"""Notification dispatch — the delivery loop no router owns.
 
 The DB is the bus: migration 010's trigger pg_notifys 'snagr_notifications'
 whenever any writer (the agent's save tools, a psql session) commits a

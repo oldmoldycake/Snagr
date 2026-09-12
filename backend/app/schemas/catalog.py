@@ -1,7 +1,7 @@
 """Category + Site schemas — mirror the "Categories" and "Sites" blocks of types.ts.
 
 item_count / snagged_count / listing_count / last_checked_at / site_ids /
-category_ids are COMPUTED at query time (services/aggregates.py), not columns.
+category_ids are COMPUTED at query time (services/catalog.py), not columns.
 """
 
 from pydantic import BaseModel

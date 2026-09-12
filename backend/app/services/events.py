@@ -49,8 +49,8 @@ log = logging.getLogger(__name__)
 
 CHANNEL = "snagr_run_events"
 
-# terminal statuses -> the SSE event name the client listens for; 'running' is
-# run.started, 'queued' is announced by the POST /api/runs response instead
+# run status -> the SSE event name the client listens for. 'queued' has no
+# entry: the POST /api/runs response announces it instead.
 _STATUS_EVENTS = {
     "running": "run.started",
     "succeeded": "run.finished",
