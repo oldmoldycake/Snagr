@@ -494,10 +494,9 @@ export const handlers = [
     const category = store.categories.find((c) => c.id === Number(params.id))
     if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
     const body = (await request.json()) as CategoryUpdateRequest
-    if (body.name) {
-      category.name = body.name.trim()
-      category.slug = slugify(category.name)
-    }
+    // the slug is set once at creation and survives every rename, so links and
+    // bookmarks to /categories/<slug> keep working
+    if (body.name) category.name = body.name.trim()
     return HttpResponse.json(toCategory(category))
   }),
 
@@ -623,8 +622,8 @@ export const handlers = [
       target_cents: body.target_price != null ? Math.round(Number(body.target_price) * 100) : null,
       criteria: tracking.criteria,
       selection_mode: tracking.selection_mode,
-      allow_reproductions: tracking.allow_reproductions,
       max_listings: tracking.max_listings,
+      allow_reproductions: tracking.allow_reproductions,
       site_ids: tracking.site_ids,
       created_at: Date.now(),
     }
@@ -655,8 +654,8 @@ export const handlers = [
     }
     item.criteria = tracking.criteria
     item.selection_mode = tracking.selection_mode
-    item.allow_reproductions = tracking.allow_reproductions
     item.max_listings = tracking.max_listings
+    item.allow_reproductions = tracking.allow_reproductions
     item.site_ids = tracking.site_ids
     return HttpResponse.json(toItemDetail(item))
   }),
