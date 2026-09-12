@@ -104,6 +104,8 @@ def _stored_embedding(session, object_key: str):
     return None
 
 
+# 4 dp because that is the stored scale: every similarity/confidence column
+# is Numeric(5,4) (migration 009)
 def _round(value: float | None) -> float | None:
     return None if value is None else round(value, 4)
 
@@ -337,6 +339,9 @@ def get_image(object_key: str):
 
 @app.get("/health")
 def health():
+    """Liveness plus the one fact every client branches on: whether the
+    weights loaded. Degraded is a supported steady state (D-V1) — stored
+    images and /rescore still work without a model."""
     return {
         "status": "ok" if embedder.loaded() else "degraded",
         "model": VISION_MODEL,
