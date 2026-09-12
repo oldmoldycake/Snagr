@@ -2,9 +2,9 @@
 
     GET /api/instance -> InstanceInfo   (endpoints.ts -> getInstance)
 
-Implemented (plan Task 0): registration_open when the REGISTRATION_OPEN toggle
-is on, or while the instance has zero users (so the first-ever user bootstraps
-as admin). Public — no auth.
+registration_open is true when the REGISTRATION_OPEN toggle is on, or while the
+instance has zero users (so the first-ever user bootstraps as admin).
+Public — no auth.
 """
 
 from fastapi import APIRouter, Depends

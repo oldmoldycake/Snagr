@@ -1,7 +1,7 @@
 """Async SQLAlchemy engine + session factory + the get_db() dependency.
 
-Replaces the earlier sync stub. The whole app is async (asyncpg) so the SSE
-run stream and concurrent requests never block a worker thread.
+The whole app is async (asyncpg) so the SSE run stream and concurrent requests
+never block a worker thread.
 
 The engine is created LAZILY (first get_db() call) so importing this module —
 and therefore app.models and every router — never touches the database. That

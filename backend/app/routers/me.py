@@ -183,7 +183,6 @@ def _channel_fields(
                 "events must be a subset of the known events",
                 fields={"events": "Unknown event"},
             )
-        # empty or the full set means "every event"
         if len(events) == 0 or len(events) == len(KNOWN_EVENTS):
             events = None
 
@@ -237,7 +236,7 @@ async def create_channel(
         )
         db.add(channel)
         await db.flush()
-        await db.refresh(channel)  # created_at/enabled come back from server defaults
+        await db.refresh(channel)  # created_at comes back from the server default
         await db.commit()
         # the one response the signing secret ever rides in
         return channel_created_out(channel, secret)

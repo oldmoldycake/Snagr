@@ -44,8 +44,11 @@ def _bearer(request: Request) -> str | None:
 
 async def csrf_guard(request: Request) -> None:
     """Reject mutations lacking the custom header the frontend always sends.
-    A bearer caller is exempt — a browser can't be tricked into attaching an
-    Authorization header the way it auto-attaches cookies."""
+    A custom header is the defence: a cross-site form or <img> can't set one,
+    so its presence proves the request came from our own JS, not from a page
+    riding the browser's auto-attached cookie. A bearer caller is exempt —
+    a browser can't be tricked into attaching an Authorization header the way
+    it auto-attaches cookies."""
     if (
         request.method != "GET"
         and _bearer(request) is None
@@ -67,16 +70,15 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
             raise err(403, "insufficient_scope", f"This token lacks the {needed} scope")
         request.state.api_token = token  # require_scope reads it
         return user
-    # 1. the browser auto-sent the access cookie; pull the token out of it
     token = request.cookies.get(ACCESS_COOKIE)
     if not token:
         raise err(401, "unauthenticated", "Not signed in")
-    # 2. verify the signature + expiry (no DB hit — it's all inside the token)
+    # verify the signature + expiry (no DB hit — it's all inside the token)
     try:
         claims = decode_access_jwt(token)
     except jwt.InvalidTokenError:  # bad signature OR expired
         raise err(401, "unauthenticated", "Session expired") from None
-    # 3. load the actual user row (so a deactivated user is rejected immediately)
+    # load the actual user row (so a deactivated user is rejected immediately)
     user = await db.get(User, int(claims["sub"]))
     if user is None or not user.is_active:
         raise err(401, "unauthenticated", "Not signed in")
