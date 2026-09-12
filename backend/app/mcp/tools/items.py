@@ -3,15 +3,20 @@
 from fastmcp import FastMCP
 
 from app.mcp.refs import Ref, resolve_category, resolve_site
-from app.mcp.server import READ_ONLY, caller_session
+from app.mcp.server import DESTRUCTIVE, READ_ONLY, WRITE, caller_session
 from app.schemas.common import Paginated, TimeRange
 from app.schemas.items import (
+    ItemCreateRequest,
     ItemDetail,
     ItemListParams,
     ItemStatusFilter,
     ItemSummary,
+    ItemUpdateRequest,
+    Listing,
     ListingRow,
     PriceCheck,
+    SelectionMode,
+    WatchUpdateRequest,
 )
 from app.services import items as items_service
 
@@ -98,3 +103,94 @@ def register(mcp: FastMCP) -> None:
         items give an empty list."""
         async with caller_session() as (db, user):
             return await items_service.list_price_checks(db, user.id, item, limit)
+
+    @mcp.tool(auth=WRITE)
+    async def create_item(
+        category: Ref,
+        name: str,
+        target_price: str | None = None,
+        criteria: str | None = None,
+        selection_mode: SelectionMode = "cheapest",
+        max_listings: int = 5,
+        allow_reproductions: bool = False,
+        site_ids: list[Ref] | None = None,
+    ) -> ItemSummary:
+        """Start watching an item. If the shared catalog already has an item of
+        that name in the category this joins it; otherwise the item is created.
+        The agent picks it up on the next run.
+
+        Args:
+          category: id or slug
+          name: the item as a buyer would search for it, e.g. "Pokemon Emerald"
+          target_price: decimal string like "120.00" the user wants to pay at
+            or below; null = just track prices, no target
+          criteria: free text the agent judges every listing against, e.g.
+            "authentic cartridge, working save battery, no reproductions"
+          selection_mode: cheapest | best_match — how the tracked slots are filled
+          max_listings: how many listings to track at once, 1–10
+          allow_reproductions: true skips the counterfeit screening
+          site_ids: subset of the category's sites to search (ids or names);
+            omitted = all of them
+        """
+        async with caller_session() as (db, user):
+            cat = await resolve_category(db, category)
+            body = ItemCreateRequest(
+                category_id=cat.id,
+                name=name,
+                target_price=target_price,
+                criteria=criteria,
+                selection_mode=selection_mode,
+                max_listings=max_listings,
+                allow_reproductions=allow_reproductions,
+                site_ids=[(await resolve_site(db, ref)).id for ref in site_ids]
+                if site_ids
+                else None,
+            )
+            return await items_service.create_item(db, user.id, body)
+
+    @mcp.tool(auth=WRITE)
+    async def update_item(
+        item: int,
+        name: str | None = None,
+        target_price: str | None = None,
+        criteria: str | None = None,
+        selection_mode: SelectionMode | None = None,
+        max_listings: int | None = None,
+        allow_reproductions: bool | None = None,
+        notify: bool | None = None,
+    ) -> ItemDetail:
+        """Change a watched item's settings — the same fields as create_item —
+        plus `notify`: whether hitting the target should push a notification.
+        Only the arguments you pass change; the rest stay as they are."""
+        async with caller_session() as (db, user):
+            body = ItemUpdateRequest(
+                name=name,
+                target_price=target_price,
+                criteria=criteria,
+                selection_mode=selection_mode,
+                max_listings=max_listings,
+                allow_reproductions=allow_reproductions,
+            )
+            detail = await items_service.update_item(db, user.id, item, body)
+            if notify is not None:
+                await items_service.update_watch(
+                    db, user.id, item, WatchUpdateRequest(notify=notify)
+                )
+                detail = await items_service.get_item_detail(db, user.id, item)
+            return detail
+
+    @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
+    async def delete_item(item: int) -> str:
+        """Stop watching an item: removes this user's watch together with its
+        listings and price history. Other users' watches on the same item are
+        untouched. No undo — confirm with the user first."""
+        async with caller_session() as (db, user):
+            await items_service.delete_item(db, user.id, item)
+            return f"Stopped watching item {item}"
+
+    @mcp.tool(auth=WRITE)
+    async def update_listing(listing_id: int, active: bool) -> Listing:
+        """Stop tracking a listing (active=false: it is no longer re-checked
+        and drops out of the best-price math) or resume it (active=true)."""
+        async with caller_session() as (db, user):
+            return await items_service.update_listing(db, user.id, listing_id, active)

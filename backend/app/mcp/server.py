@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from fastmcp.server.auth import AccessToken, TokenVerifier
+from fastmcp.server.auth import AccessToken, TokenVerifier, require_scopes
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from mcp_types import ToolAnnotations
@@ -38,6 +38,11 @@ MCP_PATH = "/api/mcp"
 
 READ_ONLY = ToolAnnotations(read_only_hint=True)
 DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
+
+# scope gates — a tool carrying one is invisible to, and uncallable by, tokens
+# without that scope: the MCP twin of REST's 403 insufficient_scope
+WRITE = require_scopes("write")
+RUNS = require_scopes("runs")
 
 INSTRUCTIONS = """\
 Snagr is a self-hosted price tracker: the user watches items (a shared catalog

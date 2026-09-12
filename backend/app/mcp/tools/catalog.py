@@ -2,9 +2,11 @@
 
 from fastmcp import FastMCP
 
-from app.mcp.server import READ_ONLY, caller_session
+from app.mcp.refs import Ref, resolve_category, resolve_site
+from app.mcp.server import DESTRUCTIVE, READ_ONLY, WRITE, caller_session
 from app.schemas.catalog import Category, Site
 from app.services import catalog as catalog_service
+from app.services.catalog import build_category
 
 
 def register(mcp: FastMCP) -> None:
@@ -24,3 +26,65 @@ def register(mcp: FastMCP) -> None:
         listing on it was last checked. Sites are shared by every user."""
         async with caller_session() as (db, _user):
             return await catalog_service.list_sites(db)
+
+    @mcp.tool(auth=WRITE)
+    async def create_category(name: str) -> Category:
+        """Add a category, e.g. "Game Boy games". The slug is derived from the
+        name; a blank or already-used name (case-insensitive) is a
+        `validation_error`. Link sites to it afterwards with update_category."""
+        async with caller_session() as (db, _user):
+            return await catalog_service.create_category(db, name)
+
+    @mcp.tool(auth=WRITE)
+    async def update_category(
+        category: Ref, name: str | None = None, site_ids: list[Ref] | None = None
+    ) -> Category:
+        """Rename a category and/or replace the set of sites it is searched on —
+        one call for what the REST API splits in two. `category` is an id or
+        slug; `site_ids` are ids or names and REPLACE the current set (an empty
+        list unlinks every site). Arguments you leave out are left alone."""
+        async with caller_session() as (db, _user):
+            cat = await resolve_category(db, category)
+            if name is not None:
+                await catalog_service.update_category(db, cat.id, name)
+            if site_ids is not None:
+                ids = [(await resolve_site(db, ref)).id for ref in site_ids]
+                await catalog_service.set_category_sites(db, cat.id, ids)
+            return await build_category(db, cat)
+
+    @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
+    async def delete_category(category: Ref) -> str:
+        """Delete a category AND everything under it: its items, every user's
+        watches on them, their listings and price history. There is no undo —
+        confirm with the user before calling this."""
+        async with caller_session() as (db, _user):
+            cat = await resolve_category(db, category)
+            await catalog_service.delete_category(db, cat.id)
+            return f"Deleted category {cat.name!r} (id {cat.id}) and everything under it"
+
+    @mcp.tool(auth=WRITE)
+    async def create_site(name: str, base_url: str) -> Site:
+        """Add a marketplace the agent can search, e.g. name "eBay",
+        base_url "https://www.ebay.com". Both are trimmed and one trailing
+        slash is dropped; blanks are a `validation_error`. Link it to
+        categories with update_category — an unlinked site is never searched."""
+        async with caller_session() as (db, _user):
+            return await catalog_service.create_site(db, name, base_url)
+
+    @mcp.tool(auth=WRITE)
+    async def update_site(site: Ref, name: str | None = None, base_url: str | None = None) -> Site:
+        """Rename a site or change its base URL (`site` is an id or name).
+        Arguments you leave out — or pass empty — are left alone."""
+        async with caller_session() as (db, _user):
+            resolved = await resolve_site(db, site)
+            return await catalog_service.update_site(db, resolved.id, name, base_url)
+
+    @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
+    async def delete_site(site: Ref) -> str:
+        """Delete a site (id or name). A site that still has listings or is
+        linked to a category can't be deleted yet — unlink it first with
+        update_category and let its listings go. No undo."""
+        async with caller_session() as (db, _user):
+            resolved = await resolve_site(db, site)
+            await catalog_service.delete_site(db, resolved.id)
+            return f"Deleted site {resolved.name!r} (id {resolved.id})"

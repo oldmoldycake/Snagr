@@ -46,7 +46,21 @@ READ_TOOLS = {
     "list_runs",
     "get_run",
 }
+WRITE_TOOLS = {
+    "create_category",
+    "update_category",
+    "delete_category",
+    "create_site",
+    "update_site",
+    "delete_site",
+    "create_item",
+    "update_item",
+    "delete_item",
+    "update_listing",
+}
+RUN_TOOLS = {"trigger_run", "cancel_run"}
 VISION_TOOLS = {"list_review_queue", "list_references"}
+VISION_WRITE_TOOLS = {"confirm_review_entry", "discard_review_entry", "revoke_reference"}
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -113,22 +127,22 @@ def _agent(token: str) -> Client:
     return Client(transport)
 
 
-async def _ok(agent: Client, name: str, **args):
+async def _ok(agent: Client, tool: str, **args):
     """A successful call's structured payload (list results come unwrapped)."""
-    res = await agent.call_tool(name, args, raise_on_error=False)
+    res = await agent.call_tool(tool, args, raise_on_error=False)
     assert not res.is_error, res.content[0].text
     payload = res.structured_content
     return payload["result"] if set(payload) == {"result"} else payload
 
 
-async def _error(agent: Client, name: str, **args) -> dict:
+async def _error(agent: Client, tool: str, **args) -> dict:
     """A failed call's REST envelope — the `error` object."""
-    res = await agent.call_tool(name, args, raise_on_error=False)
+    res = await agent.call_tool(tool, args, raise_on_error=False)
     assert res.is_error, res.structured_content
     return json.loads(res.content[0].text)["error"]
 
 
-async def _seed_listings(db_session, user_id: int):
+async def _seed_listings(db_session, user_id: int) -> dict:
     """Two watched items with one listing each — one live, one sold."""
     async with db_session() as session:
         sc = Scenario(session)
@@ -144,7 +158,13 @@ async def _seed_listings(db_session, user_id: int):
         await sc.checks(live, (1, "90.00"))
         await sc.checks(sold, (2, "50.00"))
         await sc.commit()
-        return cat.id, cat.slug, alpha.id, beta.id
+        return {
+            "cat_id": cat.id,
+            "slug": cat.slug,
+            "alpha": alpha.id,
+            "beta": beta.id,
+            "live": live.id,
+        }
 
 
 # --- the gate -------------------------------------------------------------------
@@ -169,20 +189,50 @@ async def test_mcp_disabled_rejects_valid_tokens(client, monkeypatch):
     assert (await client.post("/api/mcp", json=LIST_TOOLS, headers=headers)).status_code == 401
 
 
-async def test_tool_list_follows_the_vision_setting(client, monkeypatch):
+async def test_tool_list_follows_scopes_and_the_vision_setting(client, monkeypatch):
     await _sign_in(client)
-    token = await _token(client)
-    async with _agent(token) as agent:
-        assert {t.name for t in await agent.list_tools()} == READ_TOOLS
-        monkeypatch.setattr(settings, "VISION_SIDECAR_URL", "http://vision.test")
-        assert {t.name for t in await agent.list_tools()} == READ_TOOLS | VISION_TOOLS
+    read = await _token(client)
+    write = await _token(client, scopes=("read", "write"))
+    runs = await _token(client, scopes=("read", "runs"))
+    full = await _token(client, scopes=("read", "write", "runs"))
+
+    async def names(token):
+        async with _agent(token) as agent:
+            return {t.name for t in await agent.list_tools()}
+
+    # a scope you lack hides its tools entirely — nothing to be tempted by
+    assert await names(read) == READ_TOOLS
+    assert await names(write) == READ_TOOLS | WRITE_TOOLS
+    assert await names(runs) == READ_TOOLS | RUN_TOOLS
+    assert await names(full) == READ_TOOLS | WRITE_TOOLS | RUN_TOOLS
+
+    monkeypatch.setattr(settings, "VISION_SIDECAR_URL", "http://vision.test")
+    assert await names(read) == READ_TOOLS | VISION_TOOLS
+    assert (
+        await names(full)
+        == READ_TOOLS | WRITE_TOOLS | RUN_TOOLS | VISION_TOOLS | VISION_WRITE_TOOLS
+    )
 
 
-async def test_read_tools_are_annotated_read_only(client):
+async def test_hidden_tools_are_not_callable(client):
     await _sign_in(client)
-    async with _agent(await _token(client)) as agent:
+    async with _agent(await _token(client)) as agent:  # read only
+        res = await agent.call_tool("create_category", {"name": "x"}, raise_on_error=False)
+        assert res.is_error
+        assert "create_category" in res.content[0].text
+
+
+async def test_annotations_say_what_a_tool_does(client):
+    await _sign_in(client)
+    async with _agent(await _token(client, scopes=("read", "write", "runs"))) as agent:
         for tool in await agent.list_tools():
-            assert tool.annotations.read_only_hint is True, tool.name
+            hints = tool.annotations
+            if tool.name in READ_TOOLS:
+                assert hints.read_only_hint is True, tool.name
+            elif tool.name.startswith("delete_"):
+                assert hints.destructive_hint is True, tool.name
+            else:
+                assert not (hints and hints.read_only_hint), tool.name
 
 
 # --- orientation ------------------------------------------------------------------
@@ -257,7 +307,8 @@ async def test_items_by_category_slug_and_id(client):
 async def test_listings_across_items(client, make_client, monkeypatch, db_session):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
     user_id = await _sign_in(client)
-    _cat_id, _slug, alpha_id, beta_id = await _seed_listings(db_session, user_id)
+    seed = await _seed_listings(db_session, user_id)
+    alpha_id, beta_id = seed["alpha"], seed["beta"]
 
     async with _agent(await _token(client)) as agent:
         live = await _ok(agent, "list_listings")
@@ -292,7 +343,8 @@ async def test_listings_across_items(client, make_client, monkeypatch, db_sessio
 
 async def test_price_tools(client, db_session):
     user_id = await _sign_in(client)
-    cat_id, slug, alpha_id, _beta_id = await _seed_listings(db_session, user_id)
+    seed = await _seed_listings(db_session, user_id)
+    cat_id, slug, alpha_id = seed["cat_id"], seed["slug"], seed["alpha"]
 
     async with _agent(await _token(client)) as agent:
         history = await _ok(agent, "get_price_history", item=alpha_id, range="30d")
@@ -356,3 +408,121 @@ async def test_vision_tools_when_on(client, vision_on):
         queue = await _ok(agent, "list_review_queue")
         assert queue == {"data": [], "meta": {"page": 1, "per_page": 25, "total": 0}}
         assert (await _error(agent, "list_references", item=999))["code"] == "not_found"
+
+
+# --- writes -----------------------------------------------------------------------
+
+
+async def test_catalog_writes(client):
+    await _sign_in(client)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        cat = await _ok(agent, "create_category", name="Cameras")
+        assert cat["slug"] == "cameras"
+        dup = await _error(agent, "create_category", name="cameras")
+        assert dup["code"] == "validation_error"
+        assert "name" in dup["fields"]
+
+        site = await _ok(agent, "create_site", name="eBay", base_url="https://ebay.com/")
+        assert site["base_url"] == "https://ebay.com"  # one trailing slash dropped, like REST
+
+        # rename + link sites in one call, by slug and by site name
+        linked = await _ok(
+            agent, "update_category", category="cameras", name="Film cameras", site_ids=["ebay"]
+        )
+        assert linked["name"] == "Film cameras"
+        assert linked["site_ids"] == [site["id"]]
+        (listed,) = await _ok(agent, "list_sites")
+        assert listed["category_ids"] == [cat["id"]]
+
+        moved = await _ok(agent, "update_site", site="ebay", base_url="https://www.ebay.com")
+        assert moved["base_url"] == "https://www.ebay.com"
+        assert moved["name"] == "eBay"
+
+        assert (await _error(agent, "update_site", site="craigslist"))["code"] == "not_found"
+
+        await _ok(agent, "update_category", category=cat["id"], site_ids=[])
+        assert "Deleted site" in await _ok(agent, "delete_site", site="ebay")
+        assert await _ok(agent, "list_sites") == []
+        assert "Deleted category" in await _ok(agent, "delete_category", category="cameras")
+        assert await _ok(agent, "list_categories") == []
+
+
+async def test_item_writes(client, db_session):
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        created = await _ok(
+            agent, "create_item", category=seed["slug"], name="Leica M6", target_price="1500.00"
+        )
+        assert created["target_price"] == "1500.00"
+        assert created["site_ids"] is None
+        assert created["watch"]["notify"] is True
+
+        updated = await _ok(
+            agent,
+            "update_item",
+            item=created["id"],
+            target_price="1400.00",
+            criteria="boxed, working meter",
+            notify=False,
+        )
+        assert updated["target_price"] == "1400.00"
+        assert updated["criteria"] == "boxed, working meter"
+        assert updated["watch"]["notify"] is False
+        assert updated["name"] == "Leica M6"  # untouched
+
+        paused = await _ok(agent, "update_listing", listing_id=seed["live"], active=False)
+        assert paused["active"] is False
+        assert (await _ok(agent, "list_listings"))["meta"]["total"] == 0
+        assert (await _error(agent, "update_listing", listing_id=999, active=True))[
+            "code"
+        ] == "not_found"
+
+        assert "Stopped watching" in await _ok(agent, "delete_item", item=created["id"])
+        assert (await _error(agent, "get_item", item=created["id"]))["code"] == "not_found"
+        assert (await _error(agent, "create_item", category="nope", name="x"))[
+            "code"
+        ] == "not_found"
+
+
+async def test_run_tools_need_the_runs_scope(client):
+    await _sign_in(client)
+    runner = await _token(client, scopes=("read", "runs"))
+    async with _agent(runner) as agent:
+        run = await _ok(agent, "trigger_run")
+        assert run["status"] == "queued"
+        assert run["scope_label"] == "Everything"
+
+        busy = await _error(agent, "trigger_run", scope="global")
+        assert busy["code"] == "run_in_progress"
+        assert busy["run_id"] == run["id"]
+
+        cancelled = await _ok(agent, "cancel_run", run_id=run["id"])
+        assert cancelled["status"] == "cancelled"
+        assert (await _error(agent, "cancel_run", run_id=run["id"]))["code"] == "not_active"
+
+        assert (await _error(agent, "trigger_run", scope="category", target="nope"))[
+            "code"
+        ] == "not_found"
+        assert (await _error(agent, "trigger_run", scope="item", target="abc"))[
+            "code"
+        ] == "validation_error"
+
+
+async def test_vision_writes(client, vision_on):
+    await _sign_in(client)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        assert (await _error(agent, "confirm_review_entry", entry_id=999, label="real"))[
+            "code"
+        ] == "not_found"
+        assert (await _error(agent, "discard_review_entry", entry_id=999))["code"] == "not_found"
+        assert (await _error(agent, "revoke_reference", reference_id=999))["code"] == "not_found"
+
+
+async def test_vision_writes_answer_unavailable_when_off(client):
+    await _sign_in(client)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        # hidden from the list, but a client that remembers the name still gets the REST code
+        assert (await _error(agent, "confirm_review_entry", entry_id=1, label="real"))[
+            "code"
+        ] == "vision_unavailable"
