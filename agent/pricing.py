@@ -1,3 +1,10 @@
+"""Market-price grounding: find what an item actually sells for, tier by tier,
+and write the stats to market_prices.
+
+The entry point is ground_stale() - main.py's --ground-only mode, and the
+pre-pass at the top of a global run. Grounding is best-effort by design: a
+failed search, fetch or extraction costs observations, never the run."""
+
 import asyncio
 import html
 import json
@@ -246,7 +253,8 @@ class Observation:
 async def extract_observations(
     item: str, search_results: dict[str, str], tiers: list[str], origin: str = "search"
 ) -> list[Observation]:
-    """Read priced observations out of the search snippets in one LLM call. The
+    """Read priced observations out of text already in hand, in one LLM call -
+    either search snippets or a whole guide page reduced by strip_html. The
     model only parses text we already have - it never browses.
 
     What comes back is validated rather than trusted: it is JSON from outside
@@ -579,9 +587,10 @@ def tier_stats(observations: list[Observation]) -> dict[str, dict]:
     that exists when the same cartridge is $24 loose and $14,499 graded, and
     the median resists the outliers that drag the mean ($223 vs $1,009 on one
     measured sample). Within a tier the central stats come from the best basis
-    available: guide observations when any exist (an aggregated market
-    statistic a pile of asking prices never outvotes by weight of numbers),
-    else sold prices once there are enough (asking skews high), else all."""
+    available: prices off a price-guide page when any exist (an aggregated
+    market statistic a pile of asking prices never outvotes by weight of
+    numbers) - a guide-pass fetch of a marketplace does not qualify - else
+    sold prices once there are enough (asking skews high), else all."""
     counted = [observation for observation in observations if not observation.excluded]
 
     by_tier: dict[str, list[Observation]] = {}
