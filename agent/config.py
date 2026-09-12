@@ -31,6 +31,20 @@ SEARXNG_URL = os.getenv("SEAR_XNG_URL")
 MARKET_PRICE_TTL_HOURS = int(os.getenv("MARKET_PRICE_TTL_HOURS", "24"))
 MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_RUN", "10"))
 
+# Run lifecycle. The heartbeat is the liveness signal the stale-run reaper
+# judges by: a 'running' agent_runs row whose heartbeat is older than
+# RUN_STALE_AFTER_SECONDS was left behind by a dead process (SIGKILL, OOM,
+# power loss) and is failed on the next consumer tick — left alone it would
+# block every enqueue (409 run_in_progress) and every schedule forever.
+RUN_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("RUN_HEARTBEAT_INTERVAL_SECONDS", "30"))
+RUN_STALE_AFTER_SECONDS = int(os.getenv("RUN_STALE_AFTER_SECONDS", "300"))
+# Per-unit budgets. One unit is one LLM stream (a listing recheck or a site
+# scan); a model looping on a blocked page is otherwise bounded only by
+# prompt text. Tripping either cap fails that unit and the run moves on.
+# Steps are graph steps — roughly two per tool call.
+AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "200"))
+AGENT_UNIT_TIMEOUT_SECONDS = int(os.getenv("AGENT_UNIT_TIMEOUT_SECONDS", "900"))
+
 # Target-hit notifications need no delivery config here: the agent only
 # queues notification_outbox rows — the backend's dispatcher owns delivery
 # and the per-user channels. This is the spam floor under the edge trigger:

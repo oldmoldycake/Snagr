@@ -39,6 +39,7 @@ from database import (
     Watches,
     WatchSites,
     append_run_event,
+    beat_run,
     claim_due_schedule,
     claim_queued_run,
     create_global_run,
@@ -47,6 +48,7 @@ from database import (
     get_active_listing_count,
     get_listed_items,
     get_watched_item_list,
+    reap_stale_runs,
 )
 from sqlalchemy import select, text
 
@@ -134,6 +136,7 @@ async def read_run(run_id: int) -> dict:
             "scope_label": run.scope_label,
             "status": run.status,
             "started_at": run.started_at,
+            "heartbeat_at": run.heartbeat_at,
             "finished_at": run.finished_at,
             "stats": run.stats,
             "error": run.error,
@@ -535,6 +538,116 @@ class TestClaimDueSchedule:
         results, run_count = db(scenario())
         assert sorted(r is None for r in results) == [False, True]
         assert run_count == 1
+
+
+class TestHeartbeat:
+    def test_a_claim_and_a_sweep_stamp_the_first_beat(self):
+        async def scenario():
+            await seed(queued_run())
+            claimed = await claim_queued_run()
+            created = await create_global_run()
+            return await read_run(claimed["id"]), await read_run(created["id"])
+
+        for row in db(scenario()):
+            assert row["heartbeat_at"] is not None
+            assert row["heartbeat_at"] == row["started_at"]
+
+    def test_a_fired_schedule_stamps_the_first_beat(self):
+        async def scenario():
+            await seed(due_schedule())
+            fired = await claim_due_schedule()
+            return await read_run(fired["id"])
+
+        row = db(scenario())
+        assert row["heartbeat_at"] == row["started_at"]
+
+    def test_beat_run_advances_a_running_runs_heartbeat(self):
+        async def scenario():
+            (run_id,) = await seed(
+                queued_run(
+                    status="running",
+                    started_at=NOW - timedelta(hours=1),
+                    heartbeat_at=NOW - timedelta(minutes=10),
+                )
+            )
+            ok = await beat_run(run_id)
+            return ok, await read_run(run_id)
+
+        ok, row = db(scenario())
+        assert ok is True
+        assert row["heartbeat_at"] > NOW - timedelta(minutes=1)
+
+    def test_beat_run_leaves_a_finished_run_alone(self):
+        old_beat = NOW - timedelta(minutes=10)
+
+        async def scenario():
+            (run_id,) = await seed(
+                queued_run(status="succeeded", started_at=NOW, heartbeat_at=old_beat)
+            )
+            await beat_run(run_id)
+            return await read_run(run_id)
+
+        assert db(scenario())["heartbeat_at"] == old_beat
+
+
+class TestReapStaleRuns:
+    STALE = timedelta(minutes=5)
+
+    def test_fails_a_running_run_whose_heartbeat_went_silent(self):
+        async def scenario():
+            (dead_id,) = await seed(
+                queued_run(
+                    status="running",
+                    started_at=NOW - timedelta(hours=1),
+                    heartbeat_at=NOW - timedelta(minutes=6),
+                )
+            )
+            reaped = await reap_stale_runs(self.STALE)
+            return reaped, dead_id, await read_run(dead_id), await read_events(dead_id)
+
+        reaped, dead_id, row, events = db(scenario())
+        assert reaped == [dead_id]
+        assert row["status"] == "failed"
+        assert row["finished_at"] is not None
+        assert row["error"] == "Agent stopped responding (no heartbeat for over 5 min)"
+        assert [(e["level"], e["event_type"]) for e in events] == [("error", "run_finished")]
+
+    def test_leaves_live_queued_and_finished_runs_alone(self):
+        async def scenario():
+            ids = await seed(
+                # alive: a slow run, but beating
+                queued_run(
+                    status="running",
+                    started_at=NOW - timedelta(hours=1),
+                    heartbeat_at=NOW - timedelta(seconds=20),
+                ),
+                queued_run(),
+                queued_run(
+                    status="succeeded",
+                    started_at=NOW - timedelta(hours=1),
+                    heartbeat_at=NOW - timedelta(hours=1),
+                ),
+                queued_run(status="cancelled", started_at=NOW - timedelta(hours=1)),
+            )
+            reaped = await reap_stale_runs(self.STALE)
+            return reaped, [(await read_run(run_id))["status"] for run_id in ids]
+
+        reaped, statuses = db(scenario())
+        assert reaped == []
+        assert statuses == ["running", "queued", "succeeded", "cancelled"]
+
+    def test_a_row_from_before_the_column_existed_is_judged_on_started_at(self):
+        async def scenario():
+            old_id, fresh_id = await seed(
+                queued_run(status="running", started_at=NOW - timedelta(minutes=6)),
+                queued_run(status="running", started_at=NOW - timedelta(minutes=1)),
+            )
+            reaped = await reap_stale_runs(self.STALE)
+            return reaped, old_id, (await read_run(fresh_id))["status"]
+
+        reaped, old_id, fresh_status = db(scenario())
+        assert reaped == [old_id]
+        assert fresh_status == "running"
 
 
 class TestScopedQueries:

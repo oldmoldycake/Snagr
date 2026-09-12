@@ -247,6 +247,9 @@ class AgentRuns(Base):
         Text, default="queued"
     )  # queued|running|succeeded|failed|cancelled
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # stamped by the driving process while running — the liveness signal
+    # reap_stale_runs judges by; NULL on rows from before the column existed
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stats: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
@@ -1069,8 +1072,10 @@ async def claim_queued_run() -> dict | None:
         if run is None:
             return None
 
+        now = datetime.now(UTC)
         run.status = "running"
-        run.started_at = datetime.now(UTC)
+        run.started_at = now
+        run.heartbeat_at = now
         claimed = {
             "id": run.id,
             "scope": run.scope,
@@ -1137,6 +1142,7 @@ async def claim_due_schedule() -> dict | None:
             scope_label=schedule.scope_label,
             status="running",
             started_at=now,
+            heartbeat_at=now,
         )
         session.add(run)
         await session.flush()
@@ -1170,12 +1176,14 @@ async def create_global_run() -> dict:
     """
     log.info("Recording a global sweep run")
     async with AsyncSessionLocal() as session:
+        now = datetime.now(UTC)
         run = AgentRuns(
             scope="global",
             scope_id=None,
             scope_label="Everything",
             status="running",
-            started_at=datetime.now(UTC),
+            started_at=now,
+            heartbeat_at=now,
         )
         session.add(run)
         await session.flush()
@@ -1198,6 +1206,28 @@ async def get_run_status(run_id: int) -> str | None:
         except Exception as e:
             log.error(f"Error fetching status for run {run_id}: {e}")
             return None
+
+
+async def beat_run(run_id: int) -> bool:
+    """
+    Stamp a running run's heartbeat_at — the liveness signal reap_stale_runs
+    judges by. Best-effort like append_run_event: returns False on failure
+    and never raises, because one missed beat costs nothing until several
+    are missed in a row, whereas taking the run down over one would.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            await session.execute(
+                update(AgentRuns)
+                .where(AgentRuns.id == run_id)
+                .where(AgentRuns.status == "running")
+                .values(heartbeat_at=datetime.now(UTC))
+            )
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error stamping heartbeat for run {run_id}: {e}")
+            return False
 
 
 async def append_run_event(
@@ -1249,8 +1279,8 @@ async def finish_run(
     If the row is already 'cancelled', the API wrote the terminal state while
     this run was finishing — leave it untouched and return False (the row
     lock makes the check atomic against cancel_run). Returns False on any
-    failure too, logged loudly: the row is then stuck 'running' until a
-    future cleanup (no reaper exists yet).
+    failure too, logged loudly: the row then stays 'running' until its
+    heartbeat goes stale and reap_stale_runs fails it.
     """
     log.info(f"Finishing run {run_id} as {status}")
     async with AsyncSessionLocal() as session:
@@ -1295,3 +1325,38 @@ async def finish_run(
         except Exception as e:
             log.error(f"Error finishing run {run_id}: {e}")
             return False
+
+
+async def reap_stale_runs(stale_after: timedelta) -> list[int]:
+    """
+    Fail every 'running' run whose heartbeat is older than stale_after — the
+    rows a dead process (SIGKILL, OOM, power loss) leaves behind. Left alone,
+    one such row blocks every enqueue (409 run_in_progress) and every
+    schedule forever, and nothing else ever touches it. A live run beats
+    every RUN_HEARTBEAT_INTERVAL_SECONDS, so a merely slow run is never
+    mistaken for a dead one. Rows from before the column existed have no
+    heartbeat and are judged on started_at instead.
+
+    Each terminal write goes through finish_run, so the UI sees the same
+    run_finished event a crash-free failure produces. Returns the ids
+    reaped. The select PROPAGATES like the claim helpers' failures do: a
+    swallowed failure here would leave the queue wedged in silence.
+    """
+    cutoff = datetime.now(UTC) - stale_after
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(AgentRuns.id)
+            .where(AgentRuns.status == "running")
+            .where(func.coalesce(AgentRuns.heartbeat_at, AgentRuns.started_at) < cutoff)
+            .order_by(AgentRuns.id)
+        )
+        stale = list((await session.execute(stmt)).scalars().all())
+
+    minutes = int(stale_after.total_seconds() // 60)
+    reaped = []
+    for run_id in stale:
+        log.warning(f"Run {run_id} has had no heartbeat for over {minutes} min; failing it")
+        error = f"Agent stopped responding (no heartbeat for over {minutes} min)"
+        if await finish_run(run_id, "failed", error=error):
+            reaped.append(run_id)
+    return reaped

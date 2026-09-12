@@ -29,12 +29,12 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY --from=build /opt/venv /opt/venv
-COPY *.py ./
+COPY *.py ticker.sh ./
 
 # Run as a non-root user; /app must stay writable — main.py logs to ./scraper.log
 RUN useradd --create-home --uid 1000 snagr && chown -R snagr:snagr /app
 USER snagr
 
 # One full scrape pass, then exit (the nightly job). The compose `agent`
-# service overrides this with a --consume / --ground-only ticker loop.
+# service overrides this with ticker.sh, the --consume / --ground-only loop.
 CMD ["python", "main.py"]

@@ -38,18 +38,14 @@ services:
       - agent/.env
       - agent/.env.docker
     restart: unless-stopped
-    # Checks the run queue every 60s: each --consume tick claims one queued run
-    # (or fires a due run_schedules row) and exits; an empty tick is a no-op.
-    # Every 15th tick also refreshes stale market prices (--ground-only).
-    # One-shot ticks + the loop mean a crashed pass never takes the ticker
-    # down — the next check happens a minute later regardless.
-    command: >
-      sh -c 'i=0; while :; do
-        python main.py --consume;
-        i=$$((i+1));
-        [ $$((i % 15)) -eq 0 ] && python main.py --ground-only;
-        sleep 60;
-      done'
+    # agent/ticker.sh: a --consume tick every 60s (claims one queued run or
+    # fires a due run_schedules row, then exits; an empty tick is a no-op) and
+    # a --ground-only refresh every 15th tick. It forwards SIGTERM to the tick
+    # in flight, so `docker compose stop` lets the agent fail the run it was
+    # driving instead of leaving it 'running'; the grace period is how long
+    # that gets before the kill.
+    command: ./ticker.sh
+    stop_grace_period: 30s
 
   frontend:
     build: ./frontend
