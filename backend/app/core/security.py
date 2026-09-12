@@ -89,7 +89,12 @@ def new_api_token() -> tuple[str, str]:
 
 
 def hash_api_token(raw: str) -> str:
-    """sha256 of a raw API token — the lookup key into api_tokens.token_hash."""
+    """sha256 of a raw API token — the lookup key into api_tokens.token_hash.
+
+    A fast hash on purpose (not argon2 like passwords): the token is 256
+    random bits, not something a person chose, so there is nothing to
+    brute-force — and every request finds its row by this digest, the
+    sessions.refresh_hash scheme."""
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
