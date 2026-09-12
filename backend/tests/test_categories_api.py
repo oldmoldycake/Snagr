@@ -1,4 +1,4 @@
-"""HTTP layer for /api/categories — the computed counts.
+"""HTTP layer for /api/categories — the computed counts and name validation.
 
 snagged_count means one thing across the app: per active listing take its
 LATEST check, take the cheapest of those, and compare it to the CALLER's
@@ -18,6 +18,7 @@ each request runs on its own session, so uncommitted rows are invisible.
 
 from contextlib import asynccontextmanager
 
+import pytest
 from app.models import User
 
 from tests.conftest import CSRF
@@ -164,6 +165,54 @@ async def test_snagged_counts_stay_inside_their_category(client, db_session):
     categories = await _categories_by_name(client)
     assert categories["Cameras"]["snagged_count"] == 1
     assert categories["Lenses"]["snagged_count"] == 0
+
+
+# --- POST /api/categories -----------------------------------------------------
+
+
+async def test_create_category_derives_a_slug_and_trims_the_name(client):
+    await _sign_in(client)
+
+    res = await client.post("/api/categories", json={"name": "  Game Boy games  "}, headers=CSRF)
+
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["name"] == "Game Boy games"
+    assert body["slug"] == "game-boy-games"
+    assert body["item_count"] == 0
+    assert body["snagged_count"] == 0
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_create_category_rejects_a_blank_name(client, name):
+    """The mock trims before testing, so whitespace-only is blank too. The
+    field message repeats the message — it is what the form renders."""
+    await _sign_in(client)
+
+    res = await client.post("/api/categories", json={"name": name}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert error["message"] == "Name is required"
+    assert error["fields"] == {"name": "Name is required"}
+
+
+@pytest.mark.parametrize("name", ["Cameras", "  cameras  "])
+async def test_create_category_rejects_a_duplicate_name(client, db_session, name):
+    """Case-insensitive, on the trimmed name, and `duplicate` — not
+    `validation_error`, which is what the form shows for a malformed field."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.category()
+
+    res = await client.post("/api/categories", json={"name": name}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["message"] == "A category with this name already exists"
+    assert error["fields"] == {"name": "A category with this name already exists"}
 
 
 # --- the write routes answer with the same counts ------------------------------

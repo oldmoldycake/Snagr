@@ -70,19 +70,19 @@ async def list_categories(db: AsyncSession, user_id: int) -> list[Category]:
 
 
 async def create_category(db: AsyncSession, name: str) -> Category:
-    """A new category with a generated slug; a blank or duplicate name
-    (case-insensitive) is 422 validation_error. Commits."""
+    """A new category with a generated slug; the name is trimmed, then a blank
+    one is 422 validation_error and a duplicate (case-insensitive) is 422
+    duplicate — mock parity, including the `fields` the form renders. Commits."""
+    name = name.strip()
     if not name:
-        raise err(
-            422, "validation_error", "name is required", fields={"name": "Category already exsits"}
-        )
+        raise err(422, "validation_error", "Name is required", fields={"name": "Name is required"})
 
     if await db.scalar(select(Categories).where(func.lower(Categories.name) == name.lower())):
         raise err(
             422,
-            "validation_error",
-            "Category already exsits",
-            fields={"name": "Category already exsits"},
+            "duplicate",
+            "A category with this name already exists",
+            fields={"name": "A category with this name already exists"},
         )
 
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")

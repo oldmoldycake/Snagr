@@ -29,9 +29,10 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(auth=WRITE)
     async def create_category(name: str) -> Category:
-        """Add a category, e.g. "Game Boy games". The slug is derived from the
-        name; a blank or already-used name (case-insensitive) is a
-        `validation_error`. Link sites to it afterwards with update_category."""
+        """Add a category, e.g. "Game Boy games". The name is trimmed and the
+        slug derived from it; a blank name is a `validation_error` and one
+        already in use (case-insensitive) is a `duplicate`. Link sites to it
+        afterwards with update_category."""
         async with caller_session() as (db, _user):
             return await catalog_service.create_category(db, name)
 
