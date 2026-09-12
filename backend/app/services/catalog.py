@@ -103,7 +103,7 @@ async def update_category(
     """Rename (the slug stays); 404 unknown. Commits."""
     cat = await db.get(Categories, category_id)
     if cat is None:
-        raise err(404, "not_found", f"Category {category_id} does not exsist")
+        raise err(404, "not_found", f"Category {category_id} does not exist")
 
     if name is not None:
         cat.name = name
@@ -117,7 +117,7 @@ async def delete_category(db: AsyncSession, category_id: int) -> None:
     watches on them, their listings and checks. 404 unknown. Commits."""
     cat = await db.get(Categories, category_id)
     if cat is None:
-        raise err(404, "not_found", f"Category {category_id} does not exsist")
+        raise err(404, "not_found", f"Category {category_id} does not exist")
 
     item_ids = select(Items.id).where(Items.category_id == category_id)
     watch_ids = select(Watches.id).where(Watches.item_id.in_(item_ids))
