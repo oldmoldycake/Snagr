@@ -1,6 +1,7 @@
 import type {
   AdminUser,
   AgentRun,
+  ApiToken,
   Category,
   Invite,
   NotificationChannel,
@@ -28,6 +29,7 @@ import {
   sparkline,
   store,
   targetMet,
+  type MockApiToken,
   type MockItem,
   type MockListing,
   type MockNotificationChannel,
@@ -261,6 +263,17 @@ export function toNotificationChannel(c: MockNotificationChannel): NotificationC
     events: c.events,
     enabled: c.enabled,
     created_at: iso(c.created_at)!,
+  }
+}
+
+export function toApiToken(t: MockApiToken): ApiToken {
+  return {
+    id: t.id,
+    name: t.name,
+    scopes: t.scopes,
+    expires_at: iso(t.expires_at),
+    last_used_at: iso(t.last_used_at),
+    created_at: iso(t.created_at)!,
   }
 }
 

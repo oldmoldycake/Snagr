@@ -15,7 +15,7 @@ from typing import Annotated
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, UploadFile, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
@@ -24,29 +24,22 @@ from app.core.deps import csrf_guard, current_user
 from app.core.errors import err
 from app.database import get_db
 from app.models import (
-    Items,
     VisionListingImages,
     VisionReferences,
     VisionScans,
     Watches,
 )
-from app.schemas.common import DataList, PageMeta, Paginated
+from app.schemas.common import DataList, Paginated
 from app.schemas.vision import (
     ReferenceImage,
     ReviewConfirmRequest,
     ReviewQueueEntry,
     RevokeAutoResponse,
-    queue_entry_out,
     reference_out,
 )
 from app.services import vision as vision_service
 
 router = APIRouter(prefix="/api", tags=["vision"], dependencies=[Depends(csrf_guard)])
-
-
-def _require_vision() -> None:
-    if not settings.vision_enabled:
-        raise err(503, "vision_unavailable", "The vision sidecar is not configured")
 
 
 @router.get("/vision/review-queue", response_model=Paginated[ReviewQueueEntry])
@@ -57,34 +50,7 @@ async def list_review_queue(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    if not settings.vision_enabled:
-        return Paginated(data=[], meta=PageMeta(page=page, per_page=per_page, total=0))
-
-    # scoped to the capturing watch's owner — admins included (D-V11): you
-    # review what YOUR hunts captured
-    stmt = (
-        select(VisionListingImages, VisionScans, Items.name)
-        .join(VisionScans, VisionScans.id == VisionListingImages.scan_id)
-        .join(Watches, Watches.id == VisionScans.watch_id)
-        .join(Items, Items.id == VisionScans.item_id)
-        .where(VisionListingImages.review_state == "suggested")
-        .where(Watches.user_id == user.id)
-    )
-    if item_id is not None:
-        stmt = stmt.where(VisionScans.item_id == item_id)
-
-    total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
-    rows = (
-        await db.execute(
-            stmt.order_by(VisionListingImages.created_at.desc())
-            .offset((page - 1) * per_page)
-            .limit(per_page)
-        )
-    ).all()
-    return Paginated(
-        data=[queue_entry_out(image, scan, item_name) for image, scan, item_name in rows],
-        meta=PageMeta(page=page, per_page=per_page, total=total or 0),
-    )
+    return await vision_service.list_review_queue(db, user, item_id, page, per_page)
 
 
 @router.post(
@@ -99,7 +65,7 @@ async def confirm_review_entry(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     reference = await vision_service.confirm_review_entry(db, user, entry_id, body)
     # after the commit, on purpose: the confirmation stands even if the
     # rescore can't reach the sidecar (see services/vision.py)
@@ -114,7 +80,7 @@ async def discard_review_entry(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     item_id = await vision_service.discard_review_entry(db, user, entry_id)
     background.add_task(vision_service.fire_rescore, item_id)
 
@@ -123,21 +89,7 @@ async def discard_review_entry(
 async def list_references(
     item_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    if not settings.vision_enabled:
-        return DataList(data=[])
-    await vision_service.require_watched_item(db, user, item_id)
-    references = (
-        (
-            await db.execute(
-                select(VisionReferences)
-                .where(VisionReferences.item_id == item_id)
-                .order_by(VisionReferences.created_at.desc())
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return DataList(data=[reference_out(r, user) for r in references])
+    return DataList(data=await vision_service.list_references(db, user, item_id))
 
 
 @router.post(
@@ -154,7 +106,7 @@ async def upload_reference(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     await vision_service.require_watched_item(db, user, item_id)
     if label not in ("real", "fake"):
         raise err(
@@ -207,7 +159,7 @@ async def revoke_reference(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     item_id, changed = await vision_service.revoke_reference(db, user, ref_id)
     if changed:
         background.add_task(vision_service.fire_rescore, item_id)
@@ -220,7 +172,7 @@ async def revoke_auto_references(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     revoked = await vision_service.revoke_auto_references(db, user, item_id)
     if revoked:
         background.add_task(vision_service.fire_rescore, item_id)
@@ -235,7 +187,7 @@ async def get_image(
     object store (D-V3). Entitlement: the key backs a live reference of an
     item the viewer watches, or one of the viewer's own captures, or the
     viewer is admin; anything else 404s like an unknown key."""
-    _require_vision()
+    vision_service.require_vision()
     if user.role != "admin":
         own_capture = (
             select(VisionListingImages.id)

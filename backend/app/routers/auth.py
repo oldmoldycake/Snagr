@@ -39,7 +39,7 @@ from app.core.cookies import (
     set_access_cookie,
     set_refresh_cookie,
 )
-from app.core.deps import csrf_guard, current_user
+from app.core.deps import csrf_guard, current_user, reject_bearer
 from app.core.errors import err
 from app.core.security import (
     hash_password,
@@ -257,7 +257,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     await db.commit()
 
 
-@router.get("/me", response_model=UserSchema)
+@router.get("/me", response_model=UserSchema, dependencies=[Depends(reject_bearer)])
 async def get_me(user: User = Depends(current_user)):
     # current_user already did all the work; just shape the row for the API
     return user_out(user)

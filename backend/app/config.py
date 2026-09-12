@@ -46,6 +46,10 @@ class Settings(BaseSettings):
         """Vision is on only when the sidecar URL is configured."""
         return bool(self.VISION_SIDECAR_URL)
 
+    # Agent access — the MCP endpoint (POST /api/mcp) and API tokens (bearer auth
+    # on the REST API). False removes both and hides the Settings tab.
+    MCP_ENABLED: bool = True
+
     # Instance / notifications
     APP_VERSION: str = "0.1.0"  # x-release-please-version
     NTFY_SERVER_URL: str | None = None  # drives InstanceInfo.ntfy_server_url

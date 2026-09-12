@@ -101,9 +101,21 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 
 | File | The important ones |
 |---|---|
-| [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL` |
+| [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL`, `MCP_ENABLED` |
 | [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `SEAR_XNG_URL`, `EXPECTED_CURRENCY`, `VISION_SIDECAR_URL`; optional LangSmith / Langfuse tracing |
 | [`vision/.env.example`](vision/.env.example) | `DATABASE_URL` (sync `postgresql+psycopg://` driver), `S3_*`, `HF_TOKEN`, `VISION_RETENTION_DAYS` |
+
+## Connecting an agent (MCP)
+
+Snagr speaks the [Model Context Protocol](https://modelcontextprotocol.io): the same operations the web app uses are exposed as tools at `POST /api/mcp`, so Claude Code, Hermes, OpenClaw or any MCP client can browse your items, prices and runs on your behalf and, with the right scope, add watches, edit them and kick off runs.
+
+1. **Settings → MCP & API → New token** — pick an access preset and copy the token; it is shown once.
+2. Paste the ready-made config for your client from the same page. For Claude Code:
+   ```bash
+   claude mcp add --transport http snagr https://snagr.example.com/api/mcp --header "Authorization: Bearer snagr_pat_…"
+   ```
+
+Tokens are scoped (`read` / `write` / `runs`), never reach account or admin routes, and double as a bearer credential on the REST API. `MCP_ENABLED=false` turns the whole surface off. claude.ai and Claude Desktop connectors need OAuth sign-in, which Snagr doesn't offer yet — use a client that sends a bearer header.
 
 ## Security posture
 
@@ -111,6 +123,7 @@ Snagr is built to live on a trusted LAN behind your own reverse proxy:
 
 - The web app is the only thing meant to be exposed; put HTTPS in front of it and set `COOKIE_SECURE=true`.
 - Auth tokens live in httpOnly cookies (JS never sees them); mutations require a CSRF header.
+- Agents and scripts use **API tokens** instead (Settings → MCP & API): a `snagr_pat_…` bearer credential, stored hashed, scoped to read / write / runs, and never able to touch the account that owns it. Set `MCP_ENABLED=false` to turn that whole surface off.
 - The Playwright MCP, vision sidecar, and MinIO are **LAN-internal and unauthenticated by design** — bind them to trusted interfaces only and never publish their ports. The same goes for the SearXNG instance the agent queries.
 
 Found a vulnerability? See [SECURITY.md](SECURITY.md).

@@ -8,7 +8,8 @@ Responsibilities:
     wakes the SSE hub lands with services/events.py — nothing listens yet.)
   - cancel_run(): mark cancelled, emit the run.finished event.
 
-Plain reads (list/get) live in routers/runs.py — thin CRUD stays in routers.
+The reads (list_runs / visible_run_or_404 / visible_events) live here too
+since the REST router and the MCP tools both need them.
 
 The agent (agent/*.py) is the CONSUMER: it claims queued rows
 (SELECT ... FOR UPDATE SKIP LOCKED), runs, and writes run_events + updates
@@ -20,12 +21,13 @@ agent must re-check status between units of work and abort when it reads
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
 from app.models import AgentRuns, Categories, Items, Listings, RunEvents, Sites, User, Watches
-from app.schemas.runs import AgentRun, RunEvent
+from app.schemas.common import PageMeta, Paginated
+from app.schemas.runs import AgentRun, RunEvent, RunListParams
 
 
 def build_agent_run(run: AgentRuns) -> AgentRun:
@@ -196,3 +198,72 @@ async def cancel_run(db: AsyncSession, run_id: int, viewer: User) -> AgentRuns:
     )
     await db.commit()
     return run
+
+
+# --- reads --------------------------------------------------------------------
+
+
+async def list_runs(db: AsyncSession, viewer: User, filters: RunListParams) -> Paginated[AgentRun]:
+    """The runs the viewer may see, newest first, paged."""
+    page = filters.page or 1
+    per_page = filters.per_page or 25
+
+    # per-user run privacy: own runs + system runs (user_id NULL); admins
+    # see everything. Same rule as run_visible, in SQL form because
+    # meta.total has to count post-filter in the database.
+    stmt = select(AgentRuns)
+    if viewer.role != "admin":
+        stmt = stmt.where(or_(AgentRuns.user_id.is_(None), AgentRuns.user_id == viewer.id))
+    if filters.status is not None:
+        stmt = stmt.where(AgentRuns.status == filters.status)
+    # handlers.ts ignores `scope`, but RunListParams sends it — honor the contract
+    if filters.scope is not None:
+        stmt = stmt.where(AgentRuns.scope == filters.scope)
+
+    total = (await db.execute(select(func.count()).select_from(stmt.subquery()))).scalar_one()
+
+    rows = (
+        (
+            await db.execute(
+                stmt.order_by(AgentRuns.created_at.desc(), AgentRuns.id.desc())
+                .offset((page - 1) * per_page)
+                .limit(per_page)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    return Paginated(
+        data=[build_agent_run(run) for run in rows],
+        meta=PageMeta(page=page, per_page=per_page, total=total),
+    )
+
+
+async def visible_run_or_404(db: AsyncSession, run_id: int, viewer: User) -> AgentRuns:
+    """The run row, or 404 — hidden ≡ nonexistent: another user's run 404s
+    exactly like an unknown id."""
+    run = await db.get(AgentRuns, run_id)
+    if run is None or not run_visible(run, viewer.id, viewer.role == "admin"):
+        raise err(404, "not_found", f"Run {run_id} does not exist")
+    return run
+
+
+async def visible_events(
+    db: AsyncSession, run: AgentRuns, viewer: User, after_seq: int = 0, limit: int = 500
+) -> list[RunEvent]:
+    """Up to `limit` events of a visible run that the viewer may see, in seq order."""
+    # filter-then-limit: up to `limit` VISIBLE events, so a filtered viewer
+    # always advances from their last visible seq (limit-then-filter could
+    # return [] forever once their events fall past the fetch window)
+    stmt = (
+        select(RunEvents)
+        .where(RunEvents.run_id == run.id)
+        .where(RunEvents.seq > after_seq)
+        .order_by(RunEvents.seq)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+    if viewer.role != "admin":
+        refs = await load_viewer_refs(db, viewer.id)
+        rows = [event for event in rows if event_visible(event, *refs)]
+    return [build_run_event(event) for event in rows[:limit]]

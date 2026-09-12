@@ -4,6 +4,9 @@ import type {
   AdminUser,
   AdminUserUpdateRequest,
   AgentRun,
+  ApiToken,
+  ApiTokenCreated,
+  ApiTokenCreateRequest,
   Category,
   CategoryCreateRequest,
   CategoryPriceChangeResponse,
@@ -89,6 +92,14 @@ export const deleteChannel = (id: number) =>
 
 export const testChannel = (id: number) =>
   api<void>(`/api/me/channels/${id}/test`, { method: 'POST' })
+
+export const listTokens = () => api<{ data: ApiToken[] }>('/api/me/tokens')
+
+export const createToken = (body: ApiTokenCreateRequest) =>
+  api<ApiTokenCreated>('/api/me/tokens', { method: 'POST', body })
+
+export const revokeToken = (id: number) =>
+  api<void>(`/api/me/tokens/${id}`, { method: 'DELETE' })
 
 // --- categories -------------------------------------------------------------
 

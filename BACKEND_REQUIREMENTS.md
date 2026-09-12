@@ -61,6 +61,16 @@ Frontend behavior you must support: on any 401 (except `/api/auth/*`) it calls
 **Registration**: open only while the instance has zero users; the first account gets
 `role='admin'` and registration closes. After that, accounts are created via admin invites.
 
+**API tokens (bearer)** — the second credential, for agents and scripts (§11). A user mints
+`snagr_pat_…` tokens in Settings → MCP & API; a request carrying `Authorization: Bearer <token>`
+is authenticated as that user with no cookie and no CSRF header (a browser can't be tricked into
+attaching an Authorization header). The header wins when both are present. Scopes: `read` (every
+GET, incl. the SSE stream), `write` (every other method), `runs` (trigger/cancel a run) — a
+missing scope is 403 `insufficient_scope`. Tokens act on the domain, never the account:
+`/api/auth/me`, `/api/me/*` and `/api/admin/*` answer 403 `forbidden` to a bearer caller. An
+unknown, expired or revoked token, a deactivated owner, or `MCP_ENABLED=false` is 401
+`unauthenticated`.
+
 ## 3. Schema changes (vs current `agent/config.py`)
 
 1. `users` — add `password_hash TEXT NOT NULL`, `role TEXT NOT NULL DEFAULT 'user'`
@@ -178,6 +188,9 @@ Known bugs to fix while you're in there:
 | 42 | DELETE | `/api/vision/references/{id}` | user | Soft-revoke a reference (204; re-revoking is a harmless no-op) |
 | 43 | POST | `/api/items/{id}/references/revoke-auto` | user | Revoke every live auto-promoted reference → `{revoked: n}` |
 | 44 | GET | `/api/vision/images/{key}` | user | Image bytes proxied from the vision sidecar — used by `<img src>`, deliberately not in `endpoints.ts` |
+| 45 | GET / POST | `/api/me/tokens` | user (cookie only) | List the caller's API tokens / create `{name, scopes, expires_in_days?}` → 201 `ApiTokenCreated` — the raw `token` rides in this one response only (§11) |
+| 46 | DELETE | `/api/me/tokens/{id}` | user (cookie only) | Revoke = delete (204); 404 unknown/foreign |
+| 47 | POST | `/api/mcp` | bearer | **MCP** Streamable-HTTP endpoint (§11) — deliberately not in `endpoints.ts`, like the SSE stream and the image proxy |
 
 `range` is one of `7d | 30d | 90d | 1y | all` (default `30d`). `points` is capped at 500.
 
@@ -611,3 +624,69 @@ the design decisions are in `VISUAL_AUTHENTICITY_PLAN_PROMPT.md` (D-V1…D-V12).
   item the viewer watches, or a capture of the viewer's own, or the viewer is admin.
 - **Deletion:** deleting an item deletes its entire library (references, captures, stored
   bytes); the item-delete confirmation copy must say so.
+
+## 11. MCP layer (agent access)
+
+Snagr exposes itself to agents — Claude Code, Hermes, OpenClaw, anything that speaks the
+**Model Context Protocol** — as a first-class surface, not a bolt-on: the tools run the same
+service code and return the same shapes as the REST API, so an agent sees exactly what the UI
+sees and nothing more. Decisions locked 2026-09-01/11.
+
+- **Where it lives.** Inside the backend at `POST /api/mcp` (Streamable HTTP, stateless, JSON
+  responses), built on `fastmcp` (pinned). Not a fifth component: tools call the same services
+  and DB session the routers do, so per-user visibility (§7, §10) and validation come for free.
+  The frontend nginx already proxies `/api`. Code lives in `app/mcp/` — `server.py` (the
+  `FastMCP` instance, the bearer verifier, the app factory) and `tools/<section>.py` mirroring
+  `routers/`. The app is registered as an exact-path route (`app.add_route("/api/mcp", …)`), not
+  a mount — a mount 307-redirects to a trailing slash, which not every client follows.
+- **Kill switch.** `MCP_ENABLED` (default `true`) gates the endpoint, bearer auth on REST, and —
+  via `InstanceInfo.mcp_enabled` — the Settings tab.
+
+### Personal access tokens (endpoints 45–46)
+
+- **`api_tokens`** — `id PK, user_id FK users ON DELETE CASCADE (index), name TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL` (sha256 of the raw token — the `sessions.refresh_hash`
+  scheme), `scopes JSONB NOT NULL` (list, canonical order `read, write, runs`), `expires_at
+  timestamptz NULL` (null = never), `last_used_at timestamptz NULL` (stamped at most once a
+  minute so reads don't turn into writes), `created_at`. Revoke = hard delete.
+- **Format** `snagr_pat_` + 43 url-safe chars, returned once in `ApiTokenCreated.token`.
+- **Shapes** (`types.ts`): `ApiTokenScope`, `ApiToken`, `ApiTokenCreated`, `ApiTokenCreateRequest`
+  — `name` 1–64 chars, `scopes` a non-empty subset, `expires_in_days` ≥ 1 or null; violations are
+  422 `validation_error` with a `fields` map (`name` / `scopes` / `expires_in_days`).
+- **Settings → MCP & API** (`/settings/api`, one of three tabs with General and the admin-only
+  Users): the MCP URL (`<origin>/api/mcp`), per-client config snippets (Claude Code CLI, generic
+  `mcpServers` JSON, Hermes `~/.hermes/config.yaml`, OpenClaw `~/.openclaw/openclaw.json`, curl),
+  the token table (name · scopes · last used · expires · revoke) and the create dialog — name,
+  an access preset (Read only → `[read]`, Read & write → `[read, write]`, Full → all three), an
+  expiry preset (never / 30 d / 90 d / 1 y) — whose success panel shows the raw token once
+  together with the snippets filled in.
+
+### The MCP endpoint (47)
+
+- **Auth:** bearer only — cookies are ignored, so the CSRF header is irrelevant and a browser can
+  never be tricked into calling it. No/invalid token → 401 with a `WWW-Authenticate: Bearer`
+  challenge. The verifier is `services/tokens.authenticate_token`, the same lookup REST uses.
+- **Same shapes as REST.** Tool return types are the existing Pydantic schemas, published as
+  structured output; prices stay decimal strings, timestamps ISO-8601. An `ApiError` raised
+  inside a tool becomes an MCP tool error whose text is the `{"error": {code, message, fields?}}`
+  envelope — an agent reads `validation_error` exactly as the frontend does.
+- **Scopes hide tools.** A tool gated on a scope the token lacks is absent from `tools/list`
+  (and "unknown" if called) — a read-only token simply never sees `create_item`.
+- **One tool per intent.** `update_category` takes `name` and `site_ids` together (REST splits
+  PATCH + PUT sites); `update_item` takes the item fields and the watch's `notify` flag together.
+  Category arguments accept an id **or slug**, site arguments an id **or name** (ambiguous → 422
+  listing the candidates; unknown → 404 like REST).
+- **Annotations + gating.** Read tools carry `readOnlyHint`, deletes `destructiveHint`; vision
+  tools are tagged `vision` and disabled unless `vision_enabled`. Tool docstrings are the prompt
+  the agent reads — same bar as `agent/tools.py`.
+- **Tools** (scope): `get_instance` `whoami` `list_categories` `list_sites` `list_items` `get_item`
+  `list_listings` (cross-item, the one query REST lacks) `list_price_checks` `get_price_history`
+  `get_price_summary` `get_dashboard_stats` `get_price_drops` `get_category_price_change`
+  `list_runs` `get_run` `list_review_queue` `list_references` (read); `create_category`
+  `update_category` `delete_category` `create_site` `update_site` `delete_site` `create_item`
+  `update_item` `delete_item` `update_listing` `confirm_review_entry` `discard_review_entry`
+  `revoke_reference` (write); `trigger_run` `cancel_run` (runs). Deliberately absent: admin
+  users/invites, password/email changes, token management, reference image upload.
+- **Later, separately:** an OAuth 2.1 authorization server + consent page (claude.ai / Claude
+  Desktop connectors can't send a static header), optionally delegated to the instance's OIDC
+  provider; both need a `PUBLIC_URL` setting for the discovery documents.
