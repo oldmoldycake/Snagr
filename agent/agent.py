@@ -13,6 +13,8 @@ A run must never be left 'running' by a process that is no longer driving
 it: while alive it heartbeats (agent_runs.heartbeat_at), a shutdown signal
 arrives as task cancellation and the row is failed on the way out, and every
 tick first reaps runs whose heartbeat went silent (a crash, an OOM kill).
+Each unit is also bounded — a step cap and a wall-clock cap — so one looping
+LLM stream can't hold a run open indefinitely.
 """
 
 import asyncio
@@ -23,6 +25,8 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 
 from config import (
+    AGENT_MAX_STEPS,
+    AGENT_UNIT_TIMEOUT_SECONDS,
     AI_API_KEY,
     AI_MODEL,
     AI_PROVIDER,
@@ -90,12 +94,17 @@ def agent_config(session_id: str, user_id: int) -> dict:
     can be broken down per user. Langfuse reads the `langfuse_*` metadata keys;
     the unprefixed copies are what LangSmith filters on.
 
+    recursion_limit caps one unit's graph steps: create_agent's own default is
+    effectively unlimited, and a per-call value overrides it. A unit that hits
+    the cap raises and fails like any other unit.
+
     Args:
       session_id: Identifier for the whole job run, shared by every call.
       user_id: Owner of the watch this call is working on.
     """
     return {
         "callbacks": callbacks,
+        "recursion_limit": AGENT_MAX_STEPS,
         "metadata": {
             "session_id": session_id,
             "user_id": str(user_id),
@@ -252,6 +261,20 @@ async def scan_pair(
     _require_browser_success(final.get("messages", []))
 
 
+async def _bounded(unit) -> None:
+    """
+    Run one unit under the wall-clock budget. A unit that outlives it is
+    cancelled — which is what actually stops the LLM stream — and fails with
+    a message the run's events can show; asyncio's TimeoutError carries none
+    of its own.
+    """
+    try:
+        async with asyncio.timeout(AGENT_UNIT_TIMEOUT_SECONDS):
+            await unit
+    except TimeoutError:
+        raise RuntimeError(f"unit exceeded the {AGENT_UNIT_TIMEOUT_SECONDS}s budget") from None
+
+
 async def execute_run(run: dict) -> dict | None:
     """
     Execute a claimed run: the two scrape passes, limited to the run's scope,
@@ -299,7 +322,7 @@ async def execute_run(run: dict) -> dict | None:
 
             units += 1
             try:
-                await recheck_listing(recheck_agent, session_id, row)
+                await _bounded(recheck_listing(recheck_agent, session_id, row))
                 current_listing_urls.append(row["listing_url"])
                 log.info(f"Finished recheck for listing {row['listing_id']}")
             except Exception as e:
@@ -351,8 +374,10 @@ async def execute_run(run: dict) -> dict | None:
             )
             units += 1
             try:
-                await scan_pair(
-                    scan_agent, session_id, row, current_listing_urls, markets[item_id], tracked
+                await _bounded(
+                    scan_pair(
+                        scan_agent, session_id, row, current_listing_urls, markets[item_id], tracked
+                    )
                 )
                 log.info(f"Finished {row['item_name']} on site {row['site_name']}")
             except Exception as e:

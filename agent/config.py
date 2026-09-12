@@ -38,6 +38,12 @@ MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_R
 # block every enqueue (409 run_in_progress) and every schedule forever.
 RUN_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("RUN_HEARTBEAT_INTERVAL_SECONDS", "30"))
 RUN_STALE_AFTER_SECONDS = int(os.getenv("RUN_STALE_AFTER_SECONDS", "300"))
+# Per-unit budgets. One unit is one LLM stream (a listing recheck or a site
+# scan); a model looping on a blocked page is otherwise bounded only by
+# prompt text. Tripping either cap fails that unit and the run moves on.
+# Steps are graph steps — roughly two per tool call.
+AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "200"))
+AGENT_UNIT_TIMEOUT_SECONDS = int(os.getenv("AGENT_UNIT_TIMEOUT_SECONDS", "900"))
 
 # Target-hit notifications need no delivery config here: the agent only
 # queues notification_outbox rows — the backend's dispatcher owns delivery

@@ -460,6 +460,28 @@ class TestShutdown:
         assert seen["finishes"] == [(7, "failed", None, "Agent shut down mid-run")]
 
 
+class TestUnitBudgets:
+    def test_a_unit_past_the_wall_clock_budget_fails_and_the_run_continues(self, monkeypatch):
+        monkeypatch.setattr(agent, "AGENT_UNIT_TIMEOUT_SECONDS", 0.01)
+        seen = wire(
+            monkeypatch,
+            claim=run_row(run_id=7),
+            listings=[listing_row(1), listing_row(2)],
+            slow_recheck={1},
+        )
+        asyncio.run(agent.consume())
+        assert seen["recheck_units"] == [2]
+        assert [e for e in seen["events"] if e[0] == "error"] == [
+            ("error", "error", "Recheck failed for listing 1: unit exceeded the 0.01s budget")
+        ]
+        ((_, status, stats, _),) = seen["finishes"]
+        assert status == "succeeded"
+        assert stats["errors"] == 1
+
+    def test_the_step_cap_rides_on_every_units_config(self):
+        assert agent.agent_config("session", 1)["recursion_limit"] == agent.AGENT_MAX_STEPS
+
+
 class TestStatsTally:
     def test_a_stale_tally_never_leaks_into_a_new_run(self, monkeypatch):
         tools.run_stats.update(
