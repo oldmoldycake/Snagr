@@ -10,6 +10,7 @@ succeeds — stored verdicts catch up on the next successful rescore or scan.
 Routers schedule it via BackgroundTasks AFTER the commit.
 """
 
+import asyncio
 import logging
 
 import httpx
@@ -42,6 +43,26 @@ log = logging.getLogger(__name__)
 SIDECAR_TIMEOUT_SECONDS = 30
 UPLOAD_TIMEOUT_SECONDS = 120  # embedding a fresh upload includes model inference
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def require_vision() -> None:
+    """503 vision_unavailable for anything that needs the sidecar while it is
+    unconfigured (D-V9) — every mutation, from the router or an MCP tool."""
+    if not settings.vision_enabled:
+        raise err(503, "vision_unavailable", "The vision sidecar is not configured")
+
+
+_rescores: set[asyncio.Task] = set()
+
+
+def schedule_rescore(item_id: int) -> None:
+    """fire_rescore without waiting for it — the MCP tools' twin of the
+    routers' BackgroundTasks.add_task(fire_rescore, …): the mutation is
+    committed, the sidecar catches up. The set keeps each task referenced
+    until it finishes, so the loop can't drop it mid-flight."""
+    task = asyncio.create_task(fire_rescore(item_id))
+    _rescores.add(task)
+    task.add_done_callback(_rescores.discard)
 
 
 async def fire_rescore(item_id: int) -> None:

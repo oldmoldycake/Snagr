@@ -8,26 +8,39 @@ everything here is scoped to one user's watches. The REST router and the MCP
 tools are the two callers and must agree — which is why the serializers live
 here rather than in either of them.
 
-Reads live here: build_item_summary, load_listings / listing_out,
-watch_or_404, list_items, get_item_detail, list_listings, list_price_checks.
-The writes (create/update/delete, the watch toggle, the listing toggle) still
-sit in routers/items.py and move here with the MCP write tools.
+Reads: build_item_summary, load_listings / listing_out, watch_or_404,
+list_items, get_item_detail, list_listings, list_price_checks.
+Writes: create_item, update_item, delete_item, update_watch, update_listing.
 """
 
-from sqlalchemy import func, select
+from decimal import Decimal
+
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
-from app.models import Categories, Items, Listings, PriceChecks, Sites, Watches, WatchSites
+from app.models import (
+    Categories,
+    Items,
+    ListingChecks,
+    Listings,
+    PriceChecks,
+    Sites,
+    Watches,
+    WatchSites,
+)
 from app.schemas.common import PageMeta, Paginated
 from app.schemas.items import (
+    ItemCreateRequest,
     ItemDetail,
     ItemListParams,
     ItemSummary,
+    ItemUpdateRequest,
     Listing,
     ListingRow,
     PriceCheck,
     Watch,
+    WatchUpdateRequest,
 )
 from app.schemas.vision import AuthenticityRead
 from app.services.aggregates import item_rollups
@@ -334,3 +347,152 @@ async def list_price_checks(
         )
         for row in (await db.execute(stmt)).all()
     ]
+
+
+# --- writes -------------------------------------------------------------------
+
+
+async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -> ItemSummary:
+    """Find-or-create the shared items row, create the caller's watch, insert
+    the watch_sites subset. Commits.
+
+    The contract's 404 for an unknown category and the 422s (selection_mode,
+    max_listings 1-10, site_ids ⊆ the category's sites) are not enforced yet —
+    an unknown category surfaces as the FK violation's 503.
+    """
+    stmt = select(Items).where(Items.name == body.name).where(Items.category_id == body.category_id)
+    item = (await db.execute(stmt)).scalar_one_or_none()
+
+    if item is None:
+        item = Items(name=body.name, category_id=body.category_id)
+        db.add(item)
+        await db.flush()
+        await db.refresh(item)
+
+    watch = Watches(
+        user_id=user_id,
+        item_id=item.id,
+        target_price=Decimal(body.target_price) if body.target_price is not None else None,
+        criteria=body.criteria,
+        max_listings=body.max_listings,
+        selection_mode=body.selection_mode,
+        allow_reproductions=body.allow_reproductions,
+    )
+    db.add(watch)
+    await db.flush()
+    await db.refresh(watch)
+
+    for site_id in body.site_ids or []:
+        watch_sites = WatchSites(watch_id=watch.id, site_id=site_id)
+        db.add(watch_sites)
+        await db.flush()
+        await db.refresh(watch_sites)
+
+    await db.commit()
+
+    category = await db.get(Categories, item.category_id)
+    return await build_item_summary(watch, item, category, db)
+
+
+async def update_item(
+    db: AsyncSession, user_id: int, item_id: int, body: ItemUpdateRequest
+) -> ItemDetail:
+    """Write item fields to items and watch fields to the caller's watch;
+    404 when unwatched. Only fields that are not null change (a JSON null
+    can't clear anything); site_ids is accepted but not applied yet. Commits."""
+    stmt = (
+        select(Items, Watches, Categories)
+        .join(Watches, Items.id == Watches.item_id)
+        .join(Categories, Categories.id == Items.category_id)
+        .where(Items.id == item_id)
+        .where(Watches.user_id == user_id)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        raise err(404, "not_found", f"Item {item_id} does not exist")
+
+    item, watch, category = row
+    if body.name is not None:
+        item.name = body.name
+    if body.target_price is not None:
+        watch.target_price = Decimal(body.target_price)
+    if body.criteria is not None:
+        watch.criteria = body.criteria
+    if body.selection_mode is not None:
+        watch.selection_mode = body.selection_mode
+    if body.max_listings is not None:
+        watch.max_listings = body.max_listings
+    if body.allow_reproductions is not None:
+        watch.allow_reproductions = body.allow_reproductions
+
+    await db.commit()
+    summary = await build_item_summary(watch, item, category, db)
+    return ItemDetail(**summary.model_dump(), listings=await load_listings(db, watch))
+
+
+async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
+    """Remove the caller's watch and everything hanging off it (listings,
+    checks, site subset); the shared items row stays for other watchers.
+    404 when unwatched. Commits."""
+    watch = (
+        await db.execute(
+            select(Watches).where(Watches.item_id == item_id, Watches.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if watch is None:
+        raise err(404, "not_found", f"Item {item_id} does not exist")
+    listing_ids = select(Listings.id).where(Listings.watch_id == watch.id)
+
+    await db.execute(delete(ListingChecks).where(ListingChecks.watch_id == watch.id))
+    await db.execute(delete(PriceChecks).where(PriceChecks.listing_id.in_(listing_ids)))
+    await db.execute(delete(Listings).where(Listings.watch_id == watch.id))
+    await db.execute(delete(WatchSites).where(WatchSites.watch_id == watch.id))
+    await db.execute(delete(Watches).where(Watches.id == watch.id))
+
+    await db.commit()
+
+
+async def update_watch(
+    db: AsyncSession, user_id: int, item_id: int, body: WatchUpdateRequest
+) -> Watch:
+    """The notify toggle and the per-user target override; 404 when unwatched. Commits."""
+    stmt = select(Watches).where(Watches.item_id == item_id).where(Watches.user_id == user_id)
+    # scalar_one_or_none() -> the Watches ENTITY (tracked), not a Row
+    watch = (await db.execute(stmt)).scalar_one_or_none()
+    if watch is None:
+        raise err(404, "not_found", f"Watch for item {item_id} does not exist")
+
+    if body.notify is not None:
+        watch.notify = body.notify
+    if body.target_price is not None:
+        watch.target_price = Decimal(body.target_price)
+
+    await db.commit()
+    return Watch(
+        id=watch.id,
+        notify=watch.notify,
+        target_price=str(watch.target_price) if watch.target_price is not None else None,
+    )
+
+
+async def update_listing(db: AsyncSession, user_id: int, listing_id: int, active: bool) -> Listing:
+    """Stop tracking (or resume) one of the caller's listings; 404 for
+    another user's listing, like a missing one. Commits."""
+    listing = (
+        await db.execute(
+            select(Listings)
+            .join(Watches, Watches.id == Listings.watch_id)
+            .where(Listings.id == listing_id, Watches.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if listing is None:
+        raise err(404, "not_found", f"Listing {listing_id} does not exist")
+
+    listing.active = active
+    await db.commit()
+
+    site_name = (
+        await db.execute(select(Sites.name).where(Sites.id == listing.site_id))
+    ).scalar_one_or_none()
+    authenticity = await authenticity_for_listings(db, listing.watch_id, [listing.url])
+    return await listing_out(db, listing, site_name, authenticity)

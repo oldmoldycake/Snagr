@@ -42,11 +42,6 @@ from app.services import vision as vision_service
 router = APIRouter(prefix="/api", tags=["vision"], dependencies=[Depends(csrf_guard)])
 
 
-def _require_vision() -> None:
-    if not settings.vision_enabled:
-        raise err(503, "vision_unavailable", "The vision sidecar is not configured")
-
-
 @router.get("/vision/review-queue", response_model=Paginated[ReviewQueueEntry])
 async def list_review_queue(
     item_id: int | None = None,
@@ -70,7 +65,7 @@ async def confirm_review_entry(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     reference = await vision_service.confirm_review_entry(db, user, entry_id, body)
     # after the commit, on purpose: the confirmation stands even if the
     # rescore can't reach the sidecar (see services/vision.py)
@@ -85,7 +80,7 @@ async def discard_review_entry(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     item_id = await vision_service.discard_review_entry(db, user, entry_id)
     background.add_task(vision_service.fire_rescore, item_id)
 
@@ -111,7 +106,7 @@ async def upload_reference(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     await vision_service.require_watched_item(db, user, item_id)
     if label not in ("real", "fake"):
         raise err(
@@ -164,7 +159,7 @@ async def revoke_reference(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     item_id, changed = await vision_service.revoke_reference(db, user, ref_id)
     if changed:
         background.add_task(vision_service.fire_rescore, item_id)
@@ -177,7 +172,7 @@ async def revoke_auto_references(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    _require_vision()
+    vision_service.require_vision()
     revoked = await vision_service.revoke_auto_references(db, user, item_id)
     if revoked:
         background.add_task(vision_service.fire_rescore, item_id)
@@ -192,7 +187,7 @@ async def get_image(
     object store (D-V3). Entitlement: the key backs a live reference of an
     item the viewer watches, or one of the viewer's own captures, or the
     viewer is admin; anything else 404s like an unknown key."""
-    _require_vision()
+    vision_service.require_vision()
     if user.role != "admin":
         own_capture = (
             select(VisionListingImages.id)
