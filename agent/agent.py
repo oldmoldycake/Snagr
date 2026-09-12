@@ -8,11 +8,19 @@ both passes to the claimed run's scope. Progress lands in run_events,
 totals in agent_runs.stats, and cancellation is cooperative — the run's
 status is re-checked between units of work because the API's cancel only
 flips the row, and bailing early is what stops mid-run LLM token burn.
+
+A run must never be left 'running' by a process that is no longer driving
+it: while alive it heartbeats (agent_runs.heartbeat_at), a shutdown signal
+arrives as task cancellation and the row is failed on the way out, and every
+tick first reaps runs whose heartbeat went silent (a crash, an OOM kill).
 """
 
+import asyncio
+import contextlib
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from config import (
     AI_API_KEY,
@@ -21,10 +29,13 @@ from config import (
     AI_URL,
     LANGFUSE_ENABLED,
     PLAYWRIGHT_MCP_URL,
+    RUN_HEARTBEAT_INTERVAL_SECONDS,
+    RUN_STALE_AFTER_SECONDS,
     VISION_SIDECAR_URL,
 )
 from database import (
     append_run_event,
+    beat_run,
     claim_due_schedule,
     claim_queued_run,
     create_global_run,
@@ -35,6 +46,7 @@ from database import (
     get_market_price,
     get_run_status,
     get_watched_item_list,
+    reap_stale_runs,
 )
 from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
@@ -365,17 +377,36 @@ async def execute_run(run: dict) -> dict | None:
     return stats
 
 
+async def _heartbeat(run_id: int) -> None:
+    """Stamp the run's heartbeat every RUN_HEARTBEAT_INTERVAL_SECONDS until
+    cancelled — what keeps reap_stale_runs off a run that is merely slow.
+    The claim already stamped the first beat, hence sleep-then-beat."""
+    while True:
+        await asyncio.sleep(RUN_HEARTBEAT_INTERVAL_SECONDS)
+        await beat_run(run_id)
+
+
 async def _drive(run_row: dict) -> None:
     """
     Execute a run and own its terminal write — main.py's catch only logs, so
-    an agent_runs row must never leave here still 'running'.
+    an agent_runs row must never leave here still 'running'. That includes a
+    shutdown: SIGTERM/SIGINT arrive as cancellation (see main.py), and the row
+    is failed on the way out rather than left for the reaper to find.
     """
+    run_id = run_row["id"]
+    heartbeat = asyncio.create_task(_heartbeat(run_id))
     try:
         stats = await execute_run(run_row)
+    except asyncio.CancelledError:
+        await finish_run(run_id, "failed", error="Agent shut down mid-run")
+        raise
     except Exception as e:
-        await finish_run(run_row["id"], "failed", error=str(e))
+        await finish_run(run_id, "failed", error=str(e))
         raise
     finally:
+        heartbeat.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat
         # Langfuse queues events on a background thread; flush before this
         # batch job exits or the tail of the run's traces is silently dropped.
         if LANGFUSE_ENABLED:
@@ -383,7 +414,15 @@ async def _drive(run_row: dict) -> None:
 
     # stats None = cancelled: the API already wrote the terminal state
     if stats is not None:
-        await finish_run(run_row["id"], "succeeded", stats=stats)
+        await finish_run(run_id, "succeeded", stats=stats)
+
+
+async def _reap() -> None:
+    """Fail runs whose driver died, before claiming any new work — the only
+    place a wedged row is ever noticed."""
+    reaped = await reap_stale_runs(timedelta(seconds=RUN_STALE_AFTER_SECONDS))
+    if reaped:
+        log.warning(f"Reaped stale runs: {reaped}")
 
 
 async def run() -> None:
@@ -394,16 +433,18 @@ async def run() -> None:
     conditional skip here would let one stale 'running' row silently stop
     every future sweep.
     """
+    await _reap()
     await _drive(await create_global_run())
 
 
 async def consume() -> None:
     """
-    One run-queue tick: claim the oldest queued run — user clicks beat
-    schedules — else fire the most-overdue due run_schedules row as a fresh
-    run; exit immediately when neither exists. Cron this every minute so
-    UI-triggered runs start promptly and schedules fire on time.
+    One run-queue tick: reap dead runs, then claim the oldest queued run —
+    user clicks beat schedules — else fire the most-overdue due run_schedules
+    row as a fresh run; exit immediately when neither exists. Cron this every
+    minute so UI-triggered runs start promptly and schedules fire on time.
     """
+    await _reap()
     claimed = await claim_queued_run()
     if claimed is None:
         claimed = await claim_due_schedule()

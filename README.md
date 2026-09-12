@@ -89,7 +89,7 @@ docker compose up --build   # frontend :8081, backend :8000, agent run-queue tic
 
 The compose `agent` service also loads `agent/.env.docker` (gitignored, no example file yet): `agent/.env` is written for host-side runs with `localhost` URLs, and the overlay re-points `DATABASE_URL` and `PLAYWRIGHT_MCP_URL` at hosts the container can reach (add `VISION_SIDECAR_URL=http://vision:8100` there if you use the vision profile). Create it before step 3 or compose refuses to start. Postgres and the Playwright MCP stay external.
 
-The agent ticker checks the run queue every minute — that's what makes UI-triggered runs actually execute — and refreshes stale market prices every 15th tick. For a cron-driven deployment instead, `agent/.env.example` lists the equivalent crontab lines (`main.py` nightly, `--consume` every minute, `--ground-only` every 15).
+The agent ticker checks the run queue every minute — that's what makes UI-triggered runs actually execute — and refreshes stale market prices every 15th tick. It also fails any run whose agent process died (no heartbeat for five minutes), so a crash never leaves the Run button stuck on "a run is already active". For a cron-driven deployment instead, `agent/.env.example` lists the equivalent crontab lines (`main.py` nightly, `--consume` every minute, `--ground-only` every 15).
 
 The frontend also runs fully standalone on a mock API seeded with a year of price history (`VITE_USE_MOCKS=true npm run dev` in `frontend/`, sign in with `demo@snagr.dev` / `snagr`) — see [frontend/README.md](frontend/README.md). Backend architecture is documented file-by-file in [backend/STRUCTURE.md](backend/STRUCTURE.md).
 

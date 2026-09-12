@@ -7,7 +7,7 @@ not the LLM."""
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import tools
@@ -53,9 +53,11 @@ def wire(
     statuses=None,
     fail_recheck=(),
     fail_scan=(),
+    slow_recheck=(),
     ground_raises=False,
     build_raises=False,
     tracked=None,
+    reaped=(),
 ):
     """Point every seam at in-memory fakes; returns what the fakes saw.
 
@@ -63,7 +65,9 @@ def wire(
     (default: forever "running"). `tracked` is the fake active-listing count
     per watch_id (default 0 — every slot open); a successful fake scan fills
     one slot, the way a real save would. Successful fake units bump
-    tools.run_stats the way the real DB tools would.
+    tools.run_stats the way the real DB tools would. `slow_recheck` units
+    sleep 0.2s first — long enough to be cancelled or timed out under a
+    tiny budget. `sequence` records the order of reap/claim/create calls.
     """
     seen = {
         "created": [],
@@ -76,10 +80,14 @@ def wire(
         "grounded": [],
         "built": [],
         "schedule_claims": [],
+        "beats": [],
+        "reaps": [],
+        "sequence": [],
     }
     status_script = list(statuses or ["running"])
 
     async def fake_claim():
+        seen["sequence"].append("claim")
         return dict(claim) if claim else None
 
     async def fake_claim_schedule():
@@ -88,7 +96,17 @@ def wire(
 
     async def fake_create_global():
         seen["created"].append(True)
+        seen["sequence"].append("create")
         return run_row()
+
+    async def fake_reap(stale_after):
+        seen["reaps"].append(stale_after)
+        seen["sequence"].append("reap")
+        return list(reaped)
+
+    async def fake_beat(run_id):
+        seen["beats"].append(run_id)
+        return True
 
     async def fake_status(run_id):
         return status_script.pop(0) if len(status_script) > 1 else status_script[0]
@@ -127,6 +145,8 @@ def wire(
     async def fake_recheck(pass_agent, session_id, row):
         if row["listing_id"] in fail_recheck:
             raise RuntimeError("timeout")
+        if row["listing_id"] in slow_recheck:
+            await asyncio.sleep(0.2)
         seen["recheck_units"].append(row["listing_id"])
         tools.run_stats["listings_checked"] += 1
         tools.run_stats["prices_found"] += 1
@@ -158,6 +178,8 @@ def wire(
     monkeypatch.setattr(agent, "get_active_listing_count", fake_count)
     monkeypatch.setattr(agent, "recheck_listing", fake_recheck)
     monkeypatch.setattr(agent, "scan_pair", fake_scan)
+    monkeypatch.setattr(agent, "reap_stale_runs", fake_reap)
+    monkeypatch.setattr(agent, "beat_run", fake_beat)
     return seen
 
 
@@ -384,6 +406,58 @@ class TestProgressEvents:
         assert [e[1] for e in seen["events"][1:]] == ["item_started", "item_started"]
         # the terminal run_finished event belongs to finish_run, not execute_run
         assert "run_finished" not in [e[1] for e in seen["events"]]
+
+
+class TestStaleRunReaper:
+    def test_a_consume_tick_reaps_before_it_claims(self, monkeypatch):
+        seen = wire(monkeypatch, claim=run_row(), reaped=[3])
+        asyncio.run(agent.consume())
+        assert seen["sequence"][:2] == ["reap", "claim"]
+        assert seen["reaps"] == [timedelta(seconds=agent.RUN_STALE_AFTER_SECONDS)]
+
+    def test_the_nightly_sweep_reaps_first_too(self, monkeypatch):
+        seen = wire(monkeypatch)
+        asyncio.run(agent.run())
+        assert seen["sequence"][:2] == ["reap", "create"]
+
+
+class TestHeartbeat:
+    def test_a_running_run_beats_on_the_interval(self, monkeypatch):
+        monkeypatch.setattr(agent, "RUN_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+        seen = wire(
+            monkeypatch, claim=run_row(run_id=7), listings=[listing_row(1)], slow_recheck={1}
+        )
+        asyncio.run(agent.consume())
+        assert seen["beats"] and set(seen["beats"]) == {7}
+
+    def test_the_heartbeat_stops_when_the_drive_ends(self, monkeypatch):
+        wire(monkeypatch)
+
+        async def scenario():
+            before = asyncio.all_tasks()
+            await agent._drive(run_row(run_id=7))
+            return asyncio.all_tasks() - before
+
+        assert asyncio.run(scenario()) == set()
+
+
+class TestShutdown:
+    def test_cancellation_fails_the_run_then_keeps_unwinding(self, monkeypatch):
+        # main.py turns SIGTERM/SIGINT into cancellation of the job task
+        seen = wire(
+            monkeypatch, claim=run_row(run_id=7), listings=[listing_row(1)], slow_recheck={1}
+        )
+
+        async def scenario():
+            task = asyncio.create_task(agent.consume())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            await task
+
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(scenario())
+        assert seen["recheck_units"] == []
+        assert seen["finishes"] == [(7, "failed", None, "Agent shut down mid-run")]
 
 
 class TestStatsTally:
