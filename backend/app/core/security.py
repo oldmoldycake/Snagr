@@ -89,7 +89,14 @@ def new_api_token() -> tuple[str, str]:
 
 
 def hash_api_token(raw: str) -> str:
-    """sha256 of a raw API token — the lookup key into api_tokens.token_hash."""
+    """sha256 of a raw API token — the lookup key into api_tokens.token_hash.
+
+    A fast hash is the right one here: the token is 256 random bits, not a
+    guessable password, and every request finds its row by this digest — the
+    scheme sessions.refresh_hash already uses. CodeQL reads the
+    API_TOKEN_PREFIX literal as a password and wants a slow KDF, which would
+    add ~50 ms to every API call for nothing; hence the suppression."""
+    # codeql[py/weak-sensitive-data-hashing]
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
