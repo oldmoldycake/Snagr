@@ -269,6 +269,10 @@ class AgentRuns(Base):
         Text, default="queued"
     )  # queued|running|succeeded|failed|cancelled
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # stamped by the agent while it drives the run; its stale-run reaper fails
+    # a 'running' row silent for too long, which would otherwise block every
+    # enqueue (409 run_in_progress) forever. Agent-internal, not in the contract.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     stats: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
