@@ -6,8 +6,8 @@ import { cn } from '@/lib/cn'
 import { CreateCategoryDialog } from './CreateCategoryDialog'
 
 /**
- * Category filter line — the sidebar's replacement. "All" is the dashboard;
- * a chip is its category page, so the filter state is just the URL.
+ * The app's only category navigation — there is no sidebar. "All" is the
+ * dashboard; a chip is its category page, so the filter state is just the URL.
  */
 export function CategoryChips({ activeSlug, className }: { activeSlug?: string; className?: string }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })

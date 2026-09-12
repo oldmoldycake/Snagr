@@ -95,7 +95,8 @@ export function AgentTicker({ className }: { className?: string }) {
           </>
         ) : (
           <>
-            {/* Stats live in the hero's pulse line now — one bar, one job. */}
+            {/* Stats belong to the hero's pulse line — one bar, one job, so no
+                per-run counts here (the dashboard's "once only" rule). */}
             <span aria-hidden className="text-drop">
               ✓
             </span>{' '}

@@ -1,7 +1,8 @@
 /**
  * Single source of truth for chart colors — mirrors the CSS tokens in
- * globals.css. Recharts needs literal values, not CSS variables, for some
- * props, so they're duplicated here on purpose.
+ * globals.css, which stays the token source: change both together. The hand-
+ * rolled SVG charts and Recharts (CategoryChangeChart) both need literal
+ * values in attributes/props, not CSS variables, so they're duplicated here.
  */
 
 export const chart = {

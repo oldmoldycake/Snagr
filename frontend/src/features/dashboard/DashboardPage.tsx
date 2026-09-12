@@ -46,7 +46,8 @@ export function DashboardPage() {
   const dropsByItem = useMemo(() => {
     const map = new Map<number, PriceDrop>()
     for (const drop of drops.data?.data ?? []) {
-      if (!map.has(drop.item_id)) map.set(drop.item_id, drop) // newest first
+      // the endpoint returns drops newest-first, so the first per item wins
+      if (!map.has(drop.item_id)) map.set(drop.item_id, drop)
     }
     return map
   }, [drops.data])
