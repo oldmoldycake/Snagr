@@ -97,7 +97,8 @@ async def listing_latest_check(
     Returns (price, in_stock, status, checked_at) — all None-safe, price as a
     decimal string and checked_at as ISO-8601.
 
-    NOTE: 2 queries per listing (N+1). Folds into services/aggregates.py in Pass 2.
+    NOTE: 2 queries per listing (N+1) — acceptable at household listing counts;
+    batch it through services/aggregates.py if that stops being true.
     """
     priced_stmt = (
         select(PriceChecks.price, PriceChecks.in_stock)
@@ -195,7 +196,6 @@ async def list_items(
     page = filters.page or 1
     per_page = filters.per_page or 50
 
-    # the caller's watches, joined to the shared item + its category
     stmt = (
         select(Watches, Items, Categories)
         .join(Items, Items.id == Watches.item_id)

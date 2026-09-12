@@ -9,7 +9,8 @@ a rescore re-runs suggestions but never promotion (D-V8 boundary).
 
 from scoring import ImageScore
 
-# An image enters the review queue when its confidence clears this.
+# Confidence must clear this on either side to enter the review queue —
+# fake_confidence >= it for fake, <= its complement for real.
 SUGGEST_THRESHOLD = 0.80
 # Real suggestions additionally need a strong absolute match — weak
 # reassurance must not grow the real cluster (D-V5 asymmetry).
@@ -61,6 +62,8 @@ def auto_promotable(
         return False
     if score.fake_confidence is None:
         return False
+    # Guardrail 2: the owner's own promotion threshold (D-V9), which defaults
+    # stricter (0.90) than the suggestion threshold that got it here.
     if label == "fake":
         confidence, threshold = score.fake_confidence, auto_promote_fake
     else:

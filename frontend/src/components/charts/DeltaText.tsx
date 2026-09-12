@@ -1,8 +1,9 @@
 import { cn } from '@/lib/cn'
 
 /**
- * Signed change with direction glyph. For prices, down is good (green).
- * `polarity="neutral"` renders plain ink for metrics with no goodness axis.
+ * Signed change with direction glyph. `polarity` picks which sign is good:
+ * 'price' — down is good (green); 'growth' — up is good; 'neutral' — plain
+ * ink for metrics with no goodness axis.
  */
 export function DeltaText({
   value,

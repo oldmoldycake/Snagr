@@ -1,7 +1,11 @@
 """Sync SQLAlchemy setup and the sidecar's column-compatible subset of the
 canonical schema (backend/app/models.py owns it, decision D1): the three
 vision_* tables in full, plus the minimal slices of users/watches/items the
-sidecar joins through — thresholds, watch → owner, and FK targets."""
+sidecar joins through — thresholds, watch → owner, and FK targets.
+
+Never run Base.metadata.create_all() from here against a live database: these
+models are a subset, so it would create truncated users/watches/items tables.
+Schema changes go through a backend Alembic revision."""
 
 from datetime import datetime
 

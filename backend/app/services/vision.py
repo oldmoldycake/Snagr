@@ -1,4 +1,4 @@
-"""Vision flows — the sixth service, for logic that's more than one query:
+"""Vision flows — the logic that's more than one query:
 the review/library mutations, the authenticity batch lookup that listing
 serialization reads, the sidecar upload forwarding, and the post-mutation
 rescore.

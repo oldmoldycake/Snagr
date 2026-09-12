@@ -1,9 +1,8 @@
 """All ORM models for the Snagr schema.
 
-The backend OWNS this schema (Decision D1). These definitions mirror the tables
-agent/database.py already created — column-for-column — plus the auth/run tables
-the API needs. Alembic reconciles the live database to match (see "Schema Gaps"
-in docs/superpowers/plans/2026-07-08-backend-api.md).
+The backend OWNS this schema (Decision D1, CLAUDE.md): agent/database.py and
+vision/db.py each keep a column-compatible SUBSET of these definitions, so a
+change lands as an Alembic revision here — never as create_all() from there.
 
 Columns added on top of the agent's schema are marked  # + api.
 """
@@ -128,8 +127,9 @@ class Listings(Base):
 
 
 class PriceChecks(Base):
-    """Point-in-time price/availability observation for a listing; a
-    "sold"/"ended" status also deactivates the listing."""
+    """Point-in-time price/availability observation for a listing. A
+    "sold"/"ended" status does not itself deactivate the listing — the agent is
+    instructed to follow the check with disable_listing (agent/tools.py)."""
 
     __tablename__ = "price_checks"
 

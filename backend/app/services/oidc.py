@@ -35,7 +35,7 @@ class OidcError(Exception):
 # --- provider metadata (lazy, cached — the app must boot while the IdP is down) --
 
 _metadata: dict | None = None
-_keyset = None  # JWKS, cached by Task 5's validate_id_token
+_keyset = None  # JWKS, cached by validate_id_token; cleared on a JoseError
 
 
 async def _discovery() -> dict:

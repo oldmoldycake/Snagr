@@ -322,6 +322,8 @@ export function ItemDetailPage() {
       />
 
       <EditItemDialog
+        // EditItemDialog seeds its form state from props once, so remount it
+        // whenever a tracked field changes server-side (a run, or an MCP edit).
         key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${(detail.site_ids ?? []).join(',')}`}
         item={detail}
         open={editOpen}

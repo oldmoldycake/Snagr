@@ -154,7 +154,6 @@ function validateTracking(
         fields: { site_ids: "Must be a subset of the category's linked sites" },
       })
     }
-    // empty or the full category set means "all sites"
     if (site_ids.length === 0 || site_ids.length === category.site_ids.length) site_ids = null
   }
 
@@ -212,7 +211,6 @@ function validateChannel(
         fields: { events: 'Unknown event' },
       })
     }
-    // empty or the full set means "every event"
     if (events.length === 0 || events.length === KNOWN_EVENTS.length) events = null
   }
 

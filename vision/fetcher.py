@@ -14,7 +14,8 @@ from PIL import Image
 log = logging.getLogger(__name__)
 
 FETCH_TIMEOUT_SECONDS = 20
-# Sanity bound: a listing photo is not 50 MB; anything past this is skipped.
+# Sanity bound: real listing photos are orders of magnitude smaller, so
+# anything past this is a CDN trap or a mistake, not a photo — skip it.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
 BROWSER_HEADERS = {

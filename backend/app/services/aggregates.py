@@ -1,6 +1,6 @@
 """Price aggregation math — every computed number the contract asks for.
 
-Consumed by routers/charts.py, routers/items.py, routers/categories.py.
+Consumed by routers/charts.py, mcp/tools/charts.py and services/items.py.
 
 Responsibilities:
   - price_history(item, range, points): per-listing series of PricePoints.

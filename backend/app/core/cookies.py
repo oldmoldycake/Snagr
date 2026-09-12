@@ -21,8 +21,9 @@ def _set(response: Response, name: str, value: str, max_age: int) -> None:
         name,
         value,
         max_age=max_age,
-        httponly=True,  # JS can't read it
-        samesite="lax",  # not sent on cross-site requests -> CSRF defense
+        httponly=True,
+        samesite="lax",  # withheld from cross-site POST/XHR; a top-level GET
+        # navigation (the OIDC callback) still carries it — that's why lax, not strict
         secure=settings.cookie_secure,  # HTTPS-only in prod
         path="/",
     )

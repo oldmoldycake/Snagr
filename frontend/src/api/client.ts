@@ -80,6 +80,8 @@ async function doFetch(path: string, opts: RequestOptions): Promise<Response> {
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   let res = await doFetch(path, opts)
 
+  // /api/auth/* answers 401 directly and must not trip this loop: a failed
+  // login would otherwise refresh and silently replay itself.
   if (res.status === 401 && !path.startsWith('/api/auth/')) {
     const refreshed = await tryRefresh()
     if (refreshed) res = await doFetch(path, opts)

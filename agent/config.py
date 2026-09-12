@@ -17,7 +17,7 @@ AI_API_KEY = os.getenv("AI_API_KEY", None)
 PLAYWRIGHT_MCP_URL = os.getenv("PLAYWRIGHT_MCP_URL")
 
 # Visual authenticity (vision sidecar). None = feature off: the check_images
-# tool is not registered and scan prompts are byte-identical to before.
+# tool is not registered and the scan prompt carries no photo-check block.
 VISION_SIDECAR_URL = os.getenv("VISION_SIDECAR_URL")
 # Hard cap on one sidecar call — a wedged sidecar must never stall a run.
 VISION_TIMEOUT_SECONDS = int(os.getenv("VISION_TIMEOUT_SECONDS", "90"))

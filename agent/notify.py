@@ -2,10 +2,10 @@
 
 The agent is the only writer of price_checks, so it is the only place that
 can see a watch's best price CROSS its target: save_price_check calls
-notify_target_met for every real price it records. What used to be a direct
-ntfy POST is now a durable notification_outbox row — the backend's
-dispatcher fans it out to whatever channels the owner configured (ntfy,
-Discord, signed webhook) and owns delivery retries. The agent never talks
+notify_target_met for every real price it records. What it writes is a durable
+notification_outbox row — the backend's dispatcher fans it out to whatever
+channels the owner configured (ntfy, Discord, signed webhook) and owns
+delivery retries. The agent never talks
 to a push service, so there is no server URL to configure here."""
 
 import logging

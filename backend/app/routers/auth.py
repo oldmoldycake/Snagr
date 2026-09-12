@@ -70,7 +70,6 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 async def _start_session(db: AsyncSession, response: Response, user: User) -> None:
     """Mint a fresh access+refresh pair for `user` and put both on the response.
     Called by register, login, and refresh — the one place cookies are issued."""
-    # access token: stateless JWT, straight into the cookie
     set_access_cookie(response, make_access_jwt(user.id, user.role))
     # refresh token: keep only the hash server-side; the raw value goes in the cookie
     raw, digest = new_refresh_token()
@@ -259,7 +258,6 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
 
 @router.get("/me", response_model=UserSchema, dependencies=[Depends(reject_bearer)])
 async def get_me(user: User = Depends(current_user)):
-    # current_user already did all the work; just shape the row for the API
     return user_out(user)
 
 

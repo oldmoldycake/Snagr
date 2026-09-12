@@ -159,9 +159,10 @@ def register(mcp: FastMCP) -> None:
         allow_reproductions: bool | None = None,
         notify: bool | None = None,
     ) -> ItemDetail:
-        """Change a watched item's settings — the same fields as create_item —
-        plus `notify`: whether hitting the target should push a notification.
-        Only the arguments you pass change; the rest stay as they are."""
+        """Change a watched item's settings — every create_item field except
+        site_ids (the site subset can't be changed yet) — plus `notify`:
+        whether hitting the target should push a notification. Only the
+        arguments you pass change; the rest stay as they are."""
         async with caller_session() as (db, user):
             body = ItemUpdateRequest(
                 name=name,

@@ -20,7 +20,6 @@ class Storage:
         )
 
     def ensure_bucket(self) -> None:
-        """Create the bucket if it doesn't exist yet (first start)."""
         try:
             self._s3.head_bucket(Bucket=S3_BUCKET)
         except ClientError:

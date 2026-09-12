@@ -365,6 +365,7 @@ export function FloatingTip({
   width: number
   children: ReactNode
 }) {
+  // 250 = assumed tip width, 266 = that plus the 16px cursor offset
   const left = x + 16 + 250 > width ? Math.max(4, x - 266) : x + 16
   return (
     <div className="pointer-events-none absolute z-10" style={{ left, top: Math.max(4, y - 14) }}>

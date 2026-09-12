@@ -1,7 +1,7 @@
 """Password hashing + token minting. Pure functions — no DB, no FastAPI — so
 you can unit-test every one of these in a python shell.
 
-Auth model (plan Decision D4):
+Auth model (BACKEND_REQUIREMENTS §2):
   - access:  short-lived JWT (HS256, ACCESS_TTL_MIN) in the `snagr_access` cookie
   - refresh: opaque random token (REFRESH_TTL_DAYS), its sha256 stored in the
              `sessions` table, in the `snagr_refresh` cookie, rotated on refresh

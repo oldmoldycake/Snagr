@@ -1,5 +1,10 @@
 """Async SQLAlchemy setup: engine/session factory, ORM models for the price
-tracker schema, and the query helpers the agent uses to plan its runs."""
+tracker schema, and the query helpers the agent uses to plan its runs.
+
+The models are a column-compatible subset of backend/app/models.py, which owns
+the canonical schema and every migration (D1): new columns go through an
+Alembic revision there, and Base.metadata.create_all() must never be run from
+here against the live DB."""
 
 import logging
 import os
@@ -125,8 +130,9 @@ class Listings(Base):
 
 
 class PriceChecks(Base):
-    """Point-in-time price/availability observation for a listing; a
-    "sold"/"ended" status also deactivates the listing."""
+    """Point-in-time price/availability observation for a listing. A
+    "sold"/"ended" status does not itself deactivate the listing — the agent is
+    instructed to follow the check with disable_listing (tools.py)."""
 
     __tablename__ = "price_checks"
 

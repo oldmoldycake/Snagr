@@ -1,8 +1,9 @@
 """Entry point for the price scraper job: sets up logging (scraper.log +
 console) and runs the agent once over all watched items, recorded as a global
-agent_runs row. With --consume it instead claims one API-enqueued run (or
-exits immediately when the queue is empty) — cron it every few minutes so
-UI-triggered runs start promptly. With --ground-only it only refreshes stale
+agent_runs row. With --consume it instead claims one API-enqueued run, or
+fires a due run_schedules row when the queue is empty, and exits when there is
+neither — cron it every minute so UI-triggered runs start promptly and
+schedules fire on time. With --ground-only it only refreshes stale
 market prices and exits — the near-instant path for newly added items, cheap
 enough to cron every few minutes."""
 

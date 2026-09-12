@@ -1,6 +1,8 @@
 """FastAPI application entrypoint.
 
-Wires up: the error-envelope exception handler and every domain router.
+Wires up: the error-envelope exception handler, every domain router, the MCP
+sub-app (when MCP_ENABLED), and the two lifetime tasks (SSE hub, notification
+dispatcher).
 Run: `uvicorn app.main:app --reload --port 8000`
 
 As each router is filled in, its endpoints go live. Until then they return

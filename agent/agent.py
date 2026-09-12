@@ -119,7 +119,7 @@ async def build_pass_agents():
         recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
         scan_tools = tools + [save_price_check, save_listing, log_listing_check]
         # Discovery pass only (D-V9), and only when the sidecar is configured —
-        # with the URL unset the agent must run exactly as before.
+        # with the URL unset the tool is not registered and vision is fully off.
         if VISION_SIDECAR_URL:
             scan_tools.append(check_images)
         scan_agent = create_agent(llm, scan_tools)
@@ -276,7 +276,6 @@ async def execute_run(run: dict) -> dict | None:
 
     units = 0
     async with build_pass_agents() as (recheck_agent, scan_agent):
-        # Here we get the current listing for tracked listings and check if active and updateprice
         log.info("Starting scan on current listings")
 
         listed_items_list = await get_listed_items(run["scope"], run["scope_id"])
@@ -303,7 +302,6 @@ async def execute_run(run: dict) -> dict | None:
                 )
                 continue
 
-        # We scan the sites and ingore all the already seen and currently tracked listings
         log.info("Starting scan for new items")
 
         watch_site_list = await get_watched_item_list(run["scope"], run["scope_id"])

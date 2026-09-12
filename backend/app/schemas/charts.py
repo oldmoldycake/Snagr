@@ -69,7 +69,7 @@ class CategoryPriceChangeResponse(BaseModel):
 
 class StatTile(BaseModel):
     value: int
-    delta: int  # vs the previous equal-length period
+    delta: int  # what it compares against differs per tile — see dashboard_stats
     spark: list[int]
 
 
