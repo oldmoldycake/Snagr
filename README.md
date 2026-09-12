@@ -107,7 +107,7 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 
 ## Connecting an agent (MCP)
 
-Snagr speaks the [Model Context Protocol](https://modelcontextprotocol.io): the same operations the web app uses are exposed as tools at `POST /api/mcp`, so Claude Code, Hermes, OpenClaw or any MCP client can browse your items, prices and runs on your behalf (the read tools today; writes and run triggers follow).
+Snagr speaks the [Model Context Protocol](https://modelcontextprotocol.io): the same operations the web app uses are exposed as tools at `POST /api/mcp`, so Claude Code, Hermes, OpenClaw or any MCP client can browse your items, prices and runs on your behalf and, with the right scope, add watches, edit them and kick off runs.
 
 1. **Settings → MCP & API → New token** — pick an access preset and copy the token; it is shown once.
 2. Paste the ready-made config for your client from the same page. For Claude Code:

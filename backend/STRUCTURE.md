@@ -53,8 +53,8 @@ backend/
 │   │   ├── schemas.py      # MCP-only shapes (Whoami, RunDetail) — every other tool returns schemas/*
 │   │   └── tools/          # one module per section: instance, catalog, items, charts, runs, vision
 │   └── services/          # logic that's more than one query — routers stay thin
-│       ├── items.py        # the item↔watch↔watch_sites mapping: reads + serializers (shared with mcp/); writes still in the router
-│       ├── catalog.py      # category/site serializers + list reads (shared by routers and mcp/)
+│       ├── items.py        # the item↔watch↔watch_sites mapping — reads, writes, serializers (shared by the router and mcp/)
+│       ├── catalog.py      # category/site reads, writes and serializers (shared by routers and mcp/)
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
 │       ├── runs.py         # run enqueue/scope-label/409-active-check + visibility predicate
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
