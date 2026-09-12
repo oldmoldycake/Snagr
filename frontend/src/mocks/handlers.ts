@@ -623,6 +623,7 @@ export const handlers = [
       target_cents: body.target_price != null ? Math.round(Number(body.target_price) * 100) : null,
       criteria: tracking.criteria,
       selection_mode: tracking.selection_mode,
+      allow_reproductions: tracking.allow_reproductions,
       max_listings: tracking.max_listings,
       site_ids: tracking.site_ids,
       created_at: Date.now(),
@@ -654,6 +655,7 @@ export const handlers = [
     }
     item.criteria = tracking.criteria
     item.selection_mode = tracking.selection_mode
+    item.allow_reproductions = tracking.allow_reproductions
     item.max_listings = tracking.max_listings
     item.site_ids = tracking.site_ids
     return HttpResponse.json(toItemDetail(item))
