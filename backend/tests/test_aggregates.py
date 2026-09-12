@@ -42,8 +42,8 @@ from app.services.aggregates import (
 # dashboard_stats substitutes a year because a growth tile needs a window.
 
 
-async def test_range_start_is_none_for_all():
-    assert await _range_start("all") is None
+def test_range_start_is_none_for_all():
+    assert _range_start("all") is None
 
 
 @pytest.mark.parametrize(
@@ -55,10 +55,10 @@ async def test_range_start_is_none_for_all():
         ("1y", 365),
     ],
 )
-async def test_range_start_offsets_by_the_named_window(range_name, expected_days):
+def test_range_start_offsets_by_the_named_window(range_name, expected_days):
     from datetime import datetime
 
-    start = await _range_start(range_name)
+    start = _range_start(range_name)
     actual_days = (datetime.now(UTC) - start).days
     assert actual_days == expected_days
 

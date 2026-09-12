@@ -31,16 +31,13 @@ export function EditCategoryDialog({
   const save = useMutation({
     mutationFn: async () => {
       if (name.trim() !== category.name) await updateCategory(category.id, { name: name.trim() })
-      await setCategorySites(category.id, siteIds)
+      // Navigate to the slug the server reports, never one re-derived from the
+      // new name: a rename keeps the original slug, so the derived URL 404s.
+      return (await setCategorySites(category.id, siteIds)).slug
     },
-    onSuccess: async () => {
+    onSuccess: async (slug) => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       onOpenChange(false)
-      const slug = name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
       navigate(`/categories/${slug}`, { replace: true })
     },
   })

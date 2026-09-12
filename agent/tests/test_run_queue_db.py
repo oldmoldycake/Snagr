@@ -17,6 +17,7 @@ costs seconds; per-test reconnects made the module take minutes).
 """
 
 import asyncio
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -27,7 +28,9 @@ from database import (
     Base,
     Categories,
     Items,
+    ListingChecks,
     Listings,
+    PriceChecks,
     RunEvents,
     RunSchedules,
     SiteCategories,
@@ -161,6 +164,28 @@ async def read_schedule(schedule_id: int) -> dict:
             "enabled": row.enabled,
             "last_fired_at": row.last_fired_at,
         }
+
+
+class RecordingClock:
+    """A `datetime` stand-in that answers now() truthfully and remembers which
+    timezone each caller asked for — None being the naive local answer."""
+
+    def __init__(self):
+        self.zones = []
+
+    def now(self, tz=None):
+        self.zones.append(tz)
+        return datetime.now(tz)
+
+    @contextmanager
+    def installed(self):
+        """Swap this in for `tools.datetime` for the duration of the body."""
+        real = tools.datetime
+        tools.datetime = self
+        try:
+            yield
+        finally:
+            tools.datetime = real
 
 
 async def read_events(run_id: int) -> list[dict]:
@@ -669,3 +694,47 @@ class TestRunStatsTally:
         assert isinstance(first, int)
         assert first == second  # the duplicate returns the existing listing_id
         assert tools.run_stats["new_listings"] == 1
+
+
+class TestCheckedAtIsUtc:
+    """Both checked_at columns are timestamptz and the house rule is that every
+    DB datetime is timezone-aware UTC.
+
+    Asserted at the clock, not on the row, because the row can't tell: asyncpg
+    reads a naive stamp as local time and converts it, and datetime.now() sets
+    `fold`, so today a naive write lands on the very same instant an aware one
+    would — DST changeovers included. That equivalence is the driver's
+    convention, not ours; psycopg (what vision/ uses) and a plain `timestamp`
+    column both read a naive value as already-UTC and would shift it by the
+    host's offset. Pin the rule where it's visible.
+    """
+
+    def test_save_price_check_asks_for_utc(self):
+        clock = RecordingClock()
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            with clock.installed():
+                await tools.save_price_check(ids["listing_a"], True, "ok", 49.99)
+            async with AsyncSessionLocal() as session:
+                return await session.scalar(select(PriceChecks.checked_at))
+
+        stored = db(scenario())
+        assert clock.zones == [UTC]
+        assert abs(stored - datetime.now(UTC)) < timedelta(minutes=1)
+
+    def test_log_listing_check_asks_for_utc(self):
+        clock = RecordingClock()
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            with clock.installed():
+                await tools.log_listing_check(
+                    ids["watch_a"], ids["site_a"], "https://gamebay.test/nope", "poor_fit"
+                )
+            async with AsyncSessionLocal() as session:
+                return await session.scalar(select(ListingChecks.checked_at))
+
+        stored = db(scenario())
+        assert clock.zones == [UTC]
+        assert abs(stored - datetime.now(UTC)) < timedelta(minutes=1)

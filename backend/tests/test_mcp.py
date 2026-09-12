@@ -419,7 +419,7 @@ async def test_catalog_writes(client):
         cat = await _ok(agent, "create_category", name="Cameras")
         assert cat["slug"] == "cameras"
         dup = await _error(agent, "create_category", name="cameras")
-        assert dup["code"] == "validation_error"
+        assert dup["code"] == "duplicate"
         assert "name" in dup["fields"]
 
         site = await _ok(agent, "create_site", name="eBay", base_url="https://ebay.com/")

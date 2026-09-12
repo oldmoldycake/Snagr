@@ -8,7 +8,7 @@ last_checked_at are computed at query time (house pattern #2), never stored.
 import re
 from datetime import datetime
 
-from sqlalchemy import delete, distinct, func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
@@ -24,12 +24,19 @@ from app.models import (
     WatchSites,
 )
 from app.schemas.catalog import Category, Site
+from app.services.aggregates import count_snagged_watches
 
 # --- categories -------------------------------------------------------------
 
 
-async def build_category(db: AsyncSession, cat: Categories) -> Category:
-    """One categories row -> the contract's Category shape (three queries)."""
+async def build_category(db: AsyncSession, cat: Categories, user_id: int) -> Category:
+    """One categories row -> the contract's Category shape (three queries).
+
+    item_count is instance-wide and snagged_count is the caller's, which reads
+    like an inconsistency and isn't: `items` is a shared catalog, but a target
+    price belongs to one watcher. Counting somebody else's snag here would put
+    a ⌖ on a chip whose items all show as un-met underneath.
+    """
     site_ids = list(
         (
             await db.execute(
@@ -44,15 +51,7 @@ async def build_category(db: AsyncSession, cat: Categories) -> Category:
         select(func.count()).select_from(Items).where(Items.category_id == cat.id)
     )
 
-    snagged_count = await db.scalar(
-        select(func.count(distinct(Listings.item_id)))
-        .select_from(PriceChecks)
-        .join(Listings, Listings.id == PriceChecks.listing_id)
-        .join(Watches, Watches.id == Listings.watch_id)
-        .join(Items, Items.id == Listings.item_id)
-        .where(Items.category_id == cat.id)
-        .where(PriceChecks.price < Watches.target_price)
-    )
+    snagged_count = await count_snagged_watches(db, user_id, cat.id)
 
     return Category(
         id=cat.id,
@@ -60,30 +59,30 @@ async def build_category(db: AsyncSession, cat: Categories) -> Category:
         slug=cat.slug,
         site_ids=site_ids,
         item_count=item_count or 0,
-        snagged_count=snagged_count or 0,
+        snagged_count=snagged_count,
     )
 
 
-async def list_categories(db: AsyncSession) -> list[Category]:
-    """Every category with its counts (the catalog is shared, not per user)."""
+async def list_categories(db: AsyncSession, user_id: int) -> list[Category]:
+    """Every category, with counts read through the caller's watches."""
     rows = (await db.execute(select(Categories))).scalars().all()
-    return [await build_category(db, cat) for cat in rows]
+    return [await build_category(db, cat, user_id) for cat in rows]
 
 
 async def create_category(db: AsyncSession, name: str) -> Category:
-    """A new category with a generated slug; a blank or duplicate name
-    (case-insensitive) is 422 validation_error. Commits."""
+    """A new category with a generated slug; the name is trimmed, then a blank
+    one is 422 validation_error and a duplicate (case-insensitive) is 422
+    duplicate — mock parity, including the `fields` the form renders. Commits."""
+    name = name.strip()
     if not name:
-        raise err(
-            422, "validation_error", "name is required", fields={"name": "Category already exsits"}
-        )
+        raise err(422, "validation_error", "Name is required", fields={"name": "Name is required"})
 
     if await db.scalar(select(Categories).where(func.lower(Categories.name) == name.lower())):
         raise err(
             422,
-            "validation_error",
-            "Category already exsits",
-            fields={"name": "Category already exsits"},
+            "duplicate",
+            "A category with this name already exists",
+            fields={"name": "A category with this name already exists"},
         )
 
     slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
@@ -98,17 +97,19 @@ async def create_category(db: AsyncSession, name: str) -> Category:
     )
 
 
-async def update_category(db: AsyncSession, category_id: int, name: str | None) -> Category:
+async def update_category(
+    db: AsyncSession, category_id: int, name: str | None, user_id: int
+) -> Category:
     """Rename (the slug stays); 404 unknown. Commits."""
     cat = await db.get(Categories, category_id)
     if cat is None:
-        raise err(404, "not_found", f"Category {category_id} does not exsist")
+        raise err(404, "not_found", f"Category {category_id} does not exist")
 
     if name is not None:
         cat.name = name
 
     await db.commit()
-    return await build_category(db, cat)
+    return await build_category(db, cat, user_id)
 
 
 async def delete_category(db: AsyncSession, category_id: int) -> None:
@@ -116,7 +117,7 @@ async def delete_category(db: AsyncSession, category_id: int) -> None:
     watches on them, their listings and checks. 404 unknown. Commits."""
     cat = await db.get(Categories, category_id)
     if cat is None:
-        raise err(404, "not_found", f"Category {category_id} does not exsist")
+        raise err(404, "not_found", f"Category {category_id} does not exist")
 
     item_ids = select(Items.id).where(Items.category_id == category_id)
     watch_ids = select(Watches.id).where(Watches.item_id.in_(item_ids))
@@ -134,7 +135,9 @@ async def delete_category(db: AsyncSession, category_id: int) -> None:
     await db.commit()
 
 
-async def set_category_sites(db: AsyncSession, category_id: int, site_ids: list[int]) -> Category:
+async def set_category_sites(
+    db: AsyncSession, category_id: int, site_ids: list[int], user_id: int
+) -> Category:
     """Replace the set of sites a category is searched on; unknown site ids
     are silently dropped. 404 unknown category. Commits."""
     cat = await db.get(Categories, category_id)
@@ -148,7 +151,7 @@ async def set_category_sites(db: AsyncSession, category_id: int, site_ids: list[
         db.add(SiteCategories(category_id=category_id, site_id=site_id))
     await db.commit()
 
-    return await build_category(db, cat)
+    return await build_category(db, cat, user_id)
 
 
 # --- sites ------------------------------------------------------------------

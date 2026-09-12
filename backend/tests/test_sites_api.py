@@ -365,3 +365,27 @@ async def test_update_site_ignores_empty_strings(client, db_session):
 
     assert res.status_code == 200, res.text
     assert res.json()["name"] == "TestBay"
+
+
+# --- DELETE /api/sites/{site_id} ----------------------------------------------
+
+
+async def test_delete_a_site_that_still_has_listings_is_db_unavailable(client, db_session):
+    """listings.site_id has no ON DELETE, so this trips the FK and comes back
+    as the DB error every other route reports: 503 db_unavailable.
+
+    The mock has no oracle for it — its store deactivates the listings and
+    always answers 204 — so the code is pinned to the eleven sibling handlers
+    instead. Whatever it is, it is not a `validation_error`: nothing about the
+    request was malformed.
+    """
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item, watch = await sc.tracked()
+        await sc.listing(watch, item)
+        site_id = (await sc.site()).id
+
+    res = await client.delete(f"/api/sites/{site_id}", headers=CSRF)
+
+    assert res.status_code == 503, res.text
+    assert res.json()["error"]["code"] == "db_unavailable"

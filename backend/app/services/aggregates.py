@@ -48,7 +48,7 @@ _RANGE_DELTAS: dict[str, timedelta | None] = {
 _ALL_RANGE_FALLBACK = timedelta(days=365)
 
 
-async def _range_start(range: str) -> datetime | None:
+def _range_start(range: str) -> datetime | None:
     """Lower bound for a TimeRange, or None for "all" — which means no bound.
 
     What None *implies* is the caller's call, and they disagree on purpose:
@@ -70,7 +70,7 @@ def _clamp_points(points: int) -> int:
     return max(1, min(500, points))
 
 
-async def _create_price_points(checks, step: float = 1) -> list[PricePoint]:
+def _create_price_points(checks, step: float = 1) -> list[PricePoint]:
     """Serialize checks into contract PricePoints, taking every `step`-th one.
 
     step=1 keeps everything. A fractional step walks the list at even intervals
@@ -95,7 +95,7 @@ async def _create_price_points(checks, step: float = 1) -> list[PricePoint]:
     return price_point_list
 
 
-async def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
+def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
     """Bucket pooled checks into `points` equal time slices.
 
     One SummaryPoint per slice, stamped at the slice midpoint, carrying the
@@ -128,7 +128,7 @@ async def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
     return out
 
 
-async def _generate_spark(now: int, before: int) -> list[int]:
+def _generate_spark(now: int, before: int) -> list[int]:
     """12-point linear ramp from `before` to `now`.
 
     Deliberately not real history — it's a shape, matching growthSpark in the
@@ -164,7 +164,7 @@ async def _best_price_spark(db, listings, range) -> list[str | None]:
         return []
 
     now = datetime.now(UTC)
-    start = await _range_start(range)
+    start = _range_start(range)
     if start is None:
         start = now - _ALL_RANGE_FALLBACK
     width_seconds = (now - start).total_seconds() / _SPARK_BUCKETS
@@ -270,12 +270,18 @@ async def _count_listings_with_drop(db, user_id, start, end) -> int:
     return (await db.execute(stmt)).scalar_one()
 
 
-async def _count_snagged_watches(db, user_id) -> int:
-    """Watches whose cheapest live listing is at or under their target price.
+async def count_snagged_watches(db, user_id, category_id=None) -> int:
+    """Watches whose cheapest live listing is at or under their target price,
+    optionally narrowed to one category.
 
     Same rule as item_rollups' `target_met`, but answered for every watch in one
     query rather than per item. A watch with no target_price can never be
     snagged, so it is excluded rather than counted as met.
+
+    Public because services/catalog.py counts a category's snags with it:
+    `uq_item_user` allows one watch per user and item, so a category's snagged
+    WATCHES and its snagged ITEMS are the same number for one caller — and
+    sharing the query is what keeps the chip and the item badges agreeing.
     """
     # rn == 1 picks the most recent check per listing; then take the cheapest of
     # those per watch. Two steps, because "latest" and "cheapest" disagree.
@@ -316,6 +322,8 @@ async def _count_snagged_watches(db, user_id) -> int:
         .where(Watches.target_price.is_not(None))
         .where(best_price_per_watch.c.best_price <= Watches.target_price)
     )
+    if category_id is not None:
+        stmt = stmt.join(Items, Items.id == Watches.item_id).where(Items.category_id == category_id)
     return (await db.execute(stmt)).scalar_one()
 
 
@@ -335,7 +343,7 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
     # Resolved once per request, not per listing — _range_start reads the clock
     # on every call, so doing it inside the loop would give each series its own
     # slightly different window.
-    start = await _range_start(range)
+    start = _range_start(range)
 
     listing_series_list = []
     for listing in listing_rows:
@@ -352,9 +360,9 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
         checks = (await db.execute(stmt)).scalars().all()
 
         if len(checks) > points:
-            price_points = await _create_price_points(checks, len(checks) / points)
+            price_points = _create_price_points(checks, len(checks) / points)
         else:
-            price_points = await _create_price_points(checks)
+            price_points = _create_price_points(checks)
 
         site = await db.get(Sites, listing.site_id)
         listing_series_list.append(
@@ -381,7 +389,7 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
     """
     listing_rows = await _active_listings_for_item(db, user_id, item_id)
     points = _clamp_points(points)
-    start = await _range_start(range)
+    start = _range_start(range)
 
     all_checks = []
 
@@ -398,7 +406,7 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
         checks = (await db.execute(stmt)).scalars().all()
         all_checks.extend(checks)
 
-    return await _create_summary_points(all_checks, start, points)
+    return _create_summary_points(all_checks, start, points)
 
 
 async def item_rollups(db, user_id, item, watch, range) -> dict:
@@ -413,7 +421,7 @@ async def item_rollups(db, user_id, item, watch, range) -> dict:
     """
     listing_rows = await _active_listings_for_item(db, user_id, item.id)
 
-    start = await _range_start(range)
+    start = _range_start(range)
 
     item_rollup = {
         "best_price": None,
@@ -520,7 +528,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     frontend-visible change, not a backend cleanup.
     """
     now = datetime.now(UTC)
-    start = await _range_start(range)
+    start = _range_start(range)
     if start is None:
         # range="all" has no start bound, but the tiles still need a window to
         # measure growth against. The mock charts a year here; match it.
@@ -537,7 +545,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     )
     start_of_range_watch_count = (await db.execute(stmt)).scalar_one_or_none()
 
-    tracked_item_spark = await _generate_spark(current_watch_count, start_of_range_watch_count)
+    tracked_item_spark = _generate_spark(current_watch_count, start_of_range_watch_count)
 
     tracked_stat_tile = StatTile(
         value=current_watch_count,
@@ -565,7 +573,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
 
     current_listings_at_start_of_range = (await db.execute(stmt)).scalar_one_or_none()
 
-    listing_spark = await _generate_spark(
+    listing_spark = _generate_spark(
         current_active_listing_count, current_listings_at_start_of_range
     )
 
@@ -585,7 +593,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     price_drops_stat_tile = StatTile(
         value=current_drop_count,
         delta=(current_drop_count - previous_drop_count),
-        spark=await _generate_spark(current_drop_count, previous_drop_count),
+        spark=_generate_spark(current_drop_count, previous_drop_count),
     )
 
     # Snagged
@@ -594,12 +602,12 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     # range start" means replaying each watch's price history against its target
     # at that time; the mock punts with min(value, 1), so we mirror it to stay
     # contract-accurate. Revisit if the dashboard ever needs the real number.
-    snagged_count = await _count_snagged_watches(db, user_id)
+    snagged_count = await count_snagged_watches(db, user_id)
 
     snagged_stat_tile = StatTile(
         value=snagged_count,
         delta=min(snagged_count, 1),
-        spark=await _generate_spark(snagged_count, max(0, snagged_count - 1)),
+        spark=_generate_spark(snagged_count, max(0, snagged_count - 1)),
     )
 
     return DashboardStats(
@@ -630,7 +638,7 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
     They share the >3% threshold (_DROP_THRESHOLD) and the "active listings,
     priced checks only" filters.
     """
-    start = await _range_start(range)
+    start = _range_start(range)
     limit = max(0, limit)  # Postgres rejects a negative LIMIT outright
 
     # Step 1 — pair every priced check with its predecessor on the same listing.
@@ -794,7 +802,7 @@ async def category_price_change(db, user_id, category_id, range) -> list[Categor
     before the beginning of time, and the mock agrees: it asks for the best
     price at epoch, which is always null. Absent data stays null, never 0.
     """
-    start = await _range_start(range)
+    start = _range_start(range)
 
     watched_items = (
         select(Items.id, Items.name)
