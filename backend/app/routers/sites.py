@@ -59,4 +59,4 @@ async def delete_site(site_id: int, user=Depends(current_user), db: AsyncSession
         await catalog_service.delete_site(db, site_id)
         return None
     except SQLAlchemyError as e:
-        raise err(503, "validation_error", "Could not reach the database") from e
+        raise err(503, "db_unavailable", "Could not reach the database") from e

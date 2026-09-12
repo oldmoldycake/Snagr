@@ -75,7 +75,7 @@ async def update_item(
     try:
         return await items_service.update_item(db, user.id, item_id, body)
     except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach database") from e
+        raise err(503, "db_unavailable", "Could not reach the database") from e
 
 
 @router.delete(
