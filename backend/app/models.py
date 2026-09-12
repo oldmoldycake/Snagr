@@ -310,7 +310,7 @@ class RunSchedules(Base):
     scope_label: Mapped[str] = mapped_column(Text)
     next_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     interval_minutes: Mapped[int | None] = mapped_column()  # NULL = one-shot
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -333,7 +333,7 @@ class NotificationChannels(Base):
     topic: Mapped[str | None] = mapped_column(Text)  # ntfy topic; NULL otherwise
     secret: Mapped[str | None] = mapped_column(Text)  # webhook HMAC key; NULL otherwise
     events: Mapped[list | None] = mapped_column(JSONB)  # NULL = all events
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
