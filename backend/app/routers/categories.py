@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/categories", tags=["categories"])
 @router.get("", response_model=DataList[Category])
 async def list_categories(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     try:
-        return DataList(data=await catalog_service.list_categories(db))
+        return DataList(data=await catalog_service.list_categories(db, user.id))
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
@@ -54,7 +54,7 @@ async def update_category(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return await catalog_service.update_category(db, category_id, body.name)
+        return await catalog_service.update_category(db, category_id, body.name, user.id)
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 
@@ -79,4 +79,4 @@ async def set_category_sites(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await catalog_service.set_category_sites(db, category_id, body.site_ids)
+    return await catalog_service.set_category_sites(db, category_id, body.site_ids, user.id)

@@ -270,12 +270,18 @@ async def _count_listings_with_drop(db, user_id, start, end) -> int:
     return (await db.execute(stmt)).scalar_one()
 
 
-async def _count_snagged_watches(db, user_id) -> int:
-    """Watches whose cheapest live listing is at or under their target price.
+async def count_snagged_watches(db, user_id, category_id=None) -> int:
+    """Watches whose cheapest live listing is at or under their target price,
+    optionally narrowed to one category.
 
     Same rule as item_rollups' `target_met`, but answered for every watch in one
     query rather than per item. A watch with no target_price can never be
     snagged, so it is excluded rather than counted as met.
+
+    Public because services/catalog.py counts a category's snags with it:
+    `uq_item_user` allows one watch per user and item, so a category's snagged
+    WATCHES and its snagged ITEMS are the same number for one caller — and
+    sharing the query is what keeps the chip and the item badges agreeing.
     """
     # rn == 1 picks the most recent check per listing; then take the cheapest of
     # those per watch. Two steps, because "latest" and "cheapest" disagree.
@@ -316,6 +322,8 @@ async def _count_snagged_watches(db, user_id) -> int:
         .where(Watches.target_price.is_not(None))
         .where(best_price_per_watch.c.best_price <= Watches.target_price)
     )
+    if category_id is not None:
+        stmt = stmt.join(Items, Items.id == Watches.item_id).where(Items.category_id == category_id)
     return (await db.execute(stmt)).scalar_one()
 
 
@@ -594,7 +602,7 @@ async def dashboard_stats(db, user_id, range) -> DashboardStats:
     # range start" means replaying each watch's price history against its target
     # at that time; the mock punts with min(value, 1), so we mirror it to stay
     # contract-accurate. Revisit if the dashboard ever needs the real number.
-    snagged_count = await _count_snagged_watches(db, user_id)
+    snagged_count = await count_snagged_watches(db, user_id)
 
     snagged_stat_tile = StatTile(
         value=snagged_count,

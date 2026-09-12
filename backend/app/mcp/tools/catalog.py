@@ -14,10 +14,10 @@ def register(mcp: FastMCP) -> None:
     async def list_categories() -> list[Category]:
         """Every category (video games, trading cards, …) with its slug, the
         ids of the sites linked to it, how many items it holds, and how many of
-        those are currently at or below their target ("snagged"). The catalog
-        is shared by every user of the instance."""
-        async with caller_session() as (db, _user):
-            return await catalog_service.list_categories(db)
+        those YOU are currently watching at or below your target ("snagged").
+        The catalog itself is shared by every user of the instance."""
+        async with caller_session() as (db, user):
+            return await catalog_service.list_categories(db, user.id)
 
     @mcp.tool(annotations=READ_ONLY)
     async def list_sites() -> list[Site]:
@@ -43,14 +43,14 @@ def register(mcp: FastMCP) -> None:
         one call for what the REST API splits in two. `category` is an id or
         slug; `site_ids` are ids or names and REPLACE the current set (an empty
         list unlinks every site). Arguments you leave out are left alone."""
-        async with caller_session() as (db, _user):
+        async with caller_session() as (db, user):
             cat = await resolve_category(db, category)
             if name is not None:
-                await catalog_service.update_category(db, cat.id, name)
+                await catalog_service.update_category(db, cat.id, name, user.id)
             if site_ids is not None:
                 ids = [(await resolve_site(db, ref)).id for ref in site_ids]
-                await catalog_service.set_category_sites(db, cat.id, ids)
-            return await build_category(db, cat)
+                await catalog_service.set_category_sites(db, cat.id, ids, user.id)
+            return await build_category(db, cat, user.id)
 
     @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
     async def delete_category(category: Ref) -> str:
