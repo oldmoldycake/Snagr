@@ -6,7 +6,7 @@ imperative when editing. Errors are returned as strings (not raised) so the
 agent can read them and react."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 import httpx
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
@@ -194,7 +194,7 @@ async def save_price_check(
                     currency=currency,
                     in_stock=in_stock,
                     status=status,
-                    checked_at=datetime.now(),
+                    checked_at=datetime.now(UTC),
                 )
                 .returning(PriceChecks.id)
             )
@@ -283,7 +283,7 @@ async def log_listing_check(
                 url=url,
                 reason=reason,
                 notes=notes,
-                checked_at=datetime.now(),
+                checked_at=datetime.now(UTC),
             )
 
             await session.execute(stmt)
