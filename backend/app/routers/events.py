@@ -9,9 +9,9 @@ the visibility predicate in services/runs.py):
     per event   -> event: run.event      RunEvent    (id: "<run_id>:<seq>")
     lifecycle   -> event: run.started / run.finished / run.failed  {run: AgentRun}
 
-Backed by services/events.py (Postgres LISTEN/NOTIFY hub); the wire contract
-is BACKEND_REQUIREMENTS §6. nginx.conf
-already disables buffering + extends timeouts for this path. Auth rides the
+Backed by services/events.py (Postgres LISTEN/NOTIFY hub); the frame list above
+is the whole wire contract. nginx.conf already disables buffering + extends
+timeouts for this path. Auth rides the
 access cookie — EventSource can't send headers, which is why auth is cookies
 in the first place; an expired cookie 401s the reconnect and the client shows
 "reconnecting" until any refreshed request restores it.

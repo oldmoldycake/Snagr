@@ -12,7 +12,7 @@
 Apply csrf_guard on mutating routers; current_user on everything behind
 AuthGuard in the frontend.
 
-Bearer rules (BACKEND_REQUIREMENTS §11): the header wins over the cookie when
+Bearer rules: the header wins over the cookie when
 both are present; a bearer request carries no ambient credential, so it is
 exempt from the CSRF header; every GET needs the `read` scope and every other
 method `write`, and the two run routes additionally ask for `runs`. The whole

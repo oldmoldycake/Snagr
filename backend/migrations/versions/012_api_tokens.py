@@ -1,7 +1,7 @@
 """api tokens — personal access tokens for agents and scripts
 
-The bearer credential for the MCP endpoint and the REST API (BACKEND_REQUIREMENTS
-§11). Only the sha256 is stored — the sessions.refresh_hash scheme — and the raw
+The bearer credential for the MCP endpoint and the REST API. Only the sha256 is
+stored — the sessions.refresh_hash scheme — and the raw
 value is shown once at creation. Revoking deletes the row: no soft-delete, so a
 revoked token can't be resurrected by anything later.
 
