@@ -1,6 +1,6 @@
 /**
  * TypeScript mirror of the Snagr API contract.
- * This file IS the contract — BACKEND_REQUIREMENTS.md (repo root) is written from it.
+ * This file IS the contract — the backend's Pydantic schemas mirror it field-for-field.
  *
  * Conventions:
  * - Prices are decimal strings ("549.99"), never floats.

@@ -1,7 +1,6 @@
 """Agent runs — /api/runs  (Phase 3). Auth required.
 
-triggerRun enqueues (status='queued') per BACKEND_REQUIREMENTS §7; the agent
-worker claims it.
+triggerRun enqueues (status='queued'); the agent worker claims it.
 Live progress is pushed over /api/events (routers/events.py); the /events
 sub-route here is the polling backfill for SSE reconnects.
 """

@@ -1,4 +1,4 @@
-"""The MCP layer — Snagr as tools for agents (BACKEND_REQUIREMENTS §11).
+"""The MCP layer — Snagr as tools for agents.
 
 server.py owns the FastMCP instance, the bearer verifier and the app factory
 main.py registers at POST /api/mcp; tools/<section>.py registers the tools,
