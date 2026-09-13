@@ -740,6 +740,23 @@ class TestWatchSiteSubset:
         assert pairs[ids["watch_a"]] == [ids["site_a"]]
 
 
+class TestNotifyDoesNotGateDiscovery:
+    def test_a_watch_with_notifications_off_still_gets_scanned(self):
+        # notify is the "tell me" switch, not a pause: the UI labels it
+        # "Notify me when the target price is hit", so a muted watch must
+        # keep discovering listings and just stay quiet about them
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                watch = await session.get(Watches, ids["watch_a"])
+                watch.notify = False
+                await session.commit()
+            return ids, pairs_by_watch(await get_watched_item_list())
+
+        ids, pairs = db(scenario())
+        assert pairs[ids["watch_a"]] == [ids["site_a"]]
+
+
 class TestActiveListingCount:
     def test_counts_only_the_watch_s_active_listings_across_sites(self):
         async def scenario():
