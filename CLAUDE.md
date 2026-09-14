@@ -9,7 +9,7 @@ Snagr — a self-hosted price tracker. Four independently-deployed components in
 - **`agent/`** — the LLM price scraper. A batch job that drives a headless browser (Playwright MCP) via a LangChain agent to find and re-check marketplace listings, writing results to the DB. Run on a schedule, not a server.
 - **`backend/`** — FastAPI (async SQLAlchemy 2.0 / asyncpg) JSON API under `/api`. Serves the frontend, enqueues agent runs, and exposes the same operations to agents as MCP tools at `POST /api/mcp` (`app/mcp/`).
 - **`frontend/`** — React 19 + Vite + TS + Tailwind v4 SPA. Talks to the backend over same-origin `/api`.
-- **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, MinIO object store). Off unless `VISION_SIDECAR_URL` is set / the compose `vision` profile is up (D-V1).
+- **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, S3-compatible object store — MinIO under compose). Off unless `VISION_SIDECAR_URL` is set in `backend/.env` and the agent's env (D-V1); the compose `vision` profile only *starts* the sidecar, it does not switch the feature on.
 
 ## Read these first
 
@@ -18,8 +18,8 @@ The architecture is documented in depth — prefer reading them over re-deriving
 - `backend/STRUCTURE.md` — every backend file's job, the layer model, endpoint→file lookup, and the non-obvious domain rules. **Read before touching the backend.**
 - `frontend/README.md` — frontend scripts, mock mode, structure.
 
-The backend is a **work in progress**; routers and schemas may still be stubs
-(`raise NotImplementedError` / `pass`). Treat the frontend contract as the spec.
+Every route in `frontend/src/api/endpoints.ts` is implemented — no stubs remain
+in `backend/app/`. Treat the frontend contract as the spec for anything new.
 
 ## Commands
 
@@ -28,6 +28,7 @@ The backend is a **work in progress**; routers and schemas may still be stubs
 ```bash
 ./venv/bin/ruff check --fix && ./venv/bin/ruff format   # lint + autoformat — run on what you touched before calling it done
 ```
+CI lints the whole repo with a pinned `ruff==0.16.2` (`.github/workflows/ci.yml`) — keep each venv on that version or local and CI results diverge.
 
 **Backend** (from `backend/`):
 ```bash
@@ -42,22 +43,22 @@ The backend is a **work in progress**; routers and schemas may still be stubs
 
 **Frontend** (from `frontend/`):
 ```bash
-npm run dev        # dev server (proxies /api -> localhost:8000)
+npm run dev        # dev server on :5173 (proxies /api -> localhost:8000)
 npm run build      # tsc -b + vite build; fails on type errors
 npm run lint       # oxlint
 ```
 To verify frontend changes in a real browser, use the **`frontend:verify`** skill (build + launch + drive), not the generic verify skill.
 
-**Agent** (from `agent/`): `./venv/bin/python main.py` — runs one full scrape pass and exits. `--consume` claims one API-enqueued run (or fires a due schedule) and exits; `--ground-only` only refreshes stale market prices. Needs `PLAYWRIGHT_MCP_URL`, the `AI_*` provider vars, and `DATABASE_URL` (see `agent/.env.example`).
+**Agent** (from `agent/`): `./venv/bin/python main.py` — reaps stale runs, records a global `agent_runs` row, grounds stale market prices, runs one full scrape pass, exits. `--consume` claims one API-enqueued run (or fires a due schedule) and exits; `--ground-only` only refreshes stale market prices, with no browser — it is the one mode that does *not* need `PLAYWRIGHT_MCP_URL` (`main.py` imports it lazily to dodge `agent.py`'s import-time assert), and it wins if both flags are passed. Flags are matched by membership in `sys.argv` (no argparse, so order doesn't matter), and a typo silently runs a full scrape. All modes need the `AI_*` provider vars and `DATABASE_URL` (see `agent/.env.example`).
 
-**Vision** (from `vision/` — optional; the whole feature is off unless `VISION_SIDECAR_URL` is set in `backend/.env` + `agent/.env`):
+**Vision** (from `vision/` — optional; the whole feature is off unless `VISION_SIDECAR_URL` is set in `backend/.env` + `agent/.env`, or `agent/.env.docker` with the value `http://vision:8100` under compose):
 ```bash
 ./venv/bin/uvicorn app:app --port 8100   # dev server (sync handlers by design — not the backend's async rule)
 ./venv/bin/pytest                         # tests: embedder + S3 stubbed, never downloads weights; needs Postgres
 ```
-Real (non-degraded) scoring needs `HF_TOKEN` in `vision/.env` — the DINOv3 weights are license-gated and download on first start; `/health` reports `degraded` without them.
+Real (non-degraded) scoring needs the DINOv3 weights loaded: they are license-gated, so accept the license and set `HF_TOKEN` in `vision/.env` for the first download. `/health` reports `degraded` whenever `embedder.load()` fails for *any* reason (no token, no network, a torch↔torchvision mismatch, a wrong `VISION_MODEL`) — `/check-images` and `/references` then answer 503 with the license help while `/images` and `/rescore` keep working. Degraded is a supported steady state, not a crash.
 
-**Docker (dev)**: `docker compose up --build` → frontend on `:8081`, backend on `:8000`, plus the agent ticker (checks the run queue every minute — this is what makes UI-triggered runs actually execute). `docker compose --profile vision up --build` adds the vision sidecar (`:8100`) and its MinIO — plain `up` is unchanged without the profile. Postgres and the Playwright MCP are external. Editing `backend/app/**` hot-reloads; changing `requirements.txt`, frontend, or agent code needs `--build`.
+**Docker (dev)**: `docker compose up --build` → frontend on `:8081`, backend on `:8000`, plus the agent ticker (checks the run queue every minute — this is what makes UI-triggered runs actually execute). It needs `backend/.env`, `agent/.env` **and** `agent/.env.docker` to exist — the last is gitignored with no example file, and compose refuses to start without it. `docker compose --profile vision up --build` adds the vision sidecar (`:8100`) and its MinIO (in-network only, no published port), and needs `vision/.env` whose `S3_ACCESS_KEY`/`S3_SECRET_KEY` match the compose MinIO root credentials — plain `up` is unchanged without the profile. Postgres and the Playwright MCP are external. Editing `backend/app/**` hot-reloads; changing `requirements.txt`, frontend, or agent code needs `--build`.
 
 ## Testing model
 
@@ -66,11 +67,11 @@ Real (non-degraded) scoring needs `HF_TOKEN` in `vision/.env` — the DINOv3 wei
 ## The contract is the frontend (backend builds *to* it, doesn't design it)
 
 There is no separate API spec — the frontend defines the exact contract the backend must satisfy:
-- `frontend/src/api/endpoints.ts` — the route list (one function per route)
+- `frontend/src/api/endpoints.ts` — the route list: 57 functions covering 57 of the backend's 62 routes. The other five are never `fetch`ed — `/api/auth/refresh` (`client.ts`), `/api/events` (`EventSource`), `/api/vision/images/{key}` (`<img src>`), and the OIDC pair `/api/auth/oidc/login` + `/api/auth/oidc/callback` (plain browser navigation)
 - `frontend/src/api/types.ts` — exact request/response JSON shapes; Pydantic schemas in `backend/app/schemas/` mirror these field-for-field
 - `frontend/src/mocks/handlers.ts` — the behavioral oracle: status codes and `error.code` for every case. When in doubt about behavior, match what the mock does.
 
-The frontend runs against a full MSW mock by default; set `VITE_USE_MOCKS=false` (already the case in `.env.development`) to hit the real backend. Unimplemented endpoints 404, which doubles as the visible build checklist.
+The frontend hits the real backend by default (`.env.development` sets `VITE_USE_MOCKS=false`, and `main.tsx` only starts MSW when the value is exactly `'true'`); run `VITE_USE_MOCKS=true npm run dev` for the full MSW mock. Unimplemented endpoints 404, which doubles as the visible build checklist.
 
 ## Backend architecture
 
@@ -94,7 +95,7 @@ The **backend owns the canonical schema and all Alembic migrations** (`backend/a
 - **Mutations require the `X-Snagr-Csrf` header** (`csrf_guard`); reject with 403 if absent. The frontend always sends it.
 - **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop (`frontend/src/api/client.ts` refreshes once + retries on 401 for all *other* paths).
 - Auth is httpOnly-cookie sessions: short-lived access JWT (`snagr_access`) + DB-backed rotating refresh token (`sessions` table, `snagr_refresh` cookie). JS never sees the token.
-- **Vision routes are gated on `settings.vision_enabled`**: with `VISION_SIDECAR_URL` unset, mutations answer 503 `vision_unavailable`, the two GET lists return empty data, and `InstanceInfo.vision_enabled: false` hides every vision surface in the UI.
+- **Vision routes are gated on `settings.vision_enabled`**: with `VISION_SIDECAR_URL` unset, every mutation **and the image proxy** answer 503 `vision_unavailable`, the two GET lists return empty data, and `InstanceInfo.vision_enabled: false` hides every vision surface in the UI.
 - **API tokens are the second credential** (`Authorization: Bearer snagr_pat_…`, minted in Settings → MCP & API, sha256 at rest): `current_user` accepts them next to the cookie, they are exempt from the CSRF header, scoped `read` (GET) / `write` (other methods) / `runs` (trigger + cancel), and never reach `/api/auth/me`, `/api/me/*`, `/api/admin/*` (403 `forbidden`). `POST /api/mcp` is bearer-only; its tools (`app/mcp/tools/`) call the same services as the routers and return the same schemas, with an `ApiError` surfacing as a tool error carrying the REST envelope. `MCP_ENABLED=false` switches all of it off.
 
 ## Writing code (house rules)
@@ -102,15 +103,15 @@ The **backend owns the canonical schema and all Alembic migrations** (`backend/a
 This is FOSS: optimize for the next reader, who has zero context and wrote none of it. Boring and explicit beats clever.
 
 - **Match the neighbors.** ruff settles formatting; everything it can't see is settled by precedent. Before writing, open a sibling that does the same kind of job (the router next to your router, the test next to your test) and copy its idioms — naming, structure, how it's organized. New code should be indistinguishable from existing code. Keep diffs minimal and boring to review; don't churn lines you aren't otherwise changing.
-- **Smallest change that satisfies the contract.** No speculative abstraction — a helper, base class, or *sixth* service needs a second real caller before it exists (thin CRUD living in routers is deliberate, not debt). No new dependencies without asking first: every dep is something self-hosters install and maintainers audit.
+- **Smallest change that satisfies the contract.** No speculative abstraction — a helper, base class, or *tenth* service needs a second real caller before it exists (thin CRUD living in routers is deliberate, not debt). No new dependencies without asking first: every dep is something self-hosters install and maintainers audit.
 - **Every behavior change lands with a test.** Bug fix = reproduce with a failing test first, then fix. New endpoint = tests asserting status codes and `error.code` exactly as `handlers.ts` does — error paths included, not just the happy path. Backend tests run against the real throwaway DB, so don't mock the ORM; use the `conftest` fixtures (including the CSRF header). Where `handlers.ts` is silent on a case, mirror the closest existing endpoint and call the gap out — don't invent.
-- **Fail loudly.** No bare `except`, no catch-log-continue, no quiet fallbacks: `raise err(...)` for expected failures, let the unexpected propagate to the error envelope. If something must stay unfinished, keep the loud-stub convention (`NotImplementedError` → 404), never a silent fake. No stray TODOs — flag leftovers in your summary instead.
+- **Fail loudly.** No bare `except`, no catch-log-continue, no quiet fallbacks: `raise err(...)` for expected failures, let the unexpected propagate to the error envelope. If something must stay unfinished, leave the route unregistered (it 404s, which is the build checklist) or `raise err(501, ...)` — never a silent fake. Nothing maps a bare `NotImplementedError` to anything but a 500. No stray TODOs — flag leftovers in your summary instead.
 - **Async end-to-end** in the backend request path: no sync DB calls, `requests`, or `time.sleep` inside an `async def`. Type hints on everything public.
 - **Comments earn their keep.** Explain *why* — domain rules, gotchas, decisions — never narrate what the code does. Preserve the `# + api` markers in `models.py`. Exception: docstrings in `agent/tools.py` are prompts the model reads (see Agent internals) — hold them to the same review bar as code and update them whenever tool behavior changes.
 - **No drive-by fixes.** Unrelated problems get mentioned, not silently changed.
 
 **Definition of done** — don't claim a change works until:
-- Python (backend & agent alike): `./venv/bin/ruff check` and `./venv/bin/ruff format --check` pass;
+- Python (backend, agent & vision alike): `./venv/bin/ruff check` and `./venv/bin/ruff format --check` pass;
 - backend: `./venv/bin/pytest` green, plus `./venv/bin/alembic check` if models moved;
 - frontend: `npm run build` (the type gate) and `npm run lint` green; UI changes verified through `frontend:verify`;
 - the diff reads like it was written by whoever wrote the file it touches.
