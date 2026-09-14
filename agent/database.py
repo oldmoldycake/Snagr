@@ -316,8 +316,10 @@ async def get_watched_item_list(
 ) -> Sequence[RowMapping]:
     """
     Return the (watch, site) pairs to search: one row per site for every
-    watch with notify enabled, carrying that watch's own
-    criteria/selection_mode/max_listings/allow_reproductions. A watch that
+    watch, carrying that watch's own criteria/selection_mode/max_listings/
+    allow_reproductions. Every watch, muted or not: notify gates alerting
+    only (the UI calls it "Notify me when the target price is hit"), so a
+    muted watch keeps discovering listings and just stays quiet. A watch that
     pinned a site subset (watch_sites — the API's site_ids) gets only those
     sites; one with no rows gets every site its category is linked to.
 
@@ -354,7 +356,6 @@ async def get_watched_item_list(
                 .join(Items, Items.id == Watches.item_id)
                 .join(SiteCategories, SiteCategories.category_id == Items.category_id)
                 .join(Sites, Sites.id == SiteCategories.site_id)
-                .where(Watches.notify)
             )
             # The category join above yields every site the category is linked
             # to; a watch's pins narrow that to its own subset. Correlated on
@@ -631,10 +632,10 @@ async def enqueue_new_listing(
 ) -> bool:
     """
     Queue a "new listing" notification for a listing save_listing just
-    created. No notify gate here on purpose: the scan pass only exists for
-    notify-enabled watches (get_watched_item_list filters on Watches.notify),
-    so a second check would imply that one doesn't exist. No price either —
-    the first price check happens after the listing is saved.
+    created — unless the watch is muted. notify gates alerting only, never
+    discovery (get_watched_item_list scans muted watches too), so this is
+    where a muted watch's find stays quiet. No price in the payload — the
+    first price check happens after the listing is saved.
 
     Args:
       watch_id: The watch the listing was found for.
@@ -646,14 +647,18 @@ async def enqueue_new_listing(
       match_score: The model's 0-100 criteria fit from save_listing.
       match_summary: The one-line justification for that score.
     Returns:
-      True on success, False if anything failed — a failed enqueue never
-      changes what save_listing returns to the model.
+      True on success, False if the watch is muted or anything failed — a
+      failed enqueue never changes what save_listing returns to the model.
     """
 
     async with AsyncSessionLocal() as session:
         try:
             result = await session.execute(
-                select(Watches.user_id.label("user_id"), Items.name.label("item_name"))
+                select(
+                    Watches.user_id.label("user_id"),
+                    Watches.notify.label("notify"),
+                    Items.name.label("item_name"),
+                )
                 .join(Items, Items.id == Watches.item_id)
                 .where(Watches.id == watch_id)
             )
@@ -664,6 +669,9 @@ async def enqueue_new_listing(
             return False
     if row is None or site is None:
         log.error(f"No notification context for watch {watch_id} / site {site_id}")
+        return False
+    if not row["notify"]:
+        log.info(f"Watch {watch_id} is muted; not announcing listing {listing_id}")
         return False
 
     payload = {

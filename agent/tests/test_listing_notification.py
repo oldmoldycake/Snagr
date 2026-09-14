@@ -70,7 +70,7 @@ def _clean_tables():
     db(_truncate())
 
 
-async def _seed() -> tuple[int, int, int]:
+async def _seed(notify: bool = True) -> tuple[int, int, int]:
     """One watch on one item on one site; returns (watch_id, item_id, site_id)."""
     async with AsyncSessionLocal() as session:
         user = User(email="owner@test.local")
@@ -81,7 +81,7 @@ async def _seed() -> tuple[int, int, int]:
         item = Items(category_id=category.id, name="Widget")
         session.add(item)
         await session.flush()
-        watch = Watches(user_id=user.id, item_id=item.id, target_price=100, notify=True)
+        watch = Watches(user_id=user.id, item_id=item.id, target_price=100, notify=notify)
         session.add(watch)
         await session.flush()
         ids = (watch.id, item.id, site.id)
@@ -134,6 +134,17 @@ def test_a_new_listing_enqueues_with_the_full_payload():
             "match_summary": "complete in box, right region",
         },
     }
+
+
+def test_a_muted_watch_saves_the_listing_but_enqueues_nothing():
+    # notify gates alerting only — discovery still runs for a muted watch,
+    # so the listing lands; the owner just isn't told
+    watch_id, item_id, site_id = db(_seed(notify=False))
+
+    listing_id = _save(watch_id, item_id, site_id)
+
+    assert isinstance(listing_id, int)
+    assert db(_read_outbox()) == []
 
 
 def test_a_duplicate_save_does_not_enqueue_again():
