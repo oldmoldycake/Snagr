@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/oldmoldycake/Snagr/compare/v0.2.0...v0.2.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **agent:** notify toggle no longer pauses discovery ([08107be](https://github.com/oldmoldycake/Snagr/commit/08107beaf121f72707900cf7807db434b1b885d7))
+
 ## [0.2.0](https://github.com/oldmoldycake/Snagr/compare/v0.1.0...v0.2.0) (2026-09-14)
 
 
