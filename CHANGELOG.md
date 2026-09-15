@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.0](https://github.com/oldmoldycake/Snagr/compare/v0.2.1...v0.3.0) (2026-09-15)
+
+
+### Features
+
+* **agent:** validate tool arguments and refuse cross-listing writes ([ebd9762](https://github.com/oldmoldycake/Snagr/commit/ebd97624be240d91b631195eb7d9626bd045a61f))
+* **agent:** validate tool arguments and refuse cross-listing writes ([4563221](https://github.com/oldmoldycake/Snagr/commit/4563221406f42c9e0392f6ac4b71ac3cfadd08e1))
+
+
+### Bug Fixes
+
+* **agent:** skip known inactive listings instead of resurrecting them ([602df94](https://github.com/oldmoldycake/Snagr/commit/602df946fc4746aa14bd2331c2812de81892900b))
+* **agent:** skip known inactive listings instead of resurrecting them ([7cbdd7a](https://github.com/oldmoldycake/Snagr/commit/7cbdd7a72ffa1ef2d6721789df0f04fe7d82d536))
+
 ## [0.2.1](https://github.com/oldmoldycake/Snagr/compare/v0.2.0...v0.2.1) (2026-09-14)
 
 
