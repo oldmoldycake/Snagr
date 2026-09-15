@@ -801,7 +801,9 @@ class TestRunStatsTally:
 
         async def scenario():
             ids = await seed_scope_graph()
-            return await tools.save_price_check(ids["listing_a"], True, "ok", 49.99)
+            return await tools.save_price_check(
+                ids["listing_a"], True, "ok", 49.99, runtime=unit_a(ids)
+            )
 
         assert db(scenario()).startswith("Successfully")
         assert tools.run_stats["listings_checked"] == 1
@@ -812,7 +814,9 @@ class TestRunStatsTally:
 
         async def scenario():
             ids = await seed_scope_graph()
-            return await tools.save_price_check(ids["listing_a"], False, "sold")
+            return await tools.save_price_check(
+                ids["listing_a"], False, "sold", runtime=unit_a(ids)
+            )
 
         assert db(scenario()).startswith("Successfully")
         assert tools.run_stats["listings_checked"] == 1
@@ -834,6 +838,64 @@ class TestRunStatsTally:
         assert tools.run_stats["new_listings"] == 1
 
 
+class TestListingOwnership:
+    """save_price_check and disable_listing take a listing_id the model typed
+    by hand; the bound unit is what makes a typo harmless."""
+
+    def test_a_price_check_on_another_watchs_listing_is_refused(self):
+        tools.reset_run_stats()
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            result = await tools.save_price_check(
+                ids["listing_b"], True, "ok", 49.99, runtime=unit_a(ids)
+            )
+            async with AsyncSessionLocal() as session:
+                checks = (await session.execute(select(PriceChecks))).scalars().all()
+            return result, len(checks)
+
+        result, checks = db(scenario())
+        assert result.startswith("Error:")
+        assert checks == 0
+        assert tools.run_stats["listings_checked"] == 0
+
+    def test_a_recheck_writes_only_to_the_listing_it_is_about(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (other_id,) = await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/other",
+                )
+            )
+            runtime = unit_a(ids, listing_id=ids["listing_a"])
+            refused = await tools.save_price_check(other_id, True, "ok", 10, runtime=runtime)
+            accepted = await tools.save_price_check(
+                ids["listing_a"], True, "ok", 10, runtime=runtime
+            )
+            return refused, accepted
+
+        refused, accepted = db(scenario())
+        assert refused.startswith("Error:")
+        assert "listing_id=" in refused
+        assert accepted.startswith("Successfully")
+
+    def test_disabling_another_watchs_listing_is_refused(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            result = await tools.disable_listing(ids["listing_b"], "sold", runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                return result, await session.scalar(
+                    select(Listings.active).where(Listings.id == ids["listing_b"])
+                )
+
+        result, active = db(scenario())
+        assert result.startswith("Error:")
+        assert active is True
+
+
 class TestCheckedAtIsUtc:
     """Both checked_at columns are timestamptz and the house rule is that every
     DB datetime is timezone-aware UTC.
@@ -853,7 +915,9 @@ class TestCheckedAtIsUtc:
         async def scenario():
             ids = await seed_scope_graph()
             with clock.installed():
-                await tools.save_price_check(ids["listing_a"], True, "ok", 49.99)
+                await tools.save_price_check(
+                    ids["listing_a"], True, "ok", 49.99, runtime=unit_a(ids)
+                )
             async with AsyncSessionLocal() as session:
                 return await session.scalar(select(PriceChecks.checked_at))
 

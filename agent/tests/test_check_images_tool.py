@@ -149,3 +149,38 @@ def test_skipped_fetches_are_reported(monkeypatch):
     result = _check()
     assert "Skipped (could not fetch): https://cdn.test/b.jpg" in result
     assert "rely entirely on" in result  # inconclusive → trust your own screening
+
+
+def _counting_sidecar(monkeypatch) -> list:
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200, json=_report())
+
+    _install_sidecar(monkeypatch, handler)
+    return calls
+
+
+def test_an_empty_image_list_is_refused_before_the_sidecar_is_called(monkeypatch):
+    calls = _counting_sidecar(monkeypatch)
+    result = _check(image_urls=[])
+    assert result.startswith("Error:")
+    assert "skip check_images" in result
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("listing_url", "market.test/listing/1"),
+        ("image_urls", ["ftp://cdn.test/a.jpg"]),
+        ("llm_authenticity_read", "definitely_real"),
+    ],
+)
+def test_malformed_arguments_are_refused_before_the_sidecar_is_called(monkeypatch, field, value):
+    calls = _counting_sidecar(monkeypatch)
+    result = _check(**{field: value})
+    assert result.startswith("Error:")
+    assert field in result
+    assert calls == []
