@@ -5,16 +5,18 @@ they are written as instructions to the model — keep them accurate and
 imperative when editing. Errors are returned as strings (not raised) so the
 agent can read them and react.
 
-Which watch, item and site a call is about is never a tool argument. The
-orchestrator binds it per unit as a UnitContext on the run config, and
-langchain hands a tool its runtime through the keyword-only `runtime`
-parameter, which never appears in the schema the model sees. A wrong id
-typed by the model used to file a listing under some other watch; now there
-is no id to type."""
+Which watch, item and site a call is about — and on a recheck, which
+listing — is never a tool argument. The orchestrator binds it per unit as a
+UnitContext on the run config, and langchain hands every tool its runtime
+through the keyword-only `runtime` parameter, which never appears in the
+schema the model sees. A wrong id typed by the model used to attach a price
+to some other listing; now there is no id to type."""
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from urllib.parse import urlparse
 
 import httpx
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
@@ -64,12 +66,40 @@ class UnitContext:
     listing_id: int | None = None
 
 
+PRICE_STATUSES = ("ok", "sold", "ended", "error")
+AUTHENTICITY_READS = ("looks_authentic", "suspect", "unsure")
+
+
 def _unit(runtime: ToolRuntime) -> UnitContext:
     """The unit this call belongs to. Carried on config["configurable"] rather
     than the runtime's `context` slot: langchain serializes the injected
     runtime on every call, and a non-None context there trips a pydantic
     serializer warning each time — configurable rides along untouched."""
     return runtime.config["configurable"]["unit"]
+
+
+def _is_http_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+
+async def _listing_mismatch(session, listing_id: int, unit: UnitContext) -> str | None:
+    """Why `listing_id` may not be written under this unit, or None when it
+    may. On a recheck the unit is about exactly one listing; on a scan the id
+    must at least belong to this watch. Either way a typo would attach the
+    observation to someone else's listing, which is data corruption."""
+    if unit.listing_id is not None and listing_id != unit.listing_id:
+        return (
+            f"Error: this task is about listing {unit.listing_id}, not {listing_id} — "
+            f"use listing_id={unit.listing_id}."
+        )
+    owner = await session.scalar(select(Listings.watch_id).where(Listings.id == listing_id))
+    if owner != unit.watch_id:
+        return (
+            f"Error: listing {listing_id} is not one of this watch's listings — use the "
+            f"exact listing_id save_listing returned."
+        )
+    return None
 
 
 async def save_listing(
@@ -87,7 +117,7 @@ async def save_listing(
     already known here, so you never pass them.
 
     Args:
-      url: The URL of the item that was found meeting the required criteria
+      url: The full http(s) URL of the listing page you actually visited
       title: The listing's actual title as shown on the site
       site_sku: If a SKU is present on the site, record it here
       match_score: How well this listing fits the requested criteria, as an integer 0-100
@@ -101,10 +131,15 @@ async def save_listing(
         REFUSED: A string starting with "REFUSED:" — this listing's photos crossed the
           user's authenticity auto-reject threshold (see check_images). Do not retry;
           call log_listing_check with reason "authenticity" instead and move on.
-        Error: A string naming the site/item combo that errored and what the error was
+        Error: Any other string — what was wrong with the call, or what failed while
+          saving
     """
     unit = _unit(runtime)
     watch_id, item_id, site_id = unit.watch_id, unit.item_id, unit.site_id
+    if not _is_http_url(url):
+        return f"Error: url must be the listing page's full http(s) URL, got {url!r}"
+    if not 0 <= match_score <= 100:
+        return f"Error: match_score must be an integer from 0 to 100, got {match_score}"
 
     log.info(f"Saving listing for item {item_id} on site {site_id} (watch {watch_id})")
 
@@ -187,7 +222,13 @@ async def save_listing(
 
 
 async def save_price_check(
-    listing_id: int, in_stock: bool, status: str, price: float | None = None, currency: str = "USD"
+    listing_id: int,
+    in_stock: bool,
+    status: str,
+    price: float | None = None,
+    currency: str = "USD",
+    *,
+    runtime: ToolRuntime,
 ) -> str:
     """
     Record a listing's current price and availability: after save_listing on a search, or
@@ -199,18 +240,35 @@ async def save_price_check(
 
     Args:
       listing_id: The exact listing id returned by save_listing, or the listing_id you
-        were given to re-check
+        were given to re-check. Any other id is refused.
       in_stock: true/false based on the page
-      status: Exactly one of "ok", "sold", "ended", "error". If the page no
-               longer shows a price, status MUST be "sold", "ended", or
-               "error" - never "ok" with a missing/zero price.
-      price: The numeric price shown on the page (no currency symbol). Omit
-             this entirely if no price is shown (e.g. status is "sold"/"ended"/
-             "error") - do NOT invent a price or send 0 as a placeholder.
-      currency: The currency shown, e.g. "USD"
+      status: Exactly one of "ok", "sold", "ended", "error". "ok" REQUIRES a real
+               visible price; if the page no longer shows a price, status MUST be
+               "sold", "ended", or "error".
+      price: The numeric price shown on the page (no currency symbol), greater than
+             zero. Only with status "ok" - omit it entirely for "sold"/"ended"/
+             "error", and NEVER invent a price or send 0 as a placeholder.
+      currency: The three-letter code of the currency shown, e.g. "USD"
     Returns:
-      A confirmation string on success, or a string describing the error.
+      A confirmation string on success, or a string starting with "Error:" saying what
+      was wrong with the call or what failed.
     """
+    unit = _unit(runtime)
+    if status not in PRICE_STATUSES:
+        return f"Error: status must be one of {', '.join(PRICE_STATUSES)}, got {status!r}"
+    if status == "ok" and (price is None or price <= 0):
+        return (
+            "Error: status 'ok' needs the real price shown on the page (greater than zero); "
+            "if the page shows no price, use status 'sold', 'ended' or 'error' and omit price"
+        )
+    if status != "ok" and price is not None:
+        return (
+            f"Error: omit price when status is {status!r} — a price is only recorded for a "
+            f"live listing"
+        )
+    currency = currency.upper()
+    if not re.fullmatch(r"[A-Z]{3}", currency):
+        return f"Error: currency must be a three-letter code like USD, got {currency!r}"
 
     log.info(
         f"Saving price check for listing {listing_id} at a price of {price} {currency} "
@@ -218,6 +276,11 @@ async def save_price_check(
     )
     async with AsyncSessionLocal() as session:
         try:
+            mismatch = await _listing_mismatch(session, listing_id, unit)
+            if mismatch:
+                log.info(f"Refusing price check: {mismatch}")
+                return mismatch
+
             stmt = (
                 insert(PriceChecks)
                 .values(
@@ -252,7 +315,7 @@ async def save_price_check(
     return f"Successfully recorded listing {listing_id}"
 
 
-async def disable_listing(listing_id: int, reason: str) -> str:
+async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime) -> str:
     """
     Mark a listing inactive so it is no longer tracked/rechecked.
 
@@ -262,15 +325,25 @@ async def disable_listing(listing_id: int, reason: str) -> str:
     already-inactive listing is harmless.
 
     Args:
-      listing_id: The exact listing id to disable.
+      listing_id: The exact listing id to disable - the listing_id you were given to
+        re-check, or one save_listing returned. Any other id is refused.
       reason: Short note on why it's being disabled, e.g. "sold" or "listing removed".
     Returns:
-      A confirmation string on success, or a string describing the error.
+      A confirmation string on success, or a string starting with "Error:" saying what
+      was wrong with the call or what failed.
     """
+    unit = _unit(runtime)
+    if not reason.strip():
+        return 'Error: reason must say why the listing is being disabled, e.g. "sold"'
 
     log.info(f"Disabling listing {listing_id}: {reason}")
     async with AsyncSessionLocal() as session:
         try:
+            mismatch = await _listing_mismatch(session, listing_id, unit)
+            if mismatch:
+                log.info(f"Refusing disable: {mismatch}")
+                return mismatch
+
             await session.execute(
                 update(Listings).where(Listings.id == listing_id).values(active=False)
             )
@@ -297,15 +370,20 @@ async def log_listing_check(
     call this for listings you saved with `save_listing`.
 
     Args:
-      url: The URL of the listing you evaluated and rejected
+      url: The full http(s) URL of the listing you evaluated and rejected
       reason: Short category for the rejection, e.g. "poor_fit", "duplicate",
         "authenticity", "auction"
       notes: Optional one-line detail on why, e.g. "no repro flags but price is 3x market"
     Returns:
-      A confirmation string on success, or a string describing the error.
+      A confirmation string on success, or a string starting with "Error:" saying what
+      was wrong with the call or what failed.
     """
     unit = _unit(runtime)
     watch_id, site_id = unit.watch_id, unit.site_id
+    if not _is_http_url(url):
+        return f"Error: url must be the listing page's full http(s) URL, got {url!r}"
+    if not reason.strip():
+        return 'Error: reason must name the rejection category, e.g. "poor_fit"'
 
     log.info(f"Logging listing check for watch id {watch_id}")
     async with AsyncSessionLocal() as session:
@@ -345,12 +423,12 @@ async def check_images(
     screening and before save_listing / log_listing_check.
 
     Args:
-      listing_url: The URL of the candidate listing page you are evaluating
+      listing_url: The full http(s) URL of the candidate listing page you are evaluating
       image_urls: Direct URLs of the photos on the listing page that actually
         depict the item itself. Choose carefully: skip packaging-only shots,
         hands/scale references, seller logos, stock banners, and unrelated
-        thumbnails. 1-6 images is typical. Do not call this with an empty
-        list — if the listing has no usable photos, skip the call entirely.
+        thumbnails. 1-6 images is typical. If the listing has no usable
+        photos, skip the call entirely — an empty list is refused.
       llm_authenticity_read: Your OWN verdict from the screening you already
         did, exactly one of "looks_authentic", "suspect", "unsure". Report it
         honestly — it is recorded for corroboration and does not change how
@@ -374,6 +452,23 @@ async def check_images(
     """
     unit = _unit(runtime)
     watch_id, item_id = unit.watch_id, unit.item_id
+    if not _is_http_url(listing_url):
+        return (
+            f"Error: listing_url must be the listing page's full http(s) URL, got {listing_url!r}"
+        )
+    if not image_urls:
+        return (
+            "Error: image_urls is empty — skip check_images when the listing has no usable "
+            "photos and rely on your own screening"
+        )
+    bad = [image_url for image_url in image_urls if not _is_http_url(image_url)]
+    if bad:
+        return f"Error: image_urls must be direct http(s) image URLs, got {bad[0]!r}"
+    if llm_authenticity_read not in AUTHENTICITY_READS:
+        return (
+            f"Error: llm_authenticity_read must be one of {', '.join(AUTHENTICITY_READS)}, "
+            f"got {llm_authenticity_read!r}"
+        )
 
     log.info(f"Checking {len(image_urls)} image(s) for watch {watch_id}: {listing_url}")
     try:

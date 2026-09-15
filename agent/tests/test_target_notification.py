@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 import notify
 import pytest
 import tools
+from conftest import unit_runtime
 from database import (
     AsyncSessionLocal,
     Base,
@@ -139,9 +140,17 @@ async def _seed(
         return listing_id
 
 
-def _check(listing_id: int, price: float | None = 90, in_stock: bool = True) -> str:
+def _check(
+    listing_id: int, price: float | None = 90, in_stock: bool = True, status: str = "ok"
+) -> str:
     return db(
-        tools.save_price_check(listing_id=listing_id, in_stock=in_stock, status="ok", price=price)
+        tools.save_price_check(
+            listing_id=listing_id,
+            in_stock=in_stock,
+            status=status,
+            price=price,
+            runtime=unit_runtime(),
+        )
     )
 
 
@@ -222,7 +231,8 @@ def test_out_of_stock_bargain_stays_quiet():
 def test_priceless_check_stays_quiet():
     listing_id = db(_seed())
 
-    _check(listing_id, price=None)
+    # "ok" without a price is refused outright; a priceless page is an error
+    _check(listing_id, price=None, status="error")
 
     assert db(_read_outbox()) == []
 
