@@ -125,9 +125,12 @@ async def save_listing(
       match_summary: One short line justifying the score, e.g. "dry battery ok, cart only,
         authentic per photos"
     Returns:
-      One of these three:
-        listing_id: The internal ID for the listing. If it already exists, returns the
+      One of these four:
+        listing_id: The internal ID for the listing. If it is already tracked, returns the
           existing listing_id instead.
+        SKIPPED: A string starting with "SKIPPED:" — this listing is already known and no
+          longer tracked (it sold, ended, or the user untracked it). Record nothing for it
+          and do not log it as a rejection either; move on.
         REFUSED: A string starting with "REFUSED:" — this listing's photos crossed the
           user's authenticity auto-reject threshold (see check_images). Do not retry;
           call log_listing_check with reason "authenticity" instead and move on.
@@ -198,6 +201,16 @@ async def save_listing(
             results = await session.execute(stmt)
             listing_id = results.scalar()
             if listing_id is not None:
+                if not listing_id.active:
+                    # Sold, ended, or untracked by the user: not a discovery,
+                    # and handing back its id would let price checks pile up
+                    # on a row the UI no longer shows.
+                    log.info(f"Skipping listing save for watch {watch_id}: known, inactive ({url})")
+                    return (
+                        "SKIPPED: this listing is already known and no longer tracked (it "
+                        "sold, ended, or the user untracked it). Record nothing for it and "
+                        "do not log it as a rejection; move on."
+                    )
                 log.info(f"Successfully created listing for item {item_id} on site {site_id}")
                 if is_new:
                     # committed above, so this is a pure side effect — a failed

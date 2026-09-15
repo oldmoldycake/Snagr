@@ -46,6 +46,7 @@ from database import (
     finish_run,
     get_active_listing_count,
     get_checked_urls,
+    get_known_listing_urls,
     get_listed_items,
     get_market_price,
     get_run_status,
@@ -213,11 +214,12 @@ async def recheck_listing(agent, session_id: str, row) -> None:
 
 
 async def scan_pair(
-    agent, session_id: str, row, known_urls: list, market: dict | None, tracked_listings: int
+    agent, session_id: str, row, market: dict | None, tracked_listings: int
 ) -> None:
     """One pass-2 unit: search a site for new listings for one watch, telling
-    the model how many of the watch's slots are already in use. Raises on
-    failure — the orchestrator counts it."""
+    the model how many of the watch's slots are already in use and which
+    URLs this pair already knows. Raises on failure — the orchestrator counts
+    it."""
     watch_id = row["watch_id"]
     user_id = int(row["user_id"])
     site_id = row["site_id"]
@@ -237,6 +239,7 @@ async def scan_pair(
         f"item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}"
     )
 
+    known_urls = list(await get_known_listing_urls(watch_id, site_id))
     checked_urls_list = await get_checked_urls(watch_id, site_id)
     rejected_checks = [
         {"url": c["url"], "reason": c["reason"], "notes": c["notes"]} for c in checked_urls_list
@@ -327,7 +330,6 @@ async def execute_run(run: dict) -> dict | None:
         log.info("Starting scan on current listings")
 
         listed_items_list = await get_listed_items(run["scope"], run["scope_id"])
-        current_listing_urls = []
         for row in listed_items_list:
             if await get_run_status(run_id) == "cancelled":
                 log.info(f"Run {run_id} cancelled; stopping before listing {row['listing_id']}")
@@ -336,7 +338,6 @@ async def execute_run(run: dict) -> dict | None:
             units += 1
             try:
                 await _bounded(recheck_listing(recheck_agent, session_id, row))
-                current_listing_urls.append(row["listing_url"])
                 log.info(f"Finished recheck for listing {row['listing_id']}")
             except Exception as e:
                 log.error(f"Recheck failed for listing {row['listing_id']}: {e}")
@@ -387,11 +388,7 @@ async def execute_run(run: dict) -> dict | None:
             )
             units += 1
             try:
-                await _bounded(
-                    scan_pair(
-                        scan_agent, session_id, row, current_listing_urls, markets[item_id], tracked
-                    )
-                )
+                await _bounded(scan_pair(scan_agent, session_id, row, markets[item_id], tracked))
                 log.info(f"Finished {row['item_name']} on site {row['site_name']}")
             except Exception as e:
                 log.error(f"Item {row['item_name']} on site {row['site_name']} failed: {e}")

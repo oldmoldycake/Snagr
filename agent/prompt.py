@@ -47,8 +47,9 @@ async def generate_prompt(
                               authenticity block. Skipped when reproductions
                               are allowed — repro-tolerant captures would
                               poison the reference library (D-V9).
-        known_urls:           URLs already tracked/checked — the agent should
-                              skip these rather than re-evaluate them.
+        known_urls:           URLs already saved for this (watch, site) pair,
+                              tracked now or previously — the agent must skip
+                              these rather than re-evaluate them.
         rejected_checks:      Rows from get_checked_urls (with "url", "reason",
                               and optionally "notes" keys) for listings on this
                               site already evaluated and rejected for this watch.
@@ -174,9 +175,11 @@ PHOTO AUTHENTICITY CHECK (after the text screening above)
 
     if known_urls:
         known_urls_list = "\n".join(f"    - {u}" for u in known_urls)
-        known_urls_block = f"""ALREADY-TRACKED URLS — SKIP THESE
-  The following URLs are already tracked/checked; do NOT save them again or
-  spend time re-evaluating them as new candidates:
+        known_urls_block = f"""ALREADY-KNOWN URLS — SKIP THESE
+  The following listings are already known for this search — tracked now, or
+  tracked before and since sold, ended, or untracked by the user. Do NOT save
+  them again, spend time re-evaluating them as new candidates, or log them as
+  rejections:
 {known_urls_list}
 """
     else:
@@ -267,7 +270,9 @@ FOR EACH LISTING YOU DECIDE TO SAVE
                         reproduction/counterfeit red flags and found none (or
                         which authenticity signals gave you pause).
                         Example: "dry battery ✓, damaged case ✓, cart only, no repro flags"
-     `save_listing` returns a `listing_id` (int) on success, or an error string.
+     `save_listing` returns a `listing_id` (int) on success, "SKIPPED: …" for a
+     listing already known and no longer tracked (record nothing, log nothing,
+     move on), or an error string.
   2. If you got a numeric `listing_id`, immediately call `save_price_check` with:
        - listing_id: the EXACT id returned by that save_listing call. NEVER
                      guess, infer, or reuse a listing_id you did not just
