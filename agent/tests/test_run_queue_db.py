@@ -31,6 +31,7 @@ from database import (
     Items,
     ListingChecks,
     Listings,
+    NotificationOutbox,
     PriceChecks,
     RunEvents,
     RunSchedules,
@@ -47,6 +48,7 @@ from database import (
     engine,
     finish_run,
     get_active_listing_count,
+    get_known_listing_urls,
     get_listed_items,
     get_watched_item_list,
     reap_stale_runs,
@@ -894,6 +896,65 @@ class TestListingOwnership:
         result, active = db(scenario())
         assert result.startswith("Error:")
         assert active is True
+
+
+class TestInactiveListingSave:
+    def test_a_known_inactive_listing_is_skipped_not_resurrected(self):
+        tools.reset_run_stats()
+        url = "https://gamebay.test/sold"
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url=url,
+                    active=False,
+                )
+            )
+            result = await tools.save_listing(url, "title", 80, "fits", runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                active = await session.scalar(select(Listings.active).where(Listings.url == url))
+                outbox = (await session.execute(select(NotificationOutbox))).scalars().all()
+            return result, active, len(outbox)
+
+        result, active, outbox = db(scenario())
+        assert result.startswith("SKIPPED:")
+        assert active is False
+        assert outbox == 0
+        assert tools.run_stats["new_listings"] == 0
+
+
+class TestKnownListingUrls:
+    def test_returns_the_pairs_urls_active_or_not(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/sold",
+                    active=False,
+                ),
+                # same watch, other site: not this pair's
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_b"],
+                    url="https://cardbay.test/emerald",
+                ),
+            )
+            return (
+                list(await get_known_listing_urls(ids["watch_a"], ids["site_a"])),
+                list(await get_known_listing_urls(ids["watch_b"], ids["site_a"])),
+            )
+
+        pair_a, none = db(scenario())
+        assert pair_a == ["https://gamebay.test/l1", "https://gamebay.test/sold"]
+        assert none == []
 
 
 class TestCheckedAtIsUtc:

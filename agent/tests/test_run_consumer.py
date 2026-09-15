@@ -160,7 +160,7 @@ def wire(
     async def fake_count(watch_id):
         return slots_used.get(watch_id, 0)
 
-    async def fake_scan(pass_agent, session_id, row, known_urls, market, tracked_listings):
+    async def fake_scan(pass_agent, session_id, row, market, tracked_listings):
         if row["watch_id"] in fail_scan:
             raise RuntimeError("timeout")
         seen["scan_units"].append(row["watch_id"])
@@ -509,11 +509,16 @@ class TestUnitContextBinding:
             seen["prompt_kwargs"].append(kwargs)
             return "PROMPT"
 
+        async def fake_known(watch_id, site_id):
+            seen["known_args"] = (watch_id, site_id)
+            return ["https://example.test/old"]
+
         async def fake_checked(watch_id, site_id):
             return []
 
         monkeypatch.setattr(agent, "generate_prompt", fake_prompt)
         monkeypatch.setattr(agent, "generate_recheck_prompt", fake_prompt)
+        monkeypatch.setattr(agent, "get_known_listing_urls", fake_known)
         monkeypatch.setattr(agent, "get_checked_urls", fake_checked)
         return seen
 
@@ -536,8 +541,8 @@ class TestUnitContextBinding:
             watch_id=4, item_id=5, site_id=3, listing_id=9
         )
 
-    def test_a_scan_unit_is_bound_to_the_pair(self, monkeypatch):
-        self._seams(monkeypatch)
+    def test_a_scan_unit_is_bound_to_the_pair_and_sees_its_known_urls(self, monkeypatch):
+        seen = self._seams(monkeypatch)
         fake = _FakeAgent()
         row = {
             "watch_id": 4,
@@ -554,9 +559,12 @@ class TestUnitContextBinding:
             "max_listings": 3,
             "allow_reproductions": False,
         }
-        asyncio.run(agent.scan_pair(fake, "session", row, [], None, 0))
+        asyncio.run(agent.scan_pair(fake, "session", row, None, 0))
         (config,) = fake.configs
         assert config["configurable"]["unit"] == UnitContext(watch_id=4, item_id=5, site_id=3)
+        assert seen["known_args"] == (4, 3)
+        (kwargs,) = seen["prompt_kwargs"]
+        assert kwargs["known_urls"] == ["https://example.test/old"]
 
 
 class TestStatsTally:

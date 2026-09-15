@@ -460,6 +460,39 @@ async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
             return []
 
 
+async def get_known_listing_urls(watch_id: int, site_id: int) -> Sequence[str]:
+    """
+    Return every listing URL already saved for this (watch, site) pair,
+    active or not — the set a scan must not save again. Inactive rows count:
+    a listing that sold, ended, or the user untracked is not a discovery,
+    and re-saving it would silently reattach price checks to a row the UI
+    no longer shows.
+
+    Args:
+      watch_id: The internal id of the watch to look up listings for.
+      site_id: The internal id of the site to look up listings for.
+    Returns:
+      A sequence of URLs. Returns an empty sequence if the query fails, so a
+      DB hiccup skips the skip-list instead of crashing the run.
+    """
+
+    log.info(f"Fetching known listing urls for watch {watch_id} on site {site_id}")
+    async with AsyncSessionLocal() as session:
+        try:
+            stmt = (
+                select(Listings.url)
+                .where(Listings.watch_id == watch_id)
+                .where(Listings.site_id == site_id)
+                .order_by(Listings.id)
+            )
+
+            results = await session.execute(stmt)
+            return results.scalars().all()
+        except Exception as e:
+            log.error(f"Error fetching known listing urls for watch {watch_id}: {e}")
+            return []
+
+
 async def get_active_listing_count(watch_id: int) -> int:
     """
     Return how many active listings a watch holds across every site — the
