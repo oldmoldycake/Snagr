@@ -12,7 +12,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 import tools
 from database import roll_forward
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage
+from tools import UnitContext
 
 import agent
 
@@ -36,6 +37,9 @@ def pair_row(n, site_id=1, max_listings=3):
         "site_name": "TestBay",
         "max_listings": max_listings,
     }
+
+
+UNIT = UnitContext(watch_id=1, item_id=1, site_id=1)
 
 
 def schedule_row(run_id=1, scope="global", scope_id=None, label="Everything"):
@@ -479,7 +483,80 @@ class TestUnitBudgets:
         assert stats["errors"] == 1
 
     def test_the_step_cap_rides_on_every_units_config(self):
-        assert agent.agent_config("session", 1)["recursion_limit"] == agent.AGENT_MAX_STEPS
+        assert agent.agent_config("session", 1, UNIT)["recursion_limit"] == agent.AGENT_MAX_STEPS
+
+
+class _FakeAgent:
+    """Stands in for a compiled agent: records the config it was streamed
+    with and ends the unit with one plain message."""
+
+    def __init__(self):
+        self.configs = []
+
+    async def astream(self, inputs, config, stream_mode):
+        self.configs.append(config)
+        yield {"messages": [AIMessage(content="done")]}
+
+
+class TestUnitContextBinding:
+    """The ids a tool writes under come from the run config the orchestrator
+    binds per unit, never from the model."""
+
+    def _seams(self, monkeypatch):
+        seen = {"prompt_kwargs": []}
+
+        async def fake_prompt(**kwargs):
+            seen["prompt_kwargs"].append(kwargs)
+            return "PROMPT"
+
+        async def fake_checked(watch_id, site_id):
+            return []
+
+        monkeypatch.setattr(agent, "generate_prompt", fake_prompt)
+        monkeypatch.setattr(agent, "generate_recheck_prompt", fake_prompt)
+        monkeypatch.setattr(agent, "get_checked_urls", fake_checked)
+        return seen
+
+    def test_a_recheck_unit_is_bound_to_its_one_listing(self, monkeypatch):
+        self._seams(monkeypatch)
+        fake = _FakeAgent()
+        row = {
+            "listing_id": 9,
+            "listing_url": "https://example.test/l9",
+            "watch_id": 4,
+            "user_id": 2,
+            "site_id": 3,
+            "site_name": "TestBay",
+            "item_id": 5,
+            "item_name": "Widget",
+        }
+        asyncio.run(agent.recheck_listing(fake, "session", row))
+        (config,) = fake.configs
+        assert config["configurable"]["unit"] == UnitContext(
+            watch_id=4, item_id=5, site_id=3, listing_id=9
+        )
+
+    def test_a_scan_unit_is_bound_to_the_pair(self, monkeypatch):
+        self._seams(monkeypatch)
+        fake = _FakeAgent()
+        row = {
+            "watch_id": 4,
+            "user_id": 2,
+            "site_id": 3,
+            "site_name": "TestBay",
+            "item_id": 5,
+            "item_name": "Widget",
+            "base_url": "https://example.test",
+            "criteria": None,
+            "expected_price": None,
+            "condition_hint": None,
+            "selection_mode": "cheapest",
+            "max_listings": 3,
+            "allow_reproductions": False,
+        }
+        asyncio.run(agent.scan_pair(fake, "session", row, [], None, 0))
+        (config,) = fake.configs
+        assert config["configurable"]["unit"] == UnitContext(watch_id=4, item_id=5, site_id=3)
 
 
 class TestStatsTally:

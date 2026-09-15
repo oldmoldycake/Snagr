@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import tools
+from conftest import unit_runtime
 from database import (
     AgentRuns,
     AsyncSessionLocal,
@@ -100,6 +101,13 @@ def _clean_tables():
     """Every test starts from an empty database."""
     yield
     db(_truncate())
+
+
+def unit_a(ids, **overrides):
+    """The runtime a tool call gets inside one of watch A's units on GameBay."""
+    return unit_runtime(
+        watch_id=ids["watch_a"], item_id=ids["item_a"], site_id=ids["site_a"], **overrides
+    )
 
 
 def queued_run(days_ago=0.0, **overrides):
@@ -815,9 +823,9 @@ class TestRunStatsTally:
 
         async def scenario():
             ids = await seed_scope_graph()
-            args = (ids["watch_a"], ids["item_a"], ids["site_a"], "https://gamebay.test/new")
-            first = await tools.save_listing(*args, "title", 80, "fits")
-            second = await tools.save_listing(*args, "title", 80, "fits")
+            args = ("https://gamebay.test/new", "title", 80, "fits")
+            first = await tools.save_listing(*args, runtime=unit_a(ids))
+            second = await tools.save_listing(*args, runtime=unit_a(ids))
             return first, second
 
         first, second = db(scenario())
@@ -860,7 +868,7 @@ class TestCheckedAtIsUtc:
             ids = await seed_scope_graph()
             with clock.installed():
                 await tools.log_listing_check(
-                    ids["watch_a"], ids["site_a"], "https://gamebay.test/nope", "poor_fit"
+                    "https://gamebay.test/nope", "poor_fit", runtime=unit_a(ids)
                 )
             async with AsyncSessionLocal() as session:
                 return await session.scalar(select(ListingChecks.checked_at))

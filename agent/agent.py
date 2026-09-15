@@ -62,6 +62,7 @@ from langfuse.langchain import CallbackHandler
 from pricing import ground_stale
 from prompt import generate_prompt, generate_recheck_prompt
 from tools import (
+    UnitContext,
     check_images,
     disable_listing,
     log_listing_check,
@@ -85,9 +86,9 @@ else:
     llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL)
 
 
-def agent_config(session_id: str, user_id: int) -> dict:
+def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
     """
-    Build the per-call runnable config for one watch's agent invocation.
+    Build the per-call runnable config for one unit's agent invocation.
 
     Every trace from a single job invocation shares session_id and carries the
     owning user's id, so runs group together in the tracing UI and cost/latency
@@ -98,13 +99,21 @@ def agent_config(session_id: str, user_id: int) -> dict:
     effectively unlimited, and a per-call value overrides it. A unit that hits
     the cap raises and fails like any other unit.
 
+    The unit itself rides on `configurable`, where the DB tools read it back
+    through their injected runtime (tools.UnitContext): the watch, item, site
+    and listing a tool writes under are bound here, never typed by the model.
+    Only primitive configurable values are copied into tracer metadata, so
+    the dataclass stays out of the traces.
+
     Args:
       session_id: Identifier for the whole job run, shared by every call.
       user_id: Owner of the watch this call is working on.
+      unit: What this call is about — the ids every tool call is bound to.
     """
     return {
         "callbacks": callbacks,
         "recursion_limit": AGENT_MAX_STEPS,
+        "configurable": {"unit": unit},
         "metadata": {
             "session_id": session_id,
             "user_id": str(user_id),
@@ -188,11 +197,14 @@ async def recheck_listing(agent, session_id: str, row) -> None:
         item_id=item_id,
         item_name=item_name,
     )
+    unit = UnitContext(
+        watch_id=int(watch_id), item_id=int(item_id), site_id=int(site_id), listing_id=listing_id
+    )
 
     final: dict = {}
     async for step in agent.astream(
         {"messages": [{"role": "user", "content": prompt}]},
-        config=agent_config(session_id, user_id),
+        config=agent_config(session_id, user_id, unit),
         stream_mode="values",
     ):
         step["messages"][-1].pretty_print()
@@ -249,11 +261,12 @@ async def scan_pair(
         expected_price=str(expected_price) if expected_price is not None else None,
         condition_hint=condition_hint,
     )
+    unit = UnitContext(watch_id=int(watch_id), item_id=int(item_id), site_id=int(site_id))
 
     final: dict = {}
     async for step in agent.astream(
         {"messages": [{"role": "user", "content": prompt}]},
-        config=agent_config(session_id, user_id),
+        config=agent_config(session_id, user_id, unit),
         stream_mode="values",
     ):
         step["messages"][-1].pretty_print()

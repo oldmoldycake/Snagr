@@ -46,3 +46,24 @@ os.environ.setdefault("AI_PROVIDER", "openai")
 os.environ.setdefault("AI_MODEL", "test-model")
 os.environ.setdefault("AI_API_KEY", "test-key")
 os.environ.setdefault("PLAYWRIGHT_MCP_URL", "http://localhost:9999/mcp")
+
+
+def unit_runtime(**overrides):
+    """A ToolRuntime the way the tool node injects it, carrying a UnitContext
+    on the run config — watch 1 / item 1 / site 1 unless overridden, which is
+    what a freshly seeded scenario gets after RESTART IDENTITY. The tools
+    read nothing else off it."""
+    # imported here, not at module top: the env block above must run before
+    # any agent module is imported
+    from langchain.tools import ToolRuntime
+    from tools import UnitContext
+
+    context = UnitContext(**{"watch_id": 1, "item_id": 1, "site_id": 1, **overrides})
+    return ToolRuntime(
+        state={},
+        context=None,
+        config={"configurable": {"unit": context}},
+        stream_writer=lambda _: None,
+        tool_call_id=None,
+        store=None,
+    )

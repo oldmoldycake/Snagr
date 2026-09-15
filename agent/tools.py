@@ -3,9 +3,17 @@
 Each function's docstring doubles as the tool description the LLM sees, so
 they are written as instructions to the model — keep them accurate and
 imperative when editing. Errors are returned as strings (not raised) so the
-agent can read them and react."""
+agent can read them and react.
+
+Which watch, item and site a call is about is never a tool argument. The
+orchestrator binds it per unit as a UnitContext on the run config, and
+langchain hands a tool its runtime through the keyword-only `runtime`
+parameter, which never appears in the schema the model sees. A wrong id
+typed by the model used to file a listing under some other watch; now there
+is no id to type."""
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import httpx
@@ -18,6 +26,7 @@ from database import (
     VisionScans,
     enqueue_new_listing,
 )
+from langchain.tools import ToolRuntime
 from notify import notify_target_met
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -41,24 +50,43 @@ def read_run_stats() -> dict:
     return dict(run_stats)
 
 
+@dataclass(frozen=True)
+class UnitContext:
+    """What one unit of work is about. Bound by the orchestrator, read by every
+    tool. listing_id is set on a recheck unit — the one listing being
+    revisited is the only one a price may be recorded against; a scan unit
+    leaves it None, and any listing of the watch is writable (save_listing is
+    what creates them)."""
+
+    watch_id: int
+    item_id: int
+    site_id: int
+    listing_id: int | None = None
+
+
+def _unit(runtime: ToolRuntime) -> UnitContext:
+    """The unit this call belongs to. Carried on config["configurable"] rather
+    than the runtime's `context` slot: langchain serializes the injected
+    runtime on every call, and a non-None context there trips a pydantic
+    serializer warning each time — configurable rides along untouched."""
+    return runtime.config["configurable"]["unit"]
+
+
 async def save_listing(
-    watch_id: int,
-    item_id: int,
-    site_id: int,
     url: str,
     title: str,
     match_score: int,
     match_summary: str,
     site_sku: str | None = None,
+    *,
+    runtime: ToolRuntime,
 ) -> int | str:
     """
     Save a listing that matches the user's selected criteria to the database and return its
-    listing_id.
+    listing_id. It is saved under the watch, item and site this search is for — those are
+    already known here, so you never pass them.
 
     Args:
-      watch_id: The internal id of the watch (user+item) this search is being run for
-      item_id: The item id you have for the current item
-      site_id: The internal id for the current site being searched
       url: The URL of the item that was found meeting the required criteria
       title: The listing's actual title as shown on the site
       site_sku: If a SKU is present on the site, record it here
@@ -75,6 +103,8 @@ async def save_listing(
           call log_listing_check with reason "authenticity" instead and move on.
         Error: A string naming the site/item combo that errored and what the error was
     """
+    unit = _unit(runtime)
+    watch_id, item_id, site_id = unit.watch_id, unit.item_id, unit.site_id
 
     log.info(f"Saving listing for item {item_id} on site {site_id} (watch {watch_id})")
 
@@ -160,14 +190,16 @@ async def save_price_check(
     listing_id: int, in_stock: bool, status: str, price: float | None = None, currency: str = "USD"
 ) -> str:
     """
-    Use this tool after a listing is created, to record its current price and availability.
+    Record a listing's current price and availability: after save_listing on a search, or
+    for the one listing you were told to re-check.
 
     This only records the observation - it does NOT change whether the listing
     is tracked. If status is "sold" or "ended", also call `disable_listing`
     afterward to stop tracking it.
 
     Args:
-      listing_id: The exact listing id returned by save_listing
+      listing_id: The exact listing id returned by save_listing, or the listing_id you
+        were given to re-check
       in_stock: true/false based on the page
       status: Exactly one of "ok", "sold", "ended", "error". If the page no
                longer shows a price, status MUST be "sold", "ended", or
@@ -253,19 +285,18 @@ async def disable_listing(listing_id: int, reason: str) -> str:
 
 
 async def log_listing_check(
-    watch_id: int, site_id: int, url: str, reason: str, notes: str | None = None
+    url: str, reason: str, notes: str | None = None, *, runtime: ToolRuntime
 ) -> str:
     """
     Log a listing you evaluated but decided NOT to save, so future runs don't
-    have to re-discover and re-judge the same rejection from scratch.
+    have to re-discover and re-judge the same rejection from scratch. It is
+    logged against the watch and site this search is for - you never pass those.
 
     Call this for every candidate you look at and reject - poor fit, duplicate
     of something already saved, failed authenticity screening, etc. Do NOT
     call this for listings you saved with `save_listing`.
 
     Args:
-      watch_id: The internal id of the watch (user+item) this search is being run for
-      site_id: The internal id for the current site being searched
       url: The URL of the listing you evaluated and rejected
       reason: Short category for the rejection, e.g. "poor_fit", "duplicate",
         "authenticity", "auction"
@@ -273,6 +304,8 @@ async def log_listing_check(
     Returns:
       A confirmation string on success, or a string describing the error.
     """
+    unit = _unit(runtime)
+    watch_id, site_id = unit.watch_id, unit.site_id
 
     log.info(f"Logging listing check for watch id {watch_id}")
     async with AsyncSessionLocal() as session:
@@ -297,11 +330,11 @@ async def log_listing_check(
 
 
 async def check_images(
-    watch_id: int,
-    item_id: int,
     listing_url: str,
     image_urls: list[str],
     llm_authenticity_read: str,
+    *,
+    runtime: ToolRuntime,
 ) -> str:
     """
     Get an image-based second opinion on a listing's authenticity before you
@@ -312,8 +345,6 @@ async def check_images(
     screening and before save_listing / log_listing_check.
 
     Args:
-      watch_id: The internal id of the watch (user+item) this search is being run for
-      item_id: The item id you have for the current item
       listing_url: The URL of the candidate listing page you are evaluating
       image_urls: Direct URLs of the photos on the listing page that actually
         depict the item itself. Choose carefully: skip packaging-only shots,
@@ -341,6 +372,8 @@ async def check_images(
         - "inconclusive", "no verdict", or an error: the check could not help;
           rely entirely on your own screening.
     """
+    unit = _unit(runtime)
+    watch_id, item_id = unit.watch_id, unit.item_id
 
     log.info(f"Checking {len(image_urls)} image(s) for watch {watch_id}: {listing_url}")
     try:
