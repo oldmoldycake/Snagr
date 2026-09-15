@@ -146,17 +146,17 @@ async def generate_prompt(
   treat that uncertainty as a reason to lower the match_score sharply, not ignore it."""
 
         if vision_enabled:
-            authenticity_block += f"""
+            authenticity_block += """
 
 PHOTO AUTHENTICITY CHECK (after the text screening above)
   For each candidate that passes the screening above, collect the direct URLs
   of the photos on its listing page that actually depict the item itself —
   skip packaging-only shots, hands/scale references, seller logos, stock
   banners, and unrelated thumbnails. Then, before deciding to save or reject,
-  call `check_images` exactly once for that candidate with watch_id={watch_id},
-  item_id={item_id}, the listing's URL, those image URLs, and your own honest
-  verdict from the screening you already did ("looks_authentic", "suspect",
-  or "unsure"). Skip the call only when the listing has no usable photos.
+  call `check_images` exactly once for that candidate with the listing's URL,
+  those image URLs, and your own honest verdict from the screening you
+  already did ("looks_authentic", "suspect", or "unsure"). Skip the call only
+  when the listing has no usable photos.
   Act on the reply:
     - If it starts with "REJECT:", do NOT save the listing: call
       log_listing_check with reason "authenticity", quote the reported
@@ -256,7 +256,6 @@ PURCHASABLE PRICE ONLY — AUCTIONS ARE NEVER RECORDED
 
 FOR EACH LISTING YOU DECIDE TO SAVE
   1. Call `save_listing` with:
-       - watch_id={watch_id}, item_id={item_id}, site_id={site_id}
        - url:           the product page URL you actually visited
        - title:         the listing's actual title, exactly as shown on the site
        - site_sku:      the site's SKU if one is shown, otherwise omit it
@@ -295,10 +294,10 @@ FOR EACH LISTING YOU DECIDE TO SAVE
      next candidate — do not keep retrying the same listing.
 
 FOR EACH CANDIDATE YOU EVALUATE BUT DO NOT SAVE
-  Call `log_listing_check` with watch_id={watch_id}, site_id={site_id}, the
-  listing's url, a short reason ("poor_fit", "duplicate", "authenticity",
-  etc.), and optional notes. This applies to genuine candidates you looked at
-  and rejected — not to search-result pages or listings you never opened.
+  Call `log_listing_check` with the listing's url, a short reason ("poor_fit",
+  "duplicate", "authenticity", etc.), and optional notes. This applies to
+  genuine candidates you looked at and rejected — not to search-result pages
+  or listings you never opened.
 
 WHEN DONE
   Stop once you have saved the selected listings (up to {open_slots}), or once

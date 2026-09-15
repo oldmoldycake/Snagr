@@ -12,6 +12,7 @@ import asyncio
 
 import pytest
 import tools
+from conftest import unit_runtime
 from database import (
     Base,
     Categories,
@@ -100,13 +101,11 @@ async def _seed_watch(auto_reject: bool | None) -> dict:
 def _save(ids) -> int | str:
     return db(
         tools.save_listing(
-            watch_id=ids["watch_id"],
-            item_id=ids["item_id"],
-            site_id=ids["site_id"],
             url="https://example.test/candidate",
             title="Widget — very real",
             match_score=80,
             match_summary="fits, no repro flags",
+            runtime=unit_runtime(**ids),
         )
     )
 

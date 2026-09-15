@@ -12,6 +12,7 @@ import asyncio
 
 import pytest
 import tools
+from conftest import unit_runtime
 from database import (
     AsyncSessionLocal,
     Base,
@@ -92,13 +93,11 @@ async def _seed(notify: bool = True) -> tuple[int, int, int]:
 def _save(watch_id: int, item_id: int, site_id: int):
     return db(
         tools.save_listing(
-            watch_id=watch_id,
-            item_id=item_id,
-            site_id=site_id,
             url=LISTING_URL,
             title="Widget, boxed",
             match_score=82,
             match_summary="complete in box, right region",
+            runtime=unit_runtime(watch_id=watch_id, item_id=item_id, site_id=site_id),
         )
     )
 

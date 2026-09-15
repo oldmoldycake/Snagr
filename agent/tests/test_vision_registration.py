@@ -40,7 +40,8 @@ def test_prompt_gains_the_photo_block_when_vision_is_on():
     prompt = _prompt(vision_enabled=True)
     assert "PHOTO AUTHENTICITY CHECK" in prompt
     assert "check_images" in prompt
-    assert "watch_id=1" in prompt
+    # the ids are bound on the run config now, never typed by the model
+    assert "watch_id=" not in prompt
     # the D-V5 asymmetry wording rides along
     assert "reassurance ONLY" in prompt
 
