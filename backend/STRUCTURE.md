@@ -137,6 +137,15 @@ Find any `endpoints.ts` function here:
    counts in `services/catalog.py` (the admin user list keeps its own small
    grouped count in `routers/admin.py`). Don't add columns for them.
 
+   **Every price read filters `price_checks.confirmed`** (migration 014). The
+   agent records a reading it did not believe — one wildly out of line with the
+   listing's history or the item's market value — so the checks log can show
+   what was seen, but it must never become a best price, an average, a chart
+   point or a target-met badge. `GET /api/items/{id}/price-checks` is the one
+   deliberate exception: it *is* the log, and each row carries `confirmed` so
+   the UI can ghost it. `last_checked_at` is not filtered either — a
+   disbelieved reading is still a check that happened.
+
 3. **The API schema sits on top of the agent-era tables.** Auth columns on `users`,
    plus `watch_sites`, `invites`, `sessions`, `agent_runs`, `run_events` — all added
    in migration 002, which also dropped the dead `job_runs` (superseded by
