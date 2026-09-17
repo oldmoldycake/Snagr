@@ -1,0 +1,46 @@
+{
+  "url": "data:text/html;charset=utf-8,%3C%21doctype%20html%3E%0A%3Chtml%20lang%3D%22en%22%3E%3Chead%3E%3Cmeta%20charset%3D%22utf-8%22%3E%0A%3Ctitle%3EGame%20Boy%20Pocket%20%E2%80%94%20Silver%20%7C%20Resale%20Marketplace%3C/title%3E%0A%3C/head%3E%0A%3Cbody%3E%0A%3Cmain%3E%0A%20%20%3Cdiv%20class%3D%22css-1x9kz3q%22%3E%0A%20%20%20%20%3Ch1%20class%3D%22sc-bdVaJa%20jss42%22%3EGame%20Boy%20Pocket%20%E2%80%94%20Silver%2C%20tested%20and%20working%3C/h1%3E%0A%20%20%20%20%3Cdiv%20class%3D%22_xyz9k4%20css-9f2h1b%22%3E%0A%20%20%20%20%20%20%3Cspan%20class%3D%22css-1kg8n4p%22%20data-testid%3D%22price%22%3E%2474.50%3C/span%3E%0A%20%20%20%20%20%20%3Cspan%20class%3D%22css-88ab3d%22%3E%2B%20%246.99%20shipping%3C/span%3E%0A%20%20%20%20%3C/div%3E%0A%20%20%20%20%3Cdiv%20class%3D%22sc-kAyceB%22%3E%0A%20%20%20%20%20%20%3Cp%20class%3D%22jss19%22%3ECondition%3A%20Used%20%E2%80%94%20Good%3C/p%3E%0A%20%20%20%20%20%20%3Cbutton%20class%3D%22css-4q1n0z%22%3EAdd%20to%20cart%3C/button%3E%0A%20%20%20%20%3C/div%3E%0A%20%20%20%20%3Cdiv%20class%3D%22css-7f31ca%22%3E%0A%20%20%20%20%20%20%3Cp%20class%3D%22jss20%22%3ESimilar%20items%3C/p%3E%0A%20%20%20%20%20%20%3Cspan%20class%3D%22css-1kg8n4q%22%3E%2488.00%3C/span%3E%0A%20%20%20%20%20%20%3Cspan%20class%3D%22css-1kg8n4r%22%3E%2474.50%3C/span%3E%0A%20%20%20%20%3C/div%3E%0A%20%20%3C/div%3E%0A%3C/main%3E%0A%3C/body%3E%3C/html%3E%0A",
+  "title": "Game Boy Pocket — Silver | Resale Marketplace",
+  "jsonld": [],
+  "meta": {},
+  "microdata": [],
+  "candidates": [
+    {
+      "text": "$74.50 + $6.99 shipping",
+      "selector": "div > div:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$74.50",
+      "selector": "[data-testid=\"price\"]",
+      "rank": 1
+    },
+    {
+      "text": "+ $6.99 shipping",
+      "selector": "div:nth-of-type(1) > span:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "Similar items $88.00 $74.50",
+      "selector": "div:nth-of-type(3)",
+      "rank": 4
+    },
+    {
+      "text": "$88.00",
+      "selector": "div:nth-of-type(3) > span:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$74.50",
+      "selector": "div:nth-of-type(3) > span:nth-of-type(2)",
+      "rank": 4
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": true,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": false
+  }
+}

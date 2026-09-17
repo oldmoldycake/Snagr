@@ -1,0 +1,35 @@
+{
+  "url": "https://www.newegg.com/msi-rtx-3090-gaming-trio-24g-geforce-rtx-3090-24gb-graphics-card-triple-fans/p/N82E16814137645",
+  "title": "MSI Gaming GeForce RTX 3090 Graphics Card RTX 3090 GAMING TRIO 24G - Newegg.com",
+  "jsonld": [
+    "{\"@context\": \"http://schema.org\", \"@type\": \"BreadcrumbList\"}",
+    "[{\"@context\": \"http://schema.org/\", \"@type\": \"ImageObject\", \"name\": \"MSI Gaming GeForce RTX 3090 24GB GDDR6X PCI Express 4.0 ATX Graphics Card RTX 3090 GAMING TRIO 24G\"}, {\"@context\": \"http://schema.org/\", \"@type\": \"ImageObject\", \"name\": \"MSI Gaming GeForce RTX 3090 24GB GDDR6X PCI Express 4.0 ATX Graphics Card RTX 3090 GAMING TRIO 24G\"}, {\"@context\": \"http://schema.org/\", \"@type\": \"ImageObject\", \"name\": \"MSI Gaming GeForce RTX 3090 24GB GDDR6X PCI Express 4.0 ATX Graphics Card RTX 3090 GAMING TRIO 24G\"}]",
+    "{\"@context\": \"http://schema.org/\", \"@type\": \"FAQPage\"}"
+  ],
+  "meta": {},
+  "microdata": [],
+  "candidates": [
+    {
+      "text": "$2,399.00",
+      "selector": "div.price-current_2026:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$117",
+      "selector": "span.affirm-ala-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$2,399.00",
+      "selector": "div.item-action.display-flex:nth-of-type(2) > ul.price > li.price-current:nth-of-type(3)",
+      "rank": 4
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": true,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": false
+  }
+}

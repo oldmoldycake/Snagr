@@ -1,0 +1,29 @@
+{
+  "url": "https://www.craigslist.org/view/d/felton-danelectro-longhorn-guitar/maLSgpU6h9SDmvrfiTqQUt",
+  "title": "DANELECTRO LONGHORN GUITAR - musical instruments - by owner - sale - craigslist",
+  "jsonld": [
+    "{\"@context\": \"https://schema.org\", \"@type\": \"BreadcrumbList\"}",
+    "{\"@context\": \"http://schema.org\", \"description\": \"[redacted]\", \"name\": \"DANELECTRO LONGHORN GUITAR\", \"offers\": {\"priceCurrency\": \"USD\", \"availableAtOrFrom\": {\"address\": \"[redacted]\", \"geo\": {\"@type\": \"GeoCoordinates\", \"longitude\": \"-122.061800\", \"latitude\": \"37.066200\"}, \"@type\": \"Place\"}, \"@type\": \"Offer\", \"price\": \"550.00\"}, \"@type\": \"Product\"}"
+  ],
+  "meta": {},
+  "microdata": [],
+  "candidates": [
+    {
+      "text": "DANELECTRO LONGHORN GUITAR - $550 (santa cruz)",
+      "selector": "span.postingtitletext",
+      "rank": 4
+    },
+    {
+      "text": "$550",
+      "selector": "span.price:nth-of-type(2)",
+      "rank": 4
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": false,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": false
+  }
+}

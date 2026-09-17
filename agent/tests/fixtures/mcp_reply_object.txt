@@ -1,0 +1,11 @@
+### Result
+{
+  "price": "74.50",
+  "markers": {
+    "auction": false
+  }
+}
+### Ran Playwright code
+```js
+await page.evaluate('() => ({ price: \'74.50\', markers: { auction: false } })');
+```

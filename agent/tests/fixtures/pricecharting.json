@@ -1,0 +1,318 @@
+{
+  "url": "https://www.pricecharting.com/game/super-famicom/final-fantasy-vi",
+  "title": "Final Fantasy VI Prices Super Famicom | Compare Loose, CIB & New Prices",
+  "jsonld": [
+    "{\"@context\": \"https://schema.org\", \"@type\": \"FAQPage\"}"
+  ],
+  "meta": {},
+  "microdata": [],
+  "candidates": [
+    {
+      "text": "$30.00",
+      "selector": "div.ebay-ad-item:nth-of-type(1) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$34.93",
+      "selector": "div.ebay-ad-item:nth-of-type(2) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$69.99",
+      "selector": "div.ebay-ad-item:nth-of-type(3) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$34.93",
+      "selector": "div.ebay-ad-item:nth-of-type(4) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$18.00",
+      "selector": "div.ebay-ad-item:nth-of-type(5) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$26.00",
+      "selector": "div.ebay-ad-item:nth-of-type(6) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$7.00",
+      "selector": "div.ebay-ad-item:nth-of-type(7) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$40.98",
+      "selector": "div.ebay-ad-item:nth-of-type(8) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$9.98",
+      "selector": "div.ebay-ad-item:nth-of-type(9) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$40.98",
+      "selector": "div.ebay-ad-item:nth-of-type(10) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$110.00",
+      "selector": "div.ebay-ad-item:nth-of-type(11) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$24.00",
+      "selector": "div.ebay-ad-item:nth-of-type(12) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$37.98",
+      "selector": "div.ebay-ad-item:nth-of-type(13) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$108.97",
+      "selector": "div.ebay-ad-item:nth-of-type(14) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$34.93",
+      "selector": "div.ebay-ad-item:nth-of-type(15) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$29.99",
+      "selector": "div.ebay-ad-item:nth-of-type(16) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$15.00",
+      "selector": "div.ebay-ad-item:nth-of-type(17) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$22.97",
+      "selector": "div.ebay-ad-item:nth-of-type(18) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$104.99",
+      "selector": "div.ebay-ad-item:nth-of-type(19) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$64.00",
+      "selector": "div.ebay-ad-item:nth-of-type(20) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$9.45",
+      "selector": "div.ebay-ad-item:nth-of-type(21) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$9.77",
+      "selector": "div.ebay-ad-item:nth-of-type(22) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$20.00",
+      "selector": "div.ebay-ad-item:nth-of-type(23) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$10.50",
+      "selector": "div.ebay-ad-item:nth-of-type(24) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$9.45",
+      "selector": "div.ebay-ad-item:nth-of-type(25) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$9.77",
+      "selector": "div.ebay-ad-item:nth-of-type(26) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$10.50",
+      "selector": "div.ebay-ad-item:nth-of-type(27) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$9.45",
+      "selector": "div.ebay-ad-item:nth-of-type(28) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$34.93",
+      "selector": "div.ebay-ad-item:nth-of-type(29) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$55.95",
+      "selector": "div.ebay-ad-item:nth-of-type(30) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$39.99",
+      "selector": "div.ebay-ad-item:nth-of-type(31) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$69.97",
+      "selector": "div.ebay-ad-item:nth-of-type(32) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$23.24",
+      "selector": "div.ebay-ad-item:nth-of-type(33) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$34.97",
+      "selector": "div.ebay-ad-item:nth-of-type(34) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$45.00",
+      "selector": "div.ebay-ad-item:nth-of-type(35) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$42.00",
+      "selector": "div.ebay-ad-item:nth-of-type(36) > a > div.ebay-ad-content:nth-of-type(2) > div.ebay-ad-price:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$10.00 $0.00",
+      "selector": "#used_price",
+      "rank": 2
+    },
+    {
+      "text": "$10.00",
+      "selector": "tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(1) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$28.44 $0.00",
+      "selector": "#complete_price",
+      "rank": 2
+    },
+    {
+      "text": "$28.44",
+      "selector": "tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$172.00 +$0.06",
+      "selector": "#new_price",
+      "rank": 2
+    },
+    {
+      "text": "$172.00",
+      "selector": "tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(3) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "+$0.06",
+      "selector": "tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(3) > span.change:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$592.98 +$275.02",
+      "selector": "tr:nth-of-type(1) > td.tablet-portrait-hidden:nth-of-type(4)",
+      "rank": 4
+    },
+    {
+      "text": "$592.98",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(4) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "+$275.02",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(4) > span.change:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$275.02",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(4) > span.change:nth-of-type(2) > span.js-price",
+      "rank": 4
+    },
+    {
+      "text": "$11.00 $0.00",
+      "selector": "tr:nth-of-type(1) > td.tablet-portrait-hidden:nth-of-type(5)",
+      "rank": 4
+    },
+    {
+      "text": "$11.00",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(5) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$0.00",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(5) > span.change:nth-of-type(2) > span.js-price",
+      "rank": 4
+    },
+    {
+      "text": "$8.50 $0.00",
+      "selector": "tr:nth-of-type(1) > td.tablet-portrait-hidden:nth-of-type(6)",
+      "rank": 4
+    },
+    {
+      "text": "$8.50",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(6) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$0.00",
+      "selector": "td.tablet-portrait-hidden:nth-of-type(6) > span.change:nth-of-type(2) > span.js-price",
+      "rank": 4
+    },
+    {
+      "text": "$592.98 +$275.02",
+      "selector": "tbody:nth-of-type(2) > tr.additional_data:nth-of-type(1) > td:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$592.98",
+      "selector": "tr.additional_data:nth-of-type(1) > td:nth-of-type(1) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "+$275.02",
+      "selector": "tr.additional_data:nth-of-type(1) > td:nth-of-type(1) > span.change:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$275.02",
+      "selector": "tr.additional_data:nth-of-type(1) > td:nth-of-type(1) > span.change:nth-of-type(2) > span.js-price",
+      "rank": 4
+    },
+    {
+      "text": "$11.00 $0.00",
+      "selector": "tbody:nth-of-type(2) > tr.additional_data:nth-of-type(1) > td:nth-of-type(2)",
+      "rank": 4
+    },
+    {
+      "text": "$11.00",
+      "selector": "tr.additional_data:nth-of-type(1) > td:nth-of-type(2) > span.price.js-price:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "$0.00",
+      "selector": "tr.additional_data:nth-of-type(1) > td:nth-of-type(2) > span.change:nth-of-type(2) > span.js-price",
+      "rank": 4
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": false,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": false
+  }
+}

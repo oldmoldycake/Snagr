@@ -1,0 +1,6 @@
+### Result
+"Fixture page"
+### Ran Playwright code
+```js
+await page.evaluate('() => document.title');
+```
