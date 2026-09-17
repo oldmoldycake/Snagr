@@ -714,6 +714,8 @@ export const handlers = [
           currency: 'USD',
           in_stock: c.in_stock,
           status: c.status,
+          method: c.method,
+          confirmed: c.confirmed,
           checked_at: new Date(c.ts).toISOString(),
         }
       })

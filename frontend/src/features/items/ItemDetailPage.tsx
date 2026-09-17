@@ -24,6 +24,13 @@ import { EditItemDialog } from './EditItemDialog'
 import { Ladder } from './Ladder'
 import { ListingsBoard } from './ListingsBoard'
 
+/**
+ * Only the exceptions are marked. A price the model read looks exactly as it
+ * always has; a price code read off the listing's stored locator carries a dim
+ * tag saying where from, and a reading the plausibility bands rejected dims
+ * the whole row and says so — it is shown, but it counts for nothing until a
+ * later reading agrees with it.
+ */
 function checkLine(check: PriceCheck): LogLine {
   const level =
     check.status === 'ok'
@@ -33,7 +40,7 @@ function checkLine(check: PriceCheck): LogLine {
         : check.status === 'sold' || check.status === 'ended'
           ? 'error'
           : 'info'
-  const message =
+  const text =
     check.status === 'sold' || check.status === 'ended'
       ? `${check.status} · ${check.site_name}`
       : check.status === 'error'
@@ -41,6 +48,18 @@ function checkLine(check: PriceCheck): LogLine {
         : `${formatMoney(check.price, check.currency)} · ${
             check.in_stock == null ? 'stock unknown' : check.in_stock ? 'in stock' : 'out of stock'
           } · ${check.site_name}`
+  const marks = [
+    check.method && check.method !== 'llm' ? check.method : null,
+    check.confirmed ? null : 'unconfirmed',
+  ].filter(Boolean)
+  const message = (
+    <span className={cn(check.confirmed ? undefined : 'text-ink-3')}>
+      {text}
+      {marks.length > 0 ? (
+        <span className="ml-2 text-ink-3">{marks.join(' · ')}</span>
+      ) : null}
+    </span>
+  )
   return { key: check.id, time: formatDateTime(check.checked_at), level, message }
 }
 

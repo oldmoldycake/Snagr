@@ -278,6 +278,15 @@ export interface PriceCheck {
   in_stock: boolean | null
   /** 'ok' | 'sold' | 'ended' | 'error' — 'sold'/'ended' is terminal for the listing */
   status: string | null
+  /** how the price was read: 'llm' (the model looked at the page) or one of
+   *  'jsonld' | 'meta' | 'microdata' | 'locator' (code replayed the listing's
+   *  stored locator, no model involved). null on rows older than the column. */
+  method: string | null
+  /** false for a reading the plausibility bands rejected — a "$4.49" on a $449
+   *  item. Still shown, because hiding an observation is its own failure, but
+   *  it never notifies and never enters a chart or an average until a later
+   *  read agrees with it. */
+  confirmed: boolean
   checked_at: string
 }
 

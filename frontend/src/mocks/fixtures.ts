@@ -130,6 +130,8 @@ export interface MockCheck {
   price_cents: number | null
   in_stock: boolean
   status: string
+  method: string
+  confirmed: boolean
 }
 
 export interface MockWatch {
@@ -344,6 +346,10 @@ function generateChecks(
       price_cents: inStock ? effective : walk() > 0.5 ? effective : null,
       in_stock: inStock,
       status: 'ok',
+      // the listing's oldest check is the discovery read, which is always the
+      // model; everything after it replays the locator that read taught us
+      method: day === 365 ? 'llm' : day % 7 === 0 ? 'locator' : 'jsonld',
+      confirmed: true,
     })
   }
 
@@ -355,6 +361,8 @@ function generateChecks(
       price_cents: null,
       in_stock: false,
       status: endStatus,
+      method: 'locator',
+      confirmed: true,
     })
   }
 }
@@ -744,6 +752,30 @@ function seedHistoricalRuns() {
   const system = historicalRun(0, 1, 'Everything', null)
   store.runs.push(system, historicalRun(1, 2, 'Category: GPUs', 1), historicalRun(2, 4, 'Everything', 2))
   seedSystemRunEvents(system)
+  seedDisbelievedCheck()
+}
+
+/**
+ * One reading the plausibility bands rejected, so the disbelieved row is
+ * reachable in mock mode. Deliberately absurd — a tenth of the listing's real
+ * price, the "$4.49 for a $449 item" case the confirm rule exists for. It
+ * shows in the checks log and in nothing else: no chart, no average, no best
+ * price, and in the real system no notification.
+ */
+function seedDisbelievedCheck() {
+  const item = store.items.find((i) => i.name === 'RTX 4070 Super')!
+  const listing = store.listings.find((l) => l.item_id === item.id)!
+  const last = latestCheck(listing.id)
+  store.checks.push({
+    id: newId(),
+    listing_id: listing.id,
+    ts: NOW - 3 * 3_600_000,
+    price_cents: Math.round((last?.price_cents ?? 59999) / 10),
+    in_stock: true,
+    status: 'ok',
+    method: 'llm',
+    confirmed: false,
+  })
 }
 
 /**
@@ -829,16 +861,28 @@ export function eventVisible(event: MockRunEvent, user: MockUser): boolean {
 
 export const cents = (c: number | null): string | null => (c == null ? null : (c / 100).toFixed(2))
 
+/**
+ * Every BELIEVED check for a listing, oldest first. Unconfirmed readings are
+ * excluded here and in latestCheck, matching the backend: a price the
+ * plausibility bands rejected is shown in the checks log but never counted in
+ * a chart, an average or a "best price". The log reads store.checks directly.
+ */
 export function checksFor(listingId: number): MockCheck[] {
   return store.checks
-    .filter((c) => c.listing_id === listingId)
+    .filter((c) => c.listing_id === listingId && c.confirmed)
     .sort((a, b) => a.ts - b.ts)
 }
 
 export function latestCheck(listingId: number): MockCheck | null {
   let best: MockCheck | null = null
   for (const c of store.checks) {
-    if (c.listing_id === listingId && c.price_cents != null && (!best || c.ts > best.ts)) best = c
+    if (
+      c.listing_id === listingId &&
+      c.confirmed &&
+      c.price_cents != null &&
+      (!best || c.ts > best.ts)
+    )
+      best = c
   }
   return best
 }
