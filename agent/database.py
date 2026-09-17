@@ -23,6 +23,7 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -124,6 +125,18 @@ class Listings(Base):
     match_summary: Mapped[str | None] = mapped_column(Text)
     signals: Mapped[dict | None] = mapped_column(JSONB)
     verdict: Mapped[str | None] = mapped_column(Text)  # auto_ok | needs_review
+    # Where this listing's price lives on its page, learned by code at the
+    # moment the LLM confirms a price and replayed on every later recheck
+    # (agent/locators.py). kind is jsonld|meta|microdata|css. locator_failures
+    # counts reads that came back empty since the last verify — past
+    # LOCATOR_MAX_FAILURES the locator is cleared and the next LLM read learns
+    # a fresh one. static_ok means the same locator reads the same price out
+    # of the raw HTML, so rechecks need no browser at all.
+    price_locator: Mapped[str | None] = mapped_column(Text)
+    locator_kind: Mapped[str | None] = mapped_column(Text)
+    locator_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locator_failures: Mapped[int] = mapped_column(default=0, server_default="0")
+    static_ok: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
@@ -142,6 +155,13 @@ class PriceChecks(Base):
     currency: Mapped[str] = mapped_column(Text, default="USD")
     in_stock: Mapped[bool | None] = mapped_column(Boolean)
     status: Mapped[str | None] = mapped_column(Text)
+    # How the price was read: llm (the model looked at the page) or one of
+    # jsonld|meta|microdata|locator (code replayed the listing's locator).
+    # confirmed is false for a reading the plausibility bands rejected: kept
+    # so the checks log shows what was seen, but never notified on and never
+    # counted in an aggregate until a later read agrees with it (§4.3).
+    method: Mapped[str | None] = mapped_column(Text)
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
