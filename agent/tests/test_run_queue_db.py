@@ -20,6 +20,7 @@ import asyncio
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
+import observations
 import pytest
 import tools
 from conftest import unit_runtime
@@ -44,6 +45,7 @@ from database import (
     beat_run,
     claim_due_schedule,
     claim_queued_run,
+    clear_static_ok,
     create_global_run,
     engine,
     finish_run,
@@ -51,8 +53,12 @@ from database import (
     get_known_listing_urls,
     get_listed_items,
     get_watched_item_list,
+    has_verified_locator,
+    note_locator_failure,
     reap_stale_runs,
+    save_locator,
 )
+from locators import Locator, site_consensus
 from sqlalchemy import select, text
 
 NOW = datetime.now(UTC)
@@ -106,9 +112,16 @@ def _clean_tables():
 
 
 def unit_a(ids, **overrides):
-    """The runtime a tool call gets inside one of watch A's units on GameBay."""
+    """The runtime a tool call gets inside one of watch A's units on GameBay.
+
+    site_base_url is GameBay's, because the URL guard (S2) checks every URL a
+    tool is handed against the site the unit is for."""
     return unit_runtime(
-        watch_id=ids["watch_a"], item_id=ids["item_a"], site_id=ids["site_a"], **overrides
+        watch_id=ids["watch_a"],
+        item_id=ids["item_a"],
+        site_id=ids["site_a"],
+        site_base_url="https://gamebay.test",
+        **overrides,
     )
 
 
@@ -192,13 +205,17 @@ class RecordingClock:
 
     @contextmanager
     def installed(self):
-        """Swap this in for `tools.datetime` for the duration of the body."""
-        real = tools.datetime
+        """Swap this in for both modules that stamp a row for the duration of
+        the body: log_listing_check stamps in tools, and every price check
+        now stamps in observations, the one writer of them."""
+        real_tools, real_observations = tools.datetime, observations.datetime
         tools.datetime = self
+        observations.datetime = self
         try:
             yield
         finally:
-            tools.datetime = real
+            tools.datetime = real_tools
+            observations.datetime = real_observations
 
 
 async def read_events(run_id: int) -> list[dict]:
@@ -1001,3 +1018,151 @@ class TestCheckedAtIsUtc:
         stored = db(scenario())
         assert clock.zones == [UTC]
         assert abs(stored - datetime.now(UTC)) < timedelta(minutes=1)
+
+
+class TestLocatorLifecycle:
+    """listings' locator columns are a small state machine: learned and
+    verified, counted down as it misses, cleared so the next LLM read can
+    learn a fresh one. Getting the clearing wrong is what would leave a site
+    burning a browser load per recheck on a selector that will never match
+    again."""
+
+    async def _listing(self, ids):
+        async with AsyncSessionLocal() as session:
+            return await session.get(Listings, ids["listing_a"])
+
+    def test_a_learned_locator_is_stored_verified_and_counted_from_zero(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await note_locator_failure(ids["listing_a"], 3)
+            await save_locator(ids["listing_a"], "jsonld", "offers.price", static_ok=True)
+            return await self._listing(ids)
+
+        listing = db(scenario())
+        assert (listing.locator_kind, listing.price_locator) == ("jsonld", "offers.price")
+        assert listing.locator_verified_at is not None
+        assert (listing.locator_failures, listing.static_ok) == (0, True)
+
+    def test_misses_accumulate_until_the_locator_is_dropped(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await save_locator(ids["listing_a"], "css", "span.price", static_ok=False)
+            cleared = [await note_locator_failure(ids["listing_a"], 3) for _ in range(3)]
+            return cleared, await self._listing(ids)
+
+        cleared, listing = db(scenario())
+        assert cleared == [False, False, True]
+        assert (listing.price_locator, listing.locator_kind) == (None, None)
+        assert (listing.locator_verified_at, listing.locator_failures) == (None, 0)
+
+    def test_clearing_a_locator_also_sends_the_listing_back_to_the_browser(self):
+        # static_ok describes a locator that no longer exists
+        async def scenario():
+            ids = await seed_scope_graph()
+            await save_locator(ids["listing_a"], "jsonld", "offers.price", static_ok=True)
+            await note_locator_failure(ids["listing_a"], 1)
+            return await self._listing(ids)
+
+        assert db(scenario()).static_ok is False
+
+    def test_clear_static_ok_leaves_the_locator_alone(self):
+        # the locator still works in the browser; only the GET was pointless
+        async def scenario():
+            ids = await seed_scope_graph()
+            await save_locator(ids["listing_a"], "jsonld", "offers.price", static_ok=True)
+            await clear_static_ok(ids["listing_a"])
+            return await self._listing(ids)
+
+        listing = db(scenario())
+        assert (listing.static_ok, listing.price_locator) == (False, "offers.price")
+
+    def test_has_verified_locator_answers_for_the_post_unit_learn(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            before = await has_verified_locator(ids["listing_a"])
+            await save_locator(ids["listing_a"], "meta", "product:price:amount")
+            return before, await has_verified_locator(ids["listing_a"])
+
+        assert db(scenario()) == (False, True)
+
+    def test_a_relearn_replaces_the_previous_locator(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await save_locator(ids["listing_a"], "css", "span.old", static_ok=True)
+            await save_locator(ids["listing_a"], "jsonld", "offers.price", static_ok=False)
+            return await self._listing(ids)
+
+        listing = db(scenario())
+        assert (listing.locator_kind, listing.price_locator) == ("jsonld", "offers.price")
+        assert listing.static_ok is False
+
+
+class TestSiteConsensus:
+    """One marketplace serves one page template, so the locator most of a
+    site's listings agree on is the best guess for one that has never been
+    learned — and one relearn after a redesign fixes the whole site."""
+
+    async def _agree(self, ids, *locators):
+        """Give watch A's listing and some siblings on the same site a locator
+        each, then answer what the site agrees on."""
+        async with AsyncSessionLocal() as session:
+            for index, (kind, locator) in enumerate(locators):
+                listing = Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url=f"https://gamebay.test/sibling{index}",
+                    price_locator=locator,
+                    locator_kind=kind,
+                    locator_verified_at=datetime.now(UTC),
+                )
+                session.add(listing)
+            await session.commit()
+        async with AsyncSessionLocal() as session:
+            return await site_consensus(session, ids["site_a"])
+
+    def test_the_most_common_verified_locator_wins(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            return await self._agree(
+                ids,
+                ("jsonld", "offers.price"),
+                ("jsonld", "offers.price"),
+                ("css", "span.price"),
+            )
+
+        assert db(scenario()) == Locator("jsonld", "offers.price")
+
+    def test_a_site_with_nothing_learned_yet_agrees_on_nothing(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                return await site_consensus(session, ids["site_a"])
+
+        assert db(scenario()) is None
+
+    def test_an_unverified_locator_does_not_vote(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                listing.locator_kind, listing.price_locator = "css", "span.unverified"
+                await session.commit()
+            async with AsyncSessionLocal() as session:
+                return await site_consensus(session, ids["site_a"])
+
+        assert db(scenario()) is None
+
+    def test_another_sites_locators_do_not_vote(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_b"])
+                listing.locator_kind = "css"
+                listing.price_locator = "span.cardbay"
+                listing.locator_verified_at = datetime.now(UTC)
+                await session.commit()
+            async with AsyncSessionLocal() as session:
+                return await site_consensus(session, ids["site_a"])
+
+        assert db(scenario()) is None

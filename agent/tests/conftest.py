@@ -48,17 +48,30 @@ os.environ.setdefault("AI_API_KEY", "test-key")
 os.environ.setdefault("PLAYWRIGHT_MCP_URL", "http://localhost:9999/mcp")
 
 
+# The site every seeded scenario is on. Tool URLs are checked against the
+# site's own registrable domain (S2), so a test URL has to live on it.
+SITE_BASE_URL = "https://example.test"
+
+
 def unit_runtime(**overrides):
     """A ToolRuntime the way the tool node injects it, carrying a UnitContext
-    on the run config — watch 1 / item 1 / site 1 unless overridden, which is
-    what a freshly seeded scenario gets after RESTART IDENTITY. The tools
-    read nothing else off it."""
+    on the run config — watch 1 / item 1 / site 1 on SITE_BASE_URL unless
+    overridden, which is what a freshly seeded scenario gets after RESTART
+    IDENTITY. The tools read nothing else off it."""
     # imported here, not at module top: the env block above must run before
     # any agent module is imported
     from langchain.tools import ToolRuntime
-    from tools import UnitContext
+    from observations import UnitContext
 
-    context = UnitContext(**{"watch_id": 1, "item_id": 1, "site_id": 1, **overrides})
+    context = UnitContext(
+        **{
+            "watch_id": 1,
+            "item_id": 1,
+            "site_id": 1,
+            "site_base_url": SITE_BASE_URL,
+            **overrides,
+        }
+    )
     return ToolRuntime(
         state={},
         context=None,
