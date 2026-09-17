@@ -109,3 +109,109 @@ async def test_update_item_leaves_allow_reproductions_alone(client, db_session, 
 
     assert res.status_code == 200, res.text
     assert res.json()["allow_reproductions"] is True
+
+
+# --- GET /api/items/{item_id}/price-checks ------------------------------------
+
+
+async def _seed_checks(db_session, owner_id, *points, **kwargs):
+    """One watched item with one listing carrying the given checks. Returns
+    the item id."""
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        await sc.checks(listing, *points, **kwargs)
+    return item.id
+
+
+async def test_price_checks_carry_how_each_price_was_read(client, db_session):
+    owner_id = await _sign_in(client)
+    item_id = await _seed_checks(db_session, owner_id, (1, "100.00"), method="jsonld")
+
+    (check,) = (await client.get(f"/api/items/{item_id}/price-checks")).json()["data"]
+
+    assert check["method"] == "jsonld"
+    assert check["confirmed"] is True
+
+
+async def test_an_unbelieved_reading_is_still_in_the_log(client, db_session):
+    # hiding an observation is its own failure: the log shows what was seen,
+    # flagged as the disbelieved reading it is
+    owner_id = await _sign_in(client)
+    item_id = await _seed_checks(db_session, owner_id, (1, "4.49"), confirmed=False)
+
+    (check,) = (await client.get(f"/api/items/{item_id}/price-checks")).json()["data"]
+
+    assert (check["price"], check["confirmed"]) == ("4.49", False)
+
+
+async def test_an_unbelieved_reading_is_not_the_items_best_price(client, db_session):
+    """The whole point of the confirm rule: a "$4.49" nobody trusts must not
+    reach the board, the charts or a target-hit badge."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item, target_price="50.00")
+        listing = await sc.listing(watch, item)
+        await sc.checks(listing, (2, "100.00"))
+        await sc.checks(listing, (1, "4.49"), confirmed=False)
+        item_id = item.id
+
+    summary = (await client.get(f"/api/items/{item_id}")).json()
+
+    assert summary["best_price"] == "100.00"
+
+
+async def test_an_unbelieved_reading_is_not_a_listings_current_price(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        await sc.checks(listing, (2, "100.00"))
+        await sc.checks(listing, (1, "4.49"), confirmed=False)
+        item_id = item.id
+
+    (row,) = (await client.get(f"/api/items/{item_id}")).json()["listings"]
+
+    assert row["latest_price"] == "100.00"
+
+
+async def test_an_unbelieved_reading_still_counts_as_a_check_that_happened(client, db_session):
+    # last_checked_at answers "when did we last look", which is true whether
+    # or not the number that came back was believed
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        await sc.checks(listing, (5, "100.00"))
+        await sc.checks(listing, (1, "4.49"), confirmed=False)
+        item_id = item.id
+
+    (row,) = (await client.get(f"/api/items/{item_id}")).json()["listings"]
+    checks = (await client.get(f"/api/items/{item_id}/price-checks")).json()["data"]
+
+    assert row["last_checked_at"] == max(c["checked_at"] for c in checks)
+
+
+async def test_an_unbelieved_reading_is_absent_from_the_price_history(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        await sc.checks(listing, (5, "100.00"))
+        await sc.checks(listing, (1, "4.49"), confirmed=False)
+        item_id = item.id
+
+    history = (await client.get(f"/api/items/{item_id}/price-history?range=30d")).json()
+    prices = [
+        point["price"]
+        for series in history["series"]
+        for point in series["points"]
+        if point["price"] is not None
+    ]
+
+    assert prices and "4.49" not in prices

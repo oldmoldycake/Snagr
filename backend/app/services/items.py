@@ -100,9 +100,13 @@ async def listing_latest_check(
     NOTE: 2 queries per listing (N+1) — acceptable at household listing counts;
     batch it through services/aggregates.py if that stops being true.
     """
+    # the listing's current price: believed readings only, like every other
+    # price on the site. last_checked_at below is deliberately NOT filtered —
+    # a disbelieved reading is still a check that happened.
     priced_stmt = (
         select(PriceChecks.price, PriceChecks.in_stock)
         .where(PriceChecks.price.isnot(None))
+        .where(PriceChecks.confirmed)
         .where(PriceChecks.listing_id == listing_id)
         .order_by(PriceChecks.checked_at.desc())
         .limit(1)
@@ -311,7 +315,12 @@ async def list_price_checks(
     db: AsyncSession, user_id: int, item_id: int, limit: int
 ) -> list[PriceCheck]:
     """Recent raw price checks across the caller's listings of one item,
-    newest first. An unwatched item is simply an empty list."""
+    newest first. An unwatched item is simply an empty list.
+
+    Unconfirmed readings are INCLUDED here, unlike everywhere else: this is
+    the log of what was actually seen, and hiding an observation is its own
+    failure. Each row carries `confirmed` so the UI can show it as the
+    disbelieved reading it is."""
     # join through Watches so a caller only ever sees their OWN listings' checks
     stmt = (
         select(
@@ -322,6 +331,8 @@ async def list_price_checks(
             PriceChecks.currency.label("currency"),
             PriceChecks.in_stock.label("in_stock"),
             PriceChecks.status.label("status"),
+            PriceChecks.method.label("method"),
+            PriceChecks.confirmed.label("confirmed"),
             PriceChecks.checked_at.label("checked_at"),
         )
         .join(Listings, Listings.id == PriceChecks.listing_id)
@@ -343,6 +354,8 @@ async def list_price_checks(
             currency=row.currency,
             in_stock=row.in_stock,
             status=row.status,
+            method=row.method,
+            confirmed=row.confirmed,
             checked_at=row.checked_at.isoformat(),
         )
         for row in (await db.execute(stmt)).all()
