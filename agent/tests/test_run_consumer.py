@@ -8,12 +8,14 @@ not the LLM."""
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
+import recheck
 import tools
 from database import roll_forward
 from langchain_core.messages import AIMessage, ToolMessage
-from tools import UnitContext
+from observations import UnitContext
 
 import agent
 
@@ -24,7 +26,11 @@ def run_row(run_id=1, scope="global", scope_id=None, label="Everything"):
 
 def listing_row(n):
     """A pass-1 row with only the keys the orchestrator itself reads."""
-    return {"listing_id": n, "listing_url": f"https://example.test/l{n}"}
+    return {
+        "listing_id": n,
+        "listing_url": f"https://example.test/l{n}",
+        "site_base_url": "https://example.test",
+    }
 
 
 def pair_row(n, site_id=1, max_listings=3):
@@ -58,6 +64,7 @@ def wire(
     fail_recheck=(),
     fail_scan=(),
     slow_recheck=(),
+    cheap=(),
     ground_raises=False,
     build_raises=False,
     tracked=None,
@@ -65,6 +72,8 @@ def wire(
 ):
     """Point every seam at in-memory fakes; returns what the fakes saw.
 
+    `cheap` is the set of listing ids the deterministic ladder can read on
+    its own; every other listing falls through to the agentic recheck.
     `statuses` scripts get_run_status answers in order, repeating the last one
     (default: forever "running"). `tracked` is the fake active-listing count
     per watch_id (default 0 — every slot open); a successful fake scan fills
@@ -79,6 +88,7 @@ def wire(
         "events": [],
         "finishes": [],
         "recheck_units": [],
+        "cheap_units": [],
         "scan_units": [],
         "scan_tracked": [],
         "grounded": [],
@@ -141,12 +151,20 @@ def wire(
         if build_raises:
             raise RuntimeError("mcp down")
         seen["built"].append(True)
-        yield ("recheck-agent", "scan-agent")
+        yield ("recheck-agent", "scan-agent", "browser")
+
+    async def fake_cheap(browser, row):
+        seen["cheap_units"].append(row["listing_id"])
+        if row["listing_id"] not in cheap:
+            return recheck.NOT_HANDLED
+        tools.run_stats["listings_checked"] += 1
+        tools.run_stats["prices_found"] += 1
+        return recheck.Outcome(True, "jsonld")
 
     async def fake_market(item_id):
         return None
 
-    async def fake_recheck(pass_agent, session_id, row):
+    async def fake_recheck(pass_agent, session_id, row, browser=None):
         if row["listing_id"] in fail_recheck:
             raise RuntimeError("timeout")
         if row["listing_id"] in slow_recheck:
@@ -160,7 +178,7 @@ def wire(
     async def fake_count(watch_id):
         return slots_used.get(watch_id, 0)
 
-    async def fake_scan(pass_agent, session_id, row, market, tracked_listings):
+    async def fake_scan(pass_agent, session_id, row, market, tracked_listings, browser=None):
         if row["watch_id"] in fail_scan:
             raise RuntimeError("timeout")
         seen["scan_units"].append(row["watch_id"])
@@ -181,6 +199,7 @@ def wire(
     monkeypatch.setattr(agent, "get_market_price", fake_market)
     monkeypatch.setattr(agent, "get_active_listing_count", fake_count)
     monkeypatch.setattr(agent, "recheck_listing", fake_recheck)
+    monkeypatch.setattr(agent, "recheck_deterministic", fake_cheap)
     monkeypatch.setattr(agent, "scan_pair", fake_scan)
     monkeypatch.setattr(agent, "reap_stale_runs", fake_reap)
     monkeypatch.setattr(agent, "beat_run", fake_beat)
@@ -219,6 +238,137 @@ class TestConsumeTick:
         with pytest.raises(RuntimeError, match="mcp down"):
             asyncio.run(agent.consume())
         assert seen["finishes"] == [(7, "failed", None, "mcp down")]
+
+
+class TestCheapRecheck:
+    """Pass 1 tries the deterministic ladder first; the LLM is the fallback,
+    not the default. This is the whole point of the locator work — a run that
+    reads most of its listings without a model."""
+
+    def test_a_listing_the_ladder_can_read_never_reaches_the_model(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            claim=run_row(run_id=7),
+            listings=[listing_row(1), listing_row(2)],
+            cheap={1, 2},
+        )
+        asyncio.run(agent.consume())
+
+        assert seen["cheap_units"] == [1, 2]
+        assert seen["recheck_units"] == []
+        ((_, status, stats, _),) = seen["finishes"]
+        assert (status, stats["prices_found"]) == ("succeeded", 2)
+
+    def test_a_listing_the_ladder_cannot_read_falls_back_to_the_model(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            claim=run_row(run_id=7),
+            listings=[listing_row(1), listing_row(2)],
+            cheap={1},
+        )
+        asyncio.run(agent.consume())
+
+        assert seen["cheap_units"] == [1, 2]
+        assert seen["recheck_units"] == [2]
+
+    def test_the_kill_switch_puts_every_recheck_back_through_the_model(self, monkeypatch):
+        # CHEAP_RECHECK=false is how an operator gets the pre-locator agent back
+        monkeypatch.setattr(agent, "CHEAP_RECHECK", False)
+        seen = wire(monkeypatch, claim=run_row(run_id=7), listings=[listing_row(1)], cheap={1})
+        asyncio.run(agent.consume())
+
+        assert seen["cheap_units"] == []
+        assert seen["recheck_units"] == [1]
+
+    def test_a_cheap_read_still_counts_as_a_unit_of_work(self, monkeypatch):
+        # a run of nothing but cheap reads is a successful run, not an empty
+        # one, and must not trip the all-units-failed rule
+        seen = wire(monkeypatch, claim=run_row(run_id=7), listings=[listing_row(1)], cheap={1})
+        asyncio.run(agent.consume())
+
+        assert [f[1] for f in seen["finishes"]] == ["succeeded"]
+
+    def test_a_ladder_failure_is_a_failed_unit_like_any_other(self, monkeypatch):
+        # a DB error inside the ladder must not be swallowed into "use the LLM"
+        async def explode(browser, row):
+            raise RuntimeError("database gone")
+
+        seen = wire(monkeypatch, claim=run_row(run_id=7), listings=[listing_row(1)])
+        monkeypatch.setattr(agent, "recheck_deterministic", explode)
+        with pytest.raises(RuntimeError, match="every unit failed"):
+            asyncio.run(agent.consume())
+
+        assert [f[1] for f in seen["finishes"]] == ["failed"]
+
+
+class TestPostUnitLearn:
+    """After the model reads a page, code learns where the price was, so the
+    next recheck of that listing needs no model."""
+
+    def _row(self):
+        return {
+            "listing_id": 9,
+            "listing_url": "https://example.test/l9",
+            "watch_id": 4,
+            "user_id": 2,
+            "site_id": 3,
+            "site_name": "TestBay",
+            "site_base_url": "https://example.test",
+            "item_id": 5,
+            "item_name": "Widget",
+        }
+
+    def _seams(self, monkeypatch, *, learned, price):
+        seen = {"learns": []}
+
+        async def fake_prompt(**kwargs):
+            return "PROMPT"
+
+        async def fake_has(listing_id):
+            return learned
+
+        async def fake_context(listing_id):
+            return {"last_price": price, "unconfirmed_price": None, "market": None}
+
+        async def fake_learn(unit, listing_id, learn_price, url=None):
+            seen["learns"].append((listing_id, learn_price, url))
+            return True
+
+        monkeypatch.setattr(agent, "generate_recheck_prompt", fake_prompt)
+        monkeypatch.setattr(agent, "has_verified_locator", fake_has)
+        monkeypatch.setattr(agent, "get_price_context", fake_context)
+        monkeypatch.setattr(agent, "learn_locator", fake_learn)
+        return seen
+
+    def test_a_unit_that_recorded_a_price_learns_its_locator(self, monkeypatch):
+        seen = self._seams(monkeypatch, learned=False, price=Decimal("49.99"))
+        asyncio.run(agent.recheck_listing(_FakeAgent(), "session", self._row(), "browser"))
+
+        assert seen["learns"] == [(9, Decimal("49.99"), "https://example.test/l9")]
+
+    def test_a_listing_that_already_knows_its_locator_is_left_alone(self, monkeypatch):
+        # the in-unit learn inside save_price_check usually got there first,
+        # and re-deriving the same locator costs another navigation
+        seen = self._seams(monkeypatch, learned=True, price=Decimal("49.99"))
+        asyncio.run(agent.recheck_listing(_FakeAgent(), "session", self._row(), "browser"))
+
+        assert seen["learns"] == []
+
+    def test_a_unit_that_recorded_no_price_has_nothing_to_learn_from(self, monkeypatch):
+        seen = self._seams(monkeypatch, learned=False, price=None)
+        asyncio.run(agent.recheck_listing(_FakeAgent(), "session", self._row(), "browser"))
+
+        assert seen["learns"] == []
+
+    def test_a_failed_learn_never_fails_the_unit(self, monkeypatch):
+        # the price is already recorded; an optimisation must not undo that
+        self._seams(monkeypatch, learned=False, price=Decimal("49.99"))
+
+        async def explode(unit, listing_id, price, url=None):
+            raise RuntimeError("browser gone")
+
+        monkeypatch.setattr(agent, "learn_locator", explode)
+        asyncio.run(agent.recheck_listing(_FakeAgent(), "session", self._row(), "browser"))
 
 
 class TestScopeHandling:
@@ -394,6 +544,7 @@ class TestBrowserFailureDetection:
             "user_id": 1,
             "site_id": 1,
             "site_name": "TestBay",
+            "site_base_url": "https://example.test",
             "item_id": 1,
             "item_name": "Item 1",
         }
@@ -532,13 +683,18 @@ class TestUnitContextBinding:
             "user_id": 2,
             "site_id": 3,
             "site_name": "TestBay",
+            "site_base_url": "https://example.test",
             "item_id": 5,
             "item_name": "Widget",
         }
         asyncio.run(agent.recheck_listing(fake, "session", row))
         (config,) = fake.configs
         assert config["configurable"]["unit"] == UnitContext(
-            watch_id=4, item_id=5, site_id=3, listing_id=9
+            watch_id=4,
+            item_id=5,
+            site_id=3,
+            site_base_url="https://example.test",
+            listing_id=9,
         )
 
     def test_a_scan_unit_is_bound_to_the_pair_and_sees_its_known_urls(self, monkeypatch):
@@ -561,7 +717,9 @@ class TestUnitContextBinding:
         }
         asyncio.run(agent.scan_pair(fake, "session", row, None, 0))
         (config,) = fake.configs
-        assert config["configurable"]["unit"] == UnitContext(watch_id=4, item_id=5, site_id=3)
+        assert config["configurable"]["unit"] == UnitContext(
+            watch_id=4, item_id=5, site_id=3, site_base_url="https://example.test"
+        )
         assert seen["known_args"] == (4, 3)
         (kwargs,) = seen["prompt_kwargs"]
         assert kwargs["known_urls"] == ["https://example.test/old"]
@@ -662,3 +820,23 @@ class TestRollForward:
     def test_an_every_minute_interval_steps_correctly(self):
         due = datetime(2026, 8, 14, 10, 4, tzinfo=UTC)
         assert roll_forward(due, 1, self.NOW) == datetime(2026, 8, 14, 10, 6, tzinfo=UTC)
+
+
+class TestCheapPathBudget:
+    def test_a_wedged_cheap_read_fails_the_unit_like_any_other(self, monkeypatch):
+        # the ladder opens a browser too; a hung page load must not hold the
+        # run open just because no model was involved
+        monkeypatch.setattr(agent, "AGENT_UNIT_TIMEOUT_SECONDS", 0.01)
+
+        async def hang(browser, row):
+            await asyncio.sleep(0.2)
+            return recheck.NOT_HANDLED
+
+        seen = wire(monkeypatch, claim=run_row(run_id=7), listings=[listing_row(1)])
+        monkeypatch.setattr(agent, "recheck_deterministic", hang)
+        with pytest.raises(RuntimeError, match="every unit failed"):
+            asyncio.run(agent.consume())
+
+        assert [e for e in seen["events"] if e[0] == "error"] == [
+            ("error", "error", "Recheck failed for listing 1: unit exceeded the 0.01s budget")
+        ]

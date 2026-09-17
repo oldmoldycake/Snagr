@@ -65,8 +65,16 @@ class _FakeMCP:
         yield None
 
 
-async def _no_tools(session):
-    return []
+class _BrowserTool:
+    """The two MCP tools build_pass_agents reaches for by name to build its
+    PageReader. Nothing calls them here; they only need to be findable."""
+
+    def __init__(self, name):
+        self.name = name
+
+
+async def _browser_tools(session):
+    return [_BrowserTool("browser_navigate"), _BrowserTool("browser_evaluate")]
 
 
 def _built_toolsets(monkeypatch, url) -> list:
@@ -74,7 +82,7 @@ def _built_toolsets(monkeypatch, url) -> list:
     handed to create_agent, in call order (recheck first, scan second)."""
     toolsets = []
     monkeypatch.setattr(agent, "MultiServerMCPClient", _FakeMCP)
-    monkeypatch.setattr(agent, "load_mcp_tools", _no_tools)
+    monkeypatch.setattr(agent, "load_mcp_tools", _browser_tools)
     monkeypatch.setattr(
         agent, "create_agent", lambda llm, tools: toolsets.append(tools) or object()
     )
@@ -100,3 +108,30 @@ def test_tool_registered_on_the_scan_agent_only(monkeypatch):
     assert check_images in scan_tools
     assert check_images not in recheck_tools  # discovery pass only (D-V9)
     assert disable_listing in recheck_tools
+
+
+def test_the_scan_agent_can_disable_a_listing_it_finds_already_sold(monkeypatch):
+    # the scan prompt has always told the model to follow a sold/ended
+    # save_price_check with disable_listing; until now the tool was not
+    # registered there and the instruction was dead text
+    _, scan_tools = _built_toolsets(monkeypatch, None)
+
+    assert disable_listing in scan_tools
+
+
+def test_the_page_reader_is_built_from_the_sessions_browser_tools(monkeypatch):
+    # what lets code drive the same browser the model is using, with no
+    # tokens spent and no model in the loop
+    monkeypatch.setattr(agent, "MultiServerMCPClient", _FakeMCP)
+    monkeypatch.setattr(agent, "load_mcp_tools", _browser_tools)
+    monkeypatch.setattr(agent, "create_agent", lambda llm, tools: object())
+    seen = []
+
+    async def build():
+        async with agent.build_pass_agents() as built:
+            seen.append(built)
+
+    asyncio.run(build())
+
+    (_, _, browser) = seen[0]
+    assert isinstance(browser, agent.PageReader)
