@@ -162,11 +162,14 @@ class Scenario:
         await self.db.flush()
         return row
 
-    async def checks(self, listing, *points, currency="USD", in_stock=True):
+    async def checks(
+        self, listing, *points, currency="USD", in_stock=True, method="llm", confirmed=True
+    ):
         """Record price checks as (days_ago, price) pairs, e.g. (20, "100.00").
 
         Pass price=None for an unpriced check — every aggregate must skip those
-        rather than treat them as zero.
+        rather than treat them as zero. confirmed=False is a reading the agent
+        did not believe: it belongs in the checks log and in no aggregate.
         """
         for days_ago, price in points:
             self.db.add(
@@ -176,6 +179,8 @@ class Scenario:
                     currency=currency,
                     in_stock=in_stock,
                     status=None if price is not None else "sold",
+                    method=method,
+                    confirmed=confirmed,
                     checked_at=self.ago(days_ago),
                 )
             )

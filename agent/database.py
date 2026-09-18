@@ -23,6 +23,7 @@ from sqlalchemy import (
     func,
     or_,
     select,
+    text,
     update,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -124,6 +125,18 @@ class Listings(Base):
     match_summary: Mapped[str | None] = mapped_column(Text)
     signals: Mapped[dict | None] = mapped_column(JSONB)
     verdict: Mapped[str | None] = mapped_column(Text)  # auto_ok | needs_review
+    # Where this listing's price lives on its page, learned by code at the
+    # moment the LLM confirms a price and replayed on every later recheck
+    # (agent/locators.py). kind is jsonld|meta|microdata|css. locator_failures
+    # counts reads that came back empty since the last verify — past
+    # LOCATOR_MAX_FAILURES the locator is cleared and the next LLM read learns
+    # a fresh one. static_ok means the same locator reads the same price out
+    # of the raw HTML, so rechecks need no browser at all.
+    price_locator: Mapped[str | None] = mapped_column(Text)
+    locator_kind: Mapped[str | None] = mapped_column(Text)
+    locator_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    locator_failures: Mapped[int] = mapped_column(default=0, server_default="0")
+    static_ok: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
@@ -142,6 +155,13 @@ class PriceChecks(Base):
     currency: Mapped[str] = mapped_column(Text, default="USD")
     in_stock: Mapped[bool | None] = mapped_column(Boolean)
     status: Mapped[str | None] = mapped_column(Text)
+    # How the price was read: llm (the model looked at the page) or one of
+    # jsonld|meta|microdata|locator (code replayed the listing's locator).
+    # confirmed is false for a reading the plausibility bands rejected: kept
+    # so the checks log shows what was seen, but never notified on and never
+    # counted in an aggregate until a later read agrees with it (§4.3).
+    method: Mapped[str | None] = mapped_column(Text)
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
@@ -389,7 +409,10 @@ async def get_listed_items(
       scope_id: The scoped target's id; ignored for "global".
     Returns:
       A sequence of row mappings with keys listing_id, listing_url, watch_id,
-      user_id, site_id, site_name, item_id, item_name. Returns an empty
+      user_id, condition_hint, site_id, site_name, site_base_url, item_id,
+      item_name, price_locator, locator_kind, locator_failures and static_ok
+      — the listing's context plus everything a deterministic recheck needs
+      to read it without a second query (agent/recheck.py). Returns an empty
       sequence if the query fails, so a DB hiccup skips this run's rechecks
       instead of crashing it.
     """
@@ -399,10 +422,16 @@ async def get_listed_items(
                 select(
                     Listings.id.label("listing_id"),
                     Listings.url.label("listing_url"),
+                    Listings.price_locator.label("price_locator"),
+                    Listings.locator_kind.label("locator_kind"),
+                    Listings.locator_failures.label("locator_failures"),
+                    Listings.static_ok.label("static_ok"),
                     Watches.id.label("watch_id"),
                     Watches.user_id.label("user_id"),
+                    Watches.condition_hint.label("condition_hint"),
                     Sites.id.label("site_id"),
                     Sites.name.label("site_name"),
+                    Sites.base_url.label("site_base_url"),
                     Items.id.label("item_id"),
                     Items.name.label("item_name"),
                 )
@@ -521,106 +550,226 @@ async def get_active_listing_count(watch_id: int) -> int:
         return (await session.execute(stmt)).scalar_one()
 
 
-async def get_target_notification(listing_id: int, exclude_check_id: int) -> dict | None:
+async def get_price_context(listing_id: int) -> dict:
     """
-    Return everything needed to judge and compose a target-hit notification
-    for a listing that was just price-checked.
+    The two reference prices validate_observation judges a new reading
+    against, plus the item's market stats.
 
-    best_price_before is the watch's best price across its active listings
-    ignoring the check just written — the "was this watch already met?" half
-    of the edge trigger, answered in the same round trip as the rest so the
-    caller never has to reason about ordering.
+    last_price is the listing's last CONFIRMED price and is what the
+    plausibility bands are measured against. unconfirmed_price is the most
+    recent reading only if it was NOT believed, and exists solely so the next
+    reading can corroborate it — it is deliberately never the band reference,
+    or one bad reading would become the yardstick that makes the next
+    identical bad reading look normal.
 
     Args:
-      listing_id: The listing the new price check belongs to.
-      exclude_check_id: The price_checks id just inserted, left out of
-        best_price_before so the new observation cannot mask the edge.
+      listing_id: The listing about to be re-read.
     Returns:
-      A dict with keys watch_id, user_id, target_price, last_notified_at,
-      item_id, item_name, site_id, site_name, listing_url, best_price_before.
-      Returns None when this watch can never notify (notifications off, no
-      target) and when the query fails — a DB hiccup drops the notification,
-      never the price check that triggered it.
+      A dict with keys last_price, unconfirmed_price and market. Every value
+      may be None; a failed query answers all-None, which only widens what is
+      believed rather than narrowing it.
     """
-
-    log.info(f"Fetching notification context for listing {listing_id}")
     async with AsyncSessionLocal() as session:
         try:
-            stmt = (
-                select(
-                    Listings.url.label("listing_url"),
-                    Watches.id.label("watch_id"),
-                    Watches.user_id.label("user_id"),
-                    Watches.target_price.label("target_price"),
-                    Watches.last_notified_at.label("last_notified_at"),
-                    Items.id.label("item_id"),
-                    Items.name.label("item_name"),
-                    Sites.id.label("site_id"),
-                    Sites.name.label("site_name"),
-                )
-                .join(Watches, Watches.id == Listings.watch_id)
-                .join(Items, Items.id == Listings.item_id)
-                .join(Sites, Sites.id == Listings.site_id)
-                .where(Listings.id == listing_id)
-                .where(Watches.notify)
-                .where(Watches.target_price.is_not(None))
+            last_price = await session.scalar(
+                select(PriceChecks.price)
+                .where(PriceChecks.listing_id == listing_id)
+                .where(PriceChecks.price > 0)
+                .where(PriceChecks.confirmed)
+                .order_by(PriceChecks.checked_at.desc())
                 .limit(1)
             )
-
-            results = await session.execute(stmt)
-            row = results.mappings().one_or_none()
-            if row is None:
-                return None
-
-            # Latest priced check per still-active listing on this watch; the
-            # cheapest of those is the price the UI would have called "best"
-            # a moment ago. price > 0 mirrors the API's own rollup filter.
-            latest_per_listing = (
-                select(PriceChecks.listing_id, PriceChecks.price)
-                .distinct(PriceChecks.listing_id)
-                .join(Listings, Listings.id == PriceChecks.listing_id)
-                .where(Listings.watch_id == row["watch_id"])
-                .where(Listings.active)
-                .where(PriceChecks.price > 0)
-                .where(PriceChecks.id != exclude_check_id)
-                .order_by(PriceChecks.listing_id, PriceChecks.checked_at.desc())
-                .subquery()
+            latest = (
+                await session.execute(
+                    select(PriceChecks.price, PriceChecks.confirmed)
+                    .where(PriceChecks.listing_id == listing_id)
+                    .where(PriceChecks.price > 0)
+                    .order_by(PriceChecks.checked_at.desc())
+                    .limit(1)
+                )
+            ).first()
+            item_id = await session.scalar(
+                select(Listings.item_id).where(Listings.id == listing_id)
             )
-            best_before = await session.scalar(select(func.min(latest_per_listing.c.price)))
-            return dict(row) | {"best_price_before": best_before}
+            market = await session.get(MarketPrices, item_id) if item_id else None
         except Exception as e:
-            log.error(f"Error fetching notification context for listing {listing_id}: {e}")
-            return None
+            log.error(f"Error fetching price context for listing {listing_id}: {e}")
+            return {"last_price": None, "unconfirmed_price": None, "market": None}
+
+    return {
+        "last_price": last_price,
+        "unconfirmed_price": (
+            latest.price if latest is not None and not latest.confirmed else None
+        ),
+        "market": (
+            {"status": market.status, "tiers": market.tiers, "currency": market.currency}
+            if market
+            else None
+        ),
+    }
 
 
-async def mark_watch_notified(watch_id: int) -> bool:
+async def save_locator(listing_id: int, kind: str, locator: str, static_ok: bool = False) -> bool:
     """
-    Stamp a watch as having just queued a target-hit notification.
+    Store a verified locator on a listing, clearing its failure count.
 
-    Written at enqueue, not delivery: the outbox owns retries, so "queued" is
-    the moment the owner counts as told — stamping on delivery instead would
-    let a second crossing enqueue again during an outage and double-notify
-    the owner when it ends.
+    Only ever called after the locator has been replayed in the browser and
+    read back the exact price that was confirmed (agent/locators.py) — an
+    unverified locator is never written, because a wrong one silently records
+    the wrong number forever.
 
     Args:
-      watch_id: The internal id of the watch that was notified.
+      listing_id: The listing the locator belongs to.
+      kind: One of jsonld | meta | microdata | css.
+      locator: The JSON path, meta key or CSS selector.
+      static_ok: Whether the learn-time probe found the same price in the raw
+        HTML, which is what lets later rechecks skip the browser.
     Returns:
-      True on success, False if the write failed — the cooldown then reads
-      stale and the next crossing may push again, which beats going silent.
+      True on success, False if the write failed — a lost locator costs one
+      LLM read next time, never an observation.
     """
-
-    log.info(f"Stamping watch {watch_id} as notified")
+    log.info(f"Learned {kind} locator for listing {listing_id}: {locator} (static_ok={static_ok})")
     async with AsyncSessionLocal() as session:
         try:
             await session.execute(
-                update(Watches)
-                .where(Watches.id == watch_id)
-                .values(last_notified_at=datetime.now(UTC))
+                update(Listings)
+                .where(Listings.id == listing_id)
+                .values(
+                    price_locator=locator,
+                    locator_kind=kind,
+                    locator_verified_at=datetime.now(UTC),
+                    locator_failures=0,
+                    static_ok=static_ok,
+                )
             )
             await session.commit()
             return True
         except Exception as e:
-            log.error(f"Error stamping watch {watch_id} as notified: {e}")
+            log.error(f"Error saving locator for listing {listing_id}: {e}")
+            return False
+
+
+async def note_locator_failure(listing_id: int, max_failures: int) -> bool:
+    """
+    Count one locator read that came back empty, and clear the locator once
+    it has missed too often.
+
+    A site restyle breaks every locator derived from its old markup at once.
+    Clearing after LOCATOR_MAX_FAILURES is what hands the listing back to the
+    LLM so a fresh locator can be learned, instead of burning a browser load
+    per recheck forever on a selector that will never match again.
+
+    Args:
+      listing_id: The listing whose locator missed.
+      max_failures: LOCATOR_MAX_FAILURES — the count at which it is dropped.
+    Returns:
+      True if the locator was cleared by this failure.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            failures = await session.scalar(
+                update(Listings)
+                .where(Listings.id == listing_id)
+                .values(locator_failures=Listings.locator_failures + 1)
+                .returning(Listings.locator_failures)
+            )
+            cleared = failures is not None and failures >= max_failures
+            if cleared:
+                log.info(f"Clearing locator for listing {listing_id} after {failures} misses")
+                await session.execute(
+                    update(Listings)
+                    .where(Listings.id == listing_id)
+                    .values(
+                        price_locator=None,
+                        locator_kind=None,
+                        locator_verified_at=None,
+                        locator_failures=0,
+                        static_ok=False,
+                    )
+                )
+            await session.commit()
+            return cleared
+        except Exception as e:
+            log.error(f"Error counting locator failure for listing {listing_id}: {e}")
+            return False
+
+
+async def has_verified_locator(listing_id: int) -> bool:
+    """
+    Whether this listing already knows where its price lives.
+
+    Read before the orchestrator's post-unit learn, which costs a navigation:
+    the in-unit learn inside save_price_check usually got there first, and
+    re-deriving the same locator would pay for it twice.
+
+    Args:
+      listing_id: The listing to ask about.
+    Returns:
+      True when a verified locator is stored.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            return (
+                await session.scalar(
+                    select(Listings.locator_verified_at).where(Listings.id == listing_id)
+                )
+            ) is not None
+        except Exception as e:
+            log.error(f"Error reading locator state for listing {listing_id}: {e}")
+            return False
+
+
+async def clear_static_ok(listing_id: int) -> bool:
+    """
+    Stop rechecking this listing without a browser.
+
+    Written when the static rung missed but the browser then read the same
+    locator fine: for this listing the raw page and the rendered page differ,
+    so the GET is wasted work. The next LLM learn re-probes and may set it
+    again (decision 14).
+
+    Args:
+      listing_id: The listing to send back to the browser.
+    Returns:
+      True on success.
+    """
+    log.info(f"Listing {listing_id} needs the browser after all; clearing static_ok")
+    async with AsyncSessionLocal() as session:
+        try:
+            await session.execute(
+                update(Listings).where(Listings.id == listing_id).values(static_ok=False)
+            )
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error clearing static_ok for listing {listing_id}: {e}")
+            return False
+
+
+async def deactivate_listing(listing_id: int, reason: str) -> bool:
+    """
+    Mark a listing inactive because a deterministic recheck saw it end.
+
+    The same write disable_listing makes for the LLM, reached from the code
+    path instead: a listing whose page says it sold or ended stops being
+    tracked either way.
+
+    Args:
+      listing_id: The listing to stop tracking.
+      reason: Why, for the log — "sold" or "ended".
+    Returns:
+      True on success.
+    """
+    log.info(f"Listing {listing_id} marked inactive ({reason})")
+    async with AsyncSessionLocal() as session:
+        try:
+            await session.execute(
+                update(Listings).where(Listings.id == listing_id).values(active=False)
+            )
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error disabling listing {listing_id}: {e}")
             return False
 
 

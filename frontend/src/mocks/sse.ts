@@ -212,6 +212,9 @@ export function startDemoRun(run: MockRun) {
         price_cents: price,
         in_stock: true,
         status: 'ok',
+        // a live recheck replays the listing's locator; no model is involved
+        method: 'jsonld',
+        confirmed: true,
       })
       stats.prices_found++
       const dollars = (price / 100).toFixed(2)
@@ -252,6 +255,9 @@ export function startDemoRun(run: MockRun) {
         price_cents: price,
         in_stock: true,
         status: 'ok',
+        // a live recheck replays the listing's locator; no model is involved
+        method: 'jsonld',
+        confirmed: true,
       })
       stats.new_listings++
       stats.prices_found++
@@ -305,6 +311,8 @@ export function startDemoRun(run: MockRun) {
         price_cents: null,
         in_stock: false,
         status: 'sold',
+        method: 'locator',
+        confirmed: true,
       })
       emit(run, 'warn', 'listing_ended', `${site.name} — "${lowest.title ?? bmItem.name}" sold — slot freed`, {
         listing_id: lowest.id,
@@ -342,6 +350,9 @@ export function startDemoRun(run: MockRun) {
         price_cents: price,
         in_stock: true,
         status: 'ok',
+        // a live recheck replays the listing's locator; no model is involved
+        method: 'jsonld',
+        confirmed: true,
       })
       stats.new_listings++
       stats.prices_found++

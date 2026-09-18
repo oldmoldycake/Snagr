@@ -162,6 +162,29 @@ Snagr is built to live on a trusted LAN behind your own reverse proxy:
 - Agents and scripts use **API tokens** instead (Settings → MCP & API): a `snagr_pat_…` bearer credential, stored hashed, scoped to read / write / runs, and never able to touch the account that owns it. Set `MCP_ENABLED=false` to turn that whole surface off.
 - The Playwright MCP, vision sidecar, and MinIO are **LAN-internal and unauthenticated by design** — bind them to trusted interfaces only. The same goes for the SearXNG instance the agent queries. (The dev compose stack publishes the backend on `:8000` and the sidecar on `:8100` so host-run dev servers can reach them; drop those mappings, or bind them to `127.0.0.1`, for anything long-lived.)
 
+**Marketplace pages are untrusted input**, and the agent reads them with a
+real browser before typing what it found into the database:
+
+- A listing URL must belong to the site it was found on, and must never be a
+  private, loopback, link-local or otherwise reserved address, or a bare
+  container name. The URL is stored and re-visited on every future price
+  check, so accepting one a page chose would be accepting a standing request
+  — including one aimed at Snagr's own backend or the vision sidecar. The
+  same rule guards the browserless price fetch. One accepted cost: a listing
+  that genuinely redirects to a sister domain (`ebay.com` → `ebay.co.uk`) is
+  refused rather than followed.
+- **Titles, match summaries and rejection notes are untrusted display text.**
+  They reach your ntfy / Discord / webhook bodies and the agent's own later
+  prompts, so they are capped, flattened to a single line and stripped of
+  control characters — but they are still words a stranger wrote. Treat them
+  as you would any listing text, and do not wire a notification into
+  something that acts on them unread.
+- **Prices are checked for plausibility before anything acts on them.** A
+  reading wildly out of line with the listing's own history or the item's
+  market value is recorded but marked unconfirmed: it never notifies, and it
+  stays out of every chart and average until a second reading agrees with it.
+  A consumer that buys automatically should require `confirmed: true`.
+
 Found a vulnerability? See [SECURITY.md](SECURITY.md).
 
 ## Contributing

@@ -13,7 +13,7 @@ from conftest import unit_runtime
 SIDECAR = "http://vision.test"
 
 # what the orchestrator binds per unit vs. what the model passes
-UNIT = {"watch_id": 7, "item_id": 3, "site_id": 2}
+UNIT = {"watch_id": 7, "item_id": 3, "site_id": 2, "site_base_url": "https://market.test"}
 ARGS = {
     "listing_url": "https://market.test/listing/1",
     "image_urls": ["https://cdn.test/a.jpg", "https://cdn.test/b.jpg"],
@@ -175,6 +175,7 @@ def test_an_empty_image_list_is_refused_before_the_sidecar_is_called(monkeypatch
     [
         ("listing_url", "market.test/listing/1"),
         ("image_urls", ["ftp://cdn.test/a.jpg"]),
+        ("image_urls", ["http://vision:8100/a.jpg"]),
         ("llm_authenticity_read", "definitely_real"),
     ],
 )
@@ -184,3 +185,21 @@ def test_malformed_arguments_are_refused_before_the_sidecar_is_called(monkeypatc
     assert result.startswith("Error:")
     assert field in result
     assert calls == []
+
+
+def test_an_off_site_listing_url_is_refused(monkeypatch):
+    # S2: the listing page must be on the site this scan is for
+    calls = _counting_sidecar(monkeypatch)
+    result = _check(listing_url="https://elsewhere.test/listing/1")
+
+    assert result.startswith("Error: listing_url must be a listing page on this site")
+    assert calls == []
+
+
+def test_photos_on_the_sites_cdn_are_fine(monkeypatch):
+    # marketplace images live on a separate domain (i.ebayimg.com,
+    # static.mercdn.net), so image URLs get the private-address rule only
+    calls = _counting_sidecar(monkeypatch)
+    _check(image_urls=["https://cdn.elsewhere.test/a.jpg"])
+
+    assert len(calls) == 1

@@ -184,6 +184,7 @@ async def _best_price_spark(db, listings, range) -> list[str | None]:
         # `price > 0` also drops unpriced checks (NULL > 0 is NULL, not true) —
         # the same filter the rest of this module uses.
         .where(PriceChecks.price > 0)
+        .where(PriceChecks.confirmed)
         .where(PriceChecks.checked_at >= start)
         .group_by(bucket)
     )
@@ -251,6 +252,7 @@ async def _count_listings_with_drop(db, user_id, start, end) -> int:
         .where(Watches.user_id == user_id)
         .where(Listings.active)
         .where(PriceChecks.price > 0)
+        .where(PriceChecks.confirmed)
         .where(PriceChecks.checked_at >= start)
         .where(PriceChecks.checked_at <= end)
         .subquery()
@@ -302,6 +304,7 @@ async def count_snagged_watches(db, user_id, category_id=None) -> int:
         .where(Watches.user_id == user_id)
         .where(Listings.active)
         .where(PriceChecks.price > 0)
+        .where(PriceChecks.confirmed)
         .subquery()
     )
 
@@ -351,6 +354,7 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
             select(PriceChecks)
             .where(PriceChecks.listing_id == listing.id)
             .where(PriceChecks.price > 0)
+            .where(PriceChecks.confirmed)
             .order_by(PriceChecks.checked_at)
         )
 
@@ -398,6 +402,7 @@ async def price_summary(db, user_id, item_id, range, points) -> list[SummaryPoin
             select(PriceChecks)
             .where(PriceChecks.listing_id == listing.id)
             .where(PriceChecks.price > 0)
+            .where(PriceChecks.confirmed)
             .order_by(PriceChecks.checked_at)
         )
         if start is not None:
@@ -442,6 +447,7 @@ async def item_rollups(db, user_id, item, watch, range) -> dict:
             select(PriceChecks)
             .where(PriceChecks.listing_id == listing.id)
             .where(PriceChecks.price > 0)
+            .where(PriceChecks.confirmed)
             .order_by(PriceChecks.checked_at.desc())
             .limit(1)
         )
@@ -465,6 +471,7 @@ async def item_rollups(db, user_id, item, watch, range) -> dict:
                 select(PriceChecks)
                 .where(PriceChecks.listing_id == listing.id)
                 .where(PriceChecks.price > 0)
+                .where(PriceChecks.confirmed)
                 .where(PriceChecks.checked_at <= start)
                 .order_by(PriceChecks.checked_at.desc())
                 .limit(1)
@@ -667,6 +674,7 @@ async def price_drops(db, user_id, range, limit) -> list[PriceDrop]:
         .where(Watches.user_id == user_id)
         .where(Listings.active)
         .where(PriceChecks.price > 0)
+        .where(PriceChecks.confirmed)
         .subquery()
     )
 
@@ -770,6 +778,7 @@ async def _best_price_per_item_as_of(db, user_id, category_id, as_of) -> dict[in
         .where(Items.category_id == category_id)
         .where(Listings.active)
         .where(PriceChecks.price > 0)
+        .where(PriceChecks.confirmed)
     )
     if as_of is not None:
         # The rank is computed over the filtered rows, so rn == 1 is the newest

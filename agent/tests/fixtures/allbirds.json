@@ -1,0 +1,78 @@
+{
+  "url": "https://www.allbirds.com/collections/mens",
+  "title": "Allbirds: Sustainable Men’s Shoes, Wear-All-Day Comfort",
+  "jsonld": [
+    "[{\"@context\": \"https://schema.org\", \"@type\": \"CollectionPage\", \"@id\": \"/collections/mens\", \"name\": \"Men's Shoes\", \"description\": \"[redacted]\", \"url\": \"/collections/mens\"}, {\"@context\": \"https://schema.org\", \"@type\": \"FAQPage\"}]"
+  ],
+  "meta": {},
+  "microdata": [],
+  "candidates": [
+    {
+      "text": "Free ground shipping on orders over $100",
+      "selector": "div.swiper-slide.\\!flex:nth-of-type(1) > p.text-center.text-\\[10px\\]",
+      "rank": 4
+    },
+    {
+      "text": "Spend $100 more to earn free shipping!",
+      "selector": "p.text-light-charcoal.m-auto",
+      "rank": 4
+    },
+    {
+      "text": "Spend $100 more to earn free shipping!",
+      "selector": "p.text-light-charcoal.text-xs > span",
+      "rank": 4
+    },
+    {
+      "text": "$100",
+      "selector": "p.text-light-charcoal.text-xs > span > span",
+      "rank": 4
+    },
+    {
+      "text": "Anytime No Show Sock$14",
+      "selector": "div.swiper-slide.md\\:h-full:nth-of-type(1) > a.flex.h-full > div.flex.grow:nth-of-type(2) > div.flex.flex-col",
+      "rank": 4
+    },
+    {
+      "text": "Anytime Crew Sock$18",
+      "selector": "div.swiper-slide.md\\:h-full:nth-of-type(2) > a.flex.h-full > div.flex.grow:nth-of-type(2) > div.flex.flex-col",
+      "rank": 4
+    },
+    {
+      "text": "Anytime No Show Heel Grip Sock$14",
+      "selector": "div.swiper-slide.md\\:h-full:nth-of-type(3) > a.flex.h-full > div.flex.grow:nth-of-type(2) > div.flex.flex-col:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "Under $75",
+      "selector": "li.flex.items-center:nth-of-type(1) > label.flex.cursor-pointer > span.ml-2.text-sm",
+      "rank": 4
+    },
+    {
+      "text": "$76 - $100",
+      "selector": "li.flex.items-center:nth-of-type(2) > label.flex.cursor-pointer > span.ml-2.text-sm",
+      "rank": 4
+    },
+    {
+      "text": "$101 - $125",
+      "selector": "li.flex.items-center:nth-of-type(3) > label.flex.cursor-pointer > span.ml-2.text-sm",
+      "rank": 4
+    },
+    {
+      "text": "$126 - $150",
+      "selector": "li.flex.items-center:nth-of-type(4) > label.flex.cursor-pointer > span.ml-2.text-sm",
+      "rank": 4
+    },
+    {
+      "text": "Over $150",
+      "selector": "li.flex.items-center:nth-of-type(5) > label.flex.cursor-pointer > span.ml-2.text-sm",
+      "rank": 4
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": false,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": false
+  }
+}

@@ -1,0 +1,6 @@
+### Result
+null
+### Ran Playwright code
+```js
+await page.evaluate('() => document.querySelector(\'meta[property="nope"]\')');
+```

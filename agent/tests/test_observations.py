@@ -1,9 +1,15 @@
-"""The target-hit enqueue that save_price_check fires against a real Postgres:
-the edge trigger only fires on a crossing, every gate (notify flag, target,
-stock, cooldown) stays quiet, and a successful enqueue stamps the watch.
+"""record_price_check, the one writer of a price observation, against a real
+Postgres: the edge trigger only fires on a crossing, every gate (notify flag,
+target, stock, cooldown, currency, belief) stays quiet, and the whole lot
+commits as one transaction.
 
-The agent only writes notification_outbox rows now — the backend's dispatcher
+The agent only writes notification_outbox rows — the backend's dispatcher
 owns delivery — so these tests assert rows and payloads, not HTTP.
+
+The rule the atomicity exists for is asymmetric and worth stating: an
+observation beats a notification. A broken outbox must cost the announcement
+and nothing else, because a lost price is unrecoverable and a lost push is
+not.
 
 Same harness rules as test_save_listing_backstop.py: conftest rewrites
 DATABASE_URL to the throwaway snagr_test, one module-wide event loop
@@ -13,11 +19,12 @@ DATABASE_URL to the throwaway snagr_test, one module-wide event loop
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
-import notify
+import observations
 import pytest
 import tools
-from conftest import unit_runtime
+from conftest import SITE_BASE_URL, unit_runtime
 from database import (
     AsyncSessionLocal,
     Base,
@@ -33,7 +40,7 @@ from database import (
 )
 from sqlalchemy import select, text
 
-LISTING_URL = "https://example.test/listing"
+LISTING_URL = f"{SITE_BASE_URL}/listing"
 
 _ALL_TABLES = ", ".join(t.name for t in Base.metadata.sorted_tables)
 
@@ -84,14 +91,16 @@ async def _seed(
     last_notified_at: datetime | None = None,
     prior_price: float | None = None,
     rival_price: float | None = None,
+    rival_confirmed: bool = True,
 ) -> int:
     """One watch on one item, with a listing to check. prior_price seeds an
     earlier check on that same listing; rival_price seeds a second active
-    listing on the same watch. Returns the listing id to price-check."""
+    listing on the same watch, believed unless rival_confirmed says otherwise.
+    Returns the listing id to price-check."""
     async with AsyncSessionLocal() as session:
         user = User(email="owner@test.local")
         category = Categories(name="Games", slug="games")
-        site = Sites(name="TestBay", base_url="https://example.test")
+        site = Sites(name="TestBay", base_url=SITE_BASE_URL)
         session.add_all([user, category, site])
         await session.flush()
         item = Items(category_id=category.id, name="Widget")
@@ -131,7 +140,11 @@ async def _seed(
             await session.flush()
             session.add(
                 PriceChecks(
-                    listing_id=rival.id, price=rival_price, in_stock=True, checked_at=earlier
+                    listing_id=rival.id,
+                    price=rival_price,
+                    in_stock=True,
+                    confirmed=rival_confirmed,
+                    checked_at=earlier,
                 )
             )
 
@@ -141,7 +154,11 @@ async def _seed(
 
 
 def _check(
-    listing_id: int, price: float | None = 90, in_stock: bool = True, status: str = "ok"
+    listing_id: int,
+    price: float | None = 90,
+    in_stock: bool = True,
+    status: str = "ok",
+    currency: str = "USD",
 ) -> str:
     return db(
         tools.save_price_check(
@@ -149,9 +166,31 @@ def _check(
             in_stock=in_stock,
             status=status,
             price=price,
+            currency=currency,
             runtime=unit_runtime(),
         )
     )
+
+
+async def _check_rows() -> list[tuple]:
+    """Every price check written, oldest first, as (price, confirmed)."""
+    async with AsyncSessionLocal() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(PriceChecks).order_by(PriceChecks.checked_at, PriceChecks.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [(row.price, row.confirmed) for row in rows]
+
+
+async def _methods() -> list[str]:
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(select(PriceChecks).order_by(PriceChecks.id))).scalars().all()
+        return [row.method for row in rows]
 
 
 async def _read_outbox() -> list[dict]:
@@ -187,6 +226,10 @@ def test_first_price_under_target_enqueues():
             "price": "90.00",
             "currency": "USD",
             "target_price": "100.00",
+            # additive since PR 1: a consumer can tell a model's reading from
+            # a replayed locator, and only buy on a believed one
+            "method": "llm",
+            "confirmed": True,
         },
     }
     # the cooldown stamp lands at enqueue — no dispatcher ran here
@@ -281,20 +324,90 @@ def test_cooldown_elapsed_enqueues_again():
     assert len(db(_read_outbox())) == 1
 
 
-def test_a_failing_enqueue_still_records_the_price_check(monkeypatch):
-    async def refuse(user_id, event, payload):
-        return False
+async def _count_checks() -> int:
+    async with AsyncSessionLocal() as session:
+        return len((await session.execute(select(PriceChecks))).scalars().all())
 
-    monkeypatch.setattr(notify, "enqueue_notification", refuse)
+
+def test_a_failing_enqueue_still_records_the_price_check(monkeypatch):
+    # observation beats notification: the savepoint around the announcement
+    # rolls back, the price does not
+    def explode(row, best_before, price, currency, listing_id, method):
+        raise RuntimeError("outbox is on fire")
+
+    monkeypatch.setattr(observations, "target_hit_payload", explode)
     listing_id = db(_seed())
 
     assert _check(listing_id).startswith("Successfully")
 
+    assert db(_read_outbox()) == []
     # not told = not stamped: the next crossing may try again
     assert db(_last_notified_at()) is None
-
-    async def _count_checks():
-        async with AsyncSessionLocal() as session:
-            return len((await session.execute(select(PriceChecks))).scalars().all())
-
     assert db(_count_checks()) == 1
+
+
+def test_a_failing_outbox_insert_still_records_the_price_check(monkeypatch):
+    # the same rule one layer lower: a constraint violation on the outbox row
+    # itself, inside the same transaction as the check
+    real = observations.NotificationOutbox
+
+    class Doomed(real):
+        def __init__(self, **kwargs):
+            super().__init__(**{**kwargs, "user_id": 999999})  # no such user
+
+    monkeypatch.setattr(observations, "NotificationOutbox", Doomed)
+    listing_id = db(_seed())
+
+    assert _check(listing_id).startswith("Successfully")
+
+    assert db(_read_outbox()) == []
+    assert db(_count_checks()) == 1
+
+
+class TestTheConfirmRule:
+    """A reading the plausibility bands reject is recorded and disbelieved:
+    kept so the checks log shows what was seen, never announced, and never
+    counted until a second reading agrees with it (S1)."""
+
+    def test_an_implausible_price_is_recorded_but_never_announced(self):
+        # the "$4.49 for a $449 item" case that would otherwise wake a bot
+        listing_id = db(_seed(prior_price=449))
+
+        assert _check(listing_id, price=4.49).startswith("Successfully")
+
+        assert db(_read_outbox()) == []
+        assert db(_check_rows()) == [(Decimal("449.00"), True), (Decimal("4.49"), False)]
+
+    def test_a_second_reading_that_agrees_is_believed_and_announced(self):
+        listing_id = db(_seed(prior_price=449))
+        _check(listing_id, price=4.49)
+
+        assert _check(listing_id, price=4.49).startswith("Successfully")
+
+        assert len(db(_read_outbox())) == 1
+        assert db(_check_rows())[-1] == (Decimal("4.49"), True)
+
+    def test_an_unbelieved_price_is_not_the_watchs_best_price(self):
+        # otherwise a $4.49 nobody trusts makes the watch look already-met
+        # and silences the real crossing when it comes
+        listing_id = db(_seed(prior_price=449, rival_price=4.49, rival_confirmed=False))
+
+        assert _check(listing_id, price=90).startswith("Successfully")
+
+        assert len(db(_read_outbox())) == 1
+
+    def test_a_price_in_another_currency_is_recorded_but_never_announced(self):
+        listing_id = db(_seed())
+
+        assert _check(listing_id, price=90, currency="EUR").startswith("Successfully")
+
+        assert db(_read_outbox()) == []
+        assert db(_check_rows()) == [(Decimal("90.00"), True)]
+
+
+class TestMethod:
+    def test_a_model_reading_records_as_llm(self):
+        listing_id = db(_seed())
+        _check(listing_id)
+
+        assert db(_methods()) == ["llm"]

@@ -134,4 +134,12 @@ class PriceCheck(BaseModel):
     currency: str
     in_stock: bool | None
     status: str | None  # 'ok' | 'sold' | 'ended' | 'error'
+    # how the price was read: 'llm' (the model looked at the page) or one of
+    # 'jsonld' | 'meta' | 'microdata' | 'locator' (code replayed the listing's
+    # stored locator). null on rows written before the column existed.
+    method: str | None
+    # false for a reading the agent's plausibility bands rejected — shown in
+    # the checks log, but excluded from every aggregate until a later read
+    # agrees with it (services/aggregates.py)
+    confirmed: bool
     checked_at: str

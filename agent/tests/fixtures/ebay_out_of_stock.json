@@ -1,0 +1,54 @@
+{
+  "url": "https://www.ebay.com/itm/315436076206",
+  "title": "NVIDIA RTX 6000 Ada 48GB GDDR6 PCIe 4.0 x16 Graphics Card | eBay",
+  "jsonld": [
+    "{\"@context\": \"https://schema.org\", \"@type\": \"ItemPage\", \"url\": \"https://www.ebay.com/itm/315436076206\", \"dateModified\": \"2026-09-02T06:08:12Z\"}",
+    "{\"@type\": \"Product\", \"@context\": \"https://schema.org\", \"name\": \"NVIDIA RTX 6000 Ada 48GB GDDR6 PCIe 4.0 x16 Graphics Card\", \"offers\": {\"@type\": \"Offer\", \"url\": \"https://www.ebay.com/itm/315436076206\", \"itemCondition\": \"https://schema.org/NewCondition\", \"availability\": \"https://schema.org/OutOfStock\", \"priceCurrency\": \"USD\", \"price\": \"8699.0\", \"availabilityStarts\": \"2024-06-13T07:51:18Z\"}, \"gtin13\": \"Does not apply\", \"brand\": {\"@type\": \"Brand\", \"name\": \"NVIDIA\"}}"
+  ],
+  "meta": {},
+  "microdata": [],
+  "candidates": [
+    {
+      "text": "+ $11.68 delivery",
+      "selector": "div.yO4f:nth-of-type(2) > span.sh-secondary",
+      "rank": 4
+    },
+    {
+      "text": "US $8,699.00",
+      "selector": "span.x-price-primary__price:nth-of-type(1) > span.ux-textspans",
+      "rank": 4
+    },
+    {
+      "text": "US $50.00",
+      "selector": "div.ux-labels-values__values-content > div > span.ux-textspans.ux-textspans--BOLD:nth-of-type(1)",
+      "rank": 4
+    },
+    {
+      "text": "As low as $417.62/mo",
+      "selector": "div.d-financing-options-section__title:nth-of-type(1) > span.ux-textspans.ux-textspans--BOLD",
+      "rank": 4
+    },
+    {
+      "text": "$8,699.00",
+      "selector": "div.d-financing-options-section__grid:nth-of-type(5) > div.d-financing-options-section__item:nth-of-type(1) > div.d-financing-options-section__value:nth-of-type(2) > span.ux-textspans",
+      "rank": 4
+    },
+    {
+      "text": "$10,022.95",
+      "selector": "div.d-financing-options-section__value:nth-of-type(2) > span.ux-textspans.ux-textspans--BOLD",
+      "rank": 4
+    },
+    {
+      "text": "$417.62",
+      "selector": "div.d-financing-options-section__grid:nth-of-type(6) > div.d-financing-options-section__item:nth-of-type(2) > div.d-financing-options-section__value:nth-of-type(2) > span.ux-textspans",
+      "rank": 4
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": false,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": true
+  }
+}

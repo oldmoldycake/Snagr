@@ -10,28 +10,52 @@ listing — is never a tool argument. The orchestrator binds it per unit as a
 UnitContext on the run config, and langchain hands every tool its runtime
 through the keyword-only `runtime` parameter, which never appears in the
 schema the model sees. A wrong id typed by the model used to attach a price
-to some other listing; now there is no id to type."""
+to some other listing; now there is no id to type.
+
+The page the model is reading is untrusted, so what it types is too. Every
+URL is checked against the site's own domain before it is stored or fetched
+(S2), every free-text field is capped and flattened to one line before it
+reaches a later prompt or a notification body (S4/S5), and every price is
+judged for plausibility before it can become a target-hit push (S1).
+
+save_price_check does one more thing the model never sees: at the moment it
+confirms a price, code reads the page it is on and learns where that price
+lives, so later rechecks need no model at all (agent/locators.py)."""
 
 import logging
 import re
-from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from urllib.parse import urlparse
 
 import httpx
+import static
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
 from database import (
     AsyncSessionLocal,
     ListingChecks,
     Listings,
-    PriceChecks,
     VisionScans,
     enqueue_new_listing,
+    get_price_context,
+    save_locator,
 )
 from langchain.tools import ToolRuntime
-from notify import notify_target_met
+from locators import select_locator
+from observations import UnitContext, UnitMismatch, assert_writable, record_price_check
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
+from validation import (
+    MAX_NOTES,
+    MAX_REASON,
+    MAX_SUMMARY,
+    MAX_TITLE,
+    clip_text,
+    parse_price,
+    public_url,
+    url_allowed,
+    validate_observation,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,20 +76,6 @@ def read_run_stats() -> dict:
     return dict(run_stats)
 
 
-@dataclass(frozen=True)
-class UnitContext:
-    """What one unit of work is about. Bound by the orchestrator, read by every
-    tool. listing_id is set on a recheck unit — the one listing being
-    revisited is the only one a price may be recorded against; a scan unit
-    leaves it None, and any listing of the watch is writable (save_listing is
-    what creates them)."""
-
-    watch_id: int
-    item_id: int
-    site_id: int
-    listing_id: int | None = None
-
-
 PRICE_STATUSES = ("ok", "sold", "ended", "error")
 AUTHENTICITY_READS = ("looks_authentic", "suspect", "unsure")
 
@@ -78,28 +88,20 @@ def _unit(runtime: ToolRuntime) -> UnitContext:
     return runtime.config["configurable"]["unit"]
 
 
-def _is_http_url(url: str) -> bool:
-    parsed = urlparse(url)
-    return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+def _refuse_url(url: str, unit: UnitContext, field: str = "url") -> str | None:
+    """The model-facing refusal for a URL that may not be used, or None (S2).
 
-
-async def _listing_mismatch(session, listing_id: int, unit: UnitContext) -> str | None:
-    """Why `listing_id` may not be written under this unit, or None when it
-    may. On a recheck the unit is about exactly one listing; on a scan the id
-    must at least belong to this watch. Either way a typo would attach the
-    observation to someone else's listing, which is data corruption."""
-    if unit.listing_id is not None and listing_id != unit.listing_id:
-        return (
-            f"Error: this task is about listing {unit.listing_id}, not {listing_id} — "
-            f"use listing_id={unit.listing_id}."
-        )
-    owner = await session.scalar(select(Listings.watch_id).where(Listings.id == listing_id))
-    if owner != unit.watch_id:
-        return (
-            f"Error: listing {listing_id} is not one of this watch's listings — use the "
-            f"exact listing_id save_listing returned."
-        )
-    return None
+    The reason is spelled out rather than generic because the model can act
+    on it: "not part of ebay.com" tells it to go back to the listing page it
+    was actually on, which is usually exactly what happened.
+    """
+    refused = url_allowed(url, unit.site_base_url)
+    if refused is None:
+        return None
+    return (
+        f"Error: {field} must be a listing page on this site — {refused}. Use the URL "
+        f"of the page you actually visited."
+    )
 
 
 async def save_listing(
@@ -117,13 +119,15 @@ async def save_listing(
     already known here, so you never pass them.
 
     Args:
-      url: The full http(s) URL of the listing page you actually visited
+      url: The full http(s) URL of the listing page you actually visited. It must be a
+        page on THIS site - a URL on any other domain is refused, because this URL is
+        revisited on every future price check.
       title: The listing's actual title as shown on the site
       site_sku: If a SKU is present on the site, record it here
       match_score: How well this listing fits the requested criteria, as an integer 0-100
         (examples: 67, 4, 42). Be calibrated - do not default to high.
       match_summary: One short line justifying the score, e.g. "dry battery ok, cart only,
-        authentic per photos"
+        authentic per photos". Keep it to one line; long text is truncated.
     Returns:
       One of these four:
         listing_id: The internal ID for the listing. If it is already tracked, returns the
@@ -139,10 +143,14 @@ async def save_listing(
     """
     unit = _unit(runtime)
     watch_id, item_id, site_id = unit.watch_id, unit.item_id, unit.site_id
-    if not _is_http_url(url):
-        return f"Error: url must be the listing page's full http(s) URL, got {url!r}"
+    refused = _refuse_url(url, unit)
+    if refused:
+        return refused
     if not 0 <= match_score <= 100:
         return f"Error: match_score must be an integer from 0 to 100, got {match_score}"
+    # both reach a notification body and the next scan's prompt (S5)
+    title = clip_text(title, MAX_TITLE)
+    match_summary = clip_text(match_summary, MAX_SUMMARY)
 
     log.info(f"Saving listing for item {item_id} on site {site_id} (watch {watch_id})")
 
@@ -261,6 +269,11 @@ async def save_price_check(
       price: The numeric price shown on the page (no currency symbol), greater than
              zero. Only with status "ok" - omit it entirely for "sold"/"ended"/
              "error", and NEVER invent a price or send 0 as a placeholder.
+             Report exactly what the page shows: a price wildly out of line with
+             this listing's history or the item's market value is recorded but NOT
+             acted on until a second reading agrees with it, so a mis-typed
+             decimal point costs a day, not a bargain. If the number looks wrong
+             to you, re-read the page and report what it actually says.
       currency: The three-letter code of the currency shown, e.g. "USD"
     Returns:
       A confirmation string on success, or a string starting with "Error:" saying what
@@ -283,49 +296,128 @@ async def save_price_check(
     if not re.fullmatch(r"[A-Z]{3}", currency):
         return f"Error: currency must be a three-letter code like USD, got {currency!r}"
 
+    confirmed, notifiable = True, True
+    parsed = parse_price(price) if price is not None else None
+    if parsed is not None:
+        context = await get_price_context(listing_id)
+        verdict = validate_observation(
+            parsed,
+            currency,
+            listing=context,
+            market=context["market"],
+        )
+        if not verdict.ok:
+            return f"Error: {verdict.reason} — re-read the page and report what it shows"
+        # An implausible reading is RECORDED, not refused: hiding an
+        # observation is its own failure. It just does not notify and does not
+        # enter the charts until a second reading agrees with it (§4.3).
+        confirmed, notifiable = verdict.confirmed, verdict.notifiable
+        if verdict.anomalous:
+            log.warning(f"Listing {listing_id}: unconfirmed reading {parsed} — {verdict.reason}")
+
     log.info(
         f"Saving price check for listing {listing_id} at a price of {price} {currency} "
         f"(status={status})"
     )
     async with AsyncSessionLocal() as session:
         try:
-            mismatch = await _listing_mismatch(session, listing_id, unit)
-            if mismatch:
-                log.info(f"Refusing price check: {mismatch}")
-                return mismatch
-
-            stmt = (
-                insert(PriceChecks)
-                .values(
-                    listing_id=listing_id,
-                    price=price,
-                    currency=currency,
-                    in_stock=in_stock,
-                    status=status,
-                    checked_at=datetime.now(UTC),
-                )
-                .returning(PriceChecks.id)
+            await record_price_check(
+                session,
+                unit,
+                listing_id=listing_id,
+                price=parsed,
+                currency=currency,
+                in_stock=in_stock,
+                status=status,
+                method="llm",
+                confirmed=confirmed,
+                notifiable=notifiable,
             )
-
-            result = await session.execute(stmt)
-            check_id = result.scalar_one()
-            await session.commit()
-            run_stats["listings_checked"] += 1
-            if price is not None:
-                run_stats["prices_found"] += 1
-
-            log.info(f"Successfully recorded listing {listing_id}")
-
+        except UnitMismatch as e:
+            log.info(f"Refusing price check: {e}")
+            return str(e)
         except Exception as e:
             log.error(f"Error inserting price check for listing {listing_id}: {e}")
             return f"Error inserting price check for listing {listing_id}: {e}"
 
-    # Committed and the session closed before the enqueue: a target-hit
-    # notification is a side effect of recording the price, never a
-    # precondition for it. A priceless or out-of-stock check can't be a snag.
-    if in_stock and price is not None and price > 0:
-        await notify_target_met(listing_id, check_id, price, currency)
+    run_stats["listings_checked"] += 1
+    if parsed is not None:
+        run_stats["prices_found"] += 1
+    log.info(f"Successfully recorded listing {listing_id}")
+
+    # The price is safe; everything from here is an optimisation for next
+    # time. This is the one moment a confirmed price and the page it came from
+    # exist together, so it is the only moment a locator can be learned.
+    if parsed is not None and confirmed:
+        await learn_locator(unit, listing_id, parsed)
     return f"Successfully recorded listing {listing_id}"
+
+
+async def learn_locator(
+    unit: UnitContext, listing_id: int, price: Decimal, url: str | None = None
+) -> bool:
+    """Capture where on the current page the confirmed price lives.
+
+    Code does every part of this — the model is never asked for a selector,
+    because a hallucinated one, or one a hostile page steered it towards, is
+    exactly what a stored locator must not be. The page is read with the
+    fixed extractor, Python picks which of the places it states the price to
+    trust, and the choice is replayed once through the browser and required
+    to read back the same number before it is written down.
+
+    Args:
+      unit: The unit in flight, carrying the browser handle.
+      listing_id: The listing to learn for.
+      price: The price just confirmed and recorded.
+      url: The listing URL to navigate to first. Passed by the orchestrator's
+        post-unit learn, when the model has already browsed elsewhere; left
+        out when called from the tool, which is still on the page.
+    Returns:
+      True when a locator was verified and stored.
+    """
+    browser = unit.browser
+    if browser is None:
+        return False
+    if url is not None and not await browser.navigate(url):
+        return False
+
+    extract = await browser.extract()
+    if extract is None:
+        return False
+    if url is not None and not _same_page(extract.get("url"), url):
+        log.info(f"Listing {listing_id}: navigation did not land on the listing; not learning")
+        return False
+
+    found = select_locator(extract, price)
+    if found is None:
+        log.info(f"Listing {listing_id}: page does not state {price} anywhere reachable")
+        return False
+
+    # Verify by replay before trusting it: a locator that cannot read back the
+    # number it was derived from would quietly record the wrong one forever.
+    replayed = await browser.read_locator(found.kind, found.locator)
+    if parse_price(replayed) != price:
+        log.info(f"Listing {listing_id}: {found.locator} replayed as {replayed!r}, not {price}")
+        return False
+
+    probed = False
+    if found.kind in static.STATIC_KINDS:
+        probed = await static.probe(extract.get("url") or url, unit.site_base_url, found, price)
+    return await save_locator(listing_id, found.kind, found.locator, probed)
+
+
+def _same_page(href: str | None, url: str) -> bool:
+    """Whether the browser is still on the listing — same host and path.
+
+    Query strings differ freely (eBay appends tracking parameters to its own
+    links), but a different path is a different listing, and learning a
+    locator from the wrong page is how a listing ends up tracking someone
+    else's price.
+    """
+    if not href:
+        return False
+    here, there = urlparse(href), urlparse(url)
+    return here.hostname == there.hostname and here.path.rstrip("/") == there.path.rstrip("/")
 
 
 async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime) -> str:
@@ -352,11 +444,7 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
     log.info(f"Disabling listing {listing_id}: {reason}")
     async with AsyncSessionLocal() as session:
         try:
-            mismatch = await _listing_mismatch(session, listing_id, unit)
-            if mismatch:
-                log.info(f"Refusing disable: {mismatch}")
-                return mismatch
-
+            await assert_writable(session, listing_id, unit)
             await session.execute(
                 update(Listings).where(Listings.id == listing_id).values(active=False)
             )
@@ -365,6 +453,9 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
             log.info(f"Listing {listing_id} marked inactive ({reason})")
             return f"Listing {listing_id} marked inactive"
 
+        except UnitMismatch as e:
+            log.info(f"Refusing disable: {e}")
+            return str(e)
         except Exception as e:
             log.error(f"Error disabling listing {listing_id}: {e}")
             return f"Error disabling listing {listing_id}: {e}"
@@ -383,20 +474,28 @@ async def log_listing_check(
     call this for listings you saved with `save_listing`.
 
     Args:
-      url: The full http(s) URL of the listing you evaluated and rejected
+      url: The full http(s) URL of the listing you evaluated and rejected. It must be
+        a page on THIS site - a URL on any other domain is refused.
       reason: Short category for the rejection, e.g. "poor_fit", "duplicate",
-        "authenticity", "auction"
-      notes: Optional one-line detail on why, e.g. "no repro flags but price is 3x market"
+        "authenticity", "auction". A few words, not a sentence.
+      notes: Optional ONE-LINE detail on why, e.g. "no repro flags but price is 3x
+        market". This text is shown back to you on later searches of this site, so keep
+        it factual and short; long text is truncated.
     Returns:
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
     unit = _unit(runtime)
     watch_id, site_id = unit.watch_id, unit.site_id
-    if not _is_http_url(url):
-        return f"Error: url must be the listing page's full http(s) URL, got {url!r}"
+    refused = _refuse_url(url, unit)
+    if refused:
+        return refused
     if not reason.strip():
         return 'Error: reason must name the rejection category, e.g. "poor_fit"'
+    # both are replayed into every later scan prompt for this pair, which is
+    # where a page could otherwise write itself an instruction (S4)
+    reason = clip_text(reason, MAX_REASON)
+    notes = clip_text(notes, MAX_NOTES)
 
     log.info(f"Logging listing check for watch id {watch_id}")
     async with AsyncSessionLocal() as session:
@@ -436,7 +535,8 @@ async def check_images(
     screening and before save_listing / log_listing_check.
 
     Args:
-      listing_url: The full http(s) URL of the candidate listing page you are evaluating
+      listing_url: The full http(s) URL of the candidate listing page you are evaluating.
+        It must be a page on THIS site - a URL on any other domain is refused.
       image_urls: Direct URLs of the photos on the listing page that actually
         depict the item itself. Choose carefully: skip packaging-only shots,
         hands/scale references, seller logos, stock banners, and unrelated
@@ -465,18 +565,21 @@ async def check_images(
     """
     unit = _unit(runtime)
     watch_id, item_id = unit.watch_id, unit.item_id
-    if not _is_http_url(listing_url):
-        return (
-            f"Error: listing_url must be the listing page's full http(s) URL, got {listing_url!r}"
-        )
+    refused = _refuse_url(listing_url, unit, field="listing_url")
+    if refused:
+        return refused
     if not image_urls:
         return (
             "Error: image_urls is empty — skip check_images when the listing has no usable "
             "photos and rely on your own screening"
         )
-    bad = [image_url for image_url in image_urls if not _is_http_url(image_url)]
+    # Photos live on a CDN that is often a different domain from the site
+    # (i.ebayimg.com, static.mercdn.net), so image URLs get the network half
+    # of the guard only: no private addresses, no container names. Hardening
+    # the sidecar's own fetcher is S3 and belongs to the vision side.
+    bad = [image_url for image_url in image_urls if public_url(image_url)]
     if bad:
-        return f"Error: image_urls must be direct http(s) image URLs, got {bad[0]!r}"
+        return f"Error: image_urls must be direct public http(s) image URLs, got {bad[0]!r}"
     if llm_authenticity_read not in AUTHENTICITY_READS:
         return (
             f"Error: llm_authenticity_read must be one of {', '.join(AUTHENTICITY_READS)}, "

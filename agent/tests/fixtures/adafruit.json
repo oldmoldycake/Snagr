@@ -1,0 +1,52 @@
+{
+  "url": "https://www.adafruit.com/product/3055",
+  "title": "Raspberry Pi 3 - Model B - ARMv8 with 1G RAM : Adafruit Industries, Unique & fun DIY electronics and kits",
+  "jsonld": [
+    "{\"@context\": \"http://schema.org\", \"@type\": \"WebSite\", \"url\": \"https://www.adafruit.com/\", \"potentialAction\": {\"@type\": \"SearchAction\", \"target\": \"https://www.adafruit.com/search?g=1&q={search_term}\", \"query-input\": \"required name=search_term\"}}",
+    "{\"@context\": \"http://schema.org\", \"@type\": \"Product\", \"name\": \"Raspberry Pi 3 - Model B - ARMv8 with 1G RAM\", \"description\": \"[redacted]\", \"sku\": 3055, \"offers\": {\"@type\": \"Offer\", \"availability\": \"http://schema.org/InStock\", \"price\": \"35.0000\", \"priceCurrency\": \"USD\", \"itemCondition\": \"http://schema.org/NewCondition\", \"url\": \"https://adafruit.com/product/3055\", \"description\": \"[redacted]\"}}"
+  ],
+  "meta": {
+    "twitter:data1": "$35.00 USD",
+    "product:price:amount": "35.00",
+    "product:price:currency": "USD"
+  },
+  "microdata": [
+    {
+      "itemprop": "price",
+      "content": "35.0000",
+      "text": "$35.00",
+      "selector": "[itemprop=\"price\"]"
+    },
+    {
+      "itemprop": "priceCurrency",
+      "content": "USD",
+      "text": "",
+      "selector": "span > meta"
+    },
+    {
+      "itemprop": "availability",
+      "content": null,
+      "text": "In stock",
+      "selector": "div:nth-of-type(3) > span"
+    }
+  ],
+  "candidates": [
+    {
+      "text": "$35.00",
+      "selector": "div.product-price:nth-of-type(2) > span",
+      "rank": 4
+    },
+    {
+      "text": "$35.00",
+      "selector": "[itemprop=\"price\"]",
+      "rank": 0
+    }
+  ],
+  "markers": {
+    "auction": false,
+    "buy_now": true,
+    "sold": false,
+    "ended": false,
+    "out_of_stock": false
+  }
+}

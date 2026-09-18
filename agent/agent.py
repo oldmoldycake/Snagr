@@ -31,6 +31,7 @@ from config import (
     AI_MODEL,
     AI_PROVIDER,
     AI_URL,
+    CHEAP_RECHECK,
     LANGFUSE_ENABLED,
     PLAYWRIGHT_MCP_URL,
     RUN_HEARTBEAT_INTERVAL_SECONDS,
@@ -49,8 +50,10 @@ from database import (
     get_known_listing_urls,
     get_listed_items,
     get_market_price,
+    get_price_context,
     get_run_status,
     get_watched_item_list,
+    has_verified_locator,
     reap_stale_runs,
 )
 from langchain.agents import create_agent
@@ -60,12 +63,15 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
+from locators import PageReader
+from observations import UnitContext
 from pricing import ground_stale
 from prompt import generate_prompt, generate_recheck_prompt
+from recheck import recheck_deterministic
 from tools import (
-    UnitContext,
     check_images,
     disable_listing,
+    learn_locator,
     log_listing_check,
     read_run_stats,
     reset_run_stats,
@@ -127,9 +133,15 @@ def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
 @asynccontextmanager
 async def build_pass_agents():
     """
-    Connect to the Playwright MCP server and build the two per-pass agents:
-    the recheck agent (price/availability tools only) and the scan agent
-    (discovery tools too). The one seam for everything LLM/browser-shaped.
+    Connect to the Playwright MCP server and build the two per-pass agents
+    plus the page reader: the recheck agent (price/availability tools only),
+    the scan agent (discovery tools too), and a PageReader over the session's
+    raw browser tools. The one seam for everything LLM/browser-shaped.
+
+    The reader is what lets code drive the same browser the model is using
+    without the model in the loop — the deterministic recheck reads pages
+    through it, and the learn step replays a locator through it. Its tool
+    calls carry no tokens: the text never enters a prompt.
 
     A context manager because the MCP session must span the whole run: tools
     loaded without one open a fresh session per tool call, and those sessions
@@ -147,14 +159,20 @@ async def build_pass_agents():
 
     async with client.session("playwright") as session:
         tools = await load_mcp_tools(session)
+        by_name = {tool.name: tool for tool in tools}
+        browser = PageReader(by_name["browser_navigate"], by_name["browser_evaluate"])
+
         recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
-        scan_tools = tools + [save_price_check, save_listing, log_listing_check]
+        # disable_listing is in the scan toolset because the scan prompt has
+        # always told the model to call it after a sold/ended save_price_check;
+        # until now it was not registered there and the instruction was dead.
+        scan_tools = tools + [save_price_check, save_listing, log_listing_check, disable_listing]
         # Discovery pass only (D-V9), and only when the sidecar is configured —
         # with the URL unset the tool is not registered and vision is fully off.
         if VISION_SIDECAR_URL:
             scan_tools.append(check_images)
         scan_agent = create_agent(llm, scan_tools)
-        yield recheck_agent, scan_agent
+        yield recheck_agent, scan_agent, browser
 
 
 def _require_browser_success(messages: list) -> None:
@@ -172,9 +190,16 @@ def _require_browser_success(messages: list) -> None:
         raise RuntimeError(f"every browser call failed: {results[0].content}")
 
 
-async def recheck_listing(agent, session_id: str, row) -> None:
+async def recheck_listing(agent, session_id: str, row, browser=None) -> None:
     """One pass-1 unit: revisit a tracked listing and record its current
-    price/availability. Raises on failure — the orchestrator counts it."""
+    price/availability with the LLM. Raises on failure — the orchestrator
+    counts it.
+
+    Reached only when the deterministic ladder could not read the page
+    (agent/recheck.py). Afterwards the orchestrator learns a locator from
+    whatever the model confirmed, so the next recheck of this listing does
+    not need a model at all.
+    """
     listing_id = int(row["listing_id"])
     listing_url = row["listing_url"]
     watch_id = row["watch_id"]
@@ -199,7 +224,12 @@ async def recheck_listing(agent, session_id: str, row) -> None:
         item_name=item_name,
     )
     unit = UnitContext(
-        watch_id=int(watch_id), item_id=int(item_id), site_id=int(site_id), listing_id=listing_id
+        watch_id=int(watch_id),
+        item_id=int(item_id),
+        site_id=int(site_id),
+        site_base_url=row["site_base_url"],
+        listing_id=listing_id,
+        browser=browser,
     )
 
     final: dict = {}
@@ -211,10 +241,31 @@ async def recheck_listing(agent, session_id: str, row) -> None:
         step["messages"][-1].pretty_print()
         final = step
     _require_browser_success(final.get("messages", []))
+    await _learn_after_unit(unit, listing_id, listing_url)
+
+
+async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str) -> None:
+    """Learn this listing's locator once the model has finished with it.
+
+    save_price_check already tries while the model is still on the page; this
+    is the fallback for when it had browsed elsewhere by then, and it costs
+    one navigation. Skipped entirely once the listing has a verified locator,
+    and when the unit recorded no believed price there is nothing to learn
+    from. Never fatal: a run must not fail because an optimisation did.
+    """
+    if unit.browser is None or await has_verified_locator(listing_id):
+        return
+    price = (await get_price_context(listing_id))["last_price"]
+    if price is None:
+        return
+    try:
+        await learn_locator(unit, listing_id, price, url=listing_url)
+    except Exception as e:
+        log.warning(f"Post-unit locator learn failed for listing {listing_id}: {e}")
 
 
 async def scan_pair(
-    agent, session_id: str, row, market: dict | None, tracked_listings: int
+    agent, session_id: str, row, market: dict | None, tracked_listings: int, browser=None
 ) -> None:
     """One pass-2 unit: search a site for new listings for one watch, telling
     the model how many of the watch's slots are already in use and which
@@ -264,7 +315,13 @@ async def scan_pair(
         expected_price=str(expected_price) if expected_price is not None else None,
         condition_hint=condition_hint,
     )
-    unit = UnitContext(watch_id=int(watch_id), item_id=int(item_id), site_id=int(site_id))
+    unit = UnitContext(
+        watch_id=int(watch_id),
+        item_id=int(item_id),
+        site_id=int(site_id),
+        site_base_url=base_url,
+        browser=browser,
+    )
 
     final: dict = {}
     async for step in agent.astream(
@@ -275,6 +332,34 @@ async def scan_pair(
         step["messages"][-1].pretty_print()
         final = step
     _require_browser_success(final.get("messages", []))
+
+
+async def _recheck_unit(agent, session_id: str, row, browser) -> None:
+    """One pass-1 unit, cheapest path first.
+
+    The deterministic ladder gets first refusal: when it reads the page, the
+    unit is done and no model ran at all. Only when it cannot — the locator
+    is gone, the page is blocked, the reading is implausible — does the full
+    agentic recheck run, and that read is what relearns the locator.
+
+    The whole unit is bounded, not just the LLM half: a wedged browser call
+    on the cheap path would otherwise hold the run open with no model to
+    blame. CHEAP_RECHECK=false skips the ladder entirely and puts every
+    recheck back through the LLM, which is how the agent behaved before
+    locators existed.
+    """
+    listing_id = row["listing_id"]
+    if CHEAP_RECHECK:
+        outcome = await recheck_deterministic(browser, row)
+        if outcome.handled:
+            log.info(
+                f"Listing {listing_id} read by {outcome.method} over {outcome.transport}"
+                + (f" ({outcome.note})" if outcome.note else "")
+            )
+            return
+        log.info(f"Listing {listing_id} needs the model; falling back to the agentic recheck")
+
+    await recheck_listing(agent, session_id, row, browser)
 
 
 async def _bounded(unit) -> None:
@@ -326,7 +411,7 @@ async def execute_run(run: dict) -> dict | None:
             log.error(f"Grounding pre-pass failed, scraping ungrounded: {e}")
 
     units = 0
-    async with build_pass_agents() as (recheck_agent, scan_agent):
+    async with build_pass_agents() as (recheck_agent, scan_agent, browser):
         log.info("Starting scan on current listings")
 
         listed_items_list = await get_listed_items(run["scope"], run["scope_id"])
@@ -337,7 +422,7 @@ async def execute_run(run: dict) -> dict | None:
 
             units += 1
             try:
-                await _bounded(recheck_listing(recheck_agent, session_id, row))
+                await _bounded(_recheck_unit(recheck_agent, session_id, row, browser))
                 log.info(f"Finished recheck for listing {row['listing_id']}")
             except Exception as e:
                 log.error(f"Recheck failed for listing {row['listing_id']}: {e}")
@@ -388,7 +473,9 @@ async def execute_run(run: dict) -> dict | None:
             )
             units += 1
             try:
-                await _bounded(scan_pair(scan_agent, session_id, row, markets[item_id], tracked))
+                await _bounded(
+                    scan_pair(scan_agent, session_id, row, markets[item_id], tracked, browser)
+                )
                 log.info(f"Finished {row['item_name']} on site {row['site_name']}")
             except Exception as e:
                 log.error(f"Item {row['item_name']} on site {row['site_name']} failed: {e}")

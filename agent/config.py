@@ -55,3 +55,23 @@ NOTIFY_COOLDOWN_HOURS = int(os.getenv("NOTIFY_COOLDOWN_HOURS", "24"))
 # Observability (both optional). LangSmith is read by langchain itself from LANGSMITH_*;
 # Langfuse only needs an on/off signal here — its SDK reads its own vars.
 LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
+
+# Deterministic rechecks (PR 1). CHEAP_RECHECK is the kill switch: false puts
+# every recheck back through the LLM, which is how the agent behaved before
+# locators existed. A locator that stops resolving is not trusted forever —
+# after LOCATOR_MAX_FAILURES misses it is cleared so the next LLM read learns
+# a fresh one. STATIC_FETCH governs only the browserless rung: a listing whose
+# learn-time probe found the same price in the raw HTML is re-read with a
+# plain GET, and turning this off costs a page load, never a reading.
+CHEAP_RECHECK = os.getenv("CHEAP_RECHECK", "true").lower() != "false"
+LOCATOR_MAX_FAILURES = int(os.getenv("LOCATOR_MAX_FAILURES", "3"))
+STATIC_FETCH = os.getenv("STATIC_FETCH", "true").lower() != "false"
+
+# Price plausibility bands. A read outside one is anomalous — recorded, but
+# never notified and never charted until a second read agrees with it (§4.3):
+# the page that says "$4.49" for a $449 item must not wake a buying bot.
+# LOW/HIGH bound the ratio against this listing's own last price; FLOOR bounds
+# it against the item's market median. Any of them set to 0 disables that band.
+PRICE_BAND_LOW = float(os.getenv("PRICE_BAND_LOW", "0.2"))
+PRICE_BAND_HIGH = float(os.getenv("PRICE_BAND_HIGH", "5"))
+PRICE_MARKET_FLOOR = float(os.getenv("PRICE_MARKET_FLOOR", "0.1"))
