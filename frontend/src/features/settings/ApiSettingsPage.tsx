@@ -33,8 +33,6 @@ function mcpUrl(): string {
   return `${window.location.origin}/api/mcp`
 }
 
-// --- client config snippets -----------------------------------------------------
-
 type ClientKind = 'claude' | 'json' | 'hermes' | 'openclaw' | 'curl'
 
 const CLIENT_OPTIONS: readonly { value: ClientKind; label: string }[] = [
@@ -151,8 +149,6 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
     </div>
   )
 }
-
-// --- tokens -----------------------------------------------------------------------
 
 type Access = 'read' | 'write' | 'full'
 

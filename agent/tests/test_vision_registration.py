@@ -111,9 +111,8 @@ def test_tool_registered_on_the_scan_agent_only(monkeypatch):
 
 
 def test_the_scan_agent_can_disable_a_listing_it_finds_already_sold(monkeypatch):
-    # the scan prompt has always told the model to follow a sold/ended
-    # save_price_check with disable_listing; until now the tool was not
-    # registered there and the instruction was dead text
+    # the scan prompt tells the model to follow a sold/ended save_price_check
+    # with disable_listing, so the tool must be registered on the scan agent.
     _, scan_tools = _built_toolsets(monkeypatch, None)
 
     assert disable_listing in scan_tools

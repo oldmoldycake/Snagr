@@ -229,7 +229,6 @@ async def test_another_users_channel_is_hidden(client, make_client, monkeypatch,
         assert res.status_code == 404
         assert res.json()["error"]["code"] == "not_found"
 
-    # the owner still sees it untouched
     (mine,) = (await client.get("/api/me/channels")).json()["data"]
     assert mine["name"] == "mine"
 

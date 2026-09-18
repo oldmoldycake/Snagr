@@ -39,7 +39,6 @@ _live_url = _configured_url().replace("+asyncpg", "+psycopg")
 _test_url = _live_url.rsplit("/", 1)[0] + "/snagr_test_vision"
 assert _test_url != _live_url, "test DB must not be the live DB"
 os.environ["DATABASE_URL"] = _test_url
-# ------------------------------------------------------------------------------
 
 import embedder
 import fetcher

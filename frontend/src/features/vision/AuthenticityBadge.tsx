@@ -45,7 +45,6 @@ function ConfidenceMeter({ value, hot }: { value: string; hot: boolean }) {
   )
 }
 
-/** Inline detail line for an expanded listing row — verdict copy, confidence meter, photo count. */
 export function AuthenticityLine({ read }: { read: AuthenticityRead }) {
   const hot = read.verdict === 'leans_fake'
   return (

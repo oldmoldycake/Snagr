@@ -425,7 +425,6 @@ async def test_catalog_writes(client):
         site = await _ok(agent, "create_site", name="eBay", base_url="https://ebay.com/")
         assert site["base_url"] == "https://ebay.com"  # one trailing slash dropped, like REST
 
-        # rename + link sites in one call, by slug and by site name
         linked = await _ok(
             agent, "update_category", category="cameras", name="Film cameras", site_ids=["ebay"]
         )
@@ -522,7 +521,8 @@ async def test_vision_writes(client, vision_on):
 async def test_vision_writes_answer_unavailable_when_off(client):
     await _sign_in(client)
     async with _agent(await _token(client, scopes=("read", "write"))) as agent:
-        # hidden from the list, but a client that remembers the name still gets the REST code
+        # hidden tools answer vision_unavailable (same code as REST when off),
+        # even when called directly by remembered name.
         assert (await _error(agent, "confirm_review_entry", entry_id=1, label="real"))[
             "code"
         ] == "vision_unavailable"

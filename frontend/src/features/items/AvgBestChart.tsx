@@ -19,7 +19,7 @@ import {
 import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
 
-const HEIGHT = 256 // h-64
+const HEIGHT = 256
 
 const BEST_LABEL = 'Best price'
 const AVG_LABEL = 'Average across listings'
@@ -68,7 +68,6 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
     const plot = makePlot(width, HEIGHT, xMin, xMax, domain[0], domain[1])
     const nowX = plot.x(xMax)
 
-    // avg: smoothed polyline, ember tip on the final segment
     const avgPx = avgPts.map((p) => ({ x: plot.x(p.ts), y: plot.y(p.value) }))
     const avg =
       avgPx.length > 0
@@ -82,7 +81,6 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
           }
         : null
 
-    // best: eased steps like the per-listing traces, tip from the last change
     const bestPx = bestPts.map((p) => ({ x: plot.x(p.ts), y: plot.y(p.value) }))
     let best = null
     if (bestPx.length > 0) {
@@ -110,7 +108,6 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
     )
   }
 
-  // Rows the beam strikes, sorted by price — best reads above avg.
   const candidates: { label: string; color: string; value: number | null }[] = sweep.pos
     ? [
         { label: BEST_LABEL, color: chart.ink, value: valueAt(bestPts, sweep.pos.ts) },

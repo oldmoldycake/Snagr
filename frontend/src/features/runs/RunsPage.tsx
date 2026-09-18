@@ -81,7 +81,6 @@ export function RunsPage() {
     placeholderData: keepPreviousData,
   })
 
-  // keep the running row's status fresh while a run is active
   const active = isRunActive(activeRun)
   useEffect(() => {
     if (!active) return

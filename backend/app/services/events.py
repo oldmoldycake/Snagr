@@ -81,7 +81,6 @@ def register_client(user: User) -> _Client:
 
 
 def unregister_client(client: _Client) -> None:
-    """Drop a disconnected client."""
     _clients.discard(client)
 
 

@@ -26,7 +26,6 @@ export const DEFAULT_TRACKING: TrackingValue = {
   siteIds: null,
 }
 
-/** Compose the ItemCreate/Update payload fields from the form value. */
 export function trackingPayload(value: TrackingValue) {
   return {
     criteria: value.criteria.trim() || null,

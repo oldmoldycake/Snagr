@@ -404,7 +404,6 @@ def parse_result(text: str) -> object:
     if start == -1:
         return None
     body = text[start + len(marker) :]
-    # the next "### " heading ends the section; there may be none
     end = body.find("\n### ")
     if end != -1:
         body = body[:end]

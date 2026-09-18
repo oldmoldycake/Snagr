@@ -134,7 +134,6 @@ async def test_another_users_token_is_hidden(client, make_client, monkeypatch):
     assert res.json()["error"]["code"] == "not_found"
     assert (await stranger.get("/api/me/tokens")).json()["data"] == []
 
-    # the owner still sees it untouched
     (mine,) = (await client.get("/api/me/tokens")).json()["data"]
     assert mine["id"] == created["id"]
 

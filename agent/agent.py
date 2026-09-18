@@ -163,9 +163,8 @@ async def build_pass_agents():
         browser = PageReader(by_name["browser_navigate"], by_name["browser_evaluate"])
 
         recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
-        # disable_listing is in the scan toolset because the scan prompt has
-        # always told the model to call it after a sold/ended save_price_check;
-        # until now it was not registered there and the instruction was dead.
+        # disable_listing is in the scan toolset because the scan prompt tells
+        # the model to call it after a sold/ended save_price_check.
         scan_tools = tools + [save_price_check, save_listing, log_listing_check, disable_listing]
         # Discovery pass only (D-V9), and only when the sidecar is configured —
         # with the URL unset the tool is not registered and vision is fully off.

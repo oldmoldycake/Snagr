@@ -106,13 +106,11 @@ export function easedStepD(pts: Pt[], endX?: number): string {
   return `${d} H ${f(endX ?? pts[pts.length - 1].x)}`
 }
 
-/** Plain polyline (the "smoothed" avg trace), optionally carried flat to endX. */
 export function polylineD(pts: Pt[], endX?: number): string {
   const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${f(p.x)} ${f(p.y)}`).join(' ')
   return endX != null && endX > pts[pts.length - 1].x ? `${d} H ${f(endX)}` : d
 }
 
-/** Evenly spaced x-axis ticks, ~150px apart, inset half a step from the edges. */
 export function timeTicks(
   plot: Plot,
   xMin: number,
@@ -127,7 +125,6 @@ export function timeTicks(
   })
 }
 
-/** Smallest "nice" major step giving at most 5 majors over the span. */
 function majorStepFor(span: number): number {
   const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
   return steps.find((s) => span / s <= 5) ?? 10_000
@@ -222,8 +219,7 @@ export function GlowDefs({ id }: { id: string }) {
 
 export interface TraceSeg {
   d: string
-  /** out-of-stock stretch: dashed 2 4 at 55%, never glowing */
-  dash: boolean
+    dash: boolean
 }
 
 /**

@@ -49,7 +49,6 @@ def test_selection_and_stop_rules_count_open_slots_not_the_cap():
 
 
 def test_an_untouched_watch_has_every_slot_open():
-    # the default: callers that pass no count get the cap itself
     prompt = _prompt()
     assert "TRACKING SLOTS: 5 open" in prompt
     assert "0 slot(s) are already filled" in prompt

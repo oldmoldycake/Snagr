@@ -86,7 +86,6 @@ async def test_invite_lifecycle(client, make_client):
     # single-use: the same link is dead now
     assert (await invitee.get(f"/api/auth/invites/{token}")).status_code == 410
 
-    # and it no longer shows in the admin's pending list
     pending = await client.get("/api/admin/invites")
     assert pending.json()["data"] == []
 
