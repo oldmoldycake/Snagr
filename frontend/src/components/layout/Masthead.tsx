@@ -46,7 +46,6 @@ function Wordmark() {
   )
 }
 
-/** Drawer nav for <md — the masthead links plus the category list. */
 function MobileNav({ onNavigate }: { onNavigate: () => void }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const categories = data?.data ?? []
@@ -121,7 +120,6 @@ export function Masthead() {
   const searchRef = useRef<HTMLInputElement>(null)
   const navItems = useNavItems()
 
-  // "/" focuses search from anywhere that isn't already a text field.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return

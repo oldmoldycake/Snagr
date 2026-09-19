@@ -179,8 +179,6 @@ async def test_an_unbelieved_reading_is_not_a_listings_current_price(client, db_
 
 
 async def test_an_unbelieved_reading_still_counts_as_a_check_that_happened(client, db_session):
-    # last_checked_at answers "when did we last look", which is true whether
-    # or not the number that came back was believed
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:
         item = await sc.item()

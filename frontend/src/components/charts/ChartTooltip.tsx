@@ -2,7 +2,6 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/time'
 
-/** Shared tooltip chrome: raised panel, mono values, line-key strokes. */
 export function TooltipFrame({ label, children }: { label?: string; children: ReactNode }) {
   return (
     <div className="max-w-[280px] rounded-sm border border-hairline bg-overlay px-2.5 py-2 shadow-xl">

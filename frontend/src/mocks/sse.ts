@@ -70,8 +70,6 @@ function broadcastEvent(run: MockRun, event: MockRunEvent) {
   }
 }
 
-// --- demo run script ----------------------------------------------------------
-
 const timers = new Map<number, ReturnType<typeof setTimeout>[]>()
 
 export function hasActiveRun(): MockRun | undefined {
@@ -202,7 +200,6 @@ export function startDemoRun(run: MockRun) {
         return
       }
       const base = prev?.price_cents ?? 30000
-      // mostly small moves; ~15% of checks are a real drop
       const move = Math.random() < 0.15 ? -(0.05 + Math.random() * 0.1) : (Math.random() - 0.5) * 0.02
       const price = Math.max(500, Math.round(base * (1 + move)))
       store.checks.push({
@@ -255,7 +252,6 @@ export function startDemoRun(run: MockRun) {
         price_cents: price,
         in_stock: true,
         status: 'ok',
-        // a live recheck replays the listing's locator; no model is involved
         method: 'jsonld',
         confirmed: true,
       })
@@ -268,7 +264,6 @@ export function startDemoRun(run: MockRun) {
     })
   }
 
-  // --- criteria evaluation for one best_match item in scope ------------------
   const bmItem = bestMatchItems(run)[0]
   if (bmItem) {
     const category = store.categories.find((c) => c.id === bmItem.category_id)!
@@ -283,7 +278,6 @@ export function startDemoRun(run: MockRun) {
       }),
     )
 
-    // a candidate that doesn't clear the ~50 match floor
     clock += 900
     at(clock, () => {
       const title = `${bmItem.name} — Mint, Sealed`
@@ -297,7 +291,6 @@ export function startDemoRun(run: MockRun) {
       })
     })
 
-    // a tracked listing sells → slot freed
     clock += 800
     at(clock, () => {
       const tracked = store.listings.filter((l) => l.item_id === bmItem.id && l.active)
@@ -320,7 +313,6 @@ export function startDemoRun(run: MockRun) {
       })
     })
 
-    // refill the freed slot with the next best candidate
     clock += 1000
     at(clock, () => {
       const trackedCount = store.listings.filter((l) => l.item_id === bmItem.id && l.active).length
@@ -350,7 +342,6 @@ export function startDemoRun(run: MockRun) {
         price_cents: price,
         in_stock: true,
         status: 'ok',
-        // a live recheck replays the listing's locator; no model is involved
         method: 'jsonld',
         confirmed: true,
       })

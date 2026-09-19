@@ -65,8 +65,6 @@ const DAY = 86_400_000
 const TOKEN_SCOPES: ApiTokenScope[] = ['read', 'write', 'runs']
 const SESSION_KEY = 'snagr:mock-session'
 
-// --- helpers -------------------------------------------------------------------
-
 function err(status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
   return HttpResponse.json({ error: { code, message, ...extra } }, { status })
 }
@@ -217,10 +215,7 @@ function validateChannel(
   return { name, url, topic, events }
 }
 
-// --- handlers --------------------------------------------------------------------
-
 export const handlers = [
-  // ---- instance / auth ----
   http.get('/api/instance', async () => {
     await wait()
     return HttpResponse.json({
@@ -312,7 +307,6 @@ export const handlers = [
     return HttpResponse.json({ user: toUser(user) }, { status: 201 })
   }),
 
-  // ---- me ----
   http.patch('/api/me', async ({ request }) => {
     const user = requireUser()
     const body = (await request.json()) as MeUpdateRequest
@@ -350,7 +344,6 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
-  // ---- notification channels ----
   http.get('/api/me/channels', async () => {
     const user = requireUser()
     await wait()
@@ -417,7 +410,6 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
-  // ---- API tokens (Settings → MCP & API) ----
   http.get('/api/me/tokens', async () => {
     const user = requireUser()
     await wait()
@@ -467,7 +459,6 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
-  // ---- categories ----
   http.get('/api/categories', async () => {
     requireUser()
     await wait()
@@ -525,7 +516,6 @@ export const handlers = [
     return HttpResponse.json(toCategory(category))
   }),
 
-  // ---- sites ----
   http.get('/api/sites', async () => {
     requireUser()
     await wait()
@@ -571,7 +561,6 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
-  // ---- items ----
   http.get('/api/items', async ({ request }) => {
     requireUser()
     await wait()
@@ -722,7 +711,6 @@ export const handlers = [
     return HttpResponse.json({ data: checks })
   }),
 
-  // ---- vision ----
   // Contract gap, called out per house rules: this mock always reports
   // vision_enabled: true and cannot exercise the disabled mode. The real
   // backend answers 503 { error: { code: 'vision_unavailable' } } for every
@@ -891,7 +879,6 @@ export const handlers = [
     return new HttpResponse(svg, { headers: { 'Content-Type': 'image/svg+xml' } })
   }),
 
-  // ---- charts / aggregates ----
   http.get('/api/items/:id/price-history', async ({ params, request }) => {
     requireUser()
     await wait()
@@ -1089,7 +1076,6 @@ export const handlers = [
     return HttpResponse.json({ data: drops.slice(0, limit) })
   }),
 
-  // ---- runs ----
   http.post('/api/runs', async ({ request }) => {
     const user = requireUser()
     // instance-wide, deliberately: one agent, one active run — even when the
@@ -1185,7 +1171,6 @@ export const handlers = [
     return HttpResponse.json(toRun(run))
   }),
 
-  // ---- SSE ----
   http.get('/api/events', () => {
     const user = sessionUser()
     if (!user) return err(401, 'unauthenticated', 'Not signed in')
@@ -1223,7 +1208,6 @@ export const handlers = [
     })
   }),
 
-  // ---- admin ----
   http.get('/api/admin/users', async () => {
     requireAdmin()
     await wait()

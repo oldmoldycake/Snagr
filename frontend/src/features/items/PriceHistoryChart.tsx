@@ -21,7 +21,7 @@ import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
 import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
-const HEIGHT = 256 // h-64
+const HEIGHT = 256
 
 /**
  * Legend labels: strip the longest shared title prefix (whole words) among the
@@ -34,7 +34,6 @@ function seriesLabels(plotted: PreparedSeries[]): Map<number, string> {
   if (titles.length >= 2) {
     prefix = titles[0]
     for (const t of titles) while (!t.startsWith(prefix)) prefix = prefix.slice(0, -1)
-    // a cut inside a word retreats to the word boundary
     if (titles.some((t) => t.length > prefix.length && t[prefix.length] !== ' ')) {
       prefix = prefix.slice(0, prefix.lastIndexOf(' ') + 1)
     }
@@ -139,7 +138,6 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
     )
   }
 
-  // Rows the beam strikes, sorted by price — the cheapest reads first.
   const struck =
     geom && sweep.pos
       ? plotted

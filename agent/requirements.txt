@@ -1,4 +1,4 @@
-# Dev
+# Lint/test
 # ruff stays unpinned on purpose: the lint version of record is pinned in
 # .github/workflows/ci.yml and bumped deliberately — a pin here would let
 # Dependabot drift the two apart.

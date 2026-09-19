@@ -320,7 +320,6 @@ function generateChecks(
   endStatus?: 'sold' | 'ended',
 ) {
   const walk = mulberry32(jitterSeed)
-  // each listing sits at a slightly different price level than the item base
   let price = Math.round(baseCents * (0.96 + walk() * 0.1))
   let saleDaysLeft = 0
   let salePrice = 0
@@ -388,7 +387,6 @@ function seed() {
     created_at: NOW - 100 * DAY,
   })
 
-  // the demo account arrives with one channel of each push style configured
   store.notificationChannels.push(
     {
       id: 1,
@@ -460,7 +458,6 @@ function seed() {
       })
       store.watches.push({ id: newId(), item_id: itemId, user_id: 1, notify: rng() > 0.3, target_cents: null })
 
-      // spread listings across the category's sites; >4 wraps with ebay dupes
       const VARIANTS = ['', ' (New)', ' (Open Box)', ' (Renewed)', ' — Used, Like New', ' — Used, Good', ' (Refurbished)']
       for (let l = 0; l < seedItem.listings; l++) {
         listingId++
@@ -616,7 +613,6 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
   let itemId = lastItemId
   let listingId = lastListingId
 
-  // --- Pokemon Emerald: best_match, eBay only -------------------------------
   itemId++
   const emeraldId = itemId
   store.items.push({
@@ -692,7 +688,6 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
     generateChecks(listingId, spec.base, 0xeade + listingId * 11, spec.soldDaysAgo ?? 0, spec.soldDaysAgo != null ? 'sold' : undefined)
   }
 
-  // --- GameCube Controller: plain cheapest-mode contrast --------------------
   itemId++
   store.items.push({
     id: itemId,

@@ -23,7 +23,6 @@ stop() {
 }
 trap stop TERM INT
 
-# run one command as the supervised child
 tick() {
   "$@" &
   child=$!

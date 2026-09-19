@@ -11,7 +11,6 @@ export function DeltaText({
   polarity = 'price',
   className,
 }: {
-  /** signed numeric string like "-8.30" or a number */
   value: string | number | null | undefined
   suffix?: string
   polarity?: 'price' | 'growth' | 'neutral'

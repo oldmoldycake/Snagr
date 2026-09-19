@@ -260,7 +260,6 @@ async def test_discard_removes_the_entry(client, db_session, vision_on, sidecar)
     async with db_session() as session:
         assert (await session.execute(select(VisionListingImages))).first() is None
 
-    # the entry is gone — a second discard 404s
     res = await client.delete(f"/api/vision/review-queue/{entry_id}", headers=CSRF)
     assert res.status_code == 404
     assert res.json()["error"]["code"] == "not_found"

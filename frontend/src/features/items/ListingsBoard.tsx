@@ -15,20 +15,17 @@ import { AuthenticityChip, AuthenticityLine } from '@/features/vision/Authentici
 import { MatchPill } from './MatchPill'
 import { prepareSeries } from './seriesPrep'
 
-/** Below the pill's amber band — still tracked, but folded off the front page. */
+// Rail geometry: fold threshold, sub-$1 dot threshold, label-flip rail position,
+// shared grid, and price→rail-position mapping.
 const FOLD_SCORE = 70
-/** Sub-$1 drift renders as a bare dot — no false motion. */
 const UNCHANGED_CENTS = 100
 const STALE_MS = 24 * 3_600_000
-/** Past this rail position, price labels flip to the left of their dot. */
 const LABEL_FLIP_PCT = 78
 
-/** Row/axis strips must share one grid so the rail column lines up. */
 const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_34px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_34px]'
 const COL_LABEL = 'font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase'
 
 interface Rail {
-  /** Rail position for a price in cents: high (pricier) left → target right. */
   place: (cents: number) => { pct: number; clamp: '«' | '»' | null }
   targetPct: number | null
 }
@@ -473,7 +470,6 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
   const prep = useMemo(() => (history.data ? prepareSeries(history.data) : null), [history.data])
   const colorOf = (listingId: number) => prep?.colorOf(listingId) ?? chart.othersGray
 
-  // Price at the start of the selected range, per listing — the drift origin.
   const startCents = useMemo(() => {
     const m = new Map<number, number>()
     for (const s of history.data?.series ?? []) {
@@ -513,7 +509,6 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
   }
   const folded = [...lowMatch, ...inactive]
 
-  // badge the highest-scoring tracked listing (price breaks ties) in best_match mode
   const bestMatchId = mode === 'best_match' ? (active.find((l) => l.match_score != null)?.id ?? null) : null
 
   const rail = makeRail(main, startCents, targetC)

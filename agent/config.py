@@ -56,7 +56,7 @@ NOTIFY_COOLDOWN_HOURS = int(os.getenv("NOTIFY_COOLDOWN_HOURS", "24"))
 # Langfuse only needs an on/off signal here — its SDK reads its own vars.
 LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 
-# Deterministic rechecks (PR 1). CHEAP_RECHECK is the kill switch: false puts
+# Deterministic rechecks. CHEAP_RECHECK is the kill switch: false puts
 # every recheck back through the LLM, which is how the agent behaved before
 # locators existed. A locator that stops resolving is not trusted forever —
 # after LOCATOR_MAX_FAILURES misses it is cleared so the next LLM read learns

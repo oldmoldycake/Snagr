@@ -226,8 +226,8 @@ def test_first_price_under_target_enqueues():
             "price": "90.00",
             "currency": "USD",
             "target_price": "100.00",
-            # additive since PR 1: a consumer can tell a model's reading from
-            # a replayed locator, and only buy on a believed one
+            # a consumer can tell a model's reading from a replayed locator,
+            # and only buy on a believed one
             "method": "llm",
             "confirmed": True,
         },
@@ -299,8 +299,7 @@ def test_no_target_price_stays_quiet():
 def test_a_channelless_owner_still_enqueues():
     # channel eligibility is the dispatcher's business, not the agent's: the
     # event is recorded either way and a channel-less owner's row simply gets
-    # marked 'skipped' backend-side (the old owner-without-a-topic gate died
-    # with the ntfy port)
+    # marked 'skipped' backend-side.
     listing_id = db(_seed())
 
     _check(listing_id)

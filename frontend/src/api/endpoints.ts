@@ -51,8 +51,6 @@ import type {
   WatchUpdateRequest,
 } from './types'
 
-// --- instance / auth -------------------------------------------------------
-
 export const getInstance = () => api<InstanceInfo>('/api/instance')
 
 export const login = (body: LoginRequest) =>
@@ -70,8 +68,6 @@ export const validateInvite = (token: string) =>
 
 export const acceptInvite = (token: string, body: InviteAcceptRequest) =>
   api<{ user: User }>(`/api/auth/invites/${token}/accept`, { method: 'POST', body })
-
-// --- me ---------------------------------------------------------------------
 
 export const updateMe = (body: MeUpdateRequest) =>
   api<User>('/api/me', { method: 'PATCH', body })
@@ -101,8 +97,6 @@ export const createToken = (body: ApiTokenCreateRequest) =>
 export const revokeToken = (id: number) =>
   api<void>(`/api/me/tokens/${id}`, { method: 'DELETE' })
 
-// --- categories -------------------------------------------------------------
-
 export const listCategories = () => api<{ data: Category[] }>('/api/categories')
 
 export const createCategory = (body: CategoryCreateRequest) =>
@@ -117,8 +111,6 @@ export const deleteCategory = (id: number) =>
 export const setCategorySites = (id: number, siteIds: number[]) =>
   api<Category>(`/api/categories/${id}/sites`, { method: 'PUT', body: { site_ids: siteIds } })
 
-// --- sites -------------------------------------------------------------------
-
 export const listSites = () => api<{ data: Site[] }>('/api/sites')
 
 export const createSite = (body: SiteCreateRequest) =>
@@ -128,8 +120,6 @@ export const updateSite = (id: number, body: SiteUpdateRequest) =>
   api<Site>(`/api/sites/${id}`, { method: 'PATCH', body })
 
 export const deleteSite = (id: number) => api<void>(`/api/sites/${id}`, { method: 'DELETE' })
-
-// --- items / listings / watches ----------------------------------------------
 
 export const listItems = (params: ItemListParams = {}) =>
   api<Paginated<ItemSummary>>('/api/items', { params: { ...params } })
@@ -153,7 +143,6 @@ export const updateListing = (id: number, body: ListingUpdateRequest) =>
 export const listPriceChecks = (itemId: number, limit = 50) =>
   api<{ data: PriceCheck[] }>(`/api/items/${itemId}/price-checks`, { params: { limit } })
 
-// --- vision ----------------------------------------------------------------------
 // GET /api/vision/images/{key} serves bytes straight to <img src> and is
 // deliberately not listed here — same precedent as the SSE stream.
 
@@ -179,8 +168,6 @@ export const revokeReference = (id: number) =>
 export const revokeAutoReferences = (itemId: number) =>
   api<{ revoked: number }>(`/api/items/${itemId}/references/revoke-auto`, { method: 'POST' })
 
-// --- charts / aggregates -------------------------------------------------------
-
 export const getPriceHistory = (itemId: number, range: TimeRange, points = 300) =>
   api<PriceHistoryResponse>(`/api/items/${itemId}/price-history`, { params: { range, points } })
 
@@ -198,8 +185,6 @@ export const getDashboardStats = (range: TimeRange) =>
 export const getPriceDrops = (range: TimeRange, limit = 10) =>
   api<{ data: PriceDrop[] }>('/api/dashboard/price-drops', { params: { range, limit } })
 
-// --- runs ----------------------------------------------------------------------
-
 export const triggerRun = (body: RunCreateRequest) =>
   api<{ run: AgentRun }>('/api/runs', { method: 'POST', body })
 
@@ -212,8 +197,6 @@ export const getRunEvents = (id: number, afterSeq = 0, limit = 500) =>
   api<{ data: RunEvent[] }>(`/api/runs/${id}/events`, { params: { after_seq: afterSeq, limit } })
 
 export const cancelRun = (id: number) => api<AgentRun>(`/api/runs/${id}/cancel`, { method: 'POST' })
-
-// --- admin -----------------------------------------------------------------------
 
 export const listUsers = () => api<{ data: AdminUser[] }>('/api/admin/users')
 

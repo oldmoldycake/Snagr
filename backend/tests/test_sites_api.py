@@ -248,7 +248,6 @@ async def test_create_site_returns_the_new_site_with_zeroed_aggregates(client):
     assert body["last_checked_at"] is None
     datetime.fromisoformat(body["created_at"])  # ISO-8601, or this raises
 
-    # and it shows up in the list
     sites = await _sites_by_name(client)
     assert sites["NewBay"]["id"] == body["id"]
 
@@ -350,7 +349,6 @@ async def test_update_site_normalizes_inputs_like_the_mock(client, db_session):
     assert res.json()["name"] == "NewBay"
     assert res.json()["base_url"] == "https://newbay.test"
 
-    # and it stuck — the list reflects the same values
     sites = await _sites_by_name(client)
     assert sites["NewBay"]["base_url"] == "https://newbay.test"
 

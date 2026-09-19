@@ -32,7 +32,6 @@ const LABEL_OPTIONS = [
 
 function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
   const queryClient = useQueryClient()
-  // the suggestion pre-selects the label; the reviewer may flip it
   const [label, setLabel] = useState<ReferenceLabel>(entry.suggested_label)
   const [variantTag, setVariantTag] = useState('')
 

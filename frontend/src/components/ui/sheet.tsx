@@ -9,7 +9,6 @@ export const SheetClose = DialogPrimitive.Close
 export const SheetTitle = DialogPrimitive.Title
 export const SheetDescription = DialogPrimitive.Description
 
-/** Side slide-over panel (right by default). */
 export function SheetContent({
   side = 'right',
   className,

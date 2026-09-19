@@ -22,13 +22,10 @@ import { ItemListingsPanel } from './ItemListingsPanel'
 
 export interface WatchListProps {
   items: ItemSummary[]
-  /** newest recent drop per item id — rendered as an inline ▼ chip + struck-through old price */
   drops?: Map<number, PriceDrop>
   showCategory?: boolean
   showSite?: boolean
-  /** rows expand to show the item's tracked listings inline */
   expandable?: boolean
-  /** enables the per-row kebab (run / edit / delete) */
   onEdit?: (item: ItemSummary) => void
   onDelete?: (item: ItemSummary) => void
   onRun?: (item: ItemSummary) => void

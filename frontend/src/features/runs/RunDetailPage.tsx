@@ -76,7 +76,6 @@ export function RunDetailPage() {
     return fetchedEvents.data?.data ?? []
   }, [isLive, liveEvents, fetchedEvents.data])
 
-  // live log follows the tail
   useEffect(() => {
     if (isLive && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [isLive, events])
