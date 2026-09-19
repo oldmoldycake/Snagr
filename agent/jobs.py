@@ -205,6 +205,27 @@ async def release(job_id: int) -> bool:
         return True
 
 
+async def release_all(workers: Sequence[str]) -> int:
+    """Hand back everything these workers still hold — the shutdown sweep.
+
+    One statement, run after the pools have stopped, because per-task cleanup
+    during cancellation is exactly when awaiting is least reliable. Anything
+    missed is the reaper's problem a few minutes later; this just makes
+    `docker compose stop` cost seconds instead of minutes.
+    """
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            update(Jobs)
+            .where(Jobs.status == "running")
+            .where(Jobs.locked_by.in_(workers))
+            .values(status="pending", locked_by=None, started_at=None, run_after=datetime.now(UTC))
+        )
+        await session.commit()
+        if result.rowcount:
+            log.info(f"Returned {result.rowcount} in-flight jobs to the queue")
+        return result.rowcount
+
+
 async def _finish(job_id: int, outcome: str, stats: dict | None) -> bool:
     async with AsyncSessionLocal() as session:
         job = await session.get(Jobs, job_id, with_for_update=True)
@@ -380,36 +401,54 @@ async def prune() -> int:
         return result.rowcount
 
 
-async def append_event(
-    job_id: int, level: str, event_type: str, message: str, payload: dict | None = None
+async def add_event(
+    session,
+    job_id: int,
+    level: str,
+    event_type: str,
+    message: str,
+    payload: dict | None = None,
 ) -> int | None:
-    """Append one line to a job's log and return its seq.
+    """Append one line to a job's log, in the caller's transaction.
 
     seq comes from bumping jobs.last_seq under SELECT ... FOR UPDATE, so
     concurrent writers never collide on uq_job_seq; deriving it from MAX(seq)+1
-    unlocked would. Returns None if the job is missing or the write fails:
-    progress events are best-effort and must never take a job down.
+    unlocked would. Callers that already hold a lock on a watch take this one
+    after it — watch, then site, then job, everywhere.
+    """
+    job = await session.get(Jobs, job_id, with_for_update=True)
+    if job is None:
+        log.error(f"Cannot append an event to unknown job {job_id}")
+        return None
+
+    job.last_seq += 1
+    session.add(
+        JobEvents(
+            job_id=job_id,
+            seq=job.last_seq,
+            ts=datetime.now(UTC),
+            level=level,
+            event_type=event_type,
+            message=message,
+            payload=payload,
+        )
+    )
+    return job.last_seq
+
+
+async def append_event(
+    job_id: int, level: str, event_type: str, message: str, payload: dict | None = None
+) -> int | None:
+    """Append one line to a job's log on its own, and return its seq.
+
+    Returns None if the job is missing or the write fails: progress events are
+    best-effort and must never take a job down. Writers who are already in a
+    transaction call add_event instead, so the line lands with what it
+    describes or not at all.
     """
     async with AsyncSessionLocal() as session:
         try:
-            job = await session.get(Jobs, job_id, with_for_update=True)
-            if job is None:
-                log.error(f"Cannot append an event to unknown job {job_id}")
-                return None
-
-            job.last_seq += 1
-            seq = job.last_seq
-            session.add(
-                JobEvents(
-                    job_id=job_id,
-                    seq=seq,
-                    ts=datetime.now(UTC),
-                    level=level,
-                    event_type=event_type,
-                    message=message,
-                    payload=payload,
-                )
-            )
+            seq = await add_event(session, job_id, level, event_type, message, payload)
             await session.commit()
             return seq
         except Exception as e:

@@ -42,6 +42,13 @@ MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_R
 # a check is a heartbeat, not history — price_checks is the history — so it is
 # kept for days, while a hunt is a story worth months.
 RECHECK_INTERVAL_MINUTES = int(os.getenv("RECHECK_INTERVAL_MINUTES", "30"))
+# Two pools, because they cost different things. Checks are cheap and mostly
+# browserless, so several run at once and a wedged page never blocks the
+# listing behind it; hunts carry the model, so one at a time until a operator
+# has measured what their provider will take. Ground jobs run in the hunt pool
+# — they are LLM work too.
+RECHECK_CONCURRENCY = int(os.getenv("RECHECK_CONCURRENCY", "3"))
+HUNT_CONCURRENCY = int(os.getenv("HUNT_CONCURRENCY", "1"))
 JOB_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("JOB_HEARTBEAT_INTERVAL_SECONDS", "30"))
 JOB_STALE_AFTER_SECONDS = int(os.getenv("JOB_STALE_AFTER_SECONDS", "300"))
 JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))

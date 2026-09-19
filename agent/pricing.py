@@ -1,9 +1,19 @@
 """Market-price grounding: find what an item actually sells for, tier by tier,
 and write the stats to market_prices.
 
-The entry point is ground_stale() - main.py's --ground-only mode, and the
-pre-pass at the top of a global run. Grounding is best-effort by design: a
-failed search, fetch or extraction costs observations, never the run."""
+The entry point is ground_item(), one item per `ground` job; the scheduler
+picks which items are due with select_grounding_work(). Grounding is
+best-effort by design: a failed search, fetch or extraction costs
+observations, never the job.
+
+Every fetch here is async and guarded. It used to use synchronous `requests`
+inside coroutines, which was harmless in a one-shot batch and fatal next to
+browser workers in a daemon — one blocking GET stalls every other job on the
+loop. The guard is the network half of the S2 rule (no private addresses): a
+guide URL comes from a search engine, so it is no more trustworthy than a
+marketplace page. The site-domain half does not apply, because a price guide
+is deliberately somewhere else entirely.
+"""
 
 import asyncio
 import html
@@ -11,17 +21,13 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from statistics import median
 from urllib.parse import urlparse
 
-import requests
+import httpx
 from config import (
-    AI_API_KEY,
-    AI_MODEL,
-    AI_PROVIDER,
-    AI_URL,
     EXPECTED_CURRENCY,
     MARKET_PRICE_MAX_REFRESH_PER_RUN,
     MARKET_PRICE_TTL_HOURS,
@@ -30,7 +36,6 @@ from config import (
 from database import (
     get_category_item_names,
     get_category_tiers,
-    get_grounding_candidates,
     get_item_grounding,
     get_price_sources,
     set_condition_tiers,
@@ -38,13 +43,9 @@ from database import (
     set_price_sources,
     upsert_market_price,
 )
-from langchain.chat_models import init_chat_model
+from llm import build_llm
 from prompt import generate_condition_tiers_prompt, generate_price_extraction_prompt
-
-if AI_API_KEY:
-    llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL, api_key=AI_API_KEY)
-else:
-    llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL)
+from validation import public_url
 
 log = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ DEAD_CONSECUTIVE_MISSES = 5
 # candidates earn promotion without burning the whole search budget.
 MIN_PRODUCTIVE_DOMAINS = 2
 SOURCE_FETCH_TIMEOUT_S = 15
+SEARCH_TIMEOUT_SECONDS = 10
 
 # Below this a tier is stored but not reported: two prices from one eBay page
 # once published "loose $137" while the real loose market sat around $226.
@@ -117,52 +119,60 @@ async def search_searxng(
     queries: list[str], base_url: str = "http://localhost:8888", pages: int = SEARCH_PAGES
 ) -> dict[str, str] | None:
     """Run each query against SearXNG and merge the results into
-    {url: snippet}, deduped by url across queries and pages."""
+    {url: snippet}, deduped by url across queries and pages.
+
+    No address guard on this one: SearXNG is the operator's own service and
+    usually lives on the private network the guard exists to keep pages away
+    from."""
     try:
         search_results = {}
         backed_off = False
 
-        for query in queries:
-            pageno = 1
-            while pageno <= pages:
-                log.info(f"Searching SearXNG (page {pageno}): {query}")
-                params = {"q": query, "format": "json", "pageno": pageno}
-                response = requests.get(f"{base_url}/search", params=params, timeout=10)
-                response.raise_for_status()
-                response_json = response.json()
+        async with httpx.AsyncClient(timeout=SEARCH_TIMEOUT_SECONDS) as client:
+            for query in queries:
+                pageno = 1
+                while pageno <= pages:
+                    log.info(f"Searching SearXNG (page {pageno}): {query}")
+                    params = {"q": query, "format": "json", "pageno": pageno}
+                    response = await client.get(f"{base_url}/search", params=params)
+                    response.raise_for_status()
+                    response_json = response.json()
 
-                results = response_json["results"]
+                    results = response_json["results"]
 
-                # A suspension looks like success - HTTP 200 with an empty
-                # result list - so raise_for_status never sees it. Suspensions
-                # expire on their own; sleep it off and retry once.
-                if not results:
-                    suspended = response_json.get("unresponsive_engines") or []
-                    if suspended and not backed_off:
-                        backed_off = True
-                        log.warning(
-                            f"SearXNG engines suspended ({suspended}), "
-                            f"backing off {SUSPENSION_BACKOFF_S}s before one retry"
-                        )
-                        await asyncio.sleep(SUSPENSION_BACKOFF_S)
-                        continue
-                    if suspended:
-                        log.error(f"SearXNG engines still suspended, stopping search: {suspended}")
-                        return search_results
-                    log.warning(f"No results on page {pageno} for: {query}")
-                    break
+                    # A suspension looks like success - HTTP 200 with an empty
+                    # result list - so raise_for_status never sees it.
+                    # Suspensions expire on their own; sleep it off and retry
+                    # once.
+                    if not results:
+                        suspended = response_json.get("unresponsive_engines") or []
+                        if suspended and not backed_off:
+                            backed_off = True
+                            log.warning(
+                                f"SearXNG engines suspended ({suspended}), "
+                                f"backing off {SUSPENSION_BACKOFF_S}s before one retry"
+                            )
+                            await asyncio.sleep(SUSPENSION_BACKOFF_S)
+                            continue
+                        if suspended:
+                            log.error(
+                                f"SearXNG engines still suspended, stopping search: {suspended}"
+                            )
+                            return search_results
+                        log.warning(f"No results on page {pageno} for: {query}")
+                        break
 
-                known = len(search_results)
-                for result in results:
-                    # Not every engine returns a snippet; the url is what dedupes.
-                    search_results[result["url"]] = result.get("content") or ""
-                log.info(
-                    f"{len(results)} results, {len(search_results) - known} new "
-                    f"({len(results) - (len(search_results) - known)} already seen)"
-                )
+                    known = len(search_results)
+                    for result in results:
+                        # Not every engine returns a snippet; the url is what dedupes.
+                        search_results[result["url"]] = result.get("content") or ""
+                    log.info(
+                        f"{len(results)} results, {len(search_results) - known} new "
+                        f"({len(results) - (len(search_results) - known)} already seen)"
+                    )
 
-                pageno += 1
-                await asyncio.sleep(INTER_REQUEST_DELAY_S)
+                    pageno += 1
+                    await asyncio.sleep(INTER_REQUEST_DELAY_S)
 
         log.info(f"SearXNG search completed: {len(search_results)} unique urls")
         return search_results
@@ -266,7 +276,7 @@ async def extract_observations(
     prompt = await generate_price_extraction_prompt(item, search_results, tiers, EXPECTED_CURRENCY)
 
     try:
-        response = await llm.ainvoke(prompt)
+        response = await build_llm().ainvoke(prompt)
     except Exception as e:
         log.error(f"Observation extraction call failed for {item}: {e}")
         return []
@@ -339,16 +349,28 @@ def strip_html(page_html: str) -> str:
     return text[:GUIDE_PAGE_MAX_CHARS]
 
 
-def fetch_source_page(url: str) -> str | None:
-    """Fetch one source page with a plain GET and reduce it to text the
-    extraction prompt can read. The browser user agent is because some guide
-    sites serve obvious bots a stub. Returns None on any failure - a dead
-    page is a recorded miss, never a crash."""
+async def fetch_source_page(url: str) -> str | None:
+    """Fetch one source page and reduce it to text the extraction prompt can
+    read. The browser user agent is because some guide sites serve obvious
+    bots a stub. Returns None on any failure - a dead page is a recorded miss,
+    never a crash.
+
+    The address guard runs before the connection is opened: this URL came out
+    of a search engine, so nothing about it is more trustworthy than a
+    marketplace page (S8)."""
+    refused = public_url(url)
+    if refused:
+        log.warning(f"Refusing to fetch source page {url}: {refused}")
+        return None
+
     log.info(f"Fetching source page: {url}")
     try:
-        response = requests.get(
-            url, headers={"User-Agent": BROWSER_USER_AGENT}, timeout=SOURCE_FETCH_TIMEOUT_S
-        )
+        async with httpx.AsyncClient(
+            timeout=SOURCE_FETCH_TIMEOUT_S,
+            follow_redirects=True,
+            headers={"User-Agent": BROWSER_USER_AGENT},
+        ) as client:
+            response = await client.get(url)
         response.raise_for_status()
         return strip_html(response.text)
     except Exception as e:
@@ -444,13 +466,13 @@ async def fetch_domain_observations(
     when the domain came up dry), so the caller can cache it or drop a dead
     one."""
     url = cached_url
-    text = fetch_source_page(url) if url else None
+    text = await fetch_source_page(url) if url else None
     if text is None:
         results = await search_searxng([site_query(domain, alias)], SEARXNG_URL, pages=1)
         found = pick_domain_url(results or {}, domain)
         if found and found != cached_url:
             url = found
-            text = fetch_source_page(url)
+            text = await fetch_source_page(url)
 
     if text is None:
         return [], None
@@ -729,7 +751,7 @@ async def resolve_condition_tiers(category_id: int) -> list[str]:
     prompt = await generate_condition_tiers_prompt(category["name"], list(item_names))
 
     try:
-        response = await llm.ainvoke(prompt)
+        response = await build_llm().ainvoke(prompt)
     except Exception as e:
         log.error(f"Tier generation failed for category {category_id}: {e}")
         return DEFAULT_CONDITION_TIERS
@@ -800,31 +822,3 @@ def select_grounding_work(candidates: list[dict], now: datetime) -> list[dict]:
         key=lambda row: row["as_of"],
     )
     return missing + stale[:MARKET_PRICE_MAX_REFRESH_PER_RUN]
-
-
-async def ground_stale(limit: int | None = None) -> int:
-    """Ground every watched item whose market stats are missing or older than
-    the TTL, per select_grounding_work. The explicit limit is a caller
-    override on top of the per-run cap. Returns how many items grounded
-    successfully; one item failing is logged and skipped - grounding must
-    never take a run down."""
-    candidates = await get_grounding_candidates()
-    work = select_grounding_work(candidates, datetime.now(UTC))
-    if limit is not None:
-        work = work[:limit]
-    if not work:
-        log.info("Grounding: all market prices fresh, nothing to do")
-        return 0
-
-    grounded = 0
-    for row in work:
-        try:
-            payload = await ground_item(row["item_id"], row["item_name"], row["category_id"])
-        except Exception as e:
-            log.error(f"Grounding failed for item {row['item_id']} ({row['item_name']}): {e}")
-            continue
-        grounded += 1
-        log.info(f"Grounded {row['item_name']}: {payload['status']}")
-
-    log.info(f"Grounding pass complete: {grounded}/{len(work)} items")
-    return grounded

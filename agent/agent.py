@@ -1,83 +1,68 @@
-"""Agent orchestration: builds the LLM agent (model + Playwright MCP browser
-tools + database tools) and runs one search per (watch, site) pair.
+"""Agent orchestration: the browser and model seams, and the two units of work
+that need a model — a hunt over one (watch, site) pair, and the LLM fallback
+when code could not read a listing's price.
 
-Runs are recorded in agent_runs (Phase 3, D3): the scheduled sweep (run())
-inserts its own global row; consume() claims API-enqueued rows oldest-first
-— or, when the queue is empty, fires a due run_schedules row — and limits
-both passes to the claimed run's scope. Progress lands in run_events,
-totals in agent_runs.stats, and cancellation is cooperative — the run's
-status is re-checked between units of work because the API's cancel only
-flips the row, and bailing early is what stops mid-run LLM token burn.
+Nothing here decides what to work on. agent/worker.py claims a job and calls
+in; this module only knows how to do one unit and how to say what happened.
 
-A run must never be left 'running' by a process that is no longer driving
-it: while alive it heartbeats (agent_runs.heartbeat_at), a shutdown signal
-arrives as task cancellation and the row is failed on the way out, and every
-tick first reaps runs whose heartbeat went silent (a crash, an OOM kill).
-Each unit is also bounded — a step cap and a wall-clock cap — so one looping
-LLM stream can't hold a run open indefinitely.
+Two module-level side effects used to live here — an `assert PLAYWRIGHT_MCP_URL`
+and a built chat model — and both are now factories. The check pool opens
+browser sessions all day and asks for a model only when the deterministic
+ladder gives up, so importing this module must not cost either.
+
+Every job opens its own MCP session, which with `--isolated` is its own
+browser context: a hung page in one hunt cannot block a check in another, and
+"check prices now" never waits behind a hunt. That is why the server has to
+run isolated — with the old persistent profile the second session is refused
+outright.
+
+The tool list handed to the model is filtered (S7). Code execution, file
+upload and tab control are not things a price scraper needs, and a page that
+talks the model into using them is a different class of problem from one that
+lies about a price. browser_navigate is wrapped so the URL guard runs before
+any navigation, not only before a URL is stored.
 """
 
 import asyncio
-import contextlib
 import logging
-import uuid
+import time
 from contextlib import asynccontextmanager
-from datetime import timedelta
 
 from config import (
     AGENT_MAX_STEPS,
     AGENT_UNIT_TIMEOUT_SECONDS,
-    AI_API_KEY,
-    AI_MODEL,
-    AI_PROVIDER,
-    AI_URL,
-    CHEAP_RECHECK,
     LANGFUSE_ENABLED,
     PLAYWRIGHT_MCP_URL,
-    RUN_HEARTBEAT_INTERVAL_SECONDS,
-    RUN_STALE_AFTER_SECONDS,
     VISION_SIDECAR_URL,
 )
 from database import (
-    append_run_event,
-    beat_run,
-    claim_due_schedule,
-    claim_queued_run,
-    create_global_run,
-    finish_run,
     get_active_listing_count,
     get_checked_urls,
     get_known_listing_urls,
-    get_listed_items,
     get_market_price,
     get_price_context,
-    get_run_status,
-    get_watched_item_list,
     has_verified_locator,
-    reap_stale_runs,
 )
+from jobs import append_event, status
 from langchain.agents import create_agent
-from langchain.chat_models import init_chat_model
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
-from locators import PageReader
+from locators import PageReader, reply_text
 from observations import UnitContext
-from pricing import ground_stale
 from prompt import generate_prompt, generate_recheck_prompt
-from recheck import recheck_deterministic
 from tools import (
     check_images,
     disable_listing,
     learn_locator,
     log_listing_check,
-    read_run_stats,
-    reset_run_stats,
     save_listing,
     save_price_check,
+    unit_of,
 )
+from validation import url_allowed
 
 log = logging.getLogger(__name__)
 
@@ -85,22 +70,30 @@ log = logging.getLogger(__name__)
 # set; Langfuse hooks in per-call, so only build its handler when keys are configured.
 callbacks = [CallbackHandler()] if LANGFUSE_ENABLED else []
 
-assert PLAYWRIGHT_MCP_URL is not None, "PLAYWRIGHT_MCP_URL not set"
+# Nothing a price scraper does needs these, and each is a way for a page to
+# turn a bad read into something worse: arbitrary JS in the browser context,
+# a file picker, and windows the orchestrator is not watching (S7).
+BLOCKED_BROWSER_TOOLS = frozenset(
+    {"browser_run_code_unsafe", "browser_run_code", "browser_file_upload", "browser_tabs"}
+)
 
-if AI_API_KEY:
-    llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL, api_key=AI_API_KEY)
-else:
-    llm = init_chat_model(f"{AI_PROVIDER}:{AI_MODEL}", base_url=AI_URL)
+# How often a running hunt asks whether it has been cancelled. Between model
+# steps, not inside the stream — a cancel is a request to stop soon, not to
+# tear down a call in flight.
+CANCEL_POLL_SECONDS = 5
+
+
+class Cancelled(Exception):
+    """The job was cancelled while its unit was running."""
 
 
 def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
     """
     Build the per-call runnable config for one unit's agent invocation.
 
-    Every trace from a single job invocation shares session_id and carries the
-    owning user's id, so runs group together in the tracing UI and cost/latency
-    can be broken down per user. Langfuse reads the `langfuse_*` metadata keys;
-    the unprefixed copies are what LangSmith filters on.
+    Every trace from a single job shares session_id and carries the owning
+    user's id, so a job's calls group together in the tracing UI and
+    cost/latency can be broken down per user.
 
     recursion_limit caps one unit's graph steps: create_agent's own default is
     effectively unlimited, and a per-call value overrides it. A unit that hits
@@ -108,12 +101,12 @@ def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
 
     The unit itself rides on `configurable`, where the DB tools read it back
     through their injected runtime (tools.UnitContext): the watch, item, site
-    and listing a tool writes under are bound here, never typed by the model.
-    Only primitive configurable values are copied into tracer metadata, so
-    the dataclass stays out of the traces.
+    and (on a recheck) listing a tool writes under are bound here, never typed
+    by the model. Only primitive configurable values are copied into tracer
+    metadata, so the dataclass stays out of the traces.
 
     Args:
-      session_id: Identifier for the whole job run, shared by every call.
+      session_id: Identifier for the whole job, shared by every call.
       user_id: Owner of the watch this call is working on.
       unit: What this call is about — the ids every tool call is bound to.
     """
@@ -131,47 +124,101 @@ def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
 
 
 @asynccontextmanager
-async def build_pass_agents():
-    """
-    Connect to the Playwright MCP server and build the two per-pass agents
-    plus the page reader: the recheck agent (price/availability tools only),
-    the scan agent (discovery tools too), and a PageReader over the session's
-    raw browser tools. The one seam for everything LLM/browser-shaped.
+async def open_browser_session():
+    """Open one MCP session and yield its filtered tools and a page reader.
+
+    One session per job: with `--isolated` the server gives each session its
+    own browser context, so this is also the isolation boundary between
+    concurrent jobs. The session must span the whole job — tools loaded
+    without one open a fresh session per call.
 
     The reader is what lets code drive the same browser the model is using
-    without the model in the loop — the deterministic recheck reads pages
-    through it, and the learn step replays a locator through it. Its tool
-    calls carry no tokens: the text never enters a prompt.
-
-    A context manager because the MCP session must span the whole run: tools
-    loaded without one open a fresh session per tool call, and those sessions
-    race for the server's single persistent browser profile ("Browser is
-    already in use for /profile").
+    without the model in the loop: the deterministic recheck reads pages
+    through it, and the learn step replays a locator through it. Its calls
+    carry no tokens, because the text never enters a prompt.
     """
+    assert PLAYWRIGHT_MCP_URL is not None, "PLAYWRIGHT_MCP_URL not set"
     client = MultiServerMCPClient(
-        {
-            "playwright": {
-                "url": PLAYWRIGHT_MCP_URL,
-                "transport": "streamable_http",
-            }
-        }
+        {"playwright": {"url": PLAYWRIGHT_MCP_URL, "transport": "streamable_http"}}
     )
-
     async with client.session("playwright") as session:
-        tools = await load_mcp_tools(session)
-        by_name = {tool.name: tool for tool in tools}
+        loaded = await load_mcp_tools(session)
+        by_name = {tool.name: tool for tool in loaded}
         browser = PageReader(by_name["browser_navigate"], by_name["browser_evaluate"])
 
-        recheck_agent = create_agent(llm, tools + [save_price_check, disable_listing])
-        # disable_listing is in the scan toolset because the scan prompt tells
-        # the model to call it after a sold/ended save_price_check.
-        scan_tools = tools + [save_price_check, save_listing, log_listing_check, disable_listing]
-        # Discovery pass only (D-V9), and only when the sidecar is configured —
-        # with the URL unset the tool is not registered and vision is fully off.
-        if VISION_SIDECAR_URL:
-            scan_tools.append(check_images)
-        scan_agent = create_agent(llm, scan_tools)
-        yield recheck_agent, scan_agent, browser
+        dropped = sorted(BLOCKED_BROWSER_TOOLS & by_name.keys())
+        if dropped:
+            log.info(f"Withholding browser tools from the model: {', '.join(dropped)}")
+        safe = [tool for tool in loaded if tool.name not in BLOCKED_BROWSER_TOOLS]
+        # the model keeps a tool called browser_navigate; it is just no longer
+        # the one that will go anywhere it is pointed
+        safe = [tool for tool in safe if tool.name != "browser_navigate"]
+        safe.append(guarded_navigate(by_name["browser_navigate"]))
+        yield safe, browser
+
+
+def guarded_navigate(navigate):
+    """Wrap the MCP browser_navigate so the URL guard runs before it does.
+
+    Storing a URL was already guarded (S2); navigating was not, and under a
+    daemon the browser is pointed at whatever a marketplace page suggested far
+    more often than a URL is stored. The refusal is spelled out because the
+    model can act on it — "not part of ebay.com" usually means it followed an
+    advert off-site and should go back.
+    """
+
+    async def browser_navigate(url: str, *, runtime) -> str:
+        """Navigate to a URL and return the page. The URL must be on the site
+        you are searching — anywhere else is refused.
+
+        Args:
+          url: The full http(s) URL of a page on THIS site.
+        Returns:
+          The page as the browser sees it, or a string starting with "Error:"
+          saying why the URL was refused.
+        """
+        unit = unit_of(runtime)
+        refused = url_allowed(url, unit.site_base_url)
+        if refused:
+            return (
+                f"Error: refusing to open {url} — {refused}. Go back to the site you are "
+                f"searching and continue from there."
+            )
+        if unit.job_id is not None and unit.is_hunt:
+            await append_event(unit.job_id, "info", "listing_check", f"Reading {url}", {"url": url})
+        return reply_text(await navigate.ainvoke({"url": url}))
+
+    return browser_navigate
+
+
+def build_recheck_agent(llm, browser_tools: list):
+    """The fallback reader: price and availability tools only."""
+    return create_agent(llm, [*browser_tools, save_price_check, disable_listing])
+
+
+def build_hunt_agent(llm, browser_tools: list):
+    """The hunter: discovery tools too.
+
+    disable_listing is in this toolset because the hunt prompt tells the model
+    to call it after a sold/ended save_price_check.
+    """
+    tools = [*browser_tools, save_price_check, save_listing, log_listing_check, disable_listing]
+    # Discovery only (D-V9), and only when the sidecar is configured — with the
+    # URL unset the tool is not registered and vision is fully off.
+    if VISION_SIDECAR_URL:
+        tools.append(check_images)
+    return create_agent(llm, tools)
+
+
+def tokens_spent(messages: list) -> tuple[int, int]:
+    """Input and output tokens across one unit's model turns, for the job's
+    stats. Providers that report no usage simply contribute nothing."""
+    spent_in = spent_out = 0
+    for message in messages:
+        usage = getattr(message, "usage_metadata", None) or {}
+        spent_in += usage.get("input_tokens") or 0
+        spent_out += usage.get("output_tokens") or 0
+    return spent_in, spent_out
 
 
 def _require_browser_success(messages: list) -> None:
@@ -189,58 +236,69 @@ def _require_browser_success(messages: list) -> None:
         raise RuntimeError(f"every browser call failed: {results[0].content}")
 
 
-async def recheck_listing(agent, session_id: str, row, browser=None) -> None:
-    """One pass-1 unit: revisit a tracked listing and record its current
-    price/availability with the LLM. Raises on failure — the orchestrator
-    counts it.
+async def _stream(agent, prompt: str, config: dict, job_id: int | None) -> list:
+    """Run one model stream to the end and return its messages.
+
+    A running job is polled for cancellation between steps rather than inside
+    the stream: cancelling is a request to stop soon, and tearing down a call
+    in flight would lose whatever it was about to record.
+    """
+    final: dict = {}
+    checked_at = time.monotonic()
+    async for step in agent.astream(
+        {"messages": [{"role": "user", "content": prompt}]},
+        config=config,
+        stream_mode="values",
+    ):
+        step["messages"][-1].pretty_print()
+        final = step
+        if job_id is not None and time.monotonic() - checked_at > CANCEL_POLL_SECONDS:
+            checked_at = time.monotonic()
+            if await status(job_id) == "cancelled":
+                raise Cancelled(f"job {job_id} was cancelled")
+    return final.get("messages", [])
+
+
+async def recheck_listing(agent, session_id: str, row, browser, job_id=None) -> tuple[int, int]:
+    """One listing, re-read by the model because code could not read it.
 
     Reached only when the deterministic ladder could not read the page
-    (agent/recheck.py). Afterwards the orchestrator learns a locator from
-    whatever the model confirmed, so the next recheck of this listing does
-    not need a model at all.
+    (agent/recheck.py). Afterwards a locator is learned from whatever the model
+    confirmed, so the next check of this listing does not need a model at all.
+    Raises on failure — the worker counts it.
     """
     listing_id = int(row["listing_id"])
     listing_url = row["listing_url"]
-    watch_id = row["watch_id"]
     user_id = int(row["user_id"])
-    site_id = row["site_id"]
-    site_name = row["site_name"]
-    item_id = row["item_id"]
-    item_name = row["item_name"]
 
     log.info(
-        f"Rechecking listing {listing_id} for item {item_id} ({item_name}) "
-        f"on site {site_id} ({site_name}) for user {user_id}"
+        f"Rechecking listing {listing_id} for item {row['item_id']} ({row['item_name']}) "
+        f"on site {row['site_id']} ({row['site_name']}) for user {user_id}"
     )
 
     prompt = await generate_recheck_prompt(
         listing_id=listing_id,
         listing_url=listing_url,
-        watch_id=watch_id,
-        site_id=site_id,
-        site_name=site_name,
-        item_id=item_id,
-        item_name=item_name,
+        watch_id=row["watch_id"],
+        site_id=row["site_id"],
+        site_name=row["site_name"],
+        item_id=row["item_id"],
+        item_name=row["item_name"],
     )
     unit = UnitContext(
-        watch_id=int(watch_id),
-        item_id=int(item_id),
-        site_id=int(site_id),
+        watch_id=int(row["watch_id"]),
+        item_id=int(row["item_id"]),
+        site_id=int(row["site_id"]),
         site_base_url=row["site_base_url"],
         listing_id=listing_id,
         browser=browser,
+        job_id=job_id,
     )
 
-    final: dict = {}
-    async for step in agent.astream(
-        {"messages": [{"role": "user", "content": prompt}]},
-        config=agent_config(session_id, user_id, unit),
-        stream_mode="values",
-    ):
-        step["messages"][-1].pretty_print()
-        final = step
-    _require_browser_success(final.get("messages", []))
+    messages = await _stream(agent, prompt, agent_config(session_id, user_id, unit), None)
+    _require_browser_success(messages)
     await _learn_after_unit(unit, listing_id, listing_url)
+    return tokens_spent(messages)
 
 
 async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str) -> None:
@@ -250,7 +308,7 @@ async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str
     is the fallback for when it had browsed elsewhere by then, and it costs
     one navigation. Skipped entirely once the listing has a verified locator,
     and when the unit recorded no believed price there is nothing to learn
-    from. Never fatal: a run must not fail because an optimisation did.
+    from. Never fatal: a job must not fail because an optimisation did.
     """
     if unit.browser is None or await has_verified_locator(listing_id):
         return
@@ -263,37 +321,60 @@ async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str
         log.warning(f"Post-unit locator learn failed for listing {listing_id}: {e}")
 
 
-async def scan_pair(
-    agent, session_id: str, row, market: dict | None, tracked_listings: int, browser=None
-) -> None:
-    """One pass-2 unit: search a site for new listings for one watch, telling
-    the model how many of the watch's slots are already in use and which
-    URLs this pair already knows. Raises on failure — the orchestrator counts
-    it."""
+async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
+    """One hunt: search a site for listings that fit one watch.
+
+    The model is told how many of the watch's slots are already in use and
+    which URLs this pair already knows, so it neither re-judges a rejection
+    nor over-fills the watch. Raises on failure — the worker counts it.
+
+    Returns:
+      The unit's tally plus the tokens it spent, which becomes the job's stats.
+    """
     watch_id = row["watch_id"]
     user_id = int(row["user_id"])
     site_id = row["site_id"]
     site_name = row["site_name"]
     item_id = row["item_id"]
     item_name = row["item_name"]
-    base_url = row["base_url"]
-    criteria = row["criteria"]
-    expected_price = row["expected_price"]
-    condition_hint = row["condition_hint"]
-    selection_mode = row["selection_mode"]
     max_listings = int(row["max_listings"])
-    allow_reproductions = bool(row["allow_reproductions"])
+
+    # Re-read right before searching: a slot can fill between the moment the
+    # job was queued and the moment it runs, and a full watch should cost no
+    # browser time and no tokens (decision 9).
+    tracked = await get_active_listing_count(watch_id)
+    open_slots = max_listings - tracked
+    if open_slots <= 0:
+        log.info(f"Skipping {site_name} for {item_name}: all {max_listings} slots in use")
+        await append_event(
+            job_id,
+            "info",
+            "job_started",
+            f"All {max_listings} slots for {item_name} are filled — nothing to hunt for",
+        )
+        return {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
 
     log.info(
-        f"Starting search for watch {watch_id} (user {user_id}): "
-        f"item {item_id} ({item_name}) on site {site_id} ({site_name}) at {base_url}"
+        f"Hunting {site_name} for watch {watch_id} (user {user_id}): "
+        f"item {item_id} ({item_name}) at {row['base_url']}"
+    )
+    await append_event(
+        job_id,
+        "info",
+        "job_started",
+        f'Hunting {site_name} for "{item_name}" — {open_slots} open '
+        f"slot{'' if open_slots == 1 else 's'}, "
+        f"{'best match' if row['selection_mode'] == 'best_match' else 'cheapest'} mode",
+        {"item_id": int(item_id), "site_id": int(site_id)},
     )
 
     known_urls = list(await get_known_listing_urls(watch_id, site_id))
-    checked_urls_list = await get_checked_urls(watch_id, site_id)
     rejected_checks = [
-        {"url": c["url"], "reason": c["reason"], "notes": c["notes"]} for c in checked_urls_list
+        {"url": c["url"], "reason": c["reason"], "notes": c["notes"]}
+        for c in await get_checked_urls(watch_id, site_id)
     ]
+    market_row = await get_market_price(item_id)
+    expected_price = row["expected_price"]
 
     prompt = await generate_prompt(
         watch_id=watch_id,
@@ -301,275 +382,50 @@ async def scan_pair(
         site_name=site_name,
         item_id=item_id,
         item_name=item_name,
-        base_url=base_url,
-        criteria=criteria,
-        selection_mode=selection_mode,
+        base_url=row["base_url"],
+        criteria=row["criteria"],
+        selection_mode=row["selection_mode"],
         max_listings=max_listings,
-        allow_reproductions=allow_reproductions,
-        tracked_listings=tracked_listings,
+        allow_reproductions=bool(row["allow_reproductions"]),
+        tracked_listings=tracked,
         vision_enabled=bool(VISION_SIDECAR_URL),
         known_urls=known_urls,
         rejected_checks=rejected_checks,
-        market=market,
+        market=dict(market_row) if market_row else None,
         expected_price=str(expected_price) if expected_price is not None else None,
-        condition_hint=condition_hint,
+        condition_hint=row["condition_hint"],
     )
     unit = UnitContext(
         watch_id=int(watch_id),
         item_id=int(item_id),
         site_id=int(site_id),
-        site_base_url=base_url,
+        site_base_url=row["base_url"],
         browser=browser,
+        job_id=job_id,
     )
 
-    final: dict = {}
-    async for step in agent.astream(
-        {"messages": [{"role": "user", "content": prompt}]},
-        config=agent_config(session_id, user_id, unit),
-        stream_mode="values",
-    ):
-        step["messages"][-1].pretty_print()
-        final = step
-    _require_browser_success(final.get("messages", []))
+    messages = await _stream(agent, prompt, agent_config(f"job-{job_id}", user_id, unit), job_id)
+    _require_browser_success(messages)
+    spent_in, spent_out = tokens_spent(messages)
+    return {**unit.stats, "tokens_in": spent_in, "tokens_out": spent_out}
 
 
-async def _recheck_unit(agent, session_id: str, row, browser) -> None:
-    """One pass-1 unit, cheapest path first.
-
-    The deterministic ladder gets first refusal: when it reads the page, the
-    unit is done and no model ran at all. Only when it cannot — the locator
-    is gone, the page is blocked, the reading is implausible — does the full
-    agentic recheck run, and that read is what relearns the locator.
-
-    The whole unit is bounded, not just the LLM half: a wedged browser call
-    on the cheap path would otherwise hold the run open with no model to
-    blame. CHEAP_RECHECK=false skips the ladder entirely and puts every
-    recheck back through the LLM, which is how the agent behaved before
-    locators existed.
-    """
-    listing_id = row["listing_id"]
-    if CHEAP_RECHECK:
-        outcome = await recheck_deterministic(browser, row)
-        if outcome.handled:
-            log.info(
-                f"Listing {listing_id} read by {outcome.method} over {outcome.transport}"
-                + (f" ({outcome.note})" if outcome.note else "")
-            )
-            return
-        log.info(f"Listing {listing_id} needs the model; falling back to the agentic recheck")
-
-    await recheck_listing(agent, session_id, row, browser)
-
-
-async def _bounded(unit) -> None:
+async def bounded(unit):
     """
     Run one unit under the wall-clock budget. A unit that outlives it is
     cancelled — which is what actually stops the LLM stream — and fails with
-    a message the run's events can show; asyncio's TimeoutError carries none
+    a message the job's events can show; asyncio's TimeoutError carries none
     of its own.
     """
     try:
         async with asyncio.timeout(AGENT_UNIT_TIMEOUT_SECONDS):
-            await unit
+            return await unit
     except TimeoutError:
         raise RuntimeError(f"unit exceeded the {AGENT_UNIT_TIMEOUT_SECONDS}s budget") from None
 
 
-async def execute_run(run: dict) -> dict | None:
-    """
-    Execute a claimed run: the two scrape passes, limited to the run's scope,
-    emitting run_events as work progresses and polling for cooperative
-    cancellation between units (each unit is one full LLM stream — the finest
-    granularity that doesn't hook into the stream itself).
-
-    Returns the run's stats on completion, or None if the run was cancelled —
-    the API already wrote the terminal state in that case, so the caller must
-    not write another. Raises when every attempted unit failed, so _drive
-    marks the run failed instead of succeeded-with-zeroed-stats.
-    """
-    run_id = run["id"]
-    session_id = str(uuid.uuid4())
-    log.info(f"Job session {session_id} (run {run_id})")
-
-    reset_run_stats()
-    errors = 0
-    origin = " (scheduled)" if run.get("scheduled") else ""
-    await append_run_event(
-        run_id, "info", "run_started", f"Run started — {run['scope_label']}{origin}"
-    )
-
-    # Grounding pre-pass: refresh stale market prices first so this run's
-    # scan prompts read stats from minutes ago, not last night's. Global runs
-    # only — the candidate pool is instance-wide, and a scoped run shouldn't
-    # spend the per-run refresh budget on out-of-scope items. Isolation per
-    # the spec: grounding failure must never block the scrape.
-    if run["scope"] == "global":
-        try:
-            await ground_stale()
-        except Exception as e:
-            log.error(f"Grounding pre-pass failed, scraping ungrounded: {e}")
-
-    units = 0
-    async with build_pass_agents() as (recheck_agent, scan_agent, browser):
-        log.info("Starting scan on current listings")
-
-        listed_items_list = await get_listed_items(run["scope"], run["scope_id"])
-        for row in listed_items_list:
-            if await get_run_status(run_id) == "cancelled":
-                log.info(f"Run {run_id} cancelled; stopping before listing {row['listing_id']}")
-                return None
-
-            units += 1
-            try:
-                await _bounded(_recheck_unit(recheck_agent, session_id, row, browser))
-                log.info(f"Finished recheck for listing {row['listing_id']}")
-            except Exception as e:
-                log.error(f"Recheck failed for listing {row['listing_id']}: {e}")
-                errors += 1
-                await append_run_event(
-                    run_id,
-                    "error",
-                    "error",
-                    f"Recheck failed for listing {row['listing_id']}: {e}",
-                    {"listing_id": int(row["listing_id"])},
-                )
-                continue
-
-        log.info("Starting scan for new items")
-
-        watch_site_list = await get_watched_item_list(run["scope"], run["scope_id"])
-        markets: dict[int, dict | None] = {}
-        for row in watch_site_list:
-            if await get_run_status(run_id) == "cancelled":
-                log.info(f"Run {run_id} cancelled; stopping before watch {row['watch_id']}")
-                return None
-
-            item_id = row["item_id"]
-            if item_id not in markets:
-                market_row = await get_market_price(item_id)
-                markets[item_id] = dict(market_row) if market_row else None
-
-            # max_listings is one budget per watch across every site and run,
-            # and a scan only sees its own site — so the slots are metered
-            # here. Re-read right before each search: the previous site may
-            # have just filled the last slot, and a full watch should cost no
-            # browser time or tokens. Skipped pairs are not units: nothing was
-            # attempted, so they must not mask an all-failed run.
-            tracked = await get_active_listing_count(row["watch_id"])
-            if tracked >= int(row["max_listings"]):
-                log.info(
-                    f"Skipping {row['site_name']} for {row['item_name']}: "
-                    f"all {row['max_listings']} slots in use"
-                )
-                continue
-
-            await append_run_event(
-                run_id,
-                "info",
-                "item_started",
-                f'Searching {row["site_name"]} for "{row["item_name"]}"…',
-                {"item_id": int(item_id), "site_id": int(row["site_id"])},
-            )
-            units += 1
-            try:
-                await _bounded(
-                    scan_pair(scan_agent, session_id, row, markets[item_id], tracked, browser)
-                )
-                log.info(f"Finished {row['item_name']} on site {row['site_name']}")
-            except Exception as e:
-                log.error(f"Item {row['item_name']} on site {row['site_name']} failed: {e}")
-                errors += 1
-                await append_run_event(
-                    run_id,
-                    "error",
-                    "error",
-                    f"Search for {row['item_name']} on {row['site_name']} failed: {e}",
-                    {"item_id": int(item_id), "site_id": int(row["site_id"])},
-                )
-                continue
-
-    # a run that attempted work and got nothing done is a failure, not a
-    # success with zeroed stats — the per-unit events carry the detail
-    if units and errors == units:
-        raise RuntimeError(f"every unit failed ({errors}/{units}) — see the run's events")
-
-    stats = read_run_stats()
-    stats["errors"] += errors
-    return stats
-
-
-async def _heartbeat(run_id: int) -> None:
-    """Stamp the run's heartbeat every RUN_HEARTBEAT_INTERVAL_SECONDS until
-    cancelled — what keeps reap_stale_runs off a run that is merely slow.
-    The claim already stamped the first beat, hence sleep-then-beat."""
-    while True:
-        await asyncio.sleep(RUN_HEARTBEAT_INTERVAL_SECONDS)
-        await beat_run(run_id)
-
-
-async def _drive(run_row: dict) -> None:
-    """
-    Execute a run and own its terminal write — main.py's catch only logs, so
-    an agent_runs row must never leave here still 'running'. That includes a
-    shutdown: SIGTERM/SIGINT arrive as cancellation (see main.py), and the row
-    is failed on the way out rather than left for the reaper to find.
-    """
-    run_id = run_row["id"]
-    heartbeat = asyncio.create_task(_heartbeat(run_id))
-    try:
-        stats = await execute_run(run_row)
-    except asyncio.CancelledError:
-        await finish_run(run_id, "failed", error="Agent shut down mid-run")
-        raise
-    except Exception as e:
-        await finish_run(run_id, "failed", error=str(e))
-        raise
-    finally:
-        heartbeat.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await heartbeat
-        # Langfuse queues events on a background thread; flush before this
-        # batch job exits or the tail of the run's traces is silently dropped.
-        if LANGFUSE_ENABLED:
-            get_client().flush()
-
-    # stats None = cancelled: the API already wrote the terminal state
-    if stats is not None:
-        await finish_run(run_id, "succeeded", stats=stats)
-
-
-async def _reap() -> None:
-    """Fail runs whose driver died, before claiming any new work — the only
-    place a wedged row is ever noticed."""
-    reaped = await reap_stale_runs(timedelta(seconds=RUN_STALE_AFTER_SECONDS))
-    if reaped:
-        log.warning(f"Reaped stale runs: {reaped}")
-
-
-async def run() -> None:
-    """
-    The scheduled full sweep: record a global agent_runs row for this
-    invocation, then execute it. It kicks off even if an API-triggered run is
-    active — the one-active-run guard belongs to the API's enqueue; a
-    conditional skip here would let one stale 'running' row silently stop
-    every future sweep.
-    """
-    await _reap()
-    await _drive(await create_global_run())
-
-
-async def consume() -> None:
-    """
-    One run-queue tick: reap dead runs, then claim the oldest queued run —
-    user clicks beat schedules — else fire the most-overdue due run_schedules
-    row as a fresh run; exit immediately when neither exists. Cron this every
-    minute so UI-triggered runs start promptly and schedules fire on time.
-    """
-    await _reap()
-    claimed = await claim_queued_run()
-    if claimed is None:
-        claimed = await claim_due_schedule()
-    if claimed is None:
-        log.info("No queued runs or due schedules")
-        return
-    await _drive(claimed)
+def flush_traces() -> None:
+    """Langfuse queues events on a background thread; flush them where a job
+    ends, or the tail of its traces is silently dropped."""
+    if LANGFUSE_ENABLED:
+        get_client().flush()

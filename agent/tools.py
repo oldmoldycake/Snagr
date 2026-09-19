@@ -29,6 +29,7 @@ from decimal import Decimal
 from urllib.parse import urlparse
 
 import httpx
+import jobs as job_queue
 import static
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
 from database import (
@@ -59,28 +60,11 @@ from validation import (
 
 log = logging.getLogger(__name__)
 
-# Per-run tally of successful writes, read by the orchestrator for the run's
-# terminal agent_runs.stats. A plain module dict, not a contextvar: one process
-# drives exactly one run at a time. `errors` is counted by the orchestrator.
-run_stats = {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
-
-
-def reset_run_stats() -> None:
-    """Zero the tally in place before a run starts."""
-    for key in run_stats:
-        run_stats[key] = 0
-
-
-def read_run_stats() -> dict:
-    """A copy of the tally, for the run's terminal stats write."""
-    return dict(run_stats)
-
-
 PRICE_STATUSES = ("ok", "sold", "ended", "error")
 AUTHENTICITY_READS = ("looks_authentic", "suspect", "unsure")
 
 
-def _unit(runtime: ToolRuntime) -> UnitContext:
+def unit_of(runtime: ToolRuntime) -> UnitContext:
     """The unit this call belongs to. Carried on config["configurable"] rather
     than the runtime's `context` slot: langchain serializes the injected
     runtime on every call, and a non-None context there trips a pydantic
@@ -141,7 +125,7 @@ async def save_listing(
         Error: Any other string — what was wrong with the call, or what failed while
           saving
     """
-    unit = _unit(runtime)
+    unit = unit_of(runtime)
     watch_id, item_id, site_id = unit.watch_id, unit.item_id, unit.site_id
     refused = _refuse_url(url, unit)
     if refused:
@@ -187,16 +171,14 @@ async def save_listing(
                     active=True,
                     match_score=match_score,
                     match_summary=match_summary,
+                    discovered_by_job_id=unit.job_id,
                 )
                 .on_conflict_do_nothing(constraint="uq_watch_site_url")
             )
 
             result = await session.execute(stmt)
-            await session.commit()
             # rowcount 1 = a genuinely new row; 0 = the conflict target existed
             is_new = result.rowcount == 1
-            if is_new:
-                run_stats["new_listings"] += 1
 
             stmt = (
                 select(Listings)
@@ -207,36 +189,63 @@ async def save_listing(
             )
 
             results = await session.execute(stmt)
-            listing_id = results.scalar()
-            if listing_id is not None:
-                if not listing_id.active:
-                    # Sold, ended, or untracked by the user: not a discovery,
-                    # and handing back its id would let price checks pile up
-                    # on a row the UI no longer shows.
-                    log.info(f"Skipping listing save for watch {watch_id}: known, inactive ({url})")
-                    return (
-                        "SKIPPED: this listing is already known and no longer tracked (it "
-                        "sold, ended, or the user untracked it). Record nothing for it and "
-                        "do not log it as a rejection; move on."
-                    )
-                log.info(f"Successfully created listing for item {item_id} on site {site_id}")
-                if is_new:
-                    # committed above, so this is a pure side effect — a failed
-                    # enqueue can't change what this tool returns
-                    await enqueue_new_listing(
-                        watch_id,
-                        item_id,
-                        site_id,
-                        int(listing_id.id),
-                        url,
-                        title,
-                        match_score,
-                        match_summary,
-                    )
-                return int(listing_id.id)
-            else:
+            listing = results.scalar()
+            if listing is None:
+                await session.commit()
                 log.info(f"Unable to fetch the listing id for the item {item_id} on site {site_id}")
                 return f"Unable to fetch the listing id for the item {item_id} on site {site_id}"
+
+            if not listing.active:
+                # Sold, ended, or untracked by the user: not a discovery, and
+                # handing back its id would let price checks pile up on a row
+                # the UI no longer shows.
+                await session.commit()
+                log.info(f"Skipping listing save for watch {watch_id}: known, inactive ({url})")
+                return (
+                    "SKIPPED: this listing is already known and no longer tracked (it "
+                    "sold, ended, or the user untracked it). Record nothing for it and "
+                    "do not log it as a rejection; move on."
+                )
+
+            listing_id = int(listing.id)
+            if is_new:
+                unit.stats["new_listings"] += 1
+                # the discovery is watched before the hunt that found it has
+                # even finished — one transaction, so a listing can never
+                # exist without a check ahead of it
+                await job_queue.enqueue_recheck(
+                    session,
+                    listing_id=listing_id,
+                    watch_id=watch_id,
+                    item_id=item_id,
+                    site_id=site_id,
+                )
+                if unit.job_id is not None:
+                    await job_queue.add_event(
+                        session,
+                        unit.job_id,
+                        "success",
+                        "listing_discovered",
+                        f'Saved as listing #{listing_id} — "{title}" (match {match_score})',
+                        {"listing_id": listing_id, "item_id": item_id},
+                    )
+            await session.commit()
+
+            log.info(f"Successfully created listing for item {item_id} on site {site_id}")
+            if is_new:
+                # committed above, so this is a pure side effect — a failed
+                # enqueue can't change what this tool returns
+                await enqueue_new_listing(
+                    watch_id,
+                    item_id,
+                    site_id,
+                    listing_id,
+                    url,
+                    title,
+                    match_score,
+                    match_summary,
+                )
+            return listing_id
         except Exception as e:
             log.error(f"Error recording listing for item {item_id} on site {site_id}: {e}")
             return f"Error recording listing for item {item_id} on site {site_id}: {e}"
@@ -279,7 +288,7 @@ async def save_price_check(
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
-    unit = _unit(runtime)
+    unit = unit_of(runtime)
     if status not in PRICE_STATUSES:
         return f"Error: status must be one of {', '.join(PRICE_STATUSES)}, got {status!r}"
     if status == "ok" and (price is None or price <= 0):
@@ -340,9 +349,9 @@ async def save_price_check(
             log.error(f"Error inserting price check for listing {listing_id}: {e}")
             return f"Error inserting price check for listing {listing_id}: {e}"
 
-    run_stats["listings_checked"] += 1
+    unit.stats["listings_checked"] += 1
     if parsed is not None:
-        run_stats["prices_found"] += 1
+        unit.stats["prices_found"] += 1
     log.info(f"Successfully recorded listing {listing_id}")
 
     # The price is safe; everything from here is an optimisation for next
@@ -437,7 +446,7 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
-    unit = _unit(runtime)
+    unit = unit_of(runtime)
     if not reason.strip():
         return 'Error: reason must say why the listing is being disabled, e.g. "sold"'
 
@@ -448,6 +457,9 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
             await session.execute(
                 update(Listings).where(Listings.id == listing_id).values(active=False)
             )
+            # an untracked listing is not re-read: the check chain ends here,
+            # in the same transaction that ended the tracking
+            await job_queue.cancel_recheck(session, listing_id)
             await session.commit()
 
             log.info(f"Listing {listing_id} marked inactive ({reason})")
@@ -485,7 +497,7 @@ async def log_listing_check(
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
-    unit = _unit(runtime)
+    unit = unit_of(runtime)
     watch_id, site_id = unit.watch_id, unit.site_id
     refused = _refuse_url(url, unit)
     if refused:
@@ -510,6 +522,15 @@ async def log_listing_check(
             )
 
             await session.execute(stmt)
+            if unit.job_id is not None and unit.is_hunt:
+                await job_queue.add_event(
+                    session,
+                    unit.job_id,
+                    "info",
+                    "listing_evaluated",
+                    f"Skipped {url} — {reason}" + (f": {notes}" if notes else ""),
+                    {"item_id": unit.item_id, "url": url, "reason": reason, "tracked": False},
+                )
             await session.commit()
 
             log.info(f"Logged rejected listing for watch {watch_id} on site {site_id}: {url}")
@@ -563,7 +584,7 @@ async def check_images(
         - "inconclusive", "no verdict", or an error: the check could not help;
           rely entirely on your own screening.
     """
-    unit = _unit(runtime)
+    unit = unit_of(runtime)
     watch_id, item_id = unit.watch_id, unit.item_id
     refused = _refuse_url(listing_url, unit, field="listing_url")
     if refused:

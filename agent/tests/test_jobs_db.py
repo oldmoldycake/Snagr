@@ -26,7 +26,7 @@ import jobs as job_queue
 import observations
 import pytest
 import tools
-from conftest import unit_runtime
+from conftest import OPEN_JOB_INDEX, unit_runtime
 from database import (
     AsyncSessionLocal,
     Base,
@@ -69,22 +69,6 @@ def db(coro):
     return _LOOP.run_until_complete(coro)
 
 
-# create_all builds tables and their own constraints, but the queue's central
-# rule lives in a partial unique index on coalesce() expressions, which no
-# model declares — the backend owns it (D1). Installed here by hand so the
-# tests below judge the real thing; keep in sync with
-# backend/migrations/versions/015_jobs_daemon.py.
-_OPEN_JOB_INDEX = """
-    CREATE UNIQUE INDEX uq_jobs_open ON jobs (
-        kind,
-        coalesce(listing_id, 0),
-        coalesce(watch_id, 0),
-        coalesce(site_id, 0),
-        coalesce(item_id, 0)
-    ) WHERE status IN ('pending', 'running')
-"""
-
-
 async def _create_schema():
     async with engine.begin() as conn:
         # CASCADE, because a crashed backend suite can leave its superset
@@ -92,7 +76,8 @@ async def _create_schema():
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(text(f"DROP TABLE IF EXISTS {table.name} CASCADE"))
         await conn.run_sync(Base.metadata.create_all)
-        await conn.execute(text(_OPEN_JOB_INDEX))
+        # the queue's central rule is not in any model — see conftest
+        await conn.execute(text(OPEN_JOB_INDEX))
 
 
 async def _drop_schema():
@@ -924,47 +909,78 @@ class TestActiveListingCount:
         assert db(scenario()) == (2, 1, 0)
 
 
-class TestRunStatsTally:
-    def test_save_price_check_tallies_checks_and_prices(self):
-        tools.reset_run_stats()
+def tally(runtime) -> dict[str, int]:
+    """The unit's own counters, read back off the runtime the tools were
+    handed. The tally lives on the unit, not in a module global, because
+    workers run several jobs at once and a job's stats have to be its own."""
+    return runtime.config["configurable"]["unit"].stats
 
+
+class TestUnitTally:
+    def test_save_price_check_tallies_checks_and_prices(self):
         async def scenario():
             ids = await seed_scope_graph()
-            return await tools.save_price_check(
-                ids["listing_a"], True, "ok", 49.99, runtime=unit_a(ids)
+            runtime = unit_a(ids)
+            result = await tools.save_price_check(
+                ids["listing_a"], True, "ok", 49.99, runtime=runtime
             )
+            return result, tally(runtime)
 
-        assert db(scenario()).startswith("Successfully")
-        assert tools.run_stats["listings_checked"] == 1
-        assert tools.run_stats["prices_found"] == 1
+        result, counted = db(scenario())
+        assert result.startswith("Successfully")
+        assert counted["listings_checked"] == 1
+        assert counted["prices_found"] == 1
 
     def test_an_unpriced_check_tallies_no_price(self):
-        tools.reset_run_stats()
-
         async def scenario():
             ids = await seed_scope_graph()
-            return await tools.save_price_check(
-                ids["listing_a"], False, "sold", runtime=unit_a(ids)
-            )
+            runtime = unit_a(ids)
+            result = await tools.save_price_check(ids["listing_a"], False, "sold", runtime=runtime)
+            return result, tally(runtime)
 
-        assert db(scenario()).startswith("Successfully")
-        assert tools.run_stats["listings_checked"] == 1
-        assert tools.run_stats["prices_found"] == 0
+        result, counted = db(scenario())
+        assert result.startswith("Successfully")
+        assert counted["listings_checked"] == 1
+        assert counted["prices_found"] == 0
 
     def test_save_listing_tallies_only_genuinely_new_rows(self):
-        tools.reset_run_stats()
-
         async def scenario():
             ids = await seed_scope_graph()
+            runtime = unit_a(ids)
             args = ("https://gamebay.test/new", "title", 80, "fits")
-            first = await tools.save_listing(*args, runtime=unit_a(ids))
-            second = await tools.save_listing(*args, runtime=unit_a(ids))
-            return first, second
+            first = await tools.save_listing(*args, runtime=runtime)
+            second = await tools.save_listing(*args, runtime=runtime)
+            return first, second, tally(runtime)
 
-        first, second = db(scenario())
+        first, second, counted = db(scenario())
         assert isinstance(first, int)
         assert first == second  # the duplicate returns the existing listing_id
-        assert tools.run_stats["new_listings"] == 1
+        assert counted["new_listings"] == 1
+
+    def test_a_saved_listing_is_queued_for_its_first_check(self):
+        # the discovery is watched before the hunt that found it has finished
+        async def scenario():
+            ids = await seed_scope_graph()
+            listing_id = await tools.save_listing(
+                "https://gamebay.test/fresh", "title", 80, "fits", runtime=unit_a(ids)
+            )
+            return listing_id, await read_jobs(kind="recheck")
+
+        listing_id, queued = db(scenario())
+        assert isinstance(listing_id, int)
+        assert len(queued) == 1
+        assert queued[0]["status"] == "pending"
+
+    def test_an_untracked_listing_drops_out_of_the_queue(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            result = await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return result, await read_job(job_id)
+
+        result, row = db(scenario())
+        assert result.startswith("Listing")
+        assert row["status"] == "cancelled"
 
 
 class TestListingOwnership:
@@ -972,21 +988,20 @@ class TestListingOwnership:
     by hand; the bound unit is what makes a typo harmless."""
 
     def test_a_price_check_on_another_watchs_listing_is_refused(self):
-        tools.reset_run_stats()
-
         async def scenario():
             ids = await seed_scope_graph()
+            runtime = unit_a(ids)
             result = await tools.save_price_check(
-                ids["listing_b"], True, "ok", 49.99, runtime=unit_a(ids)
+                ids["listing_b"], True, "ok", 49.99, runtime=runtime
             )
             async with AsyncSessionLocal() as session:
                 checks = (await session.execute(select(PriceChecks))).scalars().all()
-            return result, len(checks)
+            return result, len(checks), tally(runtime)
 
-        result, checks = db(scenario())
+        result, checks, counted = db(scenario())
         assert result.startswith("Error:")
         assert checks == 0
-        assert tools.run_stats["listings_checked"] == 0
+        assert counted["listings_checked"] == 0
 
     def test_a_recheck_writes_only_to_the_listing_it_is_about(self):
         async def scenario():
@@ -1027,7 +1042,6 @@ class TestListingOwnership:
 
 class TestInactiveListingSave:
     def test_a_known_inactive_listing_is_skipped_not_resurrected(self):
-        tools.reset_run_stats()
         url = "https://gamebay.test/sold"
 
         async def scenario():
@@ -1041,17 +1055,18 @@ class TestInactiveListingSave:
                     active=False,
                 )
             )
-            result = await tools.save_listing(url, "title", 80, "fits", runtime=unit_a(ids))
+            runtime = unit_a(ids)
+            result = await tools.save_listing(url, "title", 80, "fits", runtime=runtime)
             async with AsyncSessionLocal() as session:
                 active = await session.scalar(select(Listings.active).where(Listings.url == url))
                 outbox = (await session.execute(select(NotificationOutbox))).scalars().all()
-            return result, active, len(outbox)
+            return result, active, len(outbox), tally(runtime)
 
-        result, active, outbox = db(scenario())
+        result, active, outbox, counted = db(scenario())
         assert result.startswith("SKIPPED:")
         assert active is False
         assert outbox == 0
-        assert tools.run_stats["new_listings"] == 0
+        assert counted["new_listings"] == 0
 
 
 class TestKnownListingUrls:

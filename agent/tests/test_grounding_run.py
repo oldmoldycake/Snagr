@@ -1,5 +1,8 @@
-"""TTL-gated grounding work selection and the ground_item/ground_stale entry
-points, with every DB seam monkeypatched."""
+"""TTL-gated grounding work selection and the ground_item entry point, with
+every DB seam monkeypatched.
+
+Queueing the selected work is the scheduler's job now, one `ground` job per
+due item — see test_worker.py."""
 
 import asyncio
 from datetime import UTC, datetime, timedelta
@@ -131,47 +134,3 @@ class TestGroundItem:
         assert upserted["tiers"]["loose"]["high"] == "120.00"
         assert upserted["tiers"]["loose"]["n"] == 3
         assert [o["excluded"] for o in upserted["observations"]] == [None, None, None, "outlier"]
-
-
-class TestGroundStale:
-    def wire(self, monkeypatch, candidates, fail_ids=()):
-        """Feed ground_stale a fixed candidate list and record which items it
-        grounds; items in fail_ids raise like a provider outage would."""
-        grounded = []
-
-        async def fake_candidates():
-            return candidates
-
-        async def fake_ground_item(item_id, item_name, category_id):
-            if item_id in fail_ids:
-                raise RuntimeError("provider down")
-            grounded.append(item_id)
-            return {"status": "ok", "tiers": {}, "confidence": "high"}
-
-        monkeypatch.setattr(pricing, "get_grounding_candidates", fake_candidates)
-        monkeypatch.setattr(pricing, "ground_item", fake_ground_item)
-        return grounded
-
-    def test_grounds_every_selected_item(self, monkeypatch):
-        grounded = self.wire(monkeypatch, [candidate(1), candidate(2)])
-        assert asyncio.run(pricing.ground_stale()) == 2
-        assert grounded == [1, 2]
-
-    def test_one_failing_item_never_takes_down_the_rest(self, monkeypatch):
-        grounded = self.wire(monkeypatch, [candidate(1), candidate(2)], fail_ids={1})
-        assert asyncio.run(pricing.ground_stale()) == 1
-        assert grounded == [2]
-
-    def test_noops_when_everything_is_fresh(self, monkeypatch):
-        # ground_stale reads the real clock, so freshness must be anchored to
-        # it — the pinned NOW ages out of the TTL as wall time moves on
-        an_hour_ago = datetime.now(UTC) - timedelta(hours=1)
-        fresh = candidate(1, as_of=an_hour_ago, last_attempt_at=an_hour_ago)
-        grounded = self.wire(monkeypatch, [fresh])
-        assert asyncio.run(pricing.ground_stale()) == 0
-        assert grounded == []
-
-    def test_explicit_limit_truncates_the_work_list(self, monkeypatch):
-        grounded = self.wire(monkeypatch, [candidate(1), candidate(2), candidate(3)])
-        assert asyncio.run(pricing.ground_stale(limit=2)) == 2
-        assert grounded == [1, 2]

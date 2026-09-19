@@ -442,6 +442,31 @@ async def get_recheck_unit(listing_id: int) -> RowMapping | None:
         return (await session.execute(stmt)).mappings().one_or_none()
 
 
+async def get_ground_unit(item_id: int) -> RowMapping | None:
+    """
+    The item a ground job is about — its name and category, which is all
+    grounding needs to start.
+
+    None means the item is gone. An unwatched item is still grounded if a job
+    says so: nobody is asking about it, but the job was queued when somebody
+    was, and refusing here would leave the row pending forever.
+
+    Args:
+      item_id: The item to refresh market stats for.
+    Returns:
+      A row mapping with keys item_id, item_name, category_id, or None. A
+      failed query PROPAGATES.
+    """
+    async with AsyncSessionLocal() as session:
+        stmt = select(
+            Items.id.label("item_id"),
+            Items.name.label("item_name"),
+            Items.category_id.label("category_id"),
+        ).where(Items.id == item_id)
+
+        return (await session.execute(stmt)).mappings().one_or_none()
+
+
 async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
     """
     Return every listing_checks row already logged for this (watch, site)
