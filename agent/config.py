@@ -76,6 +76,17 @@ CHEAP_RECHECK = os.getenv("CHEAP_RECHECK", "true").lower() != "false"
 LOCATOR_MAX_FAILURES = int(os.getenv("LOCATOR_MAX_FAILURES", "3"))
 STATIC_FETCH = os.getenv("STATIC_FETCH", "true").lower() != "false"
 
+# Per-site circuit breaker. A marketplace that starts answering challenge
+# pages instead of listings fails every read, and under a daemon that means
+# every listing, every interval, forever — each failure ending in an LLM
+# fallback that also fails. SITE_BREAKER_ERRORS consecutive read errors stop
+# the site outright for SITE_BREAKER_MINUTES; a bot wall that persists doubles
+# the wait each time up to SITE_BREAKER_CAP_MINUTES, and any successful read
+# resets the count. A wall then costs five reads and goes quiet.
+SITE_BREAKER_ERRORS = int(os.getenv("SITE_BREAKER_ERRORS", "5"))
+SITE_BREAKER_MINUTES = int(os.getenv("SITE_BREAKER_MINUTES", "60"))
+SITE_BREAKER_CAP_MINUTES = int(os.getenv("SITE_BREAKER_CAP_MINUTES", "1440"))
+
 # Price plausibility bands. A read outside one is anomalous — recorded, but
 # never notified and never charted until a second read agrees with it (§4.3):
 # the page that says "$4.49" for a $449 item must not wake a buying bot.
