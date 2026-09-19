@@ -1,5 +1,5 @@
 import type { TimeRange } from '@/lib/time'
-import type { ItemListParams, RunListParams } from './types'
+import type { ItemListParams, JobListParams } from './types'
 
 /**
  * Query key factory. Invalidation relies on prefix matching:
@@ -31,9 +31,10 @@ export const qk = {
   dashboard: (range: TimeRange) => ['dashboard', range] as const,
   dashboardDrops: (range: TimeRange) => ['dashboard', range, 'drops'] as const,
 
-  runs: (params: RunListParams = {}) => ['runs', 'list', params] as const,
-  run: (id: number) => ['runs', 'detail', id] as const,
-  runEvents: (id: number) => ['runs', 'detail', id, 'events'] as const,
+  jobs: (params: JobListParams = {}) => ['jobs', 'list', params] as const,
+  jobsSummary: ['jobs', 'summary'] as const,
+  job: (id: number) => ['jobs', 'detail', id] as const,
+  jobEvents: (id: number) => ['jobs', 'detail', id, 'events'] as const,
 
   adminUsers: ['admin', 'users'] as const,
   adminInvites: ['admin', 'invites'] as const,

@@ -10,6 +10,8 @@ import type {
   InviteCreateRequest,
   ItemCreateRequest,
   ItemUpdateRequest,
+  JobCreateRequest,
+  JobScope,
   ListingUpdateRequest,
   LoginRequest,
   MeUpdateRequest,
@@ -18,7 +20,6 @@ import type {
   NotificationEvent,
   PasswordChangeRequest,
   ReviewConfirmRequest,
-  RunCreateRequest,
   SiteCreateRequest,
   SiteUpdateRequest,
   AdminUserUpdateRequest,
@@ -30,18 +31,18 @@ import {
   cents,
   checksFor,
   downsample,
-  eventVisible,
   itemListings,
+  jobVisible,
   newId,
   NOW,
-  runVisible,
   store,
   targetMet,
   VISION_DEFAULTS,
   type MockCategory,
   type MockItem,
+  type MockJob,
   type MockNotificationChannel,
-  type MockRun,
+  type MockUser,
 } from './fixtures'
 import {
   toAdminUser,
@@ -51,18 +52,18 @@ import {
   toItemSummary,
   toListing,
   toApiToken,
+  toJob,
+  toJobEvent,
   toNotificationChannel,
   toQueueEntry,
   toReference,
-  toRun,
-  toRunEvent,
   toSite,
   toUser,
 } from './serializers'
-import { addClient, cancelDemoRun, hasActiveRun, removeClient, startDemoRun, type StreamClient } from './sse'
+import { addClient, cancelDemoHunt, removeClient, startDemoHunt, type StreamClient } from './sse'
 
 const DAY = 86_400_000
-const TOKEN_SCOPES: ApiTokenScope[] = ['read', 'write', 'runs']
+const TOKEN_SCOPES: ApiTokenScope[] = ['read', 'write', 'jobs']
 const SESSION_KEY = 'snagr:mock-session'
 
 function err(status: number, code: string, message: string, extra: Record<string, unknown> = {}) {
@@ -107,6 +108,93 @@ const slugify = (name: string) =>
 
 /** Simulated network latency so loading states are visible. */
 const wait = () => new Promise((r) => setTimeout(r, 120 + Math.random() * 180))
+
+const JOB_KINDS: JobCreateRequest['kind'][] = ['hunt', 'recheck']
+const JOB_SCOPES: JobScope[] = ['global', 'category', 'site', 'item']
+
+function newJob(kind: MockJob['kind'], over: Partial<MockJob> = {}): MockJob {
+  return {
+    id: newId(),
+    kind,
+    status: 'pending',
+    user_id: null,
+    watch_id: null,
+    item_id: null,
+    site_id: null,
+    listing_id: null,
+    priority: 0,
+    run_after: Date.now(),
+    attempts: 0,
+    started_at: null,
+    finished_at: null,
+    error: null,
+    stats: null,
+    reason: null,
+    last_seq: 0,
+    created_at: Date.now(),
+    ...over,
+  }
+}
+
+/**
+ * At most one open hunt per (watch, site) — the partial unique index, in mock
+ * form. A pending one is bumped to now, a running one is handed back
+ * untouched, and a watch with no open slot gets nothing at all (PR 2b turns
+ * that into a swap hunt).
+ */
+function enqueueHunt(
+  watchId: number,
+  itemId: number,
+  siteId: number,
+  over: Partial<MockJob> = {},
+): MockJob | null {
+  const item = store.items.find((i) => i.id === itemId)!
+  if (activeListings(itemId).length >= item.max_listings) return null
+  const open = store.jobs.find(
+    (j) =>
+      j.kind === 'hunt' &&
+      j.watch_id === watchId &&
+      j.site_id === siteId &&
+      (j.status === 'pending' || j.status === 'running'),
+  )
+  if (open) {
+    if (open.status === 'pending') {
+      open.run_after = Date.now()
+      open.priority = over.priority ?? open.priority
+      open.reason = (over.reason as MockJob['reason']) ?? open.reason
+      open.user_id = over.user_id ?? open.user_id
+    }
+    return open
+  }
+  const job = newJob('hunt', { watch_id: watchId, item_id: itemId, site_id: siteId, ...over })
+  store.jobs.push(job)
+  return job
+}
+
+/** The caller's watches inside a scope, or null when the scope target is unknown. */
+function scopedWatches(user: MockUser, scope: JobScope, scopeId: number | null) {
+  const mine = store.watches.filter((w) => w.user_id === user.id)
+  if (scope === 'global') return mine
+  if (scopeId == null) return null
+  if (scope === 'category') {
+    if (!store.categories.some((c) => c.id === scopeId)) return null
+    const items = new Set(store.items.filter((i) => i.category_id === scopeId).map((i) => i.id))
+    return mine.filter((w) => items.has(w.item_id))
+  }
+  if (scope === 'item') {
+    if (!store.items.some((i) => i.id === scopeId)) return null
+    return mine.filter((w) => w.item_id === scopeId)
+  }
+  if (!store.sites.some((s) => s.id === scopeId)) return null
+  return mine.filter((w) => sitesOf(w.item_id).includes(scopeId))
+}
+
+/** Which sites a watch searches: its own subset, else its category's. */
+function sitesOf(itemId: number): number[] {
+  const item = store.items.find((i) => i.id === itemId)!
+  const category = store.categories.find((c) => c.id === item.category_id)!
+  return item.site_ids ?? category.site_ids
+}
 
 interface TrackingFields {
   criteria: string | null
@@ -532,6 +620,8 @@ export const handlers = [
       id: newId(),
       name: body.name.trim(),
       base_url: body.base_url.trim().replace(/\/$/, ''),
+      paused_until: null,
+      paused_reason: null,
       created_at: Date.now(),
     }
     store.sites.push(site)
@@ -543,8 +633,25 @@ export const handlers = [
     const site = store.sites.find((s) => s.id === Number(params.id))
     if (!site) return err(404, 'not_found', `Site ${params.id} does not exist`)
     const body = (await request.json()) as SiteUpdateRequest
+    // the hunter sets pauses; a person can only lift one, so null is the only
+    // value this field accepts — and lifting it clears the error counter too
+    if ('paused_until' in body && body.paused_until !== null) {
+      return err(422, 'validation_error', 'only null is accepted; the hunter sets pauses', {
+        fields: { paused_until: 'only null is accepted; the hunter sets pauses' },
+      })
+    }
     if (body.name) site.name = body.name.trim()
     if (body.base_url) site.base_url = body.base_url.trim().replace(/\/$/, '')
+    if ('paused_until' in body) {
+      site.paused_until = null
+      site.paused_reason = null
+      for (const job of store.jobs) {
+        if (job.site_id === site.id && job.status === 'pending' && job.reason === 'paused') {
+          job.run_after = Date.now()
+          job.reason = 'sweep'
+        }
+      }
+    }
     return HttpResponse.json(toSite(site))
   }),
 
@@ -617,7 +724,14 @@ export const handlers = [
       created_at: Date.now(),
     }
     store.items.push(item)
-    store.watches.push({ id: newId(), item_id: item.id, user_id: user.id, notify: true, target_cents: null })
+    const watch = { id: newId(), item_id: item.id, user_id: user.id, notify: true, target_cents: null }
+    store.watches.push(watch)
+    // a new watch starts hunting at once — one job per site it will search,
+    // plus the market-price grounding the scan prompts read from
+    for (const siteId of tracking.site_ids ?? category.site_ids) {
+      enqueueHunt(watch.id, item.id, siteId, { user_id: user.id, reason: 'created', priority: 100 })
+    }
+    store.jobs.push(newJob('ground', { item_id: item.id, user_id: user.id, reason: 'created' }))
     return HttpResponse.json(toItemSummary(item), { status: 201 })
   }),
 
@@ -681,6 +795,25 @@ export const handlers = [
     if (!listing) return err(404, 'not_found', `Listing ${params.id} does not exist`)
     const body = (await request.json()) as ListingUpdateRequest
     listing.active = body.active
+    // an untracked listing is not re-read; tracking it again puts it back in
+    // the queue, because one pending recheck per active listing is the rule
+    const pending = store.jobs.find(
+      (j) => j.kind === 'recheck' && j.listing_id === listing.id && j.status === 'pending',
+    )
+    if (!body.active && pending) {
+      pending.status = 'cancelled'
+      pending.finished_at = Date.now()
+    } else if (body.active && !pending) {
+      const watch = store.watches.find((w) => w.item_id === listing.item_id)!
+      store.jobs.push(
+        newJob('recheck', {
+          watch_id: watch.id,
+          item_id: listing.item_id,
+          site_id: listing.site_id,
+          listing_id: listing.id,
+        }),
+      )
+    }
     return HttpResponse.json(toListing(listing))
   }),
 
@@ -1076,99 +1209,179 @@ export const handlers = [
     return HttpResponse.json({ data: drops.slice(0, limit) })
   }),
 
-  http.post('/api/runs', async ({ request }) => {
+  http.post('/api/jobs', async ({ request }) => {
     const user = requireUser()
-    // instance-wide, deliberately: one agent, one active run — even when the
-    // active run belongs to someone else (the bare run_id leaks no metadata)
-    const active = hasActiveRun()
-    if (active) {
-      return err(409, 'run_in_progress', 'A run is already active', { run_id: active.id })
+    const body = (await request.json()) as JobCreateRequest
+    const fields: Record<string, string> = {}
+    if (!JOB_KINDS.includes(body.kind)) fields.kind = 'Ask for a hunt or a recheck'
+    if (!JOB_SCOPES.includes(body.scope)) fields.scope = 'Unknown scope'
+    else if (body.scope !== 'global' && body.scope_id == null) {
+      fields.scope_id = 'Required unless the scope is global'
     }
-    const body = (await request.json()) as RunCreateRequest
-    let label = 'Everything'
-    if (body.scope === 'category') {
-      const c = store.categories.find((x) => x.id === body.scope_id)
-      if (!c) return err(404, 'not_found', `Category ${body.scope_id} does not exist`)
-      label = `Category: ${c.name}`
-    } else if (body.scope === 'site') {
-      const s = store.sites.find((x) => x.id === body.scope_id)
-      if (!s) return err(404, 'not_found', `Site ${body.scope_id} does not exist`)
-      label = `Site: ${s.name}`
-    } else if (body.scope === 'item') {
-      const i = store.items.find((x) => x.id === body.scope_id)
-      if (!i) return err(404, 'not_found', `Item ${body.scope_id} does not exist`)
-      label = `Item: ${i.name}`
+    if (Object.keys(fields).length > 0) {
+      return err(422, 'validation_error', 'Check the job request', { fields })
     }
 
-    const run: MockRun = {
-      id: newId(),
-      user_id: user.id,
-      scope: body.scope,
-      scope_id: body.scope_id ?? null,
-      scope_label: label,
-      status: 'queued',
-      started_at: null,
-      finished_at: null,
-      stats: null,
-      error: null,
-      created_at: Date.now(),
-      last_seq: 0,
+    const scopeId = body.scope === 'global' ? null : (body.scope_id ?? null)
+    const watches = scopedWatches(user, body.scope, scopeId)
+    // an unknown target and one holding none of the caller's watches are the
+    // same 404: neither is anything this caller can ask the hunter about
+    if (watches == null || watches.length === 0) {
+      return err(404, 'not_found', `Nothing to ${body.kind} in that scope`)
     }
-    store.runs.push(run)
-    startDemoRun(run)
-    return HttpResponse.json({ run: toRun(run) }, { status: 202 })
+
+    const queued: MockJob[] = []
+    if (body.kind === 'hunt') {
+      for (const watch of watches) {
+        const sites = sitesOf(watch.item_id).filter((id) => body.scope !== 'site' || id === scopeId)
+        for (const siteId of sites) {
+          const job = enqueueHunt(watch.id, watch.item_id, siteId, {
+            user_id: user.id,
+            reason: 'user',
+            priority: 100,
+          })
+          if (job) queued.push(job)
+        }
+      }
+      // the demo plays the first couple; the rest wait their turn, exactly as
+      // they would behind HUNT_CONCURRENCY
+      for (const job of queued.filter((j) => j.status === 'pending').slice(0, 2)) startDemoHunt(job)
+    } else {
+      const items = new Set(watches.map((w) => w.item_id))
+      for (const job of store.jobs) {
+        if (job.kind !== 'recheck' || job.status !== 'pending') continue
+        if (!items.has(job.item_id!)) continue
+        if (body.scope === 'site' && job.site_id !== scopeId) continue
+        const listing = store.listings.find((l) => l.id === job.listing_id)
+        if (!listing?.active) continue
+        job.run_after = Date.now()
+        job.priority = 100
+        queued.push(job)
+      }
+    }
+    // an empty data is still a 202 — a full watch asked nothing of the hunter
+    return HttpResponse.json({ data: queued.map(toJob) }, { status: 202 })
   }),
 
-  http.get('/api/runs', async ({ request }) => {
+  http.get('/api/jobs', async ({ request }) => {
     const user = requireUser()
     await wait()
     const url = new URL(request.url)
-    const status = url.searchParams.get('status')
+    const kinds = url.searchParams.get('kind')?.split(',').filter(Boolean)
+    const statuses = url.searchParams.get('status')?.split(',').filter(Boolean)
+    const itemId = url.searchParams.get('item_id')
     const page = intParam(request, 'page', 1)
-    const perPage = intParam(request, 'per_page', 25)
-    let runs = store.runs.filter((r) => runVisible(r, user)).sort((a, b) => b.created_at - a.created_at)
-    if (status) runs = runs.filter((r) => r.status === status)
-    const total = runs.length
-    runs = runs.slice((page - 1) * perPage, page * perPage)
-    return HttpResponse.json({ data: runs.map(toRun), meta: { page, per_page: perPage, total } })
+    const perPage = Math.min(intParam(request, 'per_page', 20), 100)
+
+    let jobs = store.jobs.filter((j) => jobVisible(j, user))
+    if (kinds?.length) jobs = jobs.filter((j) => kinds.includes(j.kind))
+    if (statuses?.length) jobs = jobs.filter((j) => statuses.includes(j.status))
+    if (itemId) jobs = jobs.filter((j) => j.item_id === Number(itemId))
+    // the queue reads forwards, history backwards
+    jobs =
+      statuses?.length === 1 && statuses[0] === 'pending'
+        ? [...jobs].sort((a, b) => a.run_after - b.run_after || a.id - b.id)
+        : [...jobs].sort((a, b) => b.created_at - a.created_at || b.id - a.id)
+
+    const total = jobs.length
+    jobs = jobs.slice((page - 1) * perPage, page * perPage)
+    return HttpResponse.json({ data: jobs.map(toJob), meta: { page, per_page: perPage, total } })
   }),
 
-  http.get('/api/runs/:id', async ({ params }) => {
+  http.get('/api/jobs/summary', async () => {
     const user = requireUser()
-    const run = store.runs.find((r) => r.id === Number(params.id))
-    // hidden ≡ nonexistent: another user's run 404s exactly like an unknown id
-    if (!run || !runVisible(run, user)) return err(404, 'not_found', `Run ${params.id} does not exist`)
-    return HttpResponse.json(toRun(run))
+    const mine = store.jobs.filter((j) => jobVisible(j, user))
+    const hunts = mine.filter((j) => j.kind === 'hunt')
+    const checks = mine.filter((j) => j.kind === 'recheck')
+    const pendingChecks = checks.filter((j) => j.status === 'pending')
+    const pendingHunts = mine.filter(
+      (j) => j.status === 'pending' && (j.kind === 'hunt' || j.kind === 'ground'),
+    )
+    const midnight = new Date()
+    midnight.setHours(0, 0, 0, 0)
+    const finishedHunts = hunts
+      .filter((j) => j.finished_at != null)
+      .sort((a, b) => b.finished_at! - a.finished_at!)
+    const watched = store.watches
+      .filter((w) => w.user_id === user.id)
+      .reduce((n, w) => n + activeListings(w.item_id).length, 0)
+
+    return HttpResponse.json({
+      hunts_running: hunts.filter((j) => j.status === 'running').length,
+      checks_running: checks.filter((j) => j.status === 'running').length,
+      checks_pending: pendingChecks.length,
+      next_check_at: pendingChecks.length
+        ? new Date(Math.min(...pendingChecks.map((j) => j.run_after))).toISOString()
+        : null,
+      next_hunt_at: pendingHunts.length
+        ? new Date(Math.min(...pendingHunts.map((j) => j.run_after))).toISOString()
+        : null,
+      hunts_today: finishedHunts.filter((j) => j.finished_at! >= midnight.getTime()).length,
+      listings_watched: watched,
+      last_hunt: finishedHunts[0] ? toJob(finishedHunts[0]) : null,
+      // sites are shared, so a pause is everyone's news
+      paused_sites: store.sites
+        .filter((s) => s.paused_until != null && s.paused_until > Date.now())
+        .map((s) => ({
+          site_id: s.id,
+          site_name: s.name,
+          paused_until: new Date(s.paused_until!).toISOString(),
+          paused_reason: s.paused_reason ?? '',
+        })),
+    })
   }),
 
-  http.get('/api/runs/:id/events', async ({ params, request }) => {
+  http.get('/api/jobs/:id', async ({ params }) => {
     const user = requireUser()
-    const run = store.runs.find((r) => r.id === Number(params.id))
-    if (!run || !runVisible(run, user)) return err(404, 'not_found', `Run ${params.id} does not exist`)
+    const job = store.jobs.find((j) => j.id === Number(params.id))
+    // hidden = nonexistent: another user's job 404s exactly like an unknown id
+    if (!job || !jobVisible(job, user)) {
+      return err(404, 'not_found', `Job ${params.id} does not exist`)
+    }
+    return HttpResponse.json(toJob(job))
+  }),
+
+  http.get('/api/jobs/:id/events', async ({ params, request }) => {
+    const user = requireUser()
+    const job = store.jobs.find((j) => j.id === Number(params.id))
+    if (!job || !jobVisible(job, user)) {
+      return err(404, 'not_found', `Job ${params.id} does not exist`)
+    }
     const afterSeq = intParam(request, 'after_seq', 0)
-    const limit = intParam(request, 'limit', 500)
-    // filter-then-limit: up to `limit` VISIBLE events, so a filtered viewer
-    // can always make progress from their last visible seq
-    const events = store.runEvents
-      .filter((e) => e.run_id === run.id && e.seq > afterSeq && eventVisible(e, user))
+    const limit = intParam(request, 'limit', 200)
+    if (limit > 500) {
+      return err(422, 'validation_error', 'limit must be 500 or less', {
+        fields: { limit: 'limit must be 500 or less' },
+      })
+    }
+    // a recheck writes no events at all — its result is its price check
+    const events = store.jobEvents
+      .filter((e) => e.job_id === job.id && e.seq > afterSeq)
       .sort((a, b) => a.seq - b.seq)
       .slice(0, limit)
-    return HttpResponse.json({ data: events.map(toRunEvent) })
+    return HttpResponse.json({ data: events.map(toJobEvent) })
   }),
 
-  http.post('/api/runs/:id/cancel', async ({ params }) => {
+  http.post('/api/jobs/:id/cancel', async ({ params }) => {
     const user = requireUser()
-    const run = store.runs.find((r) => r.id === Number(params.id))
-    if (!run || !runVisible(run, user)) return err(404, 'not_found', `Run ${params.id} does not exist`)
-    // permission before state: "you may never cancel this" holds regardless of status
-    if (run.user_id === null && user.role !== 'admin') {
-      return err(403, 'forbidden', 'Only an admin can cancel a system run')
+    const job = store.jobs.find((j) => j.id === Number(params.id))
+    if (!job || !jobVisible(job, user)) {
+      return err(404, 'not_found', `Job ${params.id} does not exist`)
     }
-    if (run.status !== 'queued' && run.status !== 'running') {
-      return err(409, 'not_active', 'This run has already finished')
+    // permission before state: "you may never cancel this" holds regardless of
+    // status. A job with no watch of the caller's behind it is the hunter's own.
+    const owns = store.watches.some((w) => w.id === job.watch_id && w.user_id === user.id)
+    if (!owns && user.role !== 'admin') {
+      return err(403, 'forbidden', 'Only an admin can cancel a system job')
     }
-    cancelDemoRun(run)
-    return HttpResponse.json(toRun(run))
+    if (job.kind === 'recheck') {
+      return err(422, 'validation_error', 'checks finish in seconds and cannot be cancelled')
+    }
+    if (job.status !== 'pending' && job.status !== 'running') {
+      return err(409, 'job_finished', 'This job has already finished')
+    }
+    cancelDemoHunt(job)
+    return HttpResponse.json(toJob(job))
   }),
 
   http.get('/api/events', () => {

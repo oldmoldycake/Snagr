@@ -3,7 +3,6 @@ import type { TimeRange } from '@/lib/time'
 import type {
   AdminUser,
   AdminUserUpdateRequest,
-  AgentRun,
   ApiToken,
   ApiTokenCreated,
   ApiTokenCreateRequest,
@@ -22,6 +21,11 @@ import type {
   ItemListParams,
   ItemSummary,
   ItemUpdateRequest,
+  Job,
+  JobCreateRequest,
+  JobEvent,
+  JobListParams,
+  JobsSummary,
   Listing,
   ListingUpdateRequest,
   LoginRequest,
@@ -40,9 +44,6 @@ import type {
   RegisterRequest,
   ReviewConfirmRequest,
   ReviewQueueEntry,
-  RunCreateRequest,
-  RunEvent,
-  RunListParams,
   Site,
   SiteCreateRequest,
   SiteUpdateRequest,
@@ -185,18 +186,20 @@ export const getDashboardStats = (range: TimeRange) =>
 export const getPriceDrops = (range: TimeRange, limit = 10) =>
   api<{ data: PriceDrop[] }>('/api/dashboard/price-drops', { params: { range, limit } })
 
-export const triggerRun = (body: RunCreateRequest) =>
-  api<{ run: AgentRun }>('/api/runs', { method: 'POST', body })
+export const enqueueJobs = (body: JobCreateRequest) =>
+  api<{ data: Job[] }>('/api/jobs', { method: 'POST', body })
 
-export const listRuns = (params: RunListParams = {}) =>
-  api<Paginated<AgentRun>>('/api/runs', { params: { ...params } })
+export const listJobs = (params: JobListParams = {}) =>
+  api<Paginated<Job>>('/api/jobs', { params: { ...params } })
 
-export const getRun = (id: number) => api<AgentRun>(`/api/runs/${id}`)
+export const getJobsSummary = () => api<JobsSummary>('/api/jobs/summary')
 
-export const getRunEvents = (id: number, afterSeq = 0, limit = 500) =>
-  api<{ data: RunEvent[] }>(`/api/runs/${id}/events`, { params: { after_seq: afterSeq, limit } })
+export const getJob = (id: number) => api<Job>(`/api/jobs/${id}`)
 
-export const cancelRun = (id: number) => api<AgentRun>(`/api/runs/${id}/cancel`, { method: 'POST' })
+export const getJobEvents = (id: number, afterSeq = 0, limit = 200) =>
+  api<{ data: JobEvent[] }>(`/api/jobs/${id}/events`, { params: { after_seq: afterSeq, limit } })
+
+export const cancelJob = (id: number) => api<Job>(`/api/jobs/${id}/cancel`, { method: 'POST' })
 
 export const listUsers = () => api<{ data: AdminUser[] }>('/api/admin/users')
 
