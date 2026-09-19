@@ -148,8 +148,11 @@ class Listings(Base):
     static_ok: Mapped[bool] = mapped_column(  # + api
         Boolean, default=False, server_default=text("false")
     )
+    # use_alter because jobs.listing_id points back here: the two tables
+    # reference each other, so one constraint has to be added after both exist
     discovered_by_job_id: Mapped[int | None] = mapped_column(  # + api
-        BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
+        BigInteger,
+        ForeignKey("jobs.id", ondelete="SET NULL", use_alter=True, name="fk_listings_job"),
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

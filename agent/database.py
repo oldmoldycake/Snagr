@@ -146,8 +146,11 @@ class Listings(Base):
     locator_failures: Mapped[int] = mapped_column(default=0, server_default="0")
     static_ok: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     # the hunt job that saved this listing (jobs.id); NULL for rows older than jobs
+    # use_alter because jobs.listing_id points back here: the two tables
+    # reference each other, so one constraint has to be added after both exist
     discovered_by_job_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
+        BigInteger,
+        ForeignKey("jobs.id", ondelete="SET NULL", use_alter=True, name="fk_listings_job"),
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -333,127 +336,110 @@ class NotificationOutbox(Base):
     payload: Mapped[dict] = mapped_column(JSONB)
 
 
-async def get_watched_item_list(
-    scope: str = "global", scope_id: int | None = None
-) -> Sequence[RowMapping]:
+async def get_hunt_unit(watch_id: int, site_id: int) -> RowMapping | None:
     """
-    Return the (watch, site) pairs to search: one row per site for every
-    watch, carrying that watch's own criteria/selection_mode/max_listings/
-    allow_reproductions. Every watch, muted or not: notify gates alerting
-    only (the UI calls it "Notify me when the target price is hit"), so a
-    muted watch keeps discovering listings and just stays quiet. A watch that
-    pinned a site subset (watch_sites — the API's site_ids) gets only those
-    sites; one with no rows gets every site its category is linked to.
+    The one (watch, site) pair a hunt job is about, carrying that watch's own
+    criteria/selection_mode/max_listings/allow_reproductions.
+
+    None means the pair is no longer one this watch searches — the site was
+    unlinked from the category, or dropped from the watch's own subset
+    (watch_sites, the API's site_ids), or either row is gone. A hunt job
+    outlives the decision that queued it, so the pair is re-validated here
+    rather than trusted; the worker treats None as "nothing to do", not as a
+    failure.
+
+    Muted watches are hunted like any other: notify gates alerting only (the
+    UI calls it "Notify me when the target price is hit"), so a muted watch
+    keeps discovering listings and just stays quiet about them.
 
     Args:
-      scope: A run's scope — "global" (everything), "category", "site", or
-        "item"; the scoped values narrow the pairs to that target.
-      scope_id: The scoped target's id; ignored for "global".
+      watch_id: The watch this hunt is for.
+      site_id: The site to search.
     Returns:
-      A sequence of row mappings with keys watch_id, user_id, criteria,
-      expected_price, condition_hint, selection_mode, max_listings,
-      allow_reproductions, item_id, item_name, category_id, site_id,
-      site_name, base_url. Returns an empty sequence if the query fails, so a
-      DB hiccup skips this run's searches instead of crashing it.
+      A row mapping with keys watch_id, user_id, criteria, expected_price,
+      condition_hint, selection_mode, max_listings, allow_reproductions,
+      item_id, item_name, category_id, site_id, site_name, base_url — or None.
+      A failed query PROPAGATES: the job must fail and be retried, not be
+      silently treated as an invalid pair.
     """
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                select(
-                    Watches.id.label("watch_id"),
-                    Watches.user_id.label("user_id"),
-                    Watches.criteria.label("criteria"),
-                    Watches.expected_price.label("expected_price"),
-                    Watches.condition_hint.label("condition_hint"),
-                    Watches.selection_mode.label("selection_mode"),
-                    Watches.max_listings.label("max_listings"),
-                    Watches.allow_reproductions.label("allow_reproductions"),
-                    Items.id.label("item_id"),
-                    Items.name.label("item_name"),
-                    Items.category_id.label("category_id"),
-                    Sites.id.label("site_id"),
-                    Sites.name.label("site_name"),
-                    Sites.base_url.label("base_url"),
-                )
-                .join(Items, Items.id == Watches.item_id)
-                .join(SiteCategories, SiteCategories.category_id == Items.category_id)
-                .join(Sites, Sites.id == SiteCategories.site_id)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(
+                Watches.id.label("watch_id"),
+                Watches.user_id.label("user_id"),
+                Watches.criteria.label("criteria"),
+                Watches.expected_price.label("expected_price"),
+                Watches.condition_hint.label("condition_hint"),
+                Watches.selection_mode.label("selection_mode"),
+                Watches.max_listings.label("max_listings"),
+                Watches.allow_reproductions.label("allow_reproductions"),
+                Items.id.label("item_id"),
+                Items.name.label("item_name"),
+                Items.category_id.label("category_id"),
+                Sites.id.label("site_id"),
+                Sites.name.label("site_name"),
+                Sites.base_url.label("base_url"),
             )
-            # The category join above yields every site the category is linked
-            # to; a watch's pins narrow that to its own subset. Correlated on
-            # the outer Watches row, so each watch is judged on its own pins.
-            pinned = select(WatchSites.site_id).where(WatchSites.watch_id == Watches.id)
-            stmt = stmt.where(or_(~pinned.exists(), Sites.id.in_(pinned)))
-            if scope == "category":
-                stmt = stmt.where(Items.category_id == scope_id)
-            elif scope == "site":
-                stmt = stmt.where(Sites.id == scope_id)
-            elif scope == "item":
-                stmt = stmt.where(Items.id == scope_id)
+            .join(Items, Items.id == Watches.item_id)
+            .join(SiteCategories, SiteCategories.category_id == Items.category_id)
+            .join(Sites, Sites.id == SiteCategories.site_id)
+            .where(Watches.id == watch_id)
+            .where(Sites.id == site_id)
+        )
+        # the category join says the site carries this kind of item; a watch's
+        # pins narrow that to its own subset. Correlated on the outer Watches
+        # row, so the watch is judged on its own pins.
+        pinned = select(WatchSites.site_id).where(WatchSites.watch_id == Watches.id)
+        stmt = stmt.where(or_(~pinned.exists(), Sites.id.in_(pinned)))
 
-            results = await session.execute(stmt)
-            return results.mappings().all()
-    except Exception as e:
-        log.error(f"Error fetching watched item list: {e}")
-        return []
+        return (await session.execute(stmt)).mappings().one_or_none()
 
 
-async def get_listed_items(
-    scope: str = "global", scope_id: int | None = None
-) -> Sequence[RowMapping]:
+async def get_recheck_unit(listing_id: int) -> RowMapping | None:
     """
-    Return every active listing with its watch and item context — the set of
-    already-tracked listings that need re-checking.
+    The one listing a recheck job is about, with its watch, site and item
+    context and whatever locator it has learned.
+
+    None means the listing is gone or no longer tracked — the user untracked
+    it, or a previous check found it sold — and there is nothing to re-read.
+    The queue's own rules make that rare (untracking cancels the pending
+    check), but a job claimed a moment before still has to cope.
 
     Args:
-      scope: A run's scope — "global" (everything), "category", "site", or
-        "item"; the scoped values narrow the listings to that target.
-      scope_id: The scoped target's id; ignored for "global".
+      listing_id: The listing to re-read.
     Returns:
-      A sequence of row mappings with keys listing_id, listing_url, watch_id,
-      user_id, condition_hint, site_id, site_name, site_base_url, item_id,
-      item_name, price_locator, locator_kind, locator_failures and static_ok
-      — the listing's context plus everything a deterministic recheck needs
-      to read it without a second query (agent/recheck.py). Returns an empty
-      sequence if the query fails, so a DB hiccup skips this run's rechecks
-      instead of crashing it.
+      A row mapping with keys listing_id, listing_url, watch_id, user_id,
+      condition_hint, site_id, site_name, site_base_url, item_id, item_name,
+      price_locator, locator_kind, locator_failures and static_ok — everything
+      a deterministic recheck needs to read the page without a second query
+      (agent/recheck.py) — or None. A failed query PROPAGATES.
     """
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                select(
-                    Listings.id.label("listing_id"),
-                    Listings.url.label("listing_url"),
-                    Listings.price_locator.label("price_locator"),
-                    Listings.locator_kind.label("locator_kind"),
-                    Listings.locator_failures.label("locator_failures"),
-                    Listings.static_ok.label("static_ok"),
-                    Watches.id.label("watch_id"),
-                    Watches.user_id.label("user_id"),
-                    Watches.condition_hint.label("condition_hint"),
-                    Sites.id.label("site_id"),
-                    Sites.name.label("site_name"),
-                    Sites.base_url.label("site_base_url"),
-                    Items.id.label("item_id"),
-                    Items.name.label("item_name"),
-                )
-                .join(Sites, Sites.id == Listings.site_id)
-                .join(Watches, Watches.id == Listings.watch_id)
-                .join(Items, Items.id == Listings.item_id)
-                .where(Listings.active)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(
+                Listings.id.label("listing_id"),
+                Listings.url.label("listing_url"),
+                Listings.price_locator.label("price_locator"),
+                Listings.locator_kind.label("locator_kind"),
+                Listings.locator_failures.label("locator_failures"),
+                Listings.static_ok.label("static_ok"),
+                Watches.id.label("watch_id"),
+                Watches.user_id.label("user_id"),
+                Watches.condition_hint.label("condition_hint"),
+                Sites.id.label("site_id"),
+                Sites.name.label("site_name"),
+                Sites.base_url.label("site_base_url"),
+                Items.id.label("item_id"),
+                Items.name.label("item_name"),
             )
-            if scope == "category":
-                stmt = stmt.where(Items.category_id == scope_id)
-            elif scope == "site":
-                stmt = stmt.where(Listings.site_id == scope_id)
-            elif scope == "item":
-                stmt = stmt.where(Listings.item_id == scope_id)
+            .join(Sites, Sites.id == Listings.site_id)
+            .join(Watches, Watches.id == Listings.watch_id)
+            .join(Items, Items.id == Listings.item_id)
+            .where(Listings.id == listing_id)
+            .where(Listings.active)
+        )
 
-            results = await session.execute(stmt)
-            return results.mappings().all()
-    except Exception as e:
-        log.error(f"Error fetching listed items: {e}")
-        return []
+        return (await session.execute(stmt)).mappings().one_or_none()
 
 
 async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:

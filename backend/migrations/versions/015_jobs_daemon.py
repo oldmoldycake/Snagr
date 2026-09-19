@@ -237,14 +237,11 @@ def upgrade() -> None:
     )
 
     # which hunt found a listing — the job page is one click from the listing
-    op.add_column(
-        "listings",
-        sa.Column(
-            "discovered_by_job_id",
-            sa.BigInteger,
-            sa.ForeignKey("jobs.id", ondelete="SET NULL"),
-            nullable=True,
-        ),
+    op.add_column("listings", sa.Column("discovered_by_job_id", sa.BigInteger, nullable=True))
+    # named, because jobs.listing_id points back at listings: the two tables
+    # reference each other, and a cycle needs a constraint the models can name
+    op.create_foreign_key(
+        "fk_listings_job", "listings", "jobs", ["discovered_by_job_id"], ["id"], ondelete="SET NULL"
     )
 
     # the circuit breaker's state (design §4.4)
@@ -347,6 +344,7 @@ def downgrade() -> None:
     op.drop_column("sites", "paused_reason")
     op.drop_column("sites", "paused_until")
     op.drop_column("sites", "consecutive_errors")
+    op.drop_constraint("fk_listings_job", "listings", type_="foreignkey")
     op.drop_column("listings", "discovered_by_job_id")
 
     op.execute("DROP TRIGGER price_checks_notify ON price_checks")

@@ -31,13 +31,22 @@ SEARXNG_URL = os.getenv("SEAR_XNG_URL")
 MARKET_PRICE_TTL_HOURS = int(os.getenv("MARKET_PRICE_TTL_HOURS", "24"))
 MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_RUN", "10"))
 
-# Run lifecycle. The heartbeat is the liveness signal the stale-run reaper
-# judges by: a 'running' agent_runs row whose heartbeat is older than
-# RUN_STALE_AFTER_SECONDS was left behind by a dead process (SIGKILL, OOM,
-# power loss) and is failed on the next consumer tick — left alone it would
-# block every enqueue (409 run_in_progress) and every schedule forever.
-RUN_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("RUN_HEARTBEAT_INTERVAL_SECONDS", "30"))
-RUN_STALE_AFTER_SECONDS = int(os.getenv("RUN_STALE_AFTER_SECONDS", "300"))
+# The work queue. RECHECK_INTERVAL_MINUTES is the whole recheck cadence: a
+# completed check inserts its own successor that far ahead, so there is no
+# schedule to keep anywhere else.
+#
+# The heartbeat is the liveness signal the job reaper judges by: a 'running'
+# row whose heartbeat is older than JOB_STALE_AFTER_SECONDS was left behind by
+# a dead process (SIGKILL, OOM, power loss) and goes back to pending, or to
+# failed once it has burned JOB_MAX_ATTEMPTS. Retention sweeps terminal rows:
+# a check is a heartbeat, not history — price_checks is the history — so it is
+# kept for days, while a hunt is a story worth months.
+RECHECK_INTERVAL_MINUTES = int(os.getenv("RECHECK_INTERVAL_MINUTES", "30"))
+JOB_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("JOB_HEARTBEAT_INTERVAL_SECONDS", "30"))
+JOB_STALE_AFTER_SECONDS = int(os.getenv("JOB_STALE_AFTER_SECONDS", "300"))
+JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+JOB_RETENTION_DAYS = int(os.getenv("JOB_RETENTION_DAYS", "7"))
+HUNT_RETENTION_DAYS = int(os.getenv("HUNT_RETENTION_DAYS", "90"))
 # Per-unit budgets. One unit is one LLM stream (a listing recheck or a site
 # scan); a model looping on a blocked page is otherwise bounded only by
 # prompt text. Tripping either cap fails that unit and the run moves on.

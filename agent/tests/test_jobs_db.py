@@ -1,7 +1,9 @@
-"""The run-queue DB helpers against a real Postgres: the claim's FOR UPDATE
-SKIP LOCKED, the locked last_seq bump behind uq_run_seq, terminal writes, the
-schedule-firing claim, the scope-filtered planning queries, and the tools
-tally — SQL that the seam tests in test_run_consumer.py can't exercise.
+"""The work queue against a real Postgres: the claim's FOR UPDATE SKIP
+LOCKED, the partial unique index that keeps one job open per target, the
+successor a finished check leaves behind, the reaper, retention, the locked
+last_seq bump behind uq_job_seq, the per-unit lookups the pools work from,
+and the tools' writes — SQL that the seam tests in test_run_consumer.py
+can't exercise.
 
 Needs the same reachable Postgres the backend suite uses. conftest.py
 force-rewrites DATABASE_URL to the throwaway `snagr_test` database, so live
@@ -20,46 +22,39 @@ import asyncio
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
+import jobs as job_queue
 import observations
 import pytest
 import tools
 from conftest import unit_runtime
 from database import (
-    AgentRuns,
     AsyncSessionLocal,
     Base,
     Categories,
     Items,
+    JobEvents,
+    Jobs,
     ListingChecks,
     Listings,
     NotificationOutbox,
     PriceChecks,
-    RunEvents,
-    RunSchedules,
     SiteCategories,
     Sites,
     User,
     Watches,
     WatchSites,
-    append_run_event,
-    beat_run,
-    claim_due_schedule,
-    claim_queued_run,
     clear_static_ok,
-    create_global_run,
     engine,
-    finish_run,
     get_active_listing_count,
+    get_hunt_unit,
     get_known_listing_urls,
-    get_listed_items,
-    get_watched_item_list,
+    get_recheck_unit,
     has_verified_locator,
     note_locator_failure,
-    reap_stale_runs,
     save_locator,
 )
 from locators import Locator, site_consensus
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
 NOW = datetime.now(UTC)
 
@@ -74,6 +69,22 @@ def db(coro):
     return _LOOP.run_until_complete(coro)
 
 
+# create_all builds tables and their own constraints, but the queue's central
+# rule lives in a partial unique index on coalesce() expressions, which no
+# model declares — the backend owns it (D1). Installed here by hand so the
+# tests below judge the real thing; keep in sync with
+# backend/migrations/versions/015_jobs_daemon.py.
+_OPEN_JOB_INDEX = """
+    CREATE UNIQUE INDEX uq_jobs_open ON jobs (
+        kind,
+        coalesce(listing_id, 0),
+        coalesce(watch_id, 0),
+        coalesce(site_id, 0),
+        coalesce(item_id, 0)
+    ) WHERE status IN ('pending', 'running')
+"""
+
+
 async def _create_schema():
     async with engine.begin() as conn:
         # CASCADE, because a crashed backend suite can leave its superset
@@ -81,6 +92,7 @@ async def _create_schema():
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(text(f"DROP TABLE IF EXISTS {table.name} CASCADE"))
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(_OPEN_JOB_INDEX))
 
 
 async def _drop_schema():
@@ -125,19 +137,6 @@ def unit_a(ids, **overrides):
     )
 
 
-def queued_run(days_ago=0.0, **overrides):
-    """A queued run `days_ago` days back; override any column."""
-    fields = {
-        "scope": "global",
-        "scope_id": None,
-        "scope_label": "Everything",
-        "status": "queued",
-        "created_at": NOW - timedelta(days=days_ago),
-        **overrides,
-    }
-    return AgentRuns(**fields)
-
-
 async def seed(*rows) -> list[int]:
     """Insert any model rows; returns their ids (captured before commit expires
     them; None for composite-key rows like watch_sites)."""
@@ -147,49 +146,6 @@ async def seed(*rows) -> list[int]:
         ids = [getattr(row, "id", None) for row in rows]
         await session.commit()
     return ids
-
-
-async def read_run(run_id: int) -> dict:
-    async with AsyncSessionLocal() as session:
-        run = await session.get(AgentRuns, run_id)
-        return {
-            "user_id": run.user_id,
-            "scope": run.scope,
-            "scope_id": run.scope_id,
-            "scope_label": run.scope_label,
-            "status": run.status,
-            "started_at": run.started_at,
-            "heartbeat_at": run.heartbeat_at,
-            "finished_at": run.finished_at,
-            "stats": run.stats,
-            "error": run.error,
-            "last_seq": run.last_seq,
-        }
-
-
-def due_schedule(minutes_overdue=5.0, **overrides):
-    """A recurring hourly schedule due `minutes_overdue` ago; override any column."""
-    fields = {
-        "scope": "global",
-        "scope_id": None,
-        "scope_label": "Everything",
-        "next_due_at": NOW - timedelta(minutes=minutes_overdue),
-        "interval_minutes": 60,
-        "enabled": True,
-        **overrides,
-    }
-    return RunSchedules(**fields)
-
-
-async def read_schedule(schedule_id: int) -> dict:
-    async with AsyncSessionLocal() as session:
-        row = await session.get(RunSchedules, schedule_id)
-        return {
-            "next_due_at": row.next_due_at,
-            "interval_minutes": row.interval_minutes,
-            "enabled": row.enabled,
-            "last_fired_at": row.last_fired_at,
-        }
 
 
 class RecordingClock:
@@ -216,35 +172,6 @@ class RecordingClock:
         finally:
             tools.datetime = real_tools
             observations.datetime = real_observations
-
-
-async def read_events(run_id: int) -> list[dict]:
-    async with AsyncSessionLocal() as session:
-        stmt = select(RunEvents).where(RunEvents.run_id == run_id).order_by(RunEvents.seq)
-        rows = (await session.execute(stmt)).scalars().all()
-        return [
-            {"seq": e.seq, "level": e.level, "event_type": e.event_type, "message": e.message}
-            for e in rows
-        ]
-
-
-async def api_cancel_bump(run_id: int) -> None:
-    """Bump last_seq + append an event the way the backend's cancel_run does."""
-    async with AsyncSessionLocal() as session:
-        run = await session.get(AgentRuns, run_id, with_for_update=True)
-        run.last_seq += 1
-        session.add(
-            RunEvents(
-                run_id=run_id,
-                seq=run.last_seq,
-                ts=datetime.now(UTC),
-                level="warn",
-                event_type="run_finished",
-                message="Run cancelled",
-                payload=None,
-            )
-        )
-        await session.commit()
 
 
 async def seed_scope_graph() -> dict:
@@ -300,427 +227,610 @@ async def seed_scope_graph() -> dict:
     return ids
 
 
-class TestClaimQueuedRun:
+def pending_job(ids, kind="recheck", **overrides):
+    """A pending job for watch A on GameBay; override any column."""
+    fields = {
+        "kind": kind,
+        "watch_id": ids["watch_a"],
+        "item_id": ids["item_a"],
+        "site_id": ids["site_a"],
+        "listing_id": ids["listing_a"] if kind == "recheck" else None,
+        **overrides,
+    }
+    return Jobs(**fields)
+
+
+async def read_job(job_id: int) -> dict:
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Jobs, job_id)
+        return {
+            "kind": job.kind,
+            "status": job.status,
+            "priority": job.priority,
+            "run_after": job.run_after,
+            "attempts": job.attempts,
+            "locked_by": job.locked_by,
+            "started_at": job.started_at,
+            "heartbeat_at": job.heartbeat_at,
+            "finished_at": job.finished_at,
+            "error": job.error,
+            "stats": job.stats,
+            "last_seq": job.last_seq,
+        }
+
+
+async def read_jobs(**filters) -> list[dict]:
+    """Every job matching the filters, oldest id first."""
+    async with AsyncSessionLocal() as session:
+        stmt = select(Jobs).order_by(Jobs.id)
+        for column, value in filters.items():
+            stmt = stmt.where(getattr(Jobs, column) == value)
+        return [
+            {"id": j.id, "kind": j.kind, "status": j.status, "run_after": j.run_after}
+            for j in (await session.execute(stmt)).scalars().all()
+        ]
+
+
+class TestClaim:
     def test_an_empty_queue_returns_none(self):
-        assert db(claim_queued_run()) is None
+        assert db(job_queue.claim("w1", ("recheck",))) is None
 
-    def test_claims_oldest_first_and_flips_it_to_running(self):
+    def test_a_users_request_jumps_the_queue(self):
+        # priority first, then oldest due — a "check prices" click is 100 and
+        # must not wait behind an hour of routine checks
         async def scenario():
-            older_id, _ = await seed(
-                queued_run(2, scope_label="older"), queued_run(1, scope_label="newer")
+            ids = await seed_scope_graph()
+            routine, urgent = await seed(
+                pending_job(ids, run_after=NOW - timedelta(hours=1)),
+                pending_job(ids, kind="hunt", priority=100, run_after=NOW),
             )
-            claimed = await claim_queued_run()
-            return older_id, claimed, await read_run(claimed["id"])
+            return routine, urgent, await job_queue.claim("w1", ("recheck", "hunt"))
 
-        older_id, claimed, row = db(scenario())
-        assert claimed["id"] == older_id
-        assert set(claimed) == {"id", "scope", "scope_id", "scope_label"}
-        assert claimed["scope_label"] == "older"
+        routine, urgent, claimed = db(scenario())
+        assert claimed["id"] == urgent
+        assert claimed["priority"] == 100
+
+    def test_the_longest_wait_wins_at_equal_priority(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            older, _ = await seed(
+                pending_job(ids, run_after=NOW - timedelta(hours=2)),
+                pending_job(ids, kind="hunt", run_after=NOW - timedelta(minutes=1)),
+            )
+            return older, await job_queue.claim("w1", ("recheck", "hunt"))
+
+        older, claimed = db(scenario())
+        assert claimed["id"] == older
+
+    def test_a_job_due_later_waits(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids, run_after=NOW + timedelta(minutes=5)))
+            return await job_queue.claim("w1", ("recheck",))
+
+        assert db(scenario()) is None
+
+    def test_a_pool_only_claims_its_own_kinds(self):
+        # the check pool runs no model, so it must never pick up a hunt
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids, kind="hunt"))
+            return await job_queue.claim("checks", ("recheck",))
+
+        assert db(scenario()) is None
+
+    def test_claiming_stamps_the_worker_and_spends_an_attempt(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            claimed = await job_queue.claim("check-worker", ("recheck",))
+            return claimed, await read_job(job_id)
+
+        claimed, row = db(scenario())
+        assert claimed["listing_id"] is not None
         assert row["status"] == "running"
+        assert row["locked_by"] == "check-worker"
+        assert row["attempts"] == 1
         assert row["started_at"] is not None
+        assert row["heartbeat_at"] is not None
 
     def test_concurrent_claims_have_exactly_one_winner(self):
-        # SKIP LOCKED: the loser sees no unlocked queued row and gets None
+        # SKIP LOCKED: the loser sees no unlocked due row and gets None
         async def scenario():
-            await seed(queued_run())
-            return await asyncio.gather(claim_queued_run(), claim_queued_run())
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids))
+            return await asyncio.gather(
+                job_queue.claim("w1", ("recheck",)), job_queue.claim("w2", ("recheck",))
+            )
 
         results = db(scenario())
         assert sorted(r is None for r in results) == [False, True]
 
-    def test_only_queued_runs_are_claimable(self):
+    def test_a_finished_job_is_never_claimed_again(self):
         async def scenario():
+            ids = await seed_scope_graph()
             await seed(
-                queued_run(status="running", started_at=NOW),
-                queued_run(status="succeeded"),
-                queued_run(status="cancelled"),
+                pending_job(ids, status="done", finished_at=NOW),
+                pending_job(ids, kind="hunt", status="cancelled", finished_at=NOW),
             )
-            return await claim_queued_run()
+            return await job_queue.claim("w1", ("recheck", "hunt", "ground"))
 
         assert db(scenario()) is None
 
 
-class TestAppendRunEvent:
-    def test_appends_with_the_next_seq_and_bumps_last_seq(self):
+class TestOneOpenJobPerTarget:
+    """Migration 015's partial unique index. It is the reason "check now" is a
+    bump rather than an insert, and the reason every insert here can be ON
+    CONFLICT DO NOTHING."""
+
+    def test_a_second_open_check_for_the_same_listing_is_dropped(self):
         async def scenario():
-            (run_id,) = await seed(queued_run(status="running", last_seq=3))
-            seq = await append_run_event(run_id, "info", "item_started", "searching")
-            return seq, await read_run(run_id), await read_events(run_id)
-
-        seq, row, events = db(scenario())
-        assert seq == 4
-        assert row["last_seq"] == 4
-        assert [e["seq"] for e in events] == [4]
-
-    def test_continues_after_an_api_side_bump(self):
-        # the API's cancel bumps last_seq under the same row lock — the next
-        # append must slot in after it, never violate uq_run_seq
-        async def scenario():
-            (run_id,) = await seed(queued_run(status="running"))
-            first = await append_run_event(run_id, "info", "run_started", "Run started")
-            await api_cancel_bump(run_id)
-            second = await append_run_event(run_id, "error", "error", "late failure")
-            return first, second, await read_events(run_id)
-
-        first, second, events = db(scenario())
-        assert (first, second) == (1, 3)
-        assert [e["seq"] for e in events] == [1, 2, 3]
-
-    def test_a_missing_run_returns_none(self):
-        assert db(append_run_event(99999, "info", "item_started", "searching")) is None
-
-
-class TestFinishRun:
-    def test_success_writes_stats_and_a_success_terminal_event(self):
-        stats = {"listings_checked": 2, "prices_found": 1, "new_listings": 1, "errors": 0}
-
-        async def scenario():
-            (run_id,) = await seed(queued_run(status="running", started_at=NOW))
-            ok = await finish_run(run_id, "succeeded", stats=stats)
-            return ok, await read_run(run_id), await read_events(run_id)
-
-        ok, row, events = db(scenario())
-        assert ok is True
-        assert row["status"] == "succeeded"
-        assert row["finished_at"] is not None
-        assert row["stats"] == stats
-        assert row["last_seq"] == 1
-        (event,) = events
-        assert event["level"] == "success"
-        assert event["event_type"] == "run_finished"
-        assert event["message"] == "Run complete — 2 checked, 1 prices, 1 new listings, 0 errors"
-
-    def test_failure_writes_error_and_an_error_terminal_event(self):
-        async def scenario():
-            (run_id,) = await seed(queued_run(status="running", started_at=NOW))
-            ok = await finish_run(run_id, "failed", error="browser crashed")
-            return ok, await read_run(run_id), await read_events(run_id)
-
-        ok, row, events = db(scenario())
-        assert ok is True
-        assert row["status"] == "failed"
-        assert row["error"] == "browser crashed"
-        assert row["stats"] is None
-        (event,) = events
-        assert event["level"] == "error"
-        assert event["event_type"] == "run_finished"
-        assert event["message"] == "Run failed: browser crashed"
-
-    def test_never_clobbers_a_cancelled_run(self):
-        # the API cancelled while the agent was finishing — its terminal
-        # state and event must survive untouched
-        async def scenario():
-            (run_id,) = await seed(queued_run(status="cancelled", last_seq=1, finished_at=NOW))
-            ok = await finish_run(run_id, "succeeded", stats={})
-            return ok, await read_run(run_id), await read_events(run_id)
-
-        ok, row, events = db(scenario())
-        assert ok is False
-        assert row["status"] == "cancelled"
-        assert row["last_seq"] == 1
-        assert events == []
-
-
-class TestCreateGlobalRun:
-    def test_inserts_a_running_global_row(self):
-        async def scenario():
-            created = await create_global_run()
-            return created, await read_run(created["id"])
-
-        created, row = db(scenario())
-        assert created["scope"] == "global"
-        assert created["scope_id"] is None
-        assert created["scope_label"] == "Everything"
-        assert row["user_id"] is None  # the nightly sweep is a system run
-        assert row["status"] == "running"
-        assert row["started_at"] is not None
-
-
-class TestClaimDueSchedule:
-    def test_an_empty_table_returns_none(self):
-        assert db(claim_due_schedule()) is None
-
-    def test_a_not_yet_due_schedule_is_ignored(self):
-        async def scenario():
-            (sid,) = await seed(due_schedule(minutes_overdue=-10))
-            return await claim_due_schedule(), await read_schedule(sid)
-
-        claimed, row = db(scenario())
-        assert claimed is None
-        assert row["enabled"] is True
-        assert row["last_fired_at"] is None
-
-    def test_a_disabled_schedule_never_fires(self):
-        async def scenario():
-            (sid,) = await seed(due_schedule(enabled=False))
-            return await claim_due_schedule(), await read_schedule(sid)
-
-        claimed, row = db(scenario())
-        assert claimed is None
-        assert row["last_fired_at"] is None
-
-    def test_fires_the_most_overdue_schedule_first(self):
-        async def scenario():
-            _, newer_id = await seed(
-                due_schedule(minutes_overdue=60, scope_label="older"),
-                due_schedule(minutes_overdue=5, scope_label="newer"),
-            )
-            return await claim_due_schedule(), await read_schedule(newer_id)
-
-        claimed, newer = db(scenario())
-        assert claimed["scope_label"] == "older"
-        assert newer["last_fired_at"] is None  # still due, untouched
-
-    def test_firing_creates_a_running_run_with_the_schedules_scope(self):
-        async def scenario():
-            await seed(due_schedule(scope="category", scope_id=4, scope_label="Category: Games"))
-            claimed = await claim_due_schedule()
-            return claimed, await read_run(claimed["id"])
-
-        claimed, run = db(scenario())
-        assert set(claimed) == {"id", "scope", "scope_id", "scope_label", "scheduled"}
-        assert claimed["scheduled"] is True
-        assert run["scope"] == "category"
-        assert run["scope_id"] == 4
-        assert run["scope_label"] == "Category: Games"
-        assert run["status"] == "running"
-        assert run["started_at"] is not None
-
-    def test_firing_copies_the_schedules_owner_onto_the_run(self):
-        async def scenario():
-            (uid,) = await seed(User(email="owner@test.local"))
-            await seed(due_schedule(user_id=uid))
-            claimed = await claim_due_schedule()
-            return uid, await read_run(claimed["id"])
-
-        uid, run = db(scenario())
-        assert run["user_id"] == uid
-
-    def test_a_system_schedule_fires_a_system_run(self):
-        async def scenario():
-            await seed(due_schedule())  # user_id stays NULL
-            claimed = await claim_due_schedule()
-            return await read_run(claimed["id"])
-
-        run = db(scenario())
-        assert run["user_id"] is None
-
-    def test_a_recurring_fire_rolls_forward_anchored_past_downtime(self):
-        async def scenario():
-            (sid,) = await seed(due_schedule(minutes_overdue=3 * 1440 + 7, interval_minutes=1440))
-            old_due = (await read_schedule(sid))["next_due_at"]
-            claimed = await claim_due_schedule()
-            second = await claim_due_schedule()
-            return claimed, second, old_due, await read_schedule(sid)
-
-        claimed, second, old_due, row = db(scenario())
-        assert claimed is not None
-        # busy with the fired run, and rolled into the future anyway
-        assert second is None
-        interval = timedelta(minutes=1440)
-        # anchor preserved: the new due time is a whole number of periods on
-        assert (row["next_due_at"] - old_due) % interval == timedelta(0)
-        # caught up in ONE step: strictly future, at most one period out
-        assert row["last_fired_at"] < row["next_due_at"] <= row["last_fired_at"] + interval
-        assert row["enabled"] is True
-
-    def test_a_one_shot_fires_once_then_deactivates(self):
-        async def scenario():
-            (sid,) = await seed(due_schedule(interval_minutes=None))
-            old_due = (await read_schedule(sid))["next_due_at"]
-            claimed = await claim_due_schedule()
-            second = await claim_due_schedule()
-            return claimed, second, old_due, await read_schedule(sid)
-
-        claimed, second, old_due, row = db(scenario())
-        assert claimed is not None
-        assert second is None
-        assert row["enabled"] is False
-        assert row["last_fired_at"] is not None
-        assert row["next_due_at"] == old_due  # one-shots keep their aim time
-
-    @pytest.mark.parametrize("status", ["queued", "running"])
-    def test_a_busy_instance_skips_without_rolling(self, status):
-        async def scenario():
-            overrides = {"status": status, "started_at": NOW if status == "running" else None}
-            _, sid = await seed(queued_run(**overrides), due_schedule())
-            return await claim_due_schedule(), await read_schedule(sid)
-
-        claimed, row = db(scenario())
-        assert claimed is None
-        # fully untouched — still due, so it fires on the next free tick
-        assert row["enabled"] is True
-        assert row["last_fired_at"] is None
-        assert row["next_due_at"] == NOW - timedelta(minutes=5)
-
-    def test_concurrent_fires_have_exactly_one_winner(self):
-        # SKIP LOCKED: the loser skips the locked row and finds nothing due
-        async def scenario():
-            await seed(due_schedule())
-            results = await asyncio.gather(claim_due_schedule(), claim_due_schedule())
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids))
             async with AsyncSessionLocal() as session:
-                run_ids = (await session.execute(select(AgentRuns.id))).all()
-            return results, len(run_ids)
-
-        results, run_count = db(scenario())
-        assert sorted(r is None for r in results) == [False, True]
-        assert run_count == 1
-
-
-class TestHeartbeat:
-    def test_a_claim_and_a_sweep_stamp_the_first_beat(self):
-        async def scenario():
-            await seed(queued_run())
-            claimed = await claim_queued_run()
-            created = await create_global_run()
-            return await read_run(claimed["id"]), await read_run(created["id"])
-
-        for row in db(scenario()):
-            assert row["heartbeat_at"] is not None
-            assert row["heartbeat_at"] == row["started_at"]
-
-    def test_a_fired_schedule_stamps_the_first_beat(self):
-        async def scenario():
-            await seed(due_schedule())
-            fired = await claim_due_schedule()
-            return await read_run(fired["id"])
-
-        row = db(scenario())
-        assert row["heartbeat_at"] == row["started_at"]
-
-    def test_beat_run_advances_a_running_runs_heartbeat(self):
-        async def scenario():
-            (run_id,) = await seed(
-                queued_run(
-                    status="running",
-                    started_at=NOW - timedelta(hours=1),
-                    heartbeat_at=NOW - timedelta(minutes=10),
+                await job_queue.enqueue_recheck(
+                    session,
+                    listing_id=ids["listing_a"],
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
                 )
-            )
-            ok = await beat_run(run_id)
-            return ok, await read_run(run_id)
+                await session.commit()
+            return await read_jobs(kind="recheck")
 
-        ok, row = db(scenario())
-        assert ok is True
-        assert row["heartbeat_at"] > NOW - timedelta(minutes=1)
+        assert len(db(scenario())) == 1
 
-    def test_beat_run_leaves_a_finished_run_alone(self):
-        old_beat = NOW - timedelta(minutes=10)
-
+    def test_a_finished_job_no_longer_holds_the_slot(self):
         async def scenario():
-            (run_id,) = await seed(
-                queued_run(status="succeeded", started_at=NOW, heartbeat_at=old_beat)
-            )
-            await beat_run(run_id)
-            return await read_run(run_id)
-
-        assert db(scenario())["heartbeat_at"] == old_beat
-
-
-class TestReapStaleRuns:
-    STALE = timedelta(minutes=5)
-
-    def test_fails_a_running_run_whose_heartbeat_went_silent(self):
-        async def scenario():
-            (dead_id,) = await seed(
-                queued_run(
-                    status="running",
-                    started_at=NOW - timedelta(hours=1),
-                    heartbeat_at=NOW - timedelta(minutes=6),
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids, status="done", finished_at=NOW))
+            async with AsyncSessionLocal() as session:
+                await job_queue.enqueue_recheck(
+                    session,
+                    listing_id=ids["listing_a"],
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
                 )
-            )
-            reaped = await reap_stale_runs(self.STALE)
-            return reaped, dead_id, await read_run(dead_id), await read_events(dead_id)
+                await session.commit()
+            return await read_jobs(kind="recheck")
 
-        reaped, dead_id, row, events = db(scenario())
-        assert reaped == [dead_id]
+        rows = db(scenario())
+        assert [r["status"] for r in rows] == ["done", "pending"]
+
+
+class TestCompletion:
+    """A listing always has exactly one check ahead of it — the chain is what
+    keeps it watched, so it is closed in the same transaction that ends the
+    check before it."""
+
+    def test_a_finished_check_queues_the_next_one(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            await job_queue.complete(job_id, {"listings_checked": 1, "prices_found": 1})
+            return await read_job(job_id), await read_jobs(status="pending")
+
+        row, pending = db(scenario())
+        assert row["status"] == "done"
+        assert row["stats"] == {"listings_checked": 1, "prices_found": 1}
+        assert len(pending) == 1
+        due_in = pending[0]["run_after"] - datetime.now(UTC)
+        assert timedelta(minutes=25) < due_in <= timedelta(minutes=30)
+
+    def test_an_untracked_listing_ends_the_chain(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                listing.active = False
+                await session.commit()
+            await job_queue.complete(job_id, {})
+            return await read_jobs(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_a_hunt_leaves_no_successor(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await job_queue.claim("w1", ("hunt",))
+            await job_queue.complete(job_id, {"new_listings": 0})
+            return await read_jobs(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_a_cancelled_job_keeps_its_terminal_state(self):
+        # the API wrote 'cancelled' while the worker was finishing; the worker
+        # must not overwrite it — but the listing still needs its next check
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Jobs, job_id)
+                job.status = "cancelled"
+                await session.commit()
+            wrote = await job_queue.complete(job_id, {"listings_checked": 1})
+            return wrote, await read_job(job_id), await read_jobs(status="pending")
+
+        wrote, row, pending = db(scenario())
+        assert wrote is False
+        assert row["status"] == "cancelled"
+        assert row["stats"] is None
+        assert len(pending) == 1
+
+
+class TestFailure:
+    def test_a_first_failure_goes_straight_back_in_the_queue(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            outcome = await job_queue.fail_or_retry(job_id, "the page timed out")
+            return outcome, await read_job(job_id)
+
+        outcome, row = db(scenario())
+        assert outcome == "pending"
+        assert row["status"] == "pending"
+        assert row["locked_by"] is None
+        assert row["attempts"] == 1
+        assert row["error"] == "the page timed out"
+        assert row["run_after"] <= datetime.now(UTC)
+
+    def test_a_failed_check_still_queues_the_next_one(self):
+        # a page being unreadable today is not a reason to stop watching it
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, attempts=2))
+            await job_queue.claim("w1", ("recheck",))
+            outcome = await job_queue.fail_or_retry(job_id, "challenge page")
+            return outcome, await read_job(job_id), await read_jobs(status="pending")
+
+        outcome, row, pending = db(scenario())
+        assert outcome == "failed"
         assert row["status"] == "failed"
         assert row["finished_at"] is not None
-        assert row["error"] == "Agent stopped responding (no heartbeat for over 5 min)"
-        assert [(e["level"], e["event_type"]) for e in events] == [("error", "run_finished")]
+        assert len(pending) == 1
 
-    def test_leaves_live_queued_and_finished_runs_alone(self):
+    def test_a_job_that_already_finished_is_left_alone(self):
         async def scenario():
-            ids = await seed(
-                # alive: a slow run, but beating
-                queued_run(
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, status="cancelled", finished_at=NOW))
+            outcome = await job_queue.fail_or_retry(job_id, "too late")
+            return outcome, await read_job(job_id)
+
+        outcome, row = db(scenario())
+        assert outcome == "cancelled"
+        assert row["error"] is None
+
+
+class TestRelease:
+    """Shutdown, not failure: `docker compose stop` costs a restart, not a
+    retry budget."""
+
+    def test_an_in_flight_job_goes_back_to_the_queue_due_now(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            released = await job_queue.release(job_id)
+            return released, await read_job(job_id)
+
+        released, row = db(scenario())
+        assert released is True
+        assert row["status"] == "pending"
+        assert row["locked_by"] is None
+        assert row["started_at"] is None
+        assert row["run_after"] <= datetime.now(UTC)
+
+    def test_a_job_that_is_not_running_is_left_alone(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, status="done", finished_at=NOW))
+            return await job_queue.release(job_id), await read_job(job_id)
+
+        released, row = db(scenario())
+        assert released is False
+        assert row["status"] == "done"
+
+
+class TestReaper:
+    """A row abandoned by a SIGKILL holds its target's open-job slot forever,
+    and the unique index would refuse every replacement — so nothing else
+    would ever notice."""
+
+    def test_a_silent_worker_loses_its_job(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(
+                    ids,
                     status="running",
                     started_at=NOW - timedelta(hours=1),
-                    heartbeat_at=NOW - timedelta(seconds=20),
-                ),
-                queued_run(),
-                queued_run(
-                    status="succeeded",
+                    heartbeat_at=NOW - timedelta(minutes=30),
+                    attempts=1,
+                    locked_by="dead-worker",
+                )
+            )
+            reaped = await job_queue.reap()
+            return job_id, reaped, await read_job(job_id)
+
+        job_id, reaped, row = db(scenario())
+        assert reaped == [job_id]
+        assert row["status"] == "pending"
+        assert "no heartbeat" in row["error"]
+
+    def test_a_beating_worker_keeps_its_job(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(
+                    ids, status="running", started_at=NOW - timedelta(hours=1), heartbeat_at=NOW
+                )
+            )
+            return await job_queue.reap(), await read_job(job_id)
+
+        reaped, row = db(scenario())
+        assert reaped == []
+        assert row["status"] == "running"
+
+    def test_a_job_that_has_died_too_often_is_failed_for_good(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    status="running",
                     started_at=NOW - timedelta(hours=1),
                     heartbeat_at=NOW - timedelta(hours=1),
+                    attempts=3,
+                )
+            )
+            await job_queue.reap()
+            return await read_job(job_id)
+
+        assert db(scenario())["status"] == "failed"
+
+
+class TestRetention:
+    """Jobs are not the price history — price_checks is. A check is a
+    heartbeat, kept for days; a hunt is a story, kept for months."""
+
+    def test_old_checks_go_and_take_their_events_with_them(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(ids, status="done", finished_at=NOW - timedelta(days=8))
+            )
+            await seed(
+                JobEvents(
+                    job_id=job_id,
+                    seq=1,
+                    ts=NOW - timedelta(days=8),
+                    level="info",
+                    event_type="job_started",
+                    message="…",
+                )
+            )
+            pruned = await job_queue.prune()
+            async with AsyncSessionLocal() as session:
+                events = await session.scalar(select(func.count()).select_from(JobEvents))
+            return pruned, await read_jobs(), events
+
+        pruned, remaining, events = db(scenario())
+        assert pruned == 1
+        assert remaining == []
+        assert events == 0
+
+    def test_a_hunt_outlives_a_check_by_months(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(
+                pending_job(ids, kind="hunt", status="done", finished_at=NOW - timedelta(days=8)),
+                pending_job(ids, status="failed", finished_at=NOW - timedelta(days=8)),
+            )
+            await job_queue.prune()
+            return [r["kind"] for r in await read_jobs()]
+
+        assert db(scenario()) == ["hunt"]
+
+    def test_unfinished_work_is_never_pruned(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids, run_after=NOW - timedelta(days=30)))
+            return await job_queue.prune(), await read_jobs()
+
+        pruned, remaining = db(scenario())
+        assert pruned == 0
+        assert len(remaining) == 1
+
+
+class TestAppendEvent:
+    def test_appends_with_the_next_seq_and_bumps_last_seq(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            first = await job_queue.append_event(job_id, "info", "job_started", "Hunting GameBay…")
+            second = await job_queue.append_event(
+                job_id, "success", "listing_discovered", "Saved a listing"
+            )
+            async with AsyncSessionLocal() as session:
+                seqs = list(
+                    (
+                        await session.execute(
+                            select(JobEvents.seq)
+                            .where(JobEvents.job_id == job_id)
+                            .order_by(JobEvents.seq)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            return first, second, seqs, await read_job(job_id)
+
+        first, second, seqs, row = db(scenario())
+        assert (first, second) == (1, 2)
+        assert seqs == [1, 2]
+        assert row["last_seq"] == 2
+
+    def test_a_missing_job_returns_none(self):
+        assert db(job_queue.append_event(9999, "info", "job_started", "…")) is None
+
+
+class TestQueueHelpers:
+    def test_a_saved_listing_is_watched_from_the_moment_it_is_saved(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                await job_queue.enqueue_recheck(
+                    session,
+                    listing_id=ids["listing_a"],
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                )
+                await session.commit()
+            return await read_jobs(kind="recheck")
+
+        rows = db(scenario())
+        assert len(rows) == 1
+        assert rows[0]["status"] == "pending"
+        assert rows[0]["run_after"] <= datetime.now(UTC)
+
+    def test_bumping_moves_a_pending_check_and_leaves_a_running_one(self):
+        # a running check is seconds from writing its own observation; its
+        # successor will honour the new cadence anyway
+        async def scenario():
+            ids = await seed_scope_graph()
+            pending_id, running_id = await seed(
+                pending_job(ids, run_after=NOW + timedelta(minutes=30)),
+                pending_job(
+                    ids,
+                    listing_id=ids["listing_b"],
+                    watch_id=ids["watch_b"],
+                    item_id=ids["item_b"],
+                    site_id=ids["site_b"],
+                    status="running",
+                    run_after=NOW + timedelta(minutes=30),
                 ),
-                queued_run(status="cancelled", started_at=NOW - timedelta(hours=1)),
             )
-            reaped = await reap_stale_runs(self.STALE)
-            return reaped, [(await read_run(run_id))["status"] for run_id in ids]
+            async with AsyncSessionLocal() as session:
+                await job_queue.bump_rechecks(
+                    session, ids["listing_a"], delay_minutes=5, priority=90
+                )
+                await job_queue.bump_rechecks(
+                    session, ids["listing_b"], delay_minutes=5, priority=90
+                )
+                await session.commit()
+            return await read_job(pending_id), await read_job(running_id)
 
-        reaped, statuses = db(scenario())
-        assert reaped == []
-        assert statuses == ["running", "queued", "succeeded", "cancelled"]
+        bumped, running = db(scenario())
+        assert bumped["priority"] == 90
+        assert bumped["run_after"] < NOW + timedelta(minutes=10)
+        assert running["priority"] == 0
+        assert running["run_after"] > NOW + timedelta(minutes=20)
 
-    def test_a_row_from_before_the_column_existed_is_judged_on_started_at(self):
-        async def scenario():
-            old_id, fresh_id = await seed(
-                queued_run(status="running", started_at=NOW - timedelta(minutes=6)),
-                queued_run(status="running", started_at=NOW - timedelta(minutes=1)),
-            )
-            reaped = await reap_stale_runs(self.STALE)
-            return reaped, old_id, (await read_run(fresh_id))["status"]
-
-        reaped, old_id, fresh_status = db(scenario())
-        assert reaped == [old_id]
-        assert fresh_status == "running"
-
-
-class TestScopedQueries:
-    def test_get_listed_items_honors_each_scope(self):
+    def test_untracking_a_listing_drops_its_pending_check(self):
         async def scenario():
             ids = await seed_scope_graph()
-            return ids, {
-                "global": [r["listing_id"] for r in await get_listed_items()],
-                "category": [
-                    r["listing_id"] for r in await get_listed_items("category", ids["cat_a"])
-                ],
-                "site": [r["listing_id"] for r in await get_listed_items("site", ids["site_b"])],
-                "item": [r["listing_id"] for r in await get_listed_items("item", ids["item_b"])],
-            }
+            (job_id,) = await seed(pending_job(ids))
+            async with AsyncSessionLocal() as session:
+                await job_queue.cancel_recheck(session, ids["listing_a"])
+                await session.commit()
+            return await read_job(job_id)
 
-        ids, out = db(scenario())
-        assert sorted(out["global"]) == sorted([ids["listing_a"], ids["listing_b"]])
-        assert out["category"] == [ids["listing_a"]]
-        assert out["site"] == [ids["listing_b"]]
-        assert out["item"] == [ids["listing_b"]]
+        row = db(scenario())
+        assert row["status"] == "cancelled"
+        assert row["finished_at"] is not None
 
-    def test_get_watched_item_list_honors_each_scope(self):
+    def test_grounding_is_queued_once_per_item(self):
         async def scenario():
             ids = await seed_scope_graph()
-            return ids, {
-                "global": [r["watch_id"] for r in await get_watched_item_list()],
-                "category": [
-                    r["watch_id"] for r in await get_watched_item_list("category", ids["cat_a"])
-                ],
-                "site": [r["watch_id"] for r in await get_watched_item_list("site", ids["site_b"])],
-                "item": [r["watch_id"] for r in await get_watched_item_list("item", ids["item_a"])],
-            }
+            first = await job_queue.enqueue_ground(ids["item_a"])
+            second = await job_queue.enqueue_ground(ids["item_a"])
+            return first, second, await read_jobs(kind="ground")
 
-        ids, out = db(scenario())
-        assert sorted(out["global"]) == sorted([ids["watch_a"], ids["watch_b"]])
-        assert out["category"] == [ids["watch_a"]]
-        assert out["site"] == [ids["watch_b"]]
-        assert out["item"] == [ids["watch_a"]]
+        first, second, rows = db(scenario())
+        assert (first, second) == (True, False)
+        assert len(rows) == 1
 
 
-def pairs_by_watch(rows) -> dict[int, list[int]]:
-    """{watch_id: sorted site_ids} from get_watched_item_list rows."""
+class TestUnitLookups:
+    """What a pool loads once it has claimed a job. A job outlives the
+    decision that queued it, so both lookups answer None rather than raising
+    when the world moved on — the worker treats that as "nothing to do"."""
+
+    def test_a_recheck_unit_carries_everything_the_ladder_needs(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            return ids, await get_recheck_unit(ids["listing_a"])
+
+        ids, unit = db(scenario())
+        assert unit["listing_id"] == ids["listing_a"]
+        assert unit["listing_url"] == "https://gamebay.test/l1"
+        assert unit["watch_id"] == ids["watch_a"]
+        assert unit["site_base_url"] == "https://gamebay.test"
+        assert unit["item_name"] == "Emerald"
+        assert (unit["price_locator"], unit["locator_kind"]) == (None, None)
+        assert unit["static_ok"] is False
+
+    def test_an_untracked_listing_has_nothing_to_re_read(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                listing.active = False
+                await session.commit()
+            return await get_recheck_unit(ids["listing_a"])
+
+        assert db(scenario()) is None
+
+    def test_a_missing_listing_has_nothing_to_re_read(self):
+        assert db(get_recheck_unit(9999)) is None
+
+    def test_a_hunt_unit_carries_the_watchs_own_settings(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            return ids, await get_hunt_unit(ids["watch_a"], ids["site_a"])
+
+        ids, unit = db(scenario())
+        assert (unit["watch_id"], unit["site_id"]) == (ids["watch_a"], ids["site_a"])
+        assert unit["item_name"] == "Emerald"
+        assert unit["base_url"] == "https://gamebay.test"
+        assert unit["selection_mode"] == "cheapest"
+        assert unit["max_listings"] == 3
+
+    def test_a_site_the_watchs_category_does_not_carry_is_not_a_pair(self):
+        # CardBay sells cards; the Emerald watch has no business there, even
+        # if a stale job says otherwise
+        async def scenario():
+            ids = await seed_scope_graph()
+            return await get_hunt_unit(ids["watch_a"], ids["site_b"])
+
+        assert db(scenario()) is None
+
+
+async def pairs_by_watch(ids) -> dict[int, list[int]]:
+    """{watch_id: sorted site_ids} — every pair get_hunt_unit still accepts.
+
+    Probed one at a time because that is how the hunter asks: a hunt job names
+    exactly one pair, and the lookup's whole job is to say whether that pair is
+    still one the watch searches."""
     out: dict[int, list[int]] = {}
-    for row in rows:
-        out.setdefault(row["watch_id"], []).append(row["site_id"])
-    return {watch_id: sorted(site_ids) for watch_id, site_ids in out.items()}
+    for watch_id in (ids["watch_a"], ids["watch_b"]):
+        sites = [
+            site_id
+            for site_id in (ids["site_a"], ids["site_b"])
+            if await get_hunt_unit(watch_id, site_id) is not None
+        ]
+        if sites:
+            out[watch_id] = sorted(sites)
+    return out
 
 
 class TestWatchSiteSubset:
@@ -736,7 +846,7 @@ class TestWatchSiteSubset:
     def test_a_watch_with_no_pins_searches_every_site_in_its_category(self):
         async def scenario():
             ids = await self._games_on_both_sites()
-            return ids, pairs_by_watch(await get_watched_item_list())
+            return ids, await pairs_by_watch(ids)
 
         ids, pairs = db(scenario())
         assert pairs[ids["watch_a"]] == sorted([ids["site_a"], ids["site_b"]])
@@ -746,7 +856,7 @@ class TestWatchSiteSubset:
         async def scenario():
             ids = await self._games_on_both_sites()
             await seed(WatchSites(watch_id=ids["watch_a"], site_id=ids["site_a"]))
-            return ids, pairs_by_watch(await get_watched_item_list())
+            return ids, await pairs_by_watch(ids)
 
         ids, pairs = db(scenario())
         assert pairs[ids["watch_a"]] == [ids["site_a"]]
@@ -760,7 +870,7 @@ class TestWatchSiteSubset:
             # category can't be searched on (the API forbids it; a later
             # unlink could still leave the row behind)
             await seed(WatchSites(watch_id=ids["watch_b"], site_id=ids["site_a"]))
-            return ids, pairs_by_watch(await get_watched_item_list())
+            return ids, await pairs_by_watch(ids)
 
         ids, pairs = db(scenario())
         assert ids["watch_b"] not in pairs
@@ -778,7 +888,7 @@ class TestNotifyDoesNotGateDiscovery:
                 watch = await session.get(Watches, ids["watch_a"])
                 watch.notify = False
                 await session.commit()
-            return ids, pairs_by_watch(await get_watched_item_list())
+            return ids, await pairs_by_watch(ids)
 
         ids, pairs = db(scenario())
         assert pairs[ids["watch_a"]] == [ids["site_a"]]
