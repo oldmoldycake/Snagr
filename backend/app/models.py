@@ -11,6 +11,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -56,13 +57,25 @@ class User(Base):
 
 
 class Sites(Base):
-    """A marketplace/storefront the agent can search, keyed by base_url."""
+    """A marketplace/storefront the agent can search, keyed by base_url.
+
+    The pause columns are the per-site circuit breaker: the hunter counts
+    consecutive read errors, and at the threshold stops reading the site at
+    all until paused_until passes. A bot wall then costs five reads instead of
+    every listing every interval forever."""
 
     __tablename__ = "sites"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    consecutive_errors: Mapped[int] = mapped_column(  # + api
+        default=0, server_default=text("0")
+    )
+    paused_until: Mapped[datetime | None] = mapped_column(  # + api
+        DateTime(timezone=True)
+    )
+    paused_reason: Mapped[str | None] = mapped_column(Text)  # + api
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -134,6 +147,9 @@ class Listings(Base):
     locator_failures: Mapped[int] = mapped_column(default=0, server_default="0")  # + api
     static_ok: Mapped[bool] = mapped_column(  # + api
         Boolean, default=False, server_default=text("false")
+    )
+    discovered_by_job_id: Mapped[int | None] = mapped_column(  # + api
+        BigInteger, ForeignKey("jobs.id", ondelete="SET NULL")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -270,47 +286,90 @@ class ApiTokens(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(Text)
     token_hash: Mapped[str] = mapped_column(Text, unique=True)
-    scopes: Mapped[list] = mapped_column(JSONB)  # subset of read | write | runs
+    scopes: Mapped[list] = mapped_column(JSONB)  # subset of read | write | jobs
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # NULL = never
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class AgentRuns(Base):
-    """+ api. One row per agent run. Supersedes the agent's unused JobRuns.
-    Created status='queued' by the API; the agent claims and drives it."""
+class Jobs(Base):
+    """+ api. One unit of the hunter's work, claimed one at a time by the agent
+    daemon (SELECT ... FOR UPDATE SKIP LOCKED). A `hunt` searches one
+    (watch, site) pair with the model; a `recheck` re-reads one listing's
+    price with no model in the loop; a `ground` refreshes an item's market
+    stats.
 
-    __tablename__ = "agent_runs"
+    `uq_jobs_open` is the design, not a safety net: at most one open job per
+    target means "check this listing now" is an UPDATE of the pending row, so
+    a queue can never grow a second copy of the same work. `user_id` NULL is
+    the hunter queueing itself; `reason` is why, and the Activity page shows
+    it verbatim.
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # NULL = system run (schedule fire, nightly sweep, deleted owner) — visible to all
+    `stats` is the terminal tally (listings_checked, prices_found,
+    new_listings, errors, tokens_in, tokens_out, duration_ms, and for a
+    recheck the method and transport that read the price)."""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text)  # hunt | recheck | ground
+    # NULL = nobody asked; the hunter queued this itself
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
-    scope_id: Mapped[int | None] = mapped_column()
-    scope_label: Mapped[str] = mapped_column(Text)
+    # denormalised from the listing: every ownership filter keys on it
+    watch_id: Mapped[int | None] = mapped_column(ForeignKey("watches.id", ondelete="CASCADE"))
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"))
+    listing_id: Mapped[int | None] = mapped_column(ForeignKey("listings.id", ondelete="CASCADE"))
+    item_id: Mapped[int | None] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(
-        Text, default="queued"
-    )  # queued|running|succeeded|failed|cancelled
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # stamped by the agent while it drives the run; its stale-run reaper fails
-    # a 'running' row silent for too long, which would otherwise block every
-    # enqueue (409 run_in_progress) forever. Agent-internal, not in the contract.
+        Text, server_default=text("'pending'")
+    )  # pending|running|done|failed|cancelled
+    priority: Mapped[int] = mapped_column(server_default=text("0"))  # user-triggered = 100
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    attempts: Mapped[int] = mapped_column(server_default=text("0"))
+    locked_by: Mapped[str | None] = mapped_column(Text)
+    # stamped by the worker holding the job; the reaper judges liveness by it
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    stats: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
-    last_seq: Mapped[int] = mapped_column(default=0)
+    reason: Mapped[str | None] = mapped_column(Text)  # user|created|slot_freed|sweep|paused
+    stats: Mapped[dict | None] = mapped_column(JSONB)
+    last_seq: Mapped[int] = mapped_column(server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    __table_args__ = (
+        Index(
+            "uq_jobs_open",
+            "kind",
+            text("coalesce(listing_id, 0)"),
+            text("coalesce(watch_id, 0)"),
+            text("coalesce(site_id, 0)"),
+            text("coalesce(item_id, 0)"),
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+        Index(
+            "ix_jobs_due",
+            "run_after",
+            text("priority DESC"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+        Index("ix_jobs_watch", "watch_id", text("created_at DESC")),
+    )
 
-class RunEvents(Base):
-    """+ api. Ordered progress log for a run — the source the SSE stream fans
-    out and a reconnecting client backfills from (?after_seq=N)."""
 
-    __tablename__ = "run_events"
+class JobEvents(Base):
+    """+ api. Ordered progress log for one job — what the Activity page's
+    terminal shows and a reconnecting client backfills from (?after_seq=N).
+    Written by hunts and grounding only: a recheck's whole output is its
+    price_checks row, so it would have nothing to say here."""
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    __tablename__ = "job_events"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
     seq: Mapped[int] = mapped_column()
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     level: Mapped[str] = mapped_column(Text)  # info|success|warn|error
@@ -318,28 +377,7 @@ class RunEvents(Base):
     message: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
-    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_run_seq"),)
-
-
-class RunSchedules(Base):
-    """+ api. User-defined scheduled runs. The agent's --consume tick fires a
-    due row by inserting a normal agent_runs row (scope copied verbatim):
-    recurring rows (interval_minutes set) roll next_due_at forward anchored;
-    one-shots (interval_minutes NULL) flip enabled off and keep the row."""
-
-    __tablename__ = "run_schedules"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # NULL = system schedule; the consume tick copies this onto the run it fires
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
-    scope_id: Mapped[int | None] = mapped_column()
-    scope_label: Mapped[str] = mapped_column(Text)
-    next_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    interval_minutes: Mapped[int | None] = mapped_column()  # NULL = one-shot
-    enabled: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
-    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("job_id", "seq", name="uq_job_seq"),)
 
 
 class NotificationChannels(Base):
