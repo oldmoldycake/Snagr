@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.3.0](https://github.com/oldmoldycake/Snagr/compare/v0.2.1...v0.3.0) (2026-09-19)
+
+
+### Features
+
+* **agent:** derive and replay per-listing price locators ([c585ccb](https://github.com/oldmoldycake/Snagr/commit/c585ccb37e624d9271cb1eed81a3e1fcf5ecaeb6))
+* **agent:** learned price locators and deterministic rechecks ([952d45a](https://github.com/oldmoldycake/Snagr/commit/952d45abc2438ea4d66b343c8ddfaea8be8422ea))
+* **agent:** read a price from raw HTML without a browser ([0a68639](https://github.com/oldmoldycake/Snagr/commit/0a6863951c139de4e1871159eda6e797c411a34d))
+* **agent:** recheck tracked listings without the model ([35f7007](https://github.com/oldmoldycake/Snagr/commit/35f700710320647d3356af766403e6bd8724ef0a))
+* **agent:** validate prices, URLs and model-typed text ([ab4c74a](https://github.com/oldmoldycake/Snagr/commit/ab4c74a4dbd5a4f33075dcb7eb9ce62a890a3a1e))
+* **agent:** validate tool arguments and refuse cross-listing writes ([ebd9762](https://github.com/oldmoldycake/Snagr/commit/ebd97624be240d91b631195eb7d9626bd045a61f))
+* **agent:** validate tool arguments and refuse cross-listing writes ([4563221](https://github.com/oldmoldycake/Snagr/commit/4563221406f42c9e0392f6ac4b71ac3cfadd08e1))
+* **api:** expose how each price was read, and ignore unbelieved readings ([9f9b70f](https://github.com/oldmoldycake/Snagr/commit/9f9b70fadbd9fbacfea6289bccd1d05c881a4d1f))
+* **db:** price locators on listings, method and confirmed on checks ([c403d6f](https://github.com/oldmoldycake/Snagr/commit/c403d6faf0566fcca2160de2e030d59e17db1d19))
+* **frontend:** show how each price was read ([6aa75a2](https://github.com/oldmoldycake/Snagr/commit/6aa75a2435eb67dc9303b0cd3f8f2261fc2d3aa7))
+
+
+### Bug Fixes
+
+* **agent:** skip known inactive listings instead of resurrecting them ([602df94](https://github.com/oldmoldycake/Snagr/commit/602df946fc4746aa14bd2331c2812de81892900b))
+* **agent:** skip known inactive listings instead of resurrecting them ([7cbdd7a](https://github.com/oldmoldycake/Snagr/commit/7cbdd7a72ffa1ef2d6721789df0f04fe7d82d536))
+
 ## [0.2.1](https://github.com/oldmoldycake/Snagr/compare/v0.2.0...v0.2.1) (2026-09-14)
 
 
