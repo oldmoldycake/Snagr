@@ -54,10 +54,12 @@ Four independently-deployed components in one repo, sharing one PostgreSQL datab
 - A [Playwright MCP](https://github.com/microsoft/playwright-mcp) endpoint the agent can reach, **started with `--isolated`**. The agent opens one browser context per job so a check never waits behind a hunt, and a server running on a persistent profile refuses the second session outright ("Browser is already in use"). Two flags are worth adding:
 
   ```
-  npx @playwright/mcp@latest --port 8931 --isolated     --storage-state ./consent.json     --blocked-origins "localhost;127.0.0.1;10.0.0.0/8;172.16.0.0/12;192.168.0.0/16;backend;vision;snagr-postgres"
+  npx @playwright/mcp@latest --port 8931 --isolated \
+    --storage-state ./consent.json \
+    --blocked-origins "localhost;127.0.0.1;backend;vision;minio;snagr-postgres"
   ```
 
-  `--storage-state` seeds cookie-consent state into every fresh context (an isolated context starts with none). `--blocked-origins` is defence in depth for the agent's own URL guard: the pages it reads are untrusted, and nothing they suggest should be able to point the browser at your private network. Note that it does not affect redirects.
+  `--storage-state` seeds cookie-consent state into every fresh context (an isolated context starts with none). `--blocked-origins` is defence in depth for the agent's own URL guard: the pages it reads are untrusted, and nothing they suggest should be able to point the browser at your own services. It takes origins, not CIDR ranges — list the names your stack actually resolves — and Playwright notes that it does not affect redirects, which is why the agent guards every URL itself as well.
 - An LLM API key — or a local model server — for any [LangChain `init_chat_model`](https://python.langchain.com/docs/how_to/chat_models_universal_init/) provider.
 - A [SearXNG](https://docs.searxng.org) instance with the JSON output format enabled, for market-price grounding. Without one, grounding attempts fail and are logged; scraping itself is unaffected.
 - **Docker + Docker Compose v2** for the reference stack. To run components outside Docker instead: **Python 3.14** (a hard floor — `agent/main.py` uses 3.14-only `except` syntax) and **Node 22** (what CI and the images use).
