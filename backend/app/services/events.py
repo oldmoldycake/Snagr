@@ -1,17 +1,24 @@
-"""SSE broadcaster — fan run activity out to every connected /api/events client (Phase 3, D3).
+"""SSE broadcaster — fan the hunter's activity out to every connected
+/api/events client.
 
-The DB is the bus: migration 007's triggers pg_notify on 'snagr_run_events'
-whenever ANY writer (the agent's consumer, our cancel_run, a psql session)
-commits a run_events insert or an agent_runs status change. listen_pg() holds
-one dedicated LISTEN connection, re-reads the announced rows, and fans them
-out to client queues as the {event, data, id} dicts that sse-starlette's
-EventSourceResponse encodes on the wire (format pinned by mocks/sse.ts).
+The DB is the bus: migration 015's triggers pg_notify whenever ANY writer
+(the agent daemon, our cancel_job, a psql session) commits a jobs insert or
+status change ('snagr_jobs'), a job_events insert or a price_checks insert
+('snagr_job_events'). listen_pg() holds one dedicated LISTEN connection,
+re-reads the announced rows, and fans them out to client queues as the
+{event, data, id} dicts that sse-starlette's EventSourceResponse encodes on
+the wire (format pinned by mocks/sse.ts).
 
-Every frame is per-viewer (run privacy): clients register with their identity,
-run envelopes and snapshots are gated by run_visible, and run.event frames
-additionally pass event_visible — the same predicate the REST surface uses
-(services/runs.py), so push and backfill can never disagree. Visibility refs
-are looked up fresh per notification: a few tiny indexed queries per event at
+Two shapes of frame, because the hunter does two shapes of work. A hunt (or a
+grounding pass) has a voice: lifecycle envelopes plus every line of its log.
+A recheck has a pulse: no lifecycle, no events, just the price check it
+wrote, which is what `listing.checked` carries — that is the whole reason
+rechecks are cheap enough to run every half hour.
+
+Every frame is per-viewer (job privacy): clients register with their
+identity, and each frame is gated by the same predicate the REST surface uses
+(services/jobs.py), so push and backfill can never disagree. Visibility is
+looked up fresh per notification: a few tiny indexed queries per event at
 household scale, and no cache invalidation coupled to watch mutations.
 
 Notifications carry ids only; rows are re-read here. NOTIFY delivers on
@@ -20,9 +27,9 @@ commit, so an announcement can never outrun what's readable.
 Errors in this module log-and-continue instead of raising — the loud-failure
 rule serves request handlers, but killing the app's only listener task would
 silently end live updates for everyone. The reconnect loop is the recovery:
-on every (re)connect each client gets a fresh per-viewer run.snapshot, from
-which it refetches its visible backfill (RunEventsProvider polls
-/runs/:id/events unconditionally; the filtered response is authoritative).
+on every (re)connect each client gets a fresh per-viewer job.snapshot, from
+which it refetches its visible backfills (JobsProvider polls
+/jobs/:id/events unconditionally; the filtered response is authoritative).
 """
 
 import asyncio
@@ -35,28 +42,28 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import _sessionmaker
-from app.models import AgentRuns, RunEvents, User
-from app.schemas.runs import RunEnvelope, RunSnapshotData, RunSnapshotEntry
-from app.services.runs import (
-    build_agent_run,
-    build_run_event,
-    event_visible,
-    load_viewer_refs,
-    run_visible,
-)
+from app.models import Items, JobEvents, Jobs, Listings, PriceChecks, Sites, User, Watches
+from app.schemas.jobs import JobEnvelope, JobSnapshotData, ListingChecked
+from app.services.jobs import build_job_event, live_jobs, named_job, sees_job
 
 log = logging.getLogger(__name__)
 
-CHANNEL = "snagr_run_events"
+JOBS_CHANNEL = "snagr_jobs"
+EVENTS_CHANNEL = "snagr_job_events"
 
-# run status -> the SSE event name the client listens for. 'queued' has no
-# entry: the POST /api/runs response announces it instead.
+# job status -> the SSE event name the client listens for. 'pending' has no
+# entry: the POST /api/jobs response announces it instead.
 _STATUS_EVENTS = {
-    "running": "run.started",
-    "succeeded": "run.finished",
-    "cancelled": "run.finished",
-    "failed": "run.failed",
+    "running": "job.started",
+    "done": "job.finished",
+    "cancelled": "job.finished",
+    "failed": "job.failed",
 }
+
+# Only work with a story to tell gets lifecycle frames. A recheck's whole
+# output is its price check, and announcing three of those a minute as
+# started/finished pairs would drown the page it is meant to inform.
+_NARRATED_KINDS = ("hunt", "ground")
 
 
 @dataclass(frozen=True, eq=False)
@@ -92,127 +99,160 @@ def _put(client: _Client, message: dict) -> None:
         log.warning("SSE client queue full; dropping message")
 
 
-def broadcast(message: dict, run: AgentRuns | None = None) -> None:
-    """Push one {event, data, id?} message to every connected client — or,
-    when `run` is given, only to clients who may see that run."""
-    for client in _clients:
-        if run is None or run_visible(run, client.user_id, client.is_admin):
+async def _broadcast_job(session, job_id: int, message: dict) -> None:
+    """Push one message to every client who may see that job."""
+    for client in list(_clients):
+        if await sees_job(session, job_id, client.user_id, client.is_admin):
             _put(client, message)
 
 
 async def snapshot_message(user_id: int, is_admin: bool) -> dict:
-    """The per-viewer run.snapshot sent on every (re)connect — the active runs
-    THIS viewer may see, from which their client refetches its backfill.
-    last_seq is the run's global write cursor (metadata; never gap-compared)."""
+    """The per-viewer job.snapshot sent on every (re)connect — the live hunts
+    THIS viewer may see, from which their client rebuilds its live set and
+    refetches each backfill. last_seq is the job's global write cursor
+    (metadata; never gap-compared)."""
     async with _sessionmaker()() as session:
-        stmt = (
-            select(AgentRuns)
-            .where(AgentRuns.status.in_(("queued", "running")))
-            .order_by(AgentRuns.id)
-        )
-        rows = (await session.execute(stmt)).scalars().all()
-    data = RunSnapshotData(
-        active_runs=[
-            RunSnapshotEntry(
-                id=run.id,
-                user_id=run.user_id,
-                status=run.status,
-                scope=run.scope,
-                scope_label=run.scope_label,
-                last_seq=run.last_seq,
-            )
-            for run in rows
-            if run_visible(run, user_id, is_admin)
-        ]
+        jobs = await live_jobs(session, user_id, is_admin)
+    return {"event": "job.snapshot", "data": JobSnapshotData(jobs=jobs).model_dump_json()}
+
+
+async def _handle_job(session, job_id: int) -> None:
+    """A jobs insert or status change — a lifecycle frame, or nothing."""
+    job = await session.get(Jobs, job_id)
+    if job is None:
+        log.warning(f"Notified of job {job_id} but found no row")
+        return
+    if job.kind not in _NARRATED_KINDS:
+        return
+    event = _STATUS_EVENTS.get(job.status)
+    if event is None:
+        return
+    frame = await named_job(session, job_id)
+    if frame is None:
+        return
+    await _broadcast_job(
+        session, job_id, {"event": event, "data": JobEnvelope(job=frame).model_dump_json()}
     )
-    return {"event": "run.snapshot", "data": data.model_dump_json()}
 
 
-async def _handle_notification(payload: str) -> None:
+async def _handle_job_event(session, job_id: int, seq: int) -> None:
+    """One line of a job's log."""
+    row = (
+        await session.execute(
+            select(JobEvents).where(JobEvents.job_id == job_id).where(JobEvents.seq == seq)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        log.warning(f"Notified of job_events {job_id}:{seq} but found no row")
+        return
+    await _broadcast_job(
+        session,
+        job_id,
+        {
+            "event": "job.event",
+            "data": build_job_event(row).model_dump_json(),
+            "id": f"{job_id}:{seq}",
+        },
+    )
+
+
+async def _handle_price_check(session, check_id: int) -> None:
+    """A price check, whichever path read it — the recheck's whole output.
+
+    Gated by listing ownership rather than by a job, because a check written
+    by a hunt belongs to the same person and reads the same on the page.
+    """
+    row = (
+        await session.execute(
+            select(
+                PriceChecks.listing_id,
+                PriceChecks.price,
+                PriceChecks.currency,
+                PriceChecks.status,
+                PriceChecks.method,
+                PriceChecks.confirmed,
+                PriceChecks.checked_at,
+                Listings.item_id,
+                Items.name.label("item_name"),
+                Sites.name.label("site_name"),
+                Watches.user_id.label("owner_id"),
+            )
+            .join(Listings, Listings.id == PriceChecks.listing_id)
+            .join(Items, Items.id == Listings.item_id)
+            .join(Sites, Sites.id == Listings.site_id)
+            .join(Watches, Watches.id == Listings.watch_id)
+            .where(PriceChecks.id == check_id)
+        )
+    ).one_or_none()
+    if row is None:
+        log.warning(f"Notified of price_check {check_id} but found no row")
+        return
+
+    frame = ListingChecked(
+        listing_id=row.listing_id,
+        item_id=row.item_id,
+        item_name=row.item_name,
+        site_name=row.site_name,
+        price=str(row.price) if row.price is not None else None,
+        currency=row.currency,
+        status=row.status,
+        method=row.method,
+        confirmed=row.confirmed,
+        # a listing that sold or ended is not re-read again, and the slot it
+        # held is what the next hunt fills
+        slot_freed=row.status in ("sold", "ended"),
+        checked_at=row.checked_at.isoformat(),
+    )
+    message = {"event": "listing.checked", "data": frame.model_dump_json()}
+    owner = row.owner_id
+    for client in list(_clients):
+        if client.is_admin or client.user_id == owner:
+            _put(client, message)
+
+
+async def _handle_notification(channel: str, payload: str) -> None:
     """Translate one trigger notification into per-viewer client deliveries."""
     note = json.loads(payload)
-    if note["kind"] == "event":
-        async with _sessionmaker()() as session:
-            stmt = (
-                select(RunEvents)
-                .where(RunEvents.run_id == note["run_id"])
-                .where(RunEvents.seq == note["seq"])
-            )
-            row = (await session.execute(stmt)).scalar_one_or_none()
-            if row is None:
-                log.warning(
-                    f"Notified of run_events {note['run_id']}:{note['seq']} but found no row"
-                )
-                return
-            run = await session.get(AgentRuns, row.run_id)
-            if run is None:
-                log.warning(f"Notified of run {note['run_id']} but found no row")
-                return
-            message = {
-                "event": "run.event",
-                "data": build_run_event(row).model_dump_json(),
-                "id": f"{row.run_id}:{row.seq}",
-            }
-            # the empty-set predicate call IS the neutrality test (an event
-            # with no item/listing reference passes for anyone) — reusing it
-            # keeps this fast path from ever drifting from the real rule
-            if event_visible(row, frozenset(), frozenset()):
-                broadcast(message, run)
-                return
-            for client in list(_clients):
-                if not run_visible(run, client.user_id, client.is_admin):
-                    continue
-                if not client.is_admin:
-                    refs = await load_viewer_refs(session, client.user_id)
-                    if not event_visible(row, *refs):
-                        continue
-                _put(client, message)
-    elif note["kind"] == "status":
-        event = _STATUS_EVENTS.get(note["status"])
-        if event is None:
-            return
-        async with _sessionmaker()() as session:
-            run = await session.get(AgentRuns, note["run_id"])
-        if run is None:
-            log.warning(f"Notified of run {note['run_id']} but found no row")
-            return
-        # lifecycle envelopes carry scope_label — gated by run-row visibility
-        broadcast(
-            {"event": event, "data": RunEnvelope(run=build_agent_run(run)).model_dump_json()},
-            run,
-        )
+    async with _sessionmaker()() as session:
+        if channel == JOBS_CHANNEL:
+            await _handle_job(session, note["id"])
+        elif "check" in note:
+            await _handle_price_check(session, note["check"])
+        else:
+            await _handle_job_event(session, note["job_id"], note["seq"])
 
 
 async def listen_pg() -> None:
-    """The app-lifetime listener task: LISTEN on the channel and process
+    """The app-lifetime listener task: LISTEN on both channels and process
     notifications in arrival order. Reconnects forever on DB loss (the LAN DB
     rides a flaky VPN); each (re)connect sends every client a fresh per-viewer
     snapshot so they backfill whatever the outage swallowed."""
     # asyncpg wants a plain postgres:// DSN, without SQLAlchemy's driver tag
     dsn = settings.DATABASE_URL.replace("+asyncpg", "")
-    pending: asyncio.Queue[str] = asyncio.Queue()
+    pending: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
-    def _on_notify(_conn, _pid, _channel, payload: str) -> None:
-        pending.put_nowait(payload)
+    def _on_notify(_conn, _pid, channel: str, payload: str) -> None:
+        pending.put_nowait((channel, payload))
 
     while True:
         try:
             conn = await asyncpg.connect(dsn)
             try:
-                await conn.add_listener(CHANNEL, _on_notify)
-                # per-client snapshots: each viewer gets only the runs they
+                for channel in (JOBS_CHANNEL, EVENTS_CHANNEL):
+                    await conn.add_listener(channel, _on_notify)
+                # per-client snapshots: each viewer gets only the jobs they
                 # may see, and refetches their own visible backfill from it
                 for client in list(_clients):
                     _put(client, await snapshot_message(client.user_id, client.is_admin))
                 log.info("SSE listener connected")
                 while True:
                     try:
-                        payload = await asyncio.wait_for(pending.get(), timeout=10)
+                        channel, payload = await asyncio.wait_for(pending.get(), timeout=10)
                     except TimeoutError:
                         # idle: surface a silently-dead TCP link (VPN drop)
                         await conn.execute("SELECT 1")
                         continue
-                    await _handle_notification(payload)
+                    await _handle_notification(channel, payload)
             finally:
                 await conn.close()
         except (OSError, asyncpg.PostgresError) as e:

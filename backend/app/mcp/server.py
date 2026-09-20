@@ -42,7 +42,7 @@ DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
 # scope gates — a tool carrying one is invisible to, and uncallable by, tokens
 # without that scope: the MCP twin of REST's 403 insufficient_scope
 WRITE = require_scopes("write")
-RUNS = require_scopes("runs")
+JOBS = require_scopes("jobs")
 
 INSTRUCTIONS = """\
 Snagr is a self-hosted price tracker: the user watches items (a shared catalog
@@ -50,12 +50,16 @@ entry plus their own target price, criteria and site subset), an agent finds
 and re-checks marketplace listings for them, and notifications fire when a
 listing crosses the target.
 
+The agent behind it is a daemon: it re-checks tracked listings on its own
+schedule and hunts for new ones when a watch has room, so nothing needs
+starting. enqueue_jobs is for "do it now".
+
 Conventions: every price is a decimal string ("549.99", never a number) and
 every timestamp is ISO-8601 UTC. Categories can be addressed by id or slug and
 sites by id or name; items only by id (list_items finds them). Anything you
-can't see with this token doesn't exist — a missing item, run or listing is a
+can't see with this token doesn't exist — a missing item, job or listing is a
 `not_found` error, never a hint. Read tools are safe to call freely; write
-tools change the user's real data, and trigger_run starts a paid agent run.
+tools change the user's real data, and a hunt spends LLM tokens.
 """
 
 

@@ -4,9 +4,9 @@ the agent reads, held to the same bar as agent/tools.py."""
 
 from fastmcp import FastMCP
 
-from app.mcp.tools import catalog, charts, instance, items, runs, vision
+from app.mcp.tools import catalog, charts, instance, items, jobs, vision
 
 
 def register(mcp: FastMCP) -> None:
-    for module in (instance, catalog, items, charts, runs, vision):
+    for module in (instance, catalog, items, charts, jobs, vision):
         module.register(mcp)

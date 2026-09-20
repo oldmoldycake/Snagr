@@ -15,7 +15,7 @@ AuthGuard in the frontend.
 Bearer rules: the header wins over the cookie when
 both are present; a bearer request carries no ambient credential, so it is
 exempt from the CSRF header; every GET needs the `read` scope and every other
-method `write`, and the two run routes additionally ask for `runs`. The whole
+method `write`, and the job routes additionally ask for `jobs`. The whole
 bearer surface is off when the operator sets MCP_ENABLED=false.
 """
 
@@ -87,7 +87,7 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
 
 async def reject_bearer(request: Request) -> None:
     """Account management is cookie-only: an API token acts on the domain
-    (items, sites, runs…), never on the account that owns it — so a leaked
+    (items, sites, jobs…), never on the account that owns it — so a leaked
     token can't mint more tokens, change the password, or reach admin routes."""
     if _bearer(request) is not None:
         raise err(403, "forbidden", "API tokens can't manage the account")

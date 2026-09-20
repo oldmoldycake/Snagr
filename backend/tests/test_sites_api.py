@@ -84,6 +84,8 @@ async def test_site_shape_and_plain_list_envelope(client, db_session):
         "category_ids",
         "listing_count",
         "last_checked_at",
+        "paused_until",
+        "paused_reason",
         "created_at",
     }
     assert site["name"] == "TestBay"
@@ -91,6 +93,8 @@ async def test_site_shape_and_plain_list_envelope(client, db_session):
     assert site["listing_count"] == 0
     assert site["category_ids"] == []
     assert site["last_checked_at"] is None
+    assert site["paused_until"] is None
+    assert site["paused_reason"] is None
     datetime.fromisoformat(site["created_at"])  # ISO-8601, or this raises
 
 

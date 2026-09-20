@@ -26,8 +26,8 @@ from app.routers import (
     events,
     instance,
     items,
+    jobs,
     me,
-    runs,
     sites,
     vision,
 )
@@ -75,7 +75,7 @@ for router in (
     sites.router,
     items.router,
     charts.router,
-    runs.router,
+    jobs.router,
     events.router,
     admin.router,
     vision.router,

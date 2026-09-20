@@ -5,6 +5,7 @@ Each test starts from an empty DB (conftest truncates between tests), so
 """
 
 from app.config import settings
+from app.models import User
 
 from tests.conftest import CSRF
 
@@ -232,27 +233,28 @@ async def test_admin_delete_user_and_watch_guard(client, make_client, monkeypatc
     assert [u["email"] for u in users] == [ADMIN["email"]]
 
 
-async def test_deleting_a_user_degrades_their_runs_to_system(
+async def test_deleting_a_user_degrades_their_jobs_to_system(
     client, make_client, monkeypatch, db_session
 ):
-    # runs don't block deletion the way watches do — ON DELETE SET NULL flips
-    # them to system runs (user_id NULL) instead of breaking the hard delete
+    # a job somebody asked for doesn't block deletion the way watches do —
+    # ON DELETE SET NULL turns it into one the hunter appears to have queued
+    # itself (user_id NULL) instead of breaking the hard delete
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
-    await _register(client)
+    admin = (await _register(client)).json()["user"]["id"]
     plain = await make_client()
     guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
 
-    from app.models import AgentRuns
+    from tests.factories import Scenario
 
     async with db_session() as s:
-        s.add(
-            AgentRuns(
-                user_id=guest_id, scope="global", scope_label="Everything", status="succeeded"
-            )
-        )
-        await s.commit()
+        sc = Scenario(s)
+        admin_user = await s.get(User, admin)
+        item = await sc.item("Alpha")
+        watch = await sc.watch(item, user=admin_user)
+        await sc.job(watch=watch, user_id=guest_id)
+        await sc.commit()
 
     assert (await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)).status_code == 204
 
-    run = (await client.get("/api/runs")).json()["data"][0]
-    assert run["user_id"] is None
+    job = (await client.get("/api/jobs")).json()["data"][0]
+    assert job["user_id"] is None

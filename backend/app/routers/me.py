@@ -191,7 +191,7 @@ def _channel_fields(
 
 async def _own_channel(channel_id: int, user, db: AsyncSession) -> NotificationChannels:
     """Fetch one of the caller's channels; another user's channel 404s the
-    same as a missing one (hidden ≡ nonexistent, the runs-privacy rule)."""
+    same as a missing one (hidden ≡ nonexistent, the job-privacy rule)."""
     try:
         channel = await db.get(NotificationChannels, channel_id)
     except SQLAlchemyError as e:

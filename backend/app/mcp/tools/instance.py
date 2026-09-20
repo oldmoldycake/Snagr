@@ -22,6 +22,6 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(annotations=READ_ONLY)
     async def whoami() -> Whoami:
         """The account this token acts as, and the scopes it carries (read,
-        write, runs). Tools you lack the scope for are simply not listed."""
+        write, jobs). Tools you lack the scope for are simply not listed."""
         async with caller_session() as (_db, user):
             return Whoami(user=user_out(user), scopes=list(get_access_token().scopes))

@@ -1,20 +1,22 @@
-"""Server-Sent Events stream — GET /api/events  (Phase 3).
+"""Server-Sent Events stream — GET /api/events.
 
 NOT in endpoints.ts: the frontend opens this directly via
-`new EventSource('/api/events')` in features/runs/RunEventsProvider.tsx.
+`new EventSource('/api/events')` in features/activity/JobsProvider.tsx.
 
 Wire format (match mocks/sse.ts exactly; every frame is per-viewer — gated by
-the visibility predicate in services/runs.py):
-    on connect  -> event: run.snapshot   {active_runs: [...]} (viewer's runs only)
-    per event   -> event: run.event      RunEvent    (id: "<run_id>:<seq>")
-    lifecycle   -> event: run.started / run.finished / run.failed  {run: AgentRun}
+the visibility predicate in services/jobs.py):
+    on connect  -> event: job.snapshot    {jobs: [...]}  (the viewer's live hunts)
+    per event   -> event: job.event       JobEvent       (id: "<job_id>:<seq>")
+    lifecycle   -> event: job.started / job.finished / job.failed  {job: Job}
+    per check   -> event: listing.checked ListingChecked
 
-Backed by services/events.py (Postgres LISTEN/NOTIFY hub); the frame list above
-is the whole wire contract. nginx.conf already disables buffering + extends
-timeouts for this path. Auth rides the
-access cookie — EventSource can't send headers, which is why auth is cookies
-in the first place; an expired cookie 401s the reconnect and the client shows
-"reconnecting" until any refreshed request restores it.
+Rechecks emit no lifecycle frames and write no events: their whole output is
+the listing.checked frame. Backed by services/events.py (Postgres
+LISTEN/NOTIFY hub); the frame list above is the whole wire contract.
+nginx.conf already disables buffering + extends timeouts for this path. Auth
+rides the access cookie — EventSource can't send headers, which is why auth is
+cookies in the first place; an expired cookie 401s the reconnect and the
+client shows "reconnecting" until any refreshed request restores it.
 """
 
 from collections.abc import AsyncIterator

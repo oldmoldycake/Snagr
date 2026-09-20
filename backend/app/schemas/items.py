@@ -68,11 +68,36 @@ class Listing(BaseModel):
     authenticity: AuthenticityRead | None
     last_checked_at: str | None
     created_at: str
-    discovered_by_run_id: int | None
+    # the hunt job that saved this listing; null for rows older than jobs
+    discovered_by_job_id: int | None
+
+
+class HuntFacts(BaseModel):
+    """What the hunter will do next for one item — computed from its jobs,
+    never stored."""
+
+    running: bool
+    next_at: str | None
+    last_at: str | None
+    last_result: Literal["found", "nothing", "failed", "cancelled"] | None
+    slots_open: int
+
+
+class RecheckFacts(BaseModel):
+    running: int  # how many of this item's checks are running right now
+    next_at: str | None
+    # minutes between checks for this item's listings; PR 2a = the instance
+    # default (settings.RECHECK_INTERVAL_MINUTES)
+    interval_minutes: int
 
 
 class ItemDetail(ItemSummary):
+    """The facts line's two objects are here and not on ItemSummary — list
+    queries stay cheap."""
+
     listings: list[Listing]
+    hunt: HuntFacts
+    recheck: RecheckFacts
 
 
 class ListingRow(Listing):
