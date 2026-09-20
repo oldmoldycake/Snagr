@@ -418,6 +418,24 @@ class TestCompletion:
 
         assert db(scenario()) == []
 
+    def test_a_successor_never_lands_inside_a_pause(self):
+        # a paused site is not read whatever the queue says, so a due time
+        # inside the pause is a time this check cannot be run at
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            async with AsyncSessionLocal() as session:
+                site = await session.get(Sites, ids["site_a"])
+                site.paused_until = NOW + timedelta(hours=3)
+                site.paused_reason = "5 consecutive read errors"
+                await session.commit()
+            await job_queue.complete(job_id, {})
+            return await read_jobs(status="pending")
+
+        (successor,) = db(scenario())
+        assert successor["run_after"] > NOW + timedelta(hours=2)
+
     def test_a_hunt_leaves_no_successor(self):
         async def scenario():
             ids = await seed_scope_graph()

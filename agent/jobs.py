@@ -36,7 +36,7 @@ from config import (
     JOB_STALE_AFTER_SECONDS,
     RECHECK_INTERVAL_MINUTES,
 )
-from database import AsyncSessionLocal, JobEvents, Jobs, Listings
+from database import AsyncSessionLocal, JobEvents, Jobs, Listings, Sites
 from sqlalchemy import bindparam, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -254,6 +254,11 @@ async def _queue_successor(session, job: Jobs) -> None:
     active = await session.scalar(select(Listings.active).where(Listings.id == job.listing_id))
     if not active:
         return
+    due = datetime.now(UTC) + timedelta(minutes=RECHECK_INTERVAL_MINUTES)
+    # A paused site is not read whatever the queue says, so a due time inside
+    # the pause would be a time this check cannot be run at — and the page
+    # would count it down as if it could.
+    paused_until = await session.scalar(select(Sites.paused_until).where(Sites.id == job.site_id))
     await _insert(
         session,
         kind="recheck",
@@ -261,7 +266,8 @@ async def _queue_successor(session, job: Jobs) -> None:
         item_id=job.item_id,
         site_id=job.site_id,
         listing_id=job.listing_id,
-        run_after=datetime.now(UTC) + timedelta(minutes=RECHECK_INTERVAL_MINUTES),
+        run_after=max(due, paused_until) if paused_until is not None else due,
+        reason="paused" if paused_until is not None and paused_until > due else None,
     )
 
 
