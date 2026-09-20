@@ -32,7 +32,7 @@ backend/
 │   │   ├── catalog.py      # Category*, Site*
 │   │   ├── items.py        # ItemSummary, ItemDetail, Listing, Watch, PriceCheck + requests
 │   │   ├── charts.py       # price-history/summary, dashboard stats, price-drops
-│   │   ├── runs.py         # AgentRun, RunEvent, RunStats + requests
+│   │   ├── jobs.py         # Job, JobStats, JobEvent, JobsSummary, ListingChecked + requests
 │   │   ├── tokens.py       # ApiToken, ApiTokenCreated + create request (Settings → MCP & API)
 │   │   ├── notifications.py# ChannelKind, NotificationEvent, NotificationChannel* + create/update requests
 │   │   └── vision.py       # ReviewQueueEntry, ReferenceImage, AuthenticityRead + requests
@@ -44,30 +44,30 @@ backend/
 │   │   ├── sites.py        # /api/sites[/{id}]
 │   │   ├── items.py        # /api/items[/{id}], /api/items/{id}/watch, /api/listings/{id}, price-checks
 │   │   ├── charts.py       # /api/items/{id}/price-*, /api/categories/{id}/price-change, /api/dashboard/*
-│   │   ├── runs.py         # /api/runs[/{id}][/events|/cancel]
+│   │   ├── jobs.py         # /api/jobs[/summary|/{id}][/events|/cancel]
 │   │   ├── events.py       # GET /api/events (SSE) — opened via EventSource, not in endpoints.ts
 │   │   ├── admin.py        # /api/admin/users, /api/admin/invites
 │   │   └── vision.py       # /api/vision/* (review queue, references, image proxy) + /api/items/{id}/references*
 │   ├── mcp/               # the MCP endpoint (POST /api/mcp): Snagr as tools for agents
 │   │   ├── server.py       # FastMCP instance, bearer verifier, the error-envelope conversion, app factory
 │   │   ├── refs.py         # category by id|slug and site by id|name (404 unknown, 422 ambiguous)
-│   │   ├── schemas.py      # MCP-only shapes (Whoami, RunDetail) — every other tool returns schemas/*
-│   │   └── tools/          # one module per section: instance, catalog, items, charts, runs, vision (__init__.register() fans out to them)
+│   │   ├── schemas.py      # MCP-only shapes (Whoami, JobDetail) — every other tool returns schemas/*
+│   │   └── tools/          # one module per section: instance, catalog, items, charts, jobs, vision (__init__.register() fans out to them)
 │   └── services/          # logic that's more than one query — routers stay thin
 │       ├── items.py        # the item↔watch↔watch_sites mapping — reads, writes, serializers (shared by the router and mcp/)
 │       ├── catalog.py      # category/site reads, writes and serializers (shared by routers and mcp/)
 │       ├── aggregates.py   # all price math: history buckets, dashboard stats, sparklines, deltas
-│       ├── runs.py         # run enqueue/scope-label/409-active-check + visibility predicate
+│       ├── jobs.py         # the queue's API side: enqueue, scope expansion, reads, cancel + the visibility predicate
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
-│       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY)
+│       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY) — job.* frames + listing.checked
 │       ├── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
 │       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
 │       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
-│   └── test_*.py           # one module per router/service (16 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–013 (linear chain); the backend owns the canonical schema (D1)
+│   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
+├── migrations/            # Alembic revisions 001–015 (linear chain); the backend owns the canonical schema (D1)
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -87,7 +87,7 @@ JSON in/out. **core** holds cross-cutting concerns (errors, auth, security).
 | Layer | Owns | Never does |
 |---|---|---|
 | `routers/` | URL paths, request parsing, choosing status codes, calling a service or the DB | complex math, raw crypto |
-| `services/` | multi-step logic (item mapping, aggregation, run lifecycle, SSE) | knowing about HTTP/FastAPI |
+| `services/` | multi-step logic (item mapping, aggregation, the job queue, SSE) | knowing about HTTP/FastAPI |
 | `schemas/` | the exact request/response shapes (mirror `types.ts`) + the `*_out()` serializers that map a row to its shape | business logic, DB access |
 | `models.py` | ORM tables (the schema) | request shapes |
 | `core/` | error envelope, auth deps, hashing/tokens | domain logic |
@@ -114,7 +114,7 @@ Find any `endpoints.ts` function here:
 | `listSites` `createSite` `updateSite` `deleteSite` | `sites.py` | 1 / 3 |
 | `listItems` `createItem` `getItem` `updateItem` `deleteItem` `updateWatch` `updateListing` `listPriceChecks` | `items.py` | 1 / 3 |
 | `getPriceHistory` `getPriceSummary` `getCategoryPriceChange` `getDashboardStats` `getPriceDrops` | `charts.py` | 1 |
-| `triggerRun` `listRuns` `getRun` `getRunEvents` `cancelRun` | `runs.py` | 3 |
+| `enqueueJobs` `listJobs` `getJobsSummary` `getJob` `getJobEvents` `cancelJob` | `jobs.py` | 3 |
 | *(EventSource `/api/events`)* | `events.py` | 3 |
 | `listUsers` `updateUser` `deleteUser` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
 | `listReviewQueue` `confirmReviewEntry` `discardReviewEntry` `listReferences` `uploadReference` `revokeReference` `revokeAutoReferences` | `vision.py` | vision |
@@ -147,27 +147,38 @@ Find any `endpoints.ts` function here:
    disbelieved reading is still a check that happened.
 
 3. **The API schema sits on top of the agent-era tables.** Auth columns on `users`,
-   plus `watch_sites`, `invites`, `sessions`, `agent_runs`, `run_events` — all added
-   in migration 002, which also dropped the dead `job_runs` (superseded by
-   `agent_runs`). Per-watch config (`criteria`, `selection_mode`, `max_listings`,
+   plus `watch_sites`, `invites`, `sessions` — added in migration 002. The three
+   run tables that came with them (`agent_runs`, `run_events`, `run_schedules`)
+   were dropped by migration 015, which replaced them with `jobs` and
+   `job_events`. Per-watch config (`criteria`, `selection_mode`, `max_listings`,
    `allow_reproductions`) lives on `watches`, not `items`: `items` stays a pure
    shared catalog row.
 
-4. **Run visibility is per-user, enforced by ONE predicate** (`services/runs.py`):
-   `run_visible` gates the run row (own runs + system runs with `user_id NULL` +
-   admins see all; a hidden run 404s exactly like an unknown id), and — within a
-   visible run — `event_visible` filters each `run_events` row by payload
-   reference (`item_id` → that item's watchers, `listing_id` → the listing's sole
-   owner, no reference → every viewer of the run), with `load_viewer_refs`
-   fetching the two ownership sets. The same functions serve five surfaces:
-   `GET /api/runs` (the rule in SQL form for pagination totals), run detail, the
-   events backfill (filter **before** `limit`), cancel (404 → 403 for system
-   runs → 409, permission before state), and the SSE hub (envelopes + snapshots
-   gated per run row, `run.event` frames by the composed predicate). Reconnects
-   never infer gaps from seq arithmetic — filtered viewers legitimately hold
-   sparse seqs; the client refetches the backfill on every snapshot and the
-   filtered response is authoritative. This is **peer privacy only**: the
-   instance operator can always read the DB.
+4. **Job visibility is per-user, enforced by ONE predicate** (`services/jobs.py`):
+   `visible_to(user_id, is_admin)` is a SQL clause — jobs for the viewer's own
+   watches, plus `ground` jobs for items they watch; admins see everything; a
+   hidden job 404s exactly like an unknown id. It is a clause rather than a
+   function of a loaded row because `meta.total` has to count post-filter in the
+   database and because the SSE hub holds only an identity. The same predicate
+   serves six surfaces: `GET /api/jobs`, detail, the events backfill, the
+   summary, cancel (404 → 403 → 422 → 409, permission before state) and every
+   pushed frame (`services/events.py`), so push and backfill can never disagree.
+
+   Unlike the runs this replaced, there is **no event-level rule**: a job belongs
+   to one watch, so seeing the job is seeing its events. `listing.checked` frames
+   are gated by listing ownership instead, which is the same person. Reconnects
+   never infer gaps from seq arithmetic; the client refetches each visible
+   backfill on every snapshot and the filtered response is authoritative. This is
+   **peer privacy only**: the instance operator can always read the DB.
+
+   **The queue's own rules live half here and half in the agent.** Migration 015's
+   partial unique index allows one *open* job per target, so every insert on both
+   sides is `ON CONFLICT DO NOTHING` and `POST /api/jobs` answers 202 with
+   whatever it queued or brought forward — never a 409. Creating a watch queues
+   its hunts and its grounding in the same transaction; untracking a listing
+   cancels its pending check. `ItemDetail.hunt` / `.recheck` are computed from
+   the watch's jobs and exist on the detail shape only, so list queries stay
+   cheap.
 
 5. **Vision visibility splits three ways (D-V11), enforced in three places.**
    An item's reference *library* is communal — every watcher of the item reads

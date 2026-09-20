@@ -19,10 +19,11 @@ npm run dev          # http://localhost:5173
 A full mock API (MSW) seeded with a year of deterministic price history is still available —
 run `VITE_USE_MOCKS=true npm run dev` (an inline value beats the file, and leaves the tracked
 `.env.development` alone; setting it there works too). Sign in with
-**demo@snagr.dev / snagr**. Click **Run all** (or the run buttons on categories, sites, and
-items) to watch a scripted agent run stream into the activity panel; it writes real price
-checks into the mock store, so the dashboard updates when it finishes. Mock data resets on
-page reload; the session survives. `src/mocks/handlers.ts` doubles as the behavioral spec
+**demo@snagr.dev / snagr**. Press **Hunt now** on an item (or the hunt buttons on categories
+and sites) to watch a scripted hunt stream into the Activity page and the panel; it writes a
+real listing and price check into the mock store, so the dashboard updates when it finishes.
+A demo check loop also runs for as long as a stream is open, one listing every ~20 s, which
+is what fills the checks tail. Mock data resets on page reload; the session survives. `src/mocks/handlers.ts` doubles as the behavioral spec
 (status codes + `error.code`) the backend is built against.
 
 ## Scripts
@@ -47,8 +48,8 @@ Multi-stage build → nginx serving the SPA with `/api` proxied to a `backend:80
 ```
 src/
 ├── api/          contract: types.ts (API mirror), client.ts (cookie auth + refresh), endpoints.ts, queries.ts (query keys)
-├── mocks/        MSW handlers + seeded fixture store + scripted SSE demo run
-├── features/     auth, dashboard, categories, items, sites, runs (SSE provider + activity sheet), settings, vision (review queue + reference library)
+├── mocks/        MSW handlers + seeded fixture store + the scripted SSE demo hunt and check loop
+├── features/     auth, dashboard, categories, items, sites, activity (SSE provider + the Activity page, ticker and sheet), settings, vision (review queue + reference library)
 ├── components/   ui/ primitives, charts/ (theme, sparkline, range selector), layout/ (shell, masthead)
 ├── lib/          money (decimal strings), time (ranges), cn, useMediaQuery
 └── styles/       globals.css — all design tokens
@@ -68,7 +69,7 @@ together). Dark-only, by design.
   (`well` is for inset grounds: search, terminal logs, list footers). Borders are always
   `hairline` / `hairline-strong`, never solid grays.
 - **`lume`** (illuminated-reticle amber) is the identity color: active nav, primary buttons,
-  focus, live-run states, "close to target". It is never semantic.
+  focus, live states, "close to target". It is never semantic.
 - **Semantics are unchanged and inverted vs finance**: `drop` green = price fell / target
   met = good; `rise` red = price rose. Every semantic color ships with a glyph
   (`▲▼✓✗⚠⌖○✚`) — never color alone. Green `⌖` always means "in range".
@@ -77,7 +78,7 @@ together). Dark-only, by design.
   eyebrow, button label, log line).
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
   sentence plus one line of tonight's totals — aggregates only, since per-item facts appear
-  exactly once, in the watch table; `Radar` sweeps only while a run is live; `MeterToTarget`/`Ladder` draw distance to
+  exactly once, in the watch table; `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into a per-listing price rail
   (right = closing on ⌖, drift marks from the chart's range); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.
