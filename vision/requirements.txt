@@ -4,7 +4,7 @@
 
 # Web framework
 fastapi==0.141.1
-uvicorn[standard]==0.52.4
+uvicorn[standard]==0.53.0
 python-multipart==0.0.32
 
 # Model
@@ -15,20 +15,20 @@ torch==2.13.0+cpu
 # transformers v5 image processors are torchvision-backed (DINOv3 ships only
 # the fast processor) — without this, weights load fails and the sidecar sits
 # in degraded mode even with a valid HF_TOKEN. 0.28 is the torch-2.13 pair.
-torchvision==0.28.0
-transformers==5.16.1
-huggingface_hub==1.30.0
+torchvision==0.29.0+cpu
+transformers==5.17.0
+huggingface_hub==1.32.0
 pillow==12.3.0
-numpy==2.5.2
+numpy==2.5.3
 
 # Data / DB
-sqlalchemy==2.0.52
+sqlalchemy==2.0.54
 psycopg[binary]==3.3.5
 pgvector==0.5.0
 python-dotenv==1.2.3
 
 # Object store / image fetching
-boto3==1.43.88
+boto3==1.43.97
 httpx==0.28.1
 
 # Dev / test
