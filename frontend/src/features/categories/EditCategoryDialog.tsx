@@ -60,7 +60,7 @@ export function EditCategoryDialog({
       <DialogContent>
         <DialogTitle>Edit category</DialogTitle>
         <DialogDescription>
-          The agent searches this category's linked sites when it runs.
+          The hunter searches this category's linked sites.
         </DialogDescription>
 
         <div className="mt-4 space-y-4">

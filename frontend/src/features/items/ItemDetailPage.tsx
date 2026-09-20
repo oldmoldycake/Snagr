@@ -17,7 +17,9 @@ import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { formatDateTime, relativeTime } from '@/lib/time'
 import { useInstance } from '@/features/auth/useSession'
-import { RunButton } from '@/features/runs/RunButton'
+import { CheckPricesButton } from '@/features/activity/CheckPricesButton'
+import { HuntButton } from '@/features/activity/HuntButton'
+import { HunterLine } from '@/features/activity/HunterLine'
 import { ReferenceLibrary } from '@/features/vision/ReferenceLibrary'
 import { ChartPanel } from './ChartPanel'
 import { EditItemDialog } from './EditItemDialog'
@@ -156,7 +158,19 @@ export function ItemDetailPage() {
         </h1>
         {detail.target_met ? <SnaggedBadge /> : null}
         <span className="flex-1" />
-        <RunButton scope="item" scopeId={detail.id} label="Run this item" size="sm" />
+        <HuntButton
+          scope="item"
+          scopeId={detail.id}
+          label="Hunt now"
+          size="sm"
+          disabled={detail.hunt.slots_open === 0}
+          title={
+            detail.hunt.slots_open === 0
+              ? `All ${detail.max_listings} slots are filled`
+              : undefined
+          }
+        />
+        <CheckPricesButton scope="item" scopeId={detail.id} size="sm" />
         <Button size="sm" onClick={() => setEditOpen(true)}>
           Edit
         </Button>
@@ -196,6 +210,7 @@ export function ItemDetailPage() {
               </>
             ) : null}
           </p>
+          <HunterLine detail={detail} />
         </div>
         <Ladder
           spark={detail.spark}
@@ -226,10 +241,10 @@ export function ItemDetailPage() {
                   title={detail.criteria ? 'No listings met your criteria' : 'No listings yet'}
                   description={
                     detail.criteria
-                      ? 'The agent left the slots empty rather than track poor matches. Loosen the criteria, or run it again to search for new candidates.'
-                      : "The agent finds listings by searching this category's sites — run it on this item to discover them."
+                      ? 'The hunter left the slots empty rather than track poor matches. Loosen the criteria, or press Hunt now to search again.'
+                      : "The hunter finds listings by searching this category's sites — it is already looking, and Hunt now asks it to go again."
                   }
-                  action={<RunButton scope="item" scopeId={detail.id} label="Run this item" variant="snag" size="sm" />}
+                  action={<HuntButton scope="item" scopeId={detail.id} variant="snag" size="sm" />}
                 />
               ) : (
                 <ListingsBoard detail={detail} range={range} />

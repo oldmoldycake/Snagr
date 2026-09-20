@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pencil, Play, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pencil, Search, Trash2 } from 'lucide-react'
 import type { ItemSummary, PriceDrop } from '@/api/types'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { SnaggedBadge } from '@/components/ui/badge'
@@ -28,7 +28,7 @@ export interface WatchListProps {
   expandable?: boolean
   onEdit?: (item: ItemSummary) => void
   onDelete?: (item: ItemSummary) => void
-  onRun?: (item: ItemSummary) => void
+  onHunt?: (item: ItemSummary) => void
   className?: string
 }
 
@@ -87,12 +87,12 @@ export function WatchList({
   expandable,
   onEdit,
   onDelete,
-  onRun,
+  onHunt,
   className,
 }: WatchListProps) {
   const navigate = useNavigate()
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
-  const hasActions = Boolean(onEdit || onDelete || onRun)
+  const hasActions = Boolean(onEdit || onDelete || onHunt)
 
   const toggleExpand = (id: number) => {
     setExpanded((prev) => {
@@ -226,9 +226,9 @@ export function WatchList({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {onRun ? (
-                          <DropdownMenuItem onSelect={() => onRun(item)}>
-                            <Play /> Run agent on this item
+                        {onHunt ? (
+                          <DropdownMenuItem onSelect={() => onHunt(item)}>
+                            <Search /> Hunt now
                           </DropdownMenuItem>
                         ) : null}
                         {onEdit ? (

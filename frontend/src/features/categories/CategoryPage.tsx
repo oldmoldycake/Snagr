@@ -25,8 +25,8 @@ import { cn } from '@/lib/cn'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { EditItemDialog } from '@/features/items/EditItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
-import { RunButton } from '@/features/runs/RunButton'
-import { useRunEvents } from '@/features/runs/RunEventsProvider'
+import { HuntButton } from '@/features/activity/HuntButton'
+import { useJobs } from '@/features/activity/JobsProvider'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
 import { EditCategoryDialog } from './EditCategoryDialog'
@@ -48,7 +48,7 @@ export function CategoryPage() {
   const [editingItem, setEditingItem] = useState<ItemSummary | null>(null)
   const [deletingItem, setDeletingItem] = useState<ItemSummary | null>(null)
   const queryClient = useQueryClient()
-  const { trigger } = useRunEvents()
+  const { enqueue } = useJobs()
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const category = categories.data?.data.find((c) => c.slug === slug)
@@ -140,7 +140,7 @@ export function CategoryPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <RunButton scope="category" scopeId={category.id} label="Run this category" size="sm" />
+          <HuntButton scope="category" scopeId={category.id} label="Hunt this category" size="sm" />
           <AddItemDialog categoryId={category.id} categoryName={category.name} />
         </div>
       </div>
@@ -198,7 +198,7 @@ export function CategoryPage() {
               expandable
               onEdit={(item) => setEditingItem(item)}
               onDelete={(item) => setDeletingItem(item)}
-              onRun={(item) => trigger({ scope: 'item', scope_id: item.id })}
+              onHunt={(item) => enqueue({ kind: 'hunt', scope: 'item', scope_id: item.id })}
             />
             <div className="border-t border-hairline bg-well px-4 py-2 font-mono text-[11px] text-ink-3">
               {rows.length} {rows.length === 1 ? 'item' : 'items'} · sorted by distance to target

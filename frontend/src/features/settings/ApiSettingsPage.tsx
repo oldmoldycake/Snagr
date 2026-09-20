@@ -153,8 +153,8 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
 type Access = 'read' | 'write' | 'full'
 
 /** Every useful combination is one of three presets — like the notification
- *  events picker, a segmented control covers the space. `runs` is its own
- *  scope because a run costs LLM money. */
+ *  events picker, a segmented control covers the space. `jobs` is its own
+ *  scope because a hunt costs LLM money. */
 const ACCESS_OPTIONS: readonly { value: Access; label: string }[] = [
   { value: 'read', label: 'Read only' },
   { value: 'write', label: 'Read & write' },
@@ -163,12 +163,12 @@ const ACCESS_OPTIONS: readonly { value: Access; label: string }[] = [
 const ACCESS_SCOPES: Record<Access, ApiTokenScope[]> = {
   read: ['read'],
   write: ['read', 'write'],
-  full: ['read', 'write', 'runs'],
+  full: ['read', 'write', 'jobs'],
 }
 const ACCESS_HINT: Record<Access, string> = {
-  read: 'Browse items, prices, runs and the review queue.',
+  read: 'Browse items, prices, the hunter\'s activity and the review queue.',
   write: 'Also add and edit categories, sites, items, listings and photo reviews.',
-  full: 'Also trigger and cancel agent runs.',
+  full: 'Also queue hunts and price checks, and cancel jobs.',
 }
 
 type Expiry = 'never' | '30' | '90' | '365'
@@ -219,7 +219,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       <DialogContent>
         <DialogTitle>New API token</DialogTitle>
         <DialogDescription>
-          A token lets an agent or script act as you — on your items and runs, never on your account.
+          A token lets an agent or script act as you — on your items and the hunter, never on your account.
         </DialogDescription>
 
         {created != null ? (
@@ -343,7 +343,7 @@ export function ApiSettingsPage() {
               <p className="text-[13px] text-ink-2">
                 Snagr speaks the Model Context Protocol: point Claude Code, Hermes, OpenClaw or any MCP
                 client at the endpoint below with a token, and it can browse your items and prices, add
-                watches, and kick off runs — exactly what you can do here, nothing more.
+                watches, and ask the hunter for work — exactly what you can do here, nothing more.
               </p>
               <ConnectSnippets token={null} />
               <p className="text-xs text-ink-3">
