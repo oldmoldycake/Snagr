@@ -129,6 +129,18 @@ async def run_job(job: dict) -> dict | None:
     return {**stats, "duration_ms": int((datetime.now(UTC) - started).total_seconds() * 1000)}
 
 
+def answered(stats: dict) -> bool:
+    """Whether the site answered this unit at all.
+
+    A price that was read and then disbelieved still counts: the site served
+    a page. What does not count is a unit that read nothing and recorded an
+    error — a challenge page, a dead host, a layout the model could not make
+    sense of. Mixed results count as an answer, so one unreadable listing
+    among five does not put a working marketplace on the breaker's clock.
+    """
+    return stats.get("errors", 0) == 0 or stats.get("prices_found", 0) > 0
+
+
 def _empty(**extra) -> dict:
     return {
         "listings_checked": 0,
@@ -174,18 +186,15 @@ async def _run_recheck(job: dict) -> dict | None:
             log.info(f"Listing {row['listing_id']} needs the model")
 
         agent = build_recheck_agent(build_llm(), browser_tools)
-        spent_in, spent_out = await bounded(
+        stats = await bounded(
             recheck_listing(agent, f"job-{job['id']}", row, browser, job_id=job["id"])
         )
-        await breaker.record_outcome(row["site_id"], True)
-        return _empty(
-            listings_checked=1,
-            prices_found=1,
-            tokens_in=spent_in,
-            tokens_out=spent_out,
-            method="llm",
-            transport="browser",
-        )
+    # a model that could not read the page says so by recording an error, not
+    # by raising — which is the usual shape of "this site has stopped talking"
+    await breaker.record_outcome(
+        row["site_id"], answered(stats), job_id=job["id"], detail="unreadable page"
+    )
+    return _empty(**stats, method="llm", transport="browser")
 
 
 async def _run_hunt(job: dict) -> dict | None:
@@ -198,7 +207,9 @@ async def _run_hunt(job: dict) -> dict | None:
     async with open_browser_session() as (browser_tools, browser):
         agent = build_hunt_agent(build_llm(), browser_tools)
         stats = await bounded(run_hunt_job(agent, job["id"], row, browser))
-    await breaker.record_outcome(row["site_id"], True)
+    await breaker.record_outcome(
+        row["site_id"], answered(stats), job_id=job["id"], detail="unreadable page"
+    )
     return _empty(**stats)
 
 

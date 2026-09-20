@@ -259,13 +259,20 @@ async def _stream(agent, prompt: str, config: dict, job_id: int | None) -> list:
     return final.get("messages", [])
 
 
-async def recheck_listing(agent, session_id: str, row, browser, job_id=None) -> tuple[int, int]:
+async def recheck_listing(agent, session_id: str, row, browser, job_id=None) -> dict:
     """One listing, re-read by the model because code could not read it.
 
     Reached only when the deterministic ladder could not read the page
     (agent/recheck.py). Afterwards a locator is learned from whatever the model
     confirmed, so the next check of this listing does not need a model at all.
     Raises on failure — the worker counts it.
+
+    Returns:
+      The unit's tally plus the tokens it spent, the same shape a hunt
+      returns. A model that could not read the page reports that by recording
+      status="error", which lands in the tally as an error rather than as an
+      exception — and that is how the breaker hears about a site that has
+      stopped answering.
     """
     listing_id = int(row["listing_id"])
     listing_url = row["listing_url"]
@@ -298,7 +305,8 @@ async def recheck_listing(agent, session_id: str, row, browser, job_id=None) -> 
     messages = await _stream(agent, prompt, agent_config(session_id, user_id, unit), None)
     _require_browser_success(messages)
     await _learn_after_unit(unit, listing_id, listing_url)
-    return tokens_spent(messages)
+    spent_in, spent_out = tokens_spent(messages)
+    return {**unit.stats, "tokens_in": spent_in, "tokens_out": spent_out}
 
 
 async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str) -> None:

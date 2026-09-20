@@ -170,6 +170,14 @@ async def record_price_check(
         )
     ).scalar_one()
 
+    # A page the reader could not get a price out of is a failed read of that
+    # site, and the tally is where the worker learns it: the model reports
+    # this by recording status="error" rather than by raising, so nothing
+    # upstream would otherwise notice a marketplace that has stopped
+    # answering (§4.4, the circuit breaker).
+    if status == "error":
+        unit.stats["errors"] += 1
+
     # A hunt has a log; a recheck has none, because its whole output is the
     # price_checks row the trigger turns into a listing.checked frame.
     if unit.is_hunt and unit.job_id is not None:

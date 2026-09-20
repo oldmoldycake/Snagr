@@ -178,7 +178,17 @@ def wire(monkeypatch, **overrides):
         seen.setdefault("llm_rechecks", []).append(row["listing_id"])
         if "recheck_raises" in overrides:
             raise overrides["recheck_raises"]
-        return (1200, 300)
+        return overrides.get(
+            "recheck_stats",
+            {
+                "listings_checked": 1,
+                "prices_found": 1,
+                "new_listings": 0,
+                "errors": 0,
+                "tokens_in": 1200,
+                "tokens_out": 300,
+            },
+        )
 
     async def hunt(agent_, job_id, row, browser):
         seen.setdefault("hunts", []).append(job_id)
@@ -247,6 +257,50 @@ class TestRecheckPath:
     def test_a_readable_page_clears_the_sites_error_count(self, monkeypatch):
         seen = wire(monkeypatch)
         asyncio.run(worker.run_job(job()))
+        assert seen["outcomes"] == [(1, True)]
+
+
+class TestTheBreakerHearsAFailedRead:
+    """A model that cannot read a page says so by recording status="error",
+    not by raising — so a marketplace that has stopped answering looks, from
+    the outside, exactly like a run of perfectly successful jobs."""
+
+    def test_a_unit_that_read_nothing_counts_against_its_site(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            ladder=FakeOutcome(False),
+            recheck_stats={
+                "listings_checked": 1,
+                "prices_found": 0,
+                "new_listings": 0,
+                "errors": 1,
+                "tokens_in": 900,
+                "tokens_out": 100,
+            },
+        )
+        asyncio.run(worker.run_job(job()))
+        assert seen["outcomes"] == [(1, False)]
+
+    def test_one_bad_listing_among_good_ones_is_still_an_answer(self, monkeypatch):
+        # otherwise five mixed hunts in a row would pause a working site
+        seen = wire(
+            monkeypatch,
+            hunt_stats={
+                "listings_checked": 5,
+                "prices_found": 2,
+                "new_listings": 1,
+                "errors": 1,
+            },
+        )
+        asyncio.run(worker.run_job(job("hunt")))
+        assert seen["outcomes"] == [(1, True)]
+
+    def test_a_hunt_that_found_nothing_worth_saving_is_not_a_failure(self, monkeypatch):
+        seen = wire(
+            monkeypatch,
+            hunt_stats={"listings_checked": 6, "prices_found": 0, "new_listings": 0, "errors": 0},
+        )
+        asyncio.run(worker.run_job(job("hunt")))
         assert seen["outcomes"] == [(1, True)]
 
 
