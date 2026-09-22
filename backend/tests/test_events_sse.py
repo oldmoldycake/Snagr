@@ -1,8 +1,12 @@
-"""The SSE pipeline: migration 007's pg_notify triggers, the hub in
+"""The SSE pipeline: migration 015's pg_notify triggers, the hub in
 services/events.py, and GET /api/events — including one end-to-end pass
 (SQL insert -> trigger -> LISTEN -> broadcast) and the per-viewer filtering
-matrix (run envelopes gated by run_visible, run.event by event_visible,
-per-client snapshots).
+matrix (every frame gated by the same predicate the REST surface uses).
+
+Two shapes of frame, because the hunter does two shapes of work: a hunt has a
+voice (lifecycle envelopes plus every line of its log) and a recheck has a
+pulse (no lifecycle, no events, just the price check it wrote). Both are
+asserted here.
 
 The wire format is pinned by mocks/sse.ts; handlers.ts has no SSE cases, so
 auth mirrors the closest normal endpoint (401 unauthenticated envelope).
@@ -12,12 +16,12 @@ import asyncio
 import json
 import os
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import asyncpg
 import pytest
-from app.config import settings
 from app.database import _sessionmaker
-from app.models import AgentRuns, RunEvents, User
+from app.models import JobEvents, Jobs, PriceChecks, User
 from app.services import events as events_service
 
 from tests.conftest import CSRF
@@ -31,30 +35,28 @@ DSN = os.environ["DATABASE_URL"].replace("+asyncpg", "")
 NOW = datetime.now(UTC)
 
 
-def _run(**overrides) -> AgentRuns:
+def _job(**overrides) -> Jobs:
     fields = {
-        "scope": "global",
-        "scope_id": None,
-        "scope_label": "Everything",
+        "kind": "hunt",
         "status": "running",
         "started_at": NOW,
         **overrides,
     }
-    return AgentRuns(**fields)
+    return Jobs(**fields)
 
 
-def _event(run_id: int, seq: int = 1, **overrides) -> RunEvents:
+def _event(job_id: int, seq: int = 1, **overrides) -> JobEvents:
     fields = {
-        "run_id": run_id,
+        "job_id": job_id,
         "seq": seq,
         "ts": NOW,
         "level": "info",
         "event_type": "listing_check",
-        "message": "Checking TestBay…",
+        "message": "Reading https://testbay.example/itm/1",
         "payload": None,
         **overrides,
     }
-    return RunEvents(**fields)
+    return JobEvents(**fields)
 
 
 async def _seed(*rows) -> list[int]:
@@ -66,10 +68,12 @@ async def _seed(*rows) -> list[int]:
 
 @pytest.fixture
 async def listen():
-    """A raw LISTEN connection on the notify channel; yields a queue of payloads."""
+    """A raw LISTEN connection on both notify channels; yields a queue of
+    (channel, payload) pairs."""
     conn = await asyncpg.connect(DSN)
-    notifications: asyncio.Queue[str] = asyncio.Queue()
-    await conn.add_listener(events_service.CHANNEL, lambda *args: notifications.put_nowait(args[3]))
+    notifications: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
+    for channel in (events_service.JOBS_CHANNEL, events_service.EVENTS_CHANNEL):
+        await conn.add_listener(channel, lambda *a: notifications.put_nowait((a[2], a[3])))
     yield notifications
     await conn.close()
 
@@ -81,8 +85,8 @@ def _viewer(user_id: int, role: str = "user") -> User:
 
 @pytest.fixture
 def mailbox():
-    """A registered hub client queue (admin viewer — sees everything, like the
-    pre-privacy hub), unregistered afterwards."""
+    """A registered hub client queue (admin viewer — sees everything),
+    unregistered afterwards."""
     client = events_service.register_client(_viewer(999, role="admin"))
     yield client.queue
     events_service.unregister_client(client)
@@ -92,111 +96,188 @@ async def _next(queue: asyncio.Queue, timeout: float = 5.0):
     return await asyncio.wait_for(queue.get(), timeout)
 
 
+async def _notify(channel: str, **note) -> None:
+    await events_service._handle_notification(channel, json.dumps(note))
+
+
 class TestNotifyTriggers:
-    """Migration 007's DDL (mirrored in conftest): every write announces itself."""
+    """Migration 015's DDL (mirrored in conftest): every write announces
+    itself, so no writer has to remember to."""
 
-    async def test_inserting_a_run_announces_its_status(self, listen):
-        (run_id,) = await _seed(_run())
-        note = json.loads(await _next(listen))
-        assert note == {"kind": "status", "run_id": run_id, "status": "running"}
-
-    async def test_inserting_a_run_event_announces_run_and_seq(self, listen):
-        (run_id,) = await _seed(_run())
-        await _next(listen)  # the insert's own status announcement
-        await _seed(_event(run_id, seq=7))
-        note = json.loads(await _next(listen))
-        assert note == {"kind": "event", "run_id": run_id, "seq": 7}
+    async def test_inserting_a_job_announces_it(self, listen):
+        (job_id,) = await _seed(_job(status="pending", started_at=None))
+        channel, payload = await _next(listen)
+        assert channel == events_service.JOBS_CHANNEL
+        assert json.loads(payload) == {"id": job_id, "kind": "hunt", "status": "pending"}
 
     async def test_a_status_change_announces_once(self, listen):
-        (run_id,) = await _seed(_run())
-        await _next(listen)
+        (job_id,) = await _seed(_job())
+        await _next(listen)  # the insert's own announcement
         async with _sessionmaker()() as session:
-            run = await session.get(AgentRuns, run_id)
-            run.status = "succeeded"
-            run.finished_at = NOW
+            job = await session.get(Jobs, job_id)
+            job.status = "done"
+            job.finished_at = NOW
             await session.commit()
-        note = json.loads(await _next(listen))
-        assert note == {"kind": "status", "run_id": run_id, "status": "succeeded"}
+        _, payload = await _next(listen)
+        assert json.loads(payload) == {"id": job_id, "kind": "hunt", "status": "done"}
 
-    async def test_a_write_without_status_change_stays_silent(self, listen):
-        (run_id,) = await _seed(_run())
+    async def test_a_write_without_a_status_change_stays_silent(self, listen):
+        (job_id,) = await _seed(_job())
         await _next(listen)
         async with _sessionmaker()() as session:
-            run = await session.get(AgentRuns, run_id)
-            run.last_seq = 42  # the agent bumps this constantly mid-run
+            job = await session.get(Jobs, job_id)
+            job.heartbeat_at = NOW  # the worker stamps this every 30 seconds
             await session.commit()
         with pytest.raises(TimeoutError):
             await _next(listen, timeout=0.5)
 
+    async def test_a_job_event_announces_its_job_and_seq(self, listen):
+        (job_id,) = await _seed(_job())
+        await _next(listen)
+        await _seed(_event(job_id, seq=7))
+        channel, payload = await _next(listen)
+        assert channel == events_service.EVENTS_CHANNEL
+        assert json.loads(payload) == {"job_id": job_id, "seq": 7}
+
+    async def test_a_price_check_announces_itself(self, listen, sc):
+        """Whoever wrote it — the deterministic ladder, a static GET or the
+        model — one trigger puts it on the page."""
+        item = await sc.item()
+        listing = await sc.listing(await sc.watch(item), item)
+        await sc.commit()
+        check = PriceChecks(
+            listing_id=listing.id,
+            price=Decimal("49.99"),
+            currency="USD",
+            in_stock=True,
+            status="ok",
+            method="jsonld",
+            checked_at=NOW,
+        )
+        (check_id,) = await _seed(check)
+        channel, payload = await _next(listen)
+        assert channel == events_service.EVENTS_CHANNEL
+        assert json.loads(payload) == {"check": check_id}
+
 
 class TestHub:
-    async def test_broadcast_reaches_every_registered_client(self):
-        a = events_service.register_client(_viewer(1))
-        b = events_service.register_client(_viewer(2))
-        try:
-            events_service.broadcast({"event": "run.event", "data": "{}"})
-            assert (await _next(a.queue))["event"] == "run.event"
-            assert (await _next(b.queue))["event"] == "run.event"
-        finally:
-            events_service.unregister_client(a)
-            events_service.unregister_client(b)
-
-    async def test_an_unregistered_client_stops_receiving(self):
-        client = events_service.register_client(_viewer(1))
+    async def test_an_unregistered_client_stops_receiving(self, sc):
+        watch = await sc.watch(await sc.item())
+        job = await sc.job(watch=watch, status="running")
+        await sc.commit()
+        client = events_service.register_client(_viewer(sc.user_id))
         events_service.unregister_client(client)
-        events_service.broadcast({"event": "run.event", "data": "{}"})
+        await _notify(events_service.JOBS_CHANNEL, id=job.id)
         assert client.queue.empty()
 
-    async def test_snapshot_lists_only_active_runs(self):
-        await _seed(
-            _run(status="succeeded", finished_at=NOW),
-            _run(status="running", scope_label="Site: TestBay"),
-            _run(status="queued", started_at=None),
-        )
-        message = await events_service.snapshot_message(1, False)
-        assert message["event"] == "run.snapshot"
-        active = json.loads(message["data"])["active_runs"]
-        assert [r["status"] for r in active] == ["running", "queued"]
-        # the exact subset mocks/sse.ts sends — the client casts it to AgentRun
-        assert set(active[0]) == {"id", "user_id", "status", "scope", "scope_label", "last_seq"}
-        assert active[0]["scope_label"] == "Site: TestBay"
+    async def test_the_snapshot_lists_live_hunts_only(self, sc, mailbox):
+        watch = await sc.watch(await sc.item())
+        await sc.job(watch=watch, status="done")
+        await sc.job(watch=watch, status="running", site_id=(await sc.site("Other")).id)
+        await sc.job(kind="ground", watch=None, item_id=watch.item_id, status="pending")
+        # a check is live work too, but it has no events and is over in
+        # seconds — a client would only ever see it as history
+        await sc.job(kind="recheck", watch=watch, status="running")
+        await sc.commit()
 
-    async def test_an_event_notification_broadcasts_the_row(self, mailbox):
-        (run_id,) = await _seed(_run())
-        await _seed(_event(run_id, seq=3, message="Found it"))
-        payload = json.dumps({"kind": "event", "run_id": run_id, "seq": 3})
-        await events_service._handle_notification(payload)
+        message = await events_service.snapshot_message(999, True)
+        assert message["event"] == "job.snapshot"
+        jobs = json.loads(message["data"])["jobs"]
+        assert sorted(j["kind"] for j in jobs) == ["ground", "hunt"]
+
+    async def test_an_event_notification_broadcasts_the_row(self, sc, mailbox):
+        watch = await sc.watch(await sc.item())
+        job = await sc.job(watch=watch, status="running")
+        await sc.job_event(job, 3, message="Saved as listing #12")
+        await sc.commit()
+
+        await _notify(events_service.EVENTS_CHANNEL, job_id=job.id, seq=3)
         message = await _next(mailbox)
-        assert message["event"] == "run.event"
-        assert message["id"] == f"{run_id}:3"
+        assert message["event"] == "job.event"
+        assert message["id"] == f"{job.id}:3"
         event = json.loads(message["data"])
-        assert event["message"] == "Found it"
+        assert event["message"] == "Saved as listing #12"
         assert event["seq"] == 3
 
     @pytest.mark.parametrize(
         ("status", "expected"),
-        [("running", "run.started"), ("succeeded", "run.finished"), ("failed", "run.failed")],
+        [
+            ("running", "job.started"),
+            ("done", "job.finished"),
+            ("cancelled", "job.finished"),
+            ("failed", "job.failed"),
+        ],
     )
-    async def test_status_notifications_map_to_lifecycle_events(self, mailbox, status, expected):
-        (run_id,) = await _seed(_run(status=status))
-        payload = json.dumps({"kind": "status", "run_id": run_id, "status": status})
-        await events_service._handle_notification(payload)
+    async def test_status_notifications_map_to_lifecycle_events(
+        self, sc, mailbox, status, expected
+    ):
+        watch = await sc.watch(await sc.item())
+        job = await sc.job(watch=watch, status=status)
+        await sc.commit()
+
+        await _notify(events_service.JOBS_CHANNEL, id=job.id)
         message = await _next(mailbox)
         assert message["event"] == expected
-        assert json.loads(message["data"])["run"]["id"] == run_id
+        body = json.loads(message["data"])["job"]
+        assert body["id"] == job.id
+        # the label is what every row on the page reads
+        assert body["label"].endswith("× TestBay")
 
-    async def test_a_queued_birth_is_not_broadcast(self, mailbox):
-        # the POST /api/runs response carries the queued run; mocks/sse.ts sends nothing
-        (run_id,) = await _seed(_run(status="queued", started_at=None))
-        payload = json.dumps({"kind": "status", "run_id": run_id, "status": "queued"})
-        await events_service._handle_notification(payload)
+    async def test_a_pending_birth_is_not_broadcast(self, sc, mailbox):
+        # the POST /api/jobs response carries the queued jobs
+        watch = await sc.watch(await sc.item())
+        job = await sc.job(watch=watch, status="pending")
+        await sc.commit()
+        await _notify(events_service.JOBS_CHANNEL, id=job.id)
         assert mailbox.empty()
+
+    async def test_a_recheck_emits_no_lifecycle_frames(self, sc, mailbox):
+        # its whole output is the price check the other trigger announces;
+        # started/finished pairs three times a minute would drown the page
+        watch = await sc.watch(await sc.item())
+        job = await sc.job(kind="recheck", watch=watch, status="running")
+        await sc.commit()
+        await _notify(events_service.JOBS_CHANNEL, id=job.id)
+        assert mailbox.empty()
+
+    async def test_a_price_check_becomes_a_listing_checked_frame(self, sc, mailbox):
+        item = await sc.item("Game Boy Color")
+        listing = await sc.listing(await sc.watch(item), item)
+        await sc.checks(listing, (0, "189.00"))
+        await sc.commit()
+        check_id = await sc.db.scalar(
+            PriceChecks.__table__.select().with_only_columns(PriceChecks.id)
+        )
+
+        await _notify(events_service.EVENTS_CHANNEL, check=check_id)
+        message = await _next(mailbox)
+        assert message["event"] == "listing.checked"
+        frame = json.loads(message["data"])
+        assert frame["item_name"] == "Game Boy Color"
+        assert frame["site_name"] == "TestBay"
+        assert frame["price"] == "189.00"
+        assert frame["confirmed"] is True
+        assert frame["slot_freed"] is False
+
+    async def test_a_sold_check_says_the_slot_is_free(self, sc, mailbox):
+        item = await sc.item()
+        listing = await sc.listing(await sc.watch(item), item)
+        await sc.checks(listing, (0, None))  # an unpriced check is a sold one
+        await sc.commit()
+        check_id = await sc.db.scalar(
+            PriceChecks.__table__.select().with_only_columns(PriceChecks.id)
+        )
+
+        await _notify(events_service.EVENTS_CHANNEL, check=check_id)
+        frame = json.loads((await _next(mailbox))["data"])
+        assert frame["status"] == "sold"
+        assert frame["slot_freed"] is True
 
     async def test_a_notification_for_a_missing_row_is_survivable(self, mailbox):
         # log-and-continue: a dead hub is worse than a dropped message
-        await events_service._handle_notification(
-            json.dumps({"kind": "event", "run_id": 999, "seq": 1})
-        )
+        await _notify(events_service.EVENTS_CHANNEL, job_id=999, seq=1)
+        await _notify(events_service.JOBS_CHANNEL, id=999)
+        await _notify(events_service.EVENTS_CHANNEL, check=999)
         assert mailbox.empty()
 
 
@@ -272,10 +353,20 @@ class TestStreamEndpoint:
         assert res.status_code == 401
         assert res.json()["error"]["code"] == "unauthenticated"
 
-    async def test_snapshot_then_live_events(self, client):
+    async def test_snapshot_then_live_events(self, client, db_session):
         res = await client.post("/api/auth/register", json=OWNER, headers=CSRF)
         assert res.status_code == 201, res.text
-        await _seed(_run(scope_label="Site: TestBay"))
+        user_id = res.json()["user"]["id"]
+
+        async with db_session() as session:
+            sc = Scenario(session)
+            user = await session.get(User, user_id)
+            item = await sc.item("Game Boy Color")
+            watch = await sc.watch(item, user=user)
+            job = await sc.job(watch=watch, status="running", days_ago=0)
+            await sc.job_event(job, 1, message="Hunting TestBay…")
+            job_id = job.id
+            await sc.commit()
 
         conn = _SseConnection(dict(client.cookies))
         await conn.start()
@@ -284,13 +375,14 @@ class TestStreamEndpoint:
             assert conn.headers["content-type"].startswith("text/event-stream")
 
             first = await conn.next_event()
-            assert first["event"] == "run.snapshot"
-            assert json.loads(first["data"])["active_runs"][0]["scope_label"] == "Site: TestBay"
+            assert first["event"] == "job.snapshot"
+            (live,) = json.loads(first["data"])["jobs"]
+            assert live["label"] == "Game Boy Color × TestBay"
 
-            events_service.broadcast({"event": "run.event", "data": "{}", "id": "1:1"})
+            await _notify(events_service.EVENTS_CHANNEL, job_id=job_id, seq=1)
             second = await conn.next_event()
-            assert second["event"] == "run.event"
-            assert second["id"] == "1:1"
+            assert second["event"] == "job.event"
+            assert second["id"] == f"{job_id}:1"
         finally:
             await conn.disconnect()
 
@@ -312,7 +404,7 @@ class TestStreamEndpoint:
 
 async def _privacy_fixture() -> dict:
     """Users A and B, a watch each, one item BOTH watch, and A's listing —
-    the ownership graph the event predicate keys on. Returns the ids."""
+    the ownership graph every frame is gated by. Returns the ids."""
     async with _sessionmaker()() as session:
         sc = Scenario(session)
         a = User(email="a@hub.local")
@@ -320,29 +412,34 @@ async def _privacy_fixture() -> dict:
         session.add_all([a, b])
         await session.flush()
         item_a = await sc.item("Alpha")
-        item_b = await sc.item("Beta")
         shared = await sc.item("Shared")
         watch_a = await sc.watch(item_a, user=a)
-        await sc.watch(item_b, user=b)
-        await sc.watch(shared, user=a)
+        shared_a = await sc.watch(shared, user=a)
         await sc.watch(shared, user=b)
         listing_a = await sc.listing(watch_a, item_a)
+        hunt_a = await sc.job(watch=watch_a, status="running")
+        ground_shared = await sc.job(kind="ground", watch=None, item_id=shared.id, status="running")
+        await sc.job_event(hunt_a, 1, message="Hunting TestBay…")
+        await sc.job_event(ground_shared, 1, message="Reading price guides…")
         ids = {
             "a": a.id,
             "b": b.id,
             "item_a": item_a.id,
-            "item_b": item_b.id,
             "shared": shared.id,
+            "shared_a": shared_a.id,
             "listing_a": listing_a.id,
+            "hunt_a": hunt_a.id,
+            "ground_shared": ground_shared.id,
         }
         await session.commit()
     return ids
 
 
 class TestPerViewerFiltering:
-    """run.event frames pass run_visible AND event_visible per client; the
-    lifecycle envelopes and snapshots pass run_visible — same predicate as
-    the REST surface (services/runs.py), asserted here on the push channel."""
+    """Every frame passes the same predicate the REST surface uses
+    (services/jobs.py), asserted here on the push channel: a viewer sees jobs
+    for their own watches, `ground` jobs for items they watch, and — as
+    admin — everything."""
 
     @pytest.fixture
     async def graph(self):
@@ -356,157 +453,124 @@ class TestPerViewerFiltering:
         for client in clients.values():
             events_service.unregister_client(client)
 
-    async def _notify_event(self, run_id: int, seq: int) -> None:
-        payload = json.dumps({"kind": "event", "run_id": run_id, "seq": seq})
-        await events_service._handle_notification(payload)
-
-    async def test_item_events_reach_watchers_and_admin_only(self, graph):
+    async def test_a_hunts_events_reach_its_owner_and_admin_only(self, graph):
         ids, clients = graph
-        (run_id,) = await _seed(_run())  # system run: everyone sees the run itself
-        await _seed(_event(run_id, seq=1, payload={"item_id": ids["item_a"]}))
-        await self._notify_event(run_id, 1)
-        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        await _notify(events_service.EVENTS_CHANNEL, job_id=ids["hunt_a"], seq=1)
+        assert (await _next(clients["a"].queue))["event"] == "job.event"
         assert clients["b"].queue.empty()
-        assert (await _next(clients["admin"].queue))["event"] == "run.event"
+        assert (await _next(clients["admin"].queue))["event"] == "job.event"
 
-    async def test_a_shared_item_event_reaches_both_watchers(self, graph):
+    async def test_a_ground_jobs_events_reach_every_watcher_of_its_item(self, graph):
         ids, clients = graph
-        (run_id,) = await _seed(_run())
-        await _seed(_event(run_id, seq=1, payload={"item_id": ids["shared"]}))
-        await self._notify_event(run_id, 1)
-        assert (await _next(clients["a"].queue))["event"] == "run.event"
-        assert (await _next(clients["b"].queue))["event"] == "run.event"
+        await _notify(events_service.EVENTS_CHANNEL, job_id=ids["ground_shared"], seq=1)
+        assert (await _next(clients["a"].queue))["event"] == "job.event"
+        assert (await _next(clients["b"].queue))["event"] == "job.event"
 
-    async def test_a_listing_event_reaches_only_its_owner(self, graph):
+    async def test_lifecycle_envelopes_are_gated_the_same_way(self, graph):
         ids, clients = graph
-        (run_id,) = await _seed(_run())
-        await _seed(_event(run_id, seq=1, payload={"listing_id": ids["listing_a"]}))
-        await self._notify_event(run_id, 1)
-        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        await _notify(events_service.JOBS_CHANNEL, id=ids["hunt_a"])
+        assert (await _next(clients["a"].queue))["event"] == "job.started"
         assert clients["b"].queue.empty()
-        assert (await _next(clients["admin"].queue))["event"] == "run.event"
+        assert (await _next(clients["admin"].queue))["event"] == "job.started"
 
-    async def test_a_neutral_event_reaches_every_viewer_of_the_run(self, graph):
+    async def test_a_check_reaches_only_the_listings_owner(self, graph):
         ids, clients = graph
-        (run_id,) = await _seed(_run())
-        await _seed(_event(run_id, seq=1, payload=None))
-        await self._notify_event(run_id, 1)
-        for client in clients.values():
-            assert (await _next(client.queue))["event"] == "run.event"
+        async with _sessionmaker()() as session:
+            check = PriceChecks(
+                listing_id=ids["listing_a"],
+                price=Decimal("10.00"),
+                currency="USD",
+                in_stock=True,
+                status="ok",
+                method="locator",
+                checked_at=NOW,
+            )
+            session.add(check)
+            await session.commit()
+            check_id = check.id
 
-    async def test_a_hidden_runs_events_never_stream(self, graph):
-        # A's own run names the item B ALSO watches — the run gate wins:
-        # B gets nothing, on the push channel exactly as on REST
-        ids, clients = graph
-        (run_id,) = await _seed(_run(user_id=ids["a"]))
-        await _seed(_event(run_id, seq=1, payload={"item_id": ids["shared"]}))
-        await self._notify_event(run_id, 1)
-        assert (await _next(clients["a"].queue))["event"] == "run.event"
+        await _notify(events_service.EVENTS_CHANNEL, check=check_id)
+        assert (await _next(clients["a"].queue))["event"] == "listing.checked"
         assert clients["b"].queue.empty()
-        assert (await _next(clients["admin"].queue))["event"] == "run.event"
-
-    async def test_lifecycle_envelopes_are_gated_by_run_visibility(self, graph):
-        ids, clients = graph
-        (run_id,) = await _seed(_run(user_id=ids["a"]))
-        payload = json.dumps({"kind": "status", "run_id": run_id, "status": "running"})
-        await events_service._handle_notification(payload)
-        assert (await _next(clients["a"].queue))["event"] == "run.started"
-        assert clients["b"].queue.empty()
-        assert (await _next(clients["admin"].queue))["event"] == "run.started"
+        assert (await _next(clients["admin"].queue))["event"] == "listing.checked"
 
     async def test_snapshots_are_per_viewer(self, graph):
         ids, _ = graph
-        await _seed(_run(scope_label="system sweep"), _run(user_id=ids["a"], scope_label="A's run"))
+        a_jobs = json.loads((await events_service.snapshot_message(ids["a"], False))["data"])
+        assert sorted(j["kind"] for j in a_jobs["jobs"]) == ["ground", "hunt"]
 
-        a_runs = json.loads((await events_service.snapshot_message(ids["a"], False))["data"])
-        assert [r["scope_label"] for r in a_runs["active_runs"]] == ["system sweep", "A's run"]
+        b_jobs = json.loads((await events_service.snapshot_message(ids["b"], False))["data"])
+        assert [j["kind"] for j in b_jobs["jobs"]] == ["ground"]
 
-        b_runs = json.loads((await events_service.snapshot_message(ids["b"], False))["data"])
-        assert [r["scope_label"] for r in b_runs["active_runs"]] == ["system sweep"]
-
-        admin_runs = json.loads((await events_service.snapshot_message(999, True))["data"])
-        assert len(admin_runs["active_runs"]) == 2
+        admin_jobs = json.loads((await events_service.snapshot_message(999, True))["data"])
+        assert len(admin_jobs["jobs"]) == 2
 
 
-class TestFilteredReconvergence:
-    async def test_filtered_viewer_converges_via_authoritative_backfill(
-        self, client, make_client, monkeypatch
+class TestReconnect:
+    async def test_a_reconnecting_viewer_rebuilds_from_snapshot_and_backfill(
+        self, client, db_session
     ):
-        """D-P5 end to end: a filtered viewer reconnects mid-system-run, sees
-        the global last_seq in their snapshot, refetches the backfill, gets
-        exactly their visible subset, keeps streaming filtered live events —
-        and a repeat backfill from their max visible seq returns nothing new
-        (convergence, no spinning)."""
-        monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
-        await client.post("/api/auth/register", json=OWNER, headers=CSRF)
-        b_client = await make_client()
-        res = await b_client.post(
-            "/api/auth/register",
-            json={"email": "b@example.com", "password": "hunter2hunter2"},
-            headers=CSRF,
-        )
-        b_id = res.json()["user"]["id"]
+        """The contract: the snapshot names the live jobs, the client refetches
+        each backfill, and live frames continue from there — with no gap
+        inference anywhere (last_seq is metadata)."""
+        res = await client.post("/api/auth/register", json=OWNER, headers=CSRF)
+        user_id = res.json()["user"]["id"]
 
-        async with _sessionmaker()() as session:
+        async with db_session() as session:
             sc = Scenario(session)
-            b = await session.get(User, b_id)
-            item_b = await sc.item("Beta")
-            other = await sc.item("Alpha")
-            await sc.watch(item_b, user=b)
-            run = await sc.run(status="running", started_at=sc.now, days_ago=0)
-            await sc.run_event(run, 1, message="Run started", event_type="run_started")
-            await sc.run_event(run, 2, payload={"item_id": other.id})
-            await sc.run_event(run, 3, payload={"item_id": item_b.id})
-            run_id, item_b_id = run.id, item_b.id
+            user = await session.get(User, user_id)
+            item = await sc.item("Alpha")
+            job = await sc.job(watch=await sc.watch(item, user=user), status="running", days_ago=0)
+            await sc.job_event(job, 1, message="Hunting TestBay…")
+            await sc.job_event(job, 2, message="Reading a candidate…")
+            job_id = job.id
             await sc.commit()
 
-        conn = _SseConnection(dict(b_client.cookies))
+        conn = _SseConnection(dict(client.cookies))
         await conn.start()
         try:
             first = await conn.next_event()
-            assert first["event"] == "run.snapshot"
-            (entry,) = json.loads(first["data"])["active_runs"]
-            assert entry["id"] == run_id
-            assert entry["last_seq"] == 3  # the GLOBAL cursor — metadata, never compared
+            (live,) = json.loads(first["data"])["jobs"]
+            assert live["id"] == job_id
+            assert live["last_seq"] == 2
 
-            # the authoritative backfill: exactly B's visible subset
-            res = await b_client.get(f"/api/runs/{run_id}/events?after_seq=0")
-            assert [e["seq"] for e in res.json()["data"]] == [1, 3]
+            res = await client.get(f"/api/jobs/{job_id}/events?after_seq=0")
+            assert [e["seq"] for e in res.json()["data"]] == [1, 2]
 
-            # live continuation stays filtered by the same predicate
-            await _seed(_event(run_id, seq=4, payload={"item_id": item_b_id}))
-            await events_service._handle_notification(
-                json.dumps({"kind": "event", "run_id": run_id, "seq": 4})
-            )
+            await _seed(_event(job_id, seq=3, message="Saved a listing"))
+            await _notify(events_service.EVENTS_CHANNEL, job_id=job_id, seq=3)
             frame = await conn.next_event()
-            assert frame["event"] == "run.event"
-            assert json.loads(frame["data"])["seq"] == 4
+            assert json.loads(frame["data"])["seq"] == 3
 
-            # convergence: from B's max visible seq there is nothing left
-            res = await b_client.get(f"/api/runs/{run_id}/events?after_seq=4")
+            # convergence: from the last seq held there is nothing left
+            res = await client.get(f"/api/jobs/{job_id}/events?after_seq=3")
             assert res.json()["data"] == []
         finally:
             await conn.disconnect()
 
 
 class TestEndToEnd:
-    async def test_a_committed_insert_reaches_a_hub_client(self, mailbox):
+    async def test_a_committed_insert_reaches_a_hub_client(self, sc, mailbox):
         """SQL insert -> trigger NOTIFY -> listen_pg -> broadcast, nothing mocked."""
+        watch = await sc.watch(await sc.item())
+        ids = (watch.id, watch.item_id, (await sc.site()).id)
+        await sc.commit()
         listener = asyncio.create_task(events_service.listen_pg())
         try:
             # connected once the on-connect snapshot lands
             message = await _next(mailbox)
-            assert message["event"] == "run.snapshot"
+            assert message["event"] == "job.snapshot"
 
-            (run_id,) = await _seed(_run())
+            watch_id, item_id, site_id = ids
+            (job_id,) = await _seed(_job(watch_id=watch_id, item_id=item_id, site_id=site_id))
             message = await _next(mailbox)
-            assert message["event"] == "run.started"
+            assert message["event"] == "job.started"
 
-            await _seed(_event(run_id, seq=1, message="Checking TestBay…"))
+            await _seed(_event(job_id, seq=1, message="Hunting TestBay…"))
             message = await _next(mailbox)
-            assert message["event"] == "run.event"
-            assert message["id"] == f"{run_id}:1"
-            assert json.loads(message["data"])["message"] == "Checking TestBay…"
+            assert message["event"] == "job.event"
+            assert message["id"] == f"{job_id}:1"
+            assert json.loads(message["data"])["message"] == "Hunting TestBay…"
         finally:
             listener.cancel()
             with pytest.raises(asyncio.CancelledError):

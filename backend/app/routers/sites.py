@@ -1,10 +1,12 @@
 """Sites — /api/sites  (GET Phase 1, writes Phase 3). Auth required.
 
 category_ids / listing_count / last_checked_at are computed at query time
-(services/catalog.py, shared with the MCP tools), never stored.
+(services/catalog.py, shared with the MCP tools), never stored. paused_until
+and paused_reason ARE stored — the hunter's circuit breaker writes them, and
+the only thing this API can do with a pause is lift it.
 """
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,11 +44,24 @@ async def create_site(
 async def update_site(
     site_id: int,
     body: SiteUpdateRequest,
+    request: Request,
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # the hunter sets pauses; a person can only lift one, so null is the only
+    # value this field takes — and "absent" has to be told apart from "null"
+    clear_pause = "paused_until" in await request.json()
+    if clear_pause and body.paused_until is not None:
+        raise err(
+            422,
+            "validation_error",
+            "only null is accepted; the hunter sets pauses",
+            fields={"paused_until": "only null is accepted; the hunter sets pauses"},
+        )
     try:
-        return await catalog_service.update_site(db, site_id, body.name, body.base_url)
+        return await catalog_service.update_site(
+            db, site_id, body.name, body.base_url, clear_pause=clear_pause
+        )
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 

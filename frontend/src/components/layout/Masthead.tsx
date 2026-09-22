@@ -6,8 +6,7 @@ import { listCategories } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
 import { useInstance, useLogout, useSession } from '@/features/auth/useSession'
-import { isRunActive, useRunEvents } from '@/features/runs/RunEventsProvider'
-import { RunButton } from '@/features/runs/RunButton'
+import { useJobs } from '@/features/activity/JobsProvider'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
@@ -22,7 +21,7 @@ import {
 const NAV_ITEMS: readonly { to: string; label: string; end?: boolean; visionOnly?: boolean }[] = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/sites', label: 'Sites' },
-  { to: '/runs', label: 'Runs' },
+  { to: '/activity', label: 'Activity' },
   { to: '/review', label: 'Review', visionOnly: true },
   { to: '/settings', label: 'Settings' },
 ]
@@ -114,7 +113,7 @@ export function Masthead() {
   const navigate = useNavigate()
   const { data: user } = useSession()
   const logout = useLogout()
-  const { activeRun, setPanelOpen } = useRunEvents()
+  const { live, setPanelOpen } = useJobs()
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -197,18 +196,18 @@ export function Masthead() {
             </kbd>
           </form>
 
-          {isRunActive(activeRun) ? (
+          {/* the only masthead state: a pill while something is running.
+              There is no button — the hunter is already hunting. */}
+          {live.length > 0 ? (
             <button
               type="button"
               onClick={() => setPanelOpen(true)}
               className="flex items-center gap-1.5 rounded-full border border-lume/40 bg-lume-glow px-2.5 py-1 font-mono text-[11px] tracking-[0.06em] text-lume uppercase hover:bg-lume/20"
             >
               <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-lume" />
-              {activeRun?.scope_label ?? 'Running'}
+              {live.length} {live.length === 1 ? 'hunt' : 'hunts'}
             </button>
-          ) : (
-            <RunButton scope="global" label="Run all" variant="primary" size="sm" />
-          )}
+          ) : null}
 
           <DropdownMenu>
             <DropdownMenuTrigger className="flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[11px] text-ink-2 hover:text-ink">

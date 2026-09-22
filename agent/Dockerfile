@@ -29,12 +29,13 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY --from=build /opt/venv /opt/venv
-COPY *.py ticker.sh ./
+COPY *.py ./
 
 # Run as a non-root user; /app must stay writable — main.py logs to ./scraper.log
 RUN useradd --create-home --uid 1000 snagr && chown -R snagr:snagr /app
 USER snagr
 
-# One full scrape pass, then exit (the nightly job). The compose `agent`
-# service overrides this with ticker.sh, the --consume / --ground-only loop.
-CMD ["python", "main.py"]
+# Drain the queue once and exit — the cron shape, and the safe default for
+# anyone running this image by hand. The compose `agent` service overrides it
+# with --serve, which is the daemon.
+CMD ["python", "main.py", "--once"]

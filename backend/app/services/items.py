@@ -43,6 +43,7 @@ from app.schemas.items import (
     WatchUpdateRequest,
 )
 from app.schemas.vision import AuthenticityRead
+from app.services import jobs as jobs_service
 from app.services.aggregates import item_rollups
 from app.services.vision import authenticity_for_listings
 
@@ -154,7 +155,7 @@ async def listing_out(
         authenticity=authenticity.get(listing.url),
         last_checked_at=checked_at,
         created_at=listing.created_at.isoformat(),
-        discovered_by_run_id=None,
+        discovered_by_job_id=listing.discovered_by_job_id,
     )
 
 
@@ -256,8 +257,21 @@ async def get_item_detail(db: AsyncSession, user_id: int, item_id: int) -> ItemD
         raise err(404, "not_found", f"Item {item_id} does not exist")
 
     watch, item, category = row
+    return await build_item_detail(db, watch, item, category)
+
+
+async def build_item_detail(
+    db: AsyncSession, watch: Watches, item: Items, category: Categories
+) -> ItemDetail:
+    """ItemSummary plus the listings and the two facts objects the item page's
+    mono line reads — both computed from the watch's jobs, never stored."""
     summary = await build_item_summary(watch, item, category, db)
-    return ItemDetail(**summary.model_dump(), listings=await load_listings(db, watch))
+    return ItemDetail(
+        **summary.model_dump(),
+        listings=await load_listings(db, watch),
+        hunt=await jobs_service.hunt_facts(db, watch),
+        recheck=await jobs_service.recheck_facts(db, watch),
+    )
 
 
 async def list_listings(
@@ -401,6 +415,13 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
         await db.flush()
         await db.refresh(watch_sites)
 
+    # The hunter starts on this watch in the same transaction that creates it:
+    # a hunt per site it will search, plus the market-price grounding the hunt
+    # prompts read from. Same transaction because a watch with no hunts is a
+    # watch nothing will ever look for — the two facts belong together.
+    await jobs_service.enqueue_hunts_for_watch(db, watch, user_id=user_id, reason="created")
+    await jobs_service.enqueue_ground(db, item.id, user_id=user_id)
+
     await db.commit()
 
     category = await db.get(Categories, item.category_id)
@@ -439,8 +460,7 @@ async def update_item(
         watch.allow_reproductions = body.allow_reproductions
 
     await db.commit()
-    summary = await build_item_summary(watch, item, category, db)
-    return ItemDetail(**summary.model_dump(), listings=await load_listings(db, watch))
+    return await build_item_detail(db, watch, item, category)
 
 
 async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
@@ -502,6 +522,12 @@ async def update_listing(db: AsyncSession, user_id: int, listing_id: int, active
         raise err(404, "not_found", f"Listing {listing_id} does not exist")
 
     listing.active = active
+    # tracking and the queue move together: an untracked listing is not
+    # re-read, and tracking one again puts it back in the rotation
+    if active:
+        await jobs_service.enqueue_recheck(db, listing)
+    else:
+        await jobs_service.cancel_recheck(db, listing.id)
     await db.commit()
 
     site_name = (

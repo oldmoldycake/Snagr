@@ -1,8 +1,9 @@
 # Dev stack: frontend (nginx) + backend (uvicorn --reload, source bind-mounted)
-# + the agent's run-queue consumer ticker. Postgres is NOT here — every service
-# uses the existing LAN DB (DATABASE_URL in each .env, kept out of the images by
+# + the hunter (the agent daemon). Postgres is NOT here — every service uses
+# the existing LAN DB (DATABASE_URL in each .env, kept out of the images by
 # .dockerignore). The Playwright MCP the agent drives is external too
-# (PLAYWRIGHT_MCP_URL in agent/.env).
+# (PLAYWRIGHT_MCP_URL in agent/.env) and must run with --isolated: the daemon
+# opens one browser context per job.
 #
 #   docker compose up --build                    # frontend http://localhost:8081, API http://localhost:8000
 #   docker compose --profile vision up --build   # + the visual-authenticity sidecar (:8100) and its minio
@@ -38,13 +39,16 @@ services:
       - agent/.env
       - agent/.env.docker
     restart: unless-stopped
-    # agent/ticker.sh: a --consume tick every 60s (claims one queued run or
-    # fires a due run_schedules row, then exits; an empty tick is a no-op) and
-    # a --ground-only refresh every 15th tick. It forwards SIGTERM to the tick
-    # in flight, so `docker compose stop` lets the agent fail the run it was
-    # driving instead of leaving it 'running'; the grace period is how long
-    # that gets before the kill.
-    command: ./ticker.sh
+    # The hunter runs as a daemon: it LISTENs for work and claims it as it
+    # appears, so a UI-triggered hunt or "check prices" starts in seconds
+    # rather than on the next tick. SIGTERM unwinds the pools and hands every
+    # in-flight job back to the queue; the grace period is how long that gets
+    # before the kill.
+    #
+    # The Playwright MCP this talks to (PLAYWRIGHT_MCP_URL in agent/.env.docker)
+    # must run with --isolated: the daemon opens one browser context per job,
+    # and a server on a persistent profile refuses the second one.
+    command: python main.py --serve
     stop_grace_period: 30s
 
   frontend:

@@ -41,3 +41,10 @@ VISUAL_AUTHENTICITY_*.md
 *.njsproj
 *.sln
 *.sw?
+
+# Local worktree conveniences: venvs and node_modules are symlinked in from
+# the main checkout, which .gitignore's directory patterns do not match.
+/vision/venv
+/frontend/node_modules
+/backend/venv
+/agent/venv

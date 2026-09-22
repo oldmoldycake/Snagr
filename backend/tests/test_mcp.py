@@ -43,8 +43,9 @@ READ_TOOLS = {
     "get_dashboard_stats",
     "get_price_drops",
     "get_category_price_change",
-    "list_runs",
-    "get_run",
+    "list_jobs",
+    "jobs_summary",
+    "get_job",
 }
 WRITE_TOOLS = {
     "create_category",
@@ -58,7 +59,7 @@ WRITE_TOOLS = {
     "delete_item",
     "update_listing",
 }
-RUN_TOOLS = {"trigger_run", "cancel_run"}
+JOB_TOOLS = {"enqueue_jobs", "cancel_job"}
 VISION_TOOLS = {"list_review_queue", "list_references"}
 VISION_WRITE_TOOLS = {"confirm_review_entry", "discard_review_entry", "revoke_reference"}
 
@@ -193,8 +194,8 @@ async def test_tool_list_follows_scopes_and_the_vision_setting(client, monkeypat
     await _sign_in(client)
     read = await _token(client)
     write = await _token(client, scopes=("read", "write"))
-    runs = await _token(client, scopes=("read", "runs"))
-    full = await _token(client, scopes=("read", "write", "runs"))
+    jobs = await _token(client, scopes=("read", "jobs"))
+    full = await _token(client, scopes=("read", "write", "jobs"))
 
     async def names(token):
         async with _agent(token) as agent:
@@ -203,14 +204,14 @@ async def test_tool_list_follows_scopes_and_the_vision_setting(client, monkeypat
     # a scope you lack hides its tools entirely — nothing to be tempted by
     assert await names(read) == READ_TOOLS
     assert await names(write) == READ_TOOLS | WRITE_TOOLS
-    assert await names(runs) == READ_TOOLS | RUN_TOOLS
-    assert await names(full) == READ_TOOLS | WRITE_TOOLS | RUN_TOOLS
+    assert await names(jobs) == READ_TOOLS | JOB_TOOLS
+    assert await names(full) == READ_TOOLS | WRITE_TOOLS | JOB_TOOLS
 
     monkeypatch.setattr(settings, "VISION_SIDECAR_URL", "http://vision.test")
     assert await names(read) == READ_TOOLS | VISION_TOOLS
     assert (
         await names(full)
-        == READ_TOOLS | WRITE_TOOLS | RUN_TOOLS | VISION_TOOLS | VISION_WRITE_TOOLS
+        == READ_TOOLS | WRITE_TOOLS | JOB_TOOLS | VISION_TOOLS | VISION_WRITE_TOOLS
     )
 
 
@@ -224,7 +225,7 @@ async def test_hidden_tools_are_not_callable(client):
 
 async def test_annotations_say_what_a_tool_does(client):
     await _sign_in(client)
-    async with _agent(await _token(client, scopes=("read", "write", "runs"))) as agent:
+    async with _agent(await _token(client, scopes=("read", "write", "jobs"))) as agent:
         for tool in await agent.list_tools():
             hints = tool.annotations
             if tool.name in READ_TOOLS:
@@ -240,14 +241,14 @@ async def test_annotations_say_what_a_tool_does(client):
 
 async def test_get_instance_and_whoami(client):
     await _sign_in(client)
-    async with _agent(await _token(client, scopes=("read", "runs"))) as agent:
+    async with _agent(await _token(client, scopes=("read", "jobs"))) as agent:
         instance = await _ok(agent, "get_instance")
         assert instance["mcp_enabled"] is True
         assert instance["vision_enabled"] is False
 
         me = await _ok(agent, "whoami")
         assert me["user"]["email"] == OWNER["email"]
-        assert me["scopes"] == ["read", "runs"]
+        assert me["scopes"] == ["read", "jobs"]
 
 
 # --- catalog ------------------------------------------------------------------------
@@ -374,29 +375,45 @@ async def test_price_tools(client, db_session):
         assert res.is_error
 
 
-# --- runs -----------------------------------------------------------------------------
+# --- jobs -----------------------------------------------------------------------------
 
 
-async def test_run_visibility_matches_rest(client, make_client, monkeypatch):
+async def _watched_item(client) -> dict:
+    """An item this caller watches, on one site — enough for the hunter to
+    have something to do."""
+    cat = (await client.post("/api/categories", json={"name": "Handhelds"}, headers=CSRF)).json()
+    site_body = {"name": "eBay", "base_url": "https://ebay.com"}
+    site = (await client.post("/api/sites", json=site_body, headers=CSRF)).json()
+    await client.put(
+        f"/api/categories/{cat['id']}/sites", json={"site_ids": [site["id"]]}, headers=CSRF
+    )
+    body = {"category_id": cat["id"], "name": "Game Boy Color", "target_price": "150.00"}
+    return (await client.post("/api/items", json=body, headers=CSRF)).json()
+
+
+async def test_job_visibility_matches_rest(client, make_client, monkeypatch):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
-    await _sign_in(client)  # the admin, whose run this is
-    res = await client.post("/api/runs", json={"scope": "global"}, headers=CSRF)
-    assert res.status_code == 202, res.text
-    run_id = res.json()["run"]["id"]
+    await _sign_in(client)  # the admin, whose watch this is
+    item = await _watched_item(client)
 
     async with _agent(await _token(client)) as agent:
-        runs = await _ok(agent, "list_runs")
-        assert [r["id"] for r in runs["data"]] == [run_id]
-        run = await _ok(agent, "get_run", run_id=run_id)
-        assert run["status"] == "queued"
-        assert run["scope_label"] == "Everything"
-        assert run["events"] == []
+        jobs = await _ok(agent, "list_jobs", kind="hunt")
+        assert [j["item_id"] for j in jobs["data"]] == [item["id"]]
+        job_id = jobs["data"][0]["id"]
+        job = await _ok(agent, "get_job", job_id=job_id)
+        assert job["status"] == "pending"
+        assert job["label"] == "Game Boy Color × eBay"
+        assert job["events"] == []
+
+        summary = await _ok(agent, "jobs_summary")
+        assert summary["hunts_running"] == 0
+        assert summary["paused_sites"] == []
 
     stranger = await make_client()
     await _sign_in(stranger, STRANGER)
     async with _agent(await _token(stranger)) as agent:
-        assert (await _ok(agent, "list_runs"))["meta"]["total"] == 0
-        assert (await _error(agent, "get_run", run_id=run_id))["code"] == "not_found"
+        assert (await _ok(agent, "list_jobs"))["meta"]["total"] == 0
+        assert (await _error(agent, "get_job", job_id=job_id))["code"] == "not_found"
 
 
 # --- vision -----------------------------------------------------------------------------
@@ -484,26 +501,27 @@ async def test_item_writes(client, db_session):
         ] == "not_found"
 
 
-async def test_run_tools_need_the_runs_scope(client):
+async def test_job_tools_need_the_jobs_scope(client):
     await _sign_in(client)
-    runner = await _token(client, scopes=("read", "runs"))
+    item = await _watched_item(client)
+    runner = await _token(client, scopes=("read", "jobs"))
     async with _agent(runner) as agent:
-        run = await _ok(agent, "trigger_run")
-        assert run["status"] == "queued"
-        assert run["scope_label"] == "Everything"
+        queued = await _ok(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
+        assert [j["status"] for j in queued] == ["pending"]
 
-        busy = await _error(agent, "trigger_run", scope="global")
-        assert busy["code"] == "run_in_progress"
-        assert busy["run_id"] == run["id"]
+        # asking twice is asking once: the open-job index dedupes, so there is
+        # no "already running" error to handle
+        again = await _ok(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
+        assert [j["id"] for j in again] == [j["id"] for j in queued]
 
-        cancelled = await _ok(agent, "cancel_run", run_id=run["id"])
+        cancelled = await _ok(agent, "cancel_job", job_id=queued[0]["id"])
         assert cancelled["status"] == "cancelled"
-        assert (await _error(agent, "cancel_run", run_id=run["id"]))["code"] == "not_active"
+        assert (await _error(agent, "cancel_job", job_id=queued[0]["id"]))["code"] == "job_finished"
 
-        assert (await _error(agent, "trigger_run", scope="category", target="nope"))[
+        assert (await _error(agent, "enqueue_jobs", scope="category", target="nope"))[
             "code"
         ] == "not_found"
-        assert (await _error(agent, "trigger_run", scope="item", target="abc"))[
+        assert (await _error(agent, "enqueue_jobs", scope="item", target="abc"))[
             "code"
         ] == "validation_error"
 

@@ -31,13 +31,29 @@ SEARXNG_URL = os.getenv("SEAR_XNG_URL")
 MARKET_PRICE_TTL_HOURS = int(os.getenv("MARKET_PRICE_TTL_HOURS", "24"))
 MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_RUN", "10"))
 
-# Run lifecycle. The heartbeat is the liveness signal the stale-run reaper
-# judges by: a 'running' agent_runs row whose heartbeat is older than
-# RUN_STALE_AFTER_SECONDS was left behind by a dead process (SIGKILL, OOM,
-# power loss) and is failed on the next consumer tick — left alone it would
-# block every enqueue (409 run_in_progress) and every schedule forever.
-RUN_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("RUN_HEARTBEAT_INTERVAL_SECONDS", "30"))
-RUN_STALE_AFTER_SECONDS = int(os.getenv("RUN_STALE_AFTER_SECONDS", "300"))
+# The work queue. RECHECK_INTERVAL_MINUTES is the whole recheck cadence: a
+# completed check inserts its own successor that far ahead, so there is no
+# schedule to keep anywhere else.
+#
+# The heartbeat is the liveness signal the job reaper judges by: a 'running'
+# row whose heartbeat is older than JOB_STALE_AFTER_SECONDS was left behind by
+# a dead process (SIGKILL, OOM, power loss) and goes back to pending, or to
+# failed once it has burned JOB_MAX_ATTEMPTS. Retention sweeps terminal rows:
+# a check is a heartbeat, not history — price_checks is the history — so it is
+# kept for days, while a hunt is a story worth months.
+RECHECK_INTERVAL_MINUTES = int(os.getenv("RECHECK_INTERVAL_MINUTES", "30"))
+# Two pools, because they cost different things. Checks are cheap and mostly
+# browserless, so several run at once and a wedged page never blocks the
+# listing behind it; hunts carry the model, so one at a time until a operator
+# has measured what their provider will take. Ground jobs run in the hunt pool
+# — they are LLM work too.
+RECHECK_CONCURRENCY = int(os.getenv("RECHECK_CONCURRENCY", "3"))
+HUNT_CONCURRENCY = int(os.getenv("HUNT_CONCURRENCY", "1"))
+JOB_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("JOB_HEARTBEAT_INTERVAL_SECONDS", "30"))
+JOB_STALE_AFTER_SECONDS = int(os.getenv("JOB_STALE_AFTER_SECONDS", "300"))
+JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
+JOB_RETENTION_DAYS = int(os.getenv("JOB_RETENTION_DAYS", "7"))
+HUNT_RETENTION_DAYS = int(os.getenv("HUNT_RETENTION_DAYS", "90"))
 # Per-unit budgets. One unit is one LLM stream (a listing recheck or a site
 # scan); a model looping on a blocked page is otherwise bounded only by
 # prompt text. Tripping either cap fails that unit and the run moves on.
@@ -66,6 +82,17 @@ LANGFUSE_ENABLED = bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE
 CHEAP_RECHECK = os.getenv("CHEAP_RECHECK", "true").lower() != "false"
 LOCATOR_MAX_FAILURES = int(os.getenv("LOCATOR_MAX_FAILURES", "3"))
 STATIC_FETCH = os.getenv("STATIC_FETCH", "true").lower() != "false"
+
+# Per-site circuit breaker. A marketplace that starts answering challenge
+# pages instead of listings fails every read, and under a daemon that means
+# every listing, every interval, forever — each failure ending in an LLM
+# fallback that also fails. SITE_BREAKER_ERRORS consecutive read errors stop
+# the site outright for SITE_BREAKER_MINUTES; a bot wall that persists doubles
+# the wait each time up to SITE_BREAKER_CAP_MINUTES, and any successful read
+# resets the count. A wall then costs five reads and goes quiet.
+SITE_BREAKER_ERRORS = int(os.getenv("SITE_BREAKER_ERRORS", "5"))
+SITE_BREAKER_MINUTES = int(os.getenv("SITE_BREAKER_MINUTES", "60"))
+SITE_BREAKER_CAP_MINUTES = int(os.getenv("SITE_BREAKER_CAP_MINUTES", "1440"))
 
 # Price plausibility bands. A read outside one is anomalous — recorded, but
 # never notified and never charted until a second read agrees with it (§4.3):

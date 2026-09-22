@@ -36,47 +36,60 @@ _ALL_TABLES = ", ".join(t.name for t in Base.metadata.sorted_tables)
 
 # create_all knows nothing about triggers, so the pg_notify plumbing the SSE
 # hub and the notification dispatcher listen to is installed here by hand —
-# keep in sync with migrations/versions/007_run_notify_triggers.py and
+# keep in sync with migrations/versions/015_jobs_daemon.py and
 # migrations/versions/010_notification_channels_outbox.py
 _NOTIFY_DDL = [
     """
-    CREATE OR REPLACE FUNCTION notify_run_event() RETURNS trigger AS $$
+    CREATE OR REPLACE FUNCTION notify_job() RETURNS trigger AS $$
     BEGIN
         PERFORM pg_notify(
-            'snagr_run_events',
-            json_build_object('kind', 'event', 'run_id', NEW.run_id, 'seq', NEW.seq)::text
+            'snagr_jobs',
+            json_build_object('id', NEW.id, 'kind', NEW.kind, 'status', NEW.status)::text
         );
         RETURN NULL;
     END;
     $$ LANGUAGE plpgsql
     """,
     """
-    CREATE OR REPLACE FUNCTION notify_run_status() RETURNS trigger AS $$
+    CREATE OR REPLACE FUNCTION notify_job_event() RETURNS trigger AS $$
     BEGIN
         PERFORM pg_notify(
-            'snagr_run_events',
-            json_build_object('kind', 'status', 'run_id', NEW.id, 'status', NEW.status)::text
+            'snagr_job_events',
+            json_build_object('job_id', NEW.job_id, 'seq', NEW.seq)::text
         );
         RETURN NULL;
     END;
     $$ LANGUAGE plpgsql
     """,
     """
-    CREATE TRIGGER run_events_notify
-        AFTER INSERT ON run_events
-        FOR EACH ROW EXECUTE FUNCTION notify_run_event()
+    CREATE OR REPLACE FUNCTION notify_price_check() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify('snagr_job_events', json_build_object('check', NEW.id)::text);
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
     """,
     """
-    CREATE TRIGGER agent_runs_insert_notify
-        AFTER INSERT ON agent_runs
-        FOR EACH ROW EXECUTE FUNCTION notify_run_status()
+    CREATE TRIGGER jobs_insert_notify
+        AFTER INSERT ON jobs
+        FOR EACH ROW EXECUTE FUNCTION notify_job()
     """,
     """
-    CREATE TRIGGER agent_runs_status_notify
-        AFTER UPDATE OF status ON agent_runs
+    CREATE TRIGGER jobs_status_notify
+        AFTER UPDATE OF status ON jobs
         FOR EACH ROW
         WHEN (OLD.status IS DISTINCT FROM NEW.status)
-        EXECUTE FUNCTION notify_run_status()
+        EXECUTE FUNCTION notify_job()
+    """,
+    """
+    CREATE TRIGGER job_events_notify
+        AFTER INSERT ON job_events
+        FOR EACH ROW EXECUTE FUNCTION notify_job_event()
+    """,
+    """
+    CREATE TRIGGER price_checks_notify
+        AFTER INSERT ON price_checks
+        FOR EACH ROW EXECUTE FUNCTION notify_price_check()
     """,
     """
     CREATE OR REPLACE FUNCTION notify_outbox() RETURNS trigger AS $$

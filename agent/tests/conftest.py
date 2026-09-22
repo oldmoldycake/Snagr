@@ -48,6 +48,80 @@ os.environ.setdefault("AI_API_KEY", "test-key")
 os.environ.setdefault("PLAYWRIGHT_MCP_URL", "http://localhost:9999/mcp")
 
 
+# --- schema the models don't describe ----------------------------------------
+# create_all builds tables and their own constraints. The queue's central rule
+# is a partial unique index over coalesce() expressions, and its wake-up is a
+# set of triggers; the backend owns both (D1), so the DB-backed tests install
+# them by hand — the same thing backend/tests/conftest.py does with the
+# trigger DDL. Keep in sync with
+# backend/migrations/versions/015_jobs_daemon.py.
+
+OPEN_JOB_INDEX = """
+    CREATE UNIQUE INDEX uq_jobs_open ON jobs (
+        kind,
+        coalesce(listing_id, 0),
+        coalesce(watch_id, 0),
+        coalesce(site_id, 0),
+        coalesce(item_id, 0)
+    ) WHERE status IN ('pending', 'running')
+"""
+
+JOB_NOTIFY_DDL = [
+    """
+    CREATE OR REPLACE FUNCTION notify_job() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify(
+            'snagr_jobs',
+            json_build_object('id', NEW.id, 'kind', NEW.kind, 'status', NEW.status)::text
+        );
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    CREATE OR REPLACE FUNCTION notify_job_event() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify(
+            'snagr_job_events',
+            json_build_object('job_id', NEW.job_id, 'seq', NEW.seq)::text
+        );
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    CREATE OR REPLACE FUNCTION notify_price_check() RETURNS trigger AS $$
+    BEGIN
+        PERFORM pg_notify('snagr_job_events', json_build_object('check', NEW.id)::text);
+        RETURN NULL;
+    END;
+    $$ LANGUAGE plpgsql
+    """,
+    """
+    CREATE TRIGGER jobs_insert_notify
+        AFTER INSERT ON jobs
+        FOR EACH ROW EXECUTE FUNCTION notify_job()
+    """,
+    """
+    CREATE TRIGGER jobs_status_notify
+        AFTER UPDATE OF status ON jobs
+        FOR EACH ROW
+        WHEN (OLD.status IS DISTINCT FROM NEW.status)
+        EXECUTE FUNCTION notify_job()
+    """,
+    """
+    CREATE TRIGGER job_events_notify
+        AFTER INSERT ON job_events
+        FOR EACH ROW EXECUTE FUNCTION notify_job_event()
+    """,
+    """
+    CREATE TRIGGER price_checks_notify
+        AFTER INSERT ON price_checks
+        FOR EACH ROW EXECUTE FUNCTION notify_price_check()
+    """,
+]
+
+
 # The site every seeded scenario is on. Tool URLs are checked against the
 # site's own registrable domain (S2), so a test URL has to live on it.
 SITE_BASE_URL = "https://example.test"

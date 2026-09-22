@@ -1,21 +1,21 @@
-"""Entry point for the price scraper job: sets up logging (scraper.log +
-console) and runs the agent once over all watched items, recorded as a global
-agent_runs row. With --consume it instead claims one API-enqueued run, or
-fires a due run_schedules row when the queue is empty, and exits when there is
-neither — cron it every minute so UI-triggered runs start promptly and
-schedules fire on time. With --ground-only it only refreshes stale
-market prices and exits — the near-instant path for newly added items, cheap
-enough to cron every few minutes.
+"""Entry point for the hunter: sets up logging (scraper.log + console) and
+runs the daemon, or one drain of the queue.
 
-Every mode runs under _supervised, which turns SIGTERM and SIGINT into
-cancellation of the job: a `docker stop` (or a Ctrl-C) unwinds it, and the
-run driver writes the run's terminal state on the way out instead of leaving
-the row 'running' for the reaper to find minutes later."""
+    --serve   run until stopped, claiming work as it appears (compose)
+    --once    queue what is due, drain the queue until empty, exit (cron)
 
+There is no bare mode. A typo used to start a full sweep of everything,
+silently and expensively; argparse now prints the usage and exits 2.
+
+Both modes run under _supervised, which turns SIGTERM and SIGINT into
+cancellation: a `docker stop` (or a Ctrl-C) unwinds the pools and hands every
+in-flight job back to the queue on the way out, so nothing is lost and nothing
+waits for the reaper."""
+
+import argparse
 import asyncio
 import logging
 import signal
-import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -31,11 +31,11 @@ log = logging.getLogger(__name__)
 
 def _supervised(job) -> None:
     """
-    Run one job coroutine to completion, treating SIGTERM and SIGINT as
-    "cancel the job": the task unwinds through every `finally`, and
-    agent._drive's cancellation handler fails the run it was driving.
-    Failures are logged, never raised — the ticker loop must outlive a bad
-    pass, and the next tick happens regardless.
+    Run one coroutine to completion, treating SIGTERM and SIGINT as "stop":
+    the task unwinds through every `finally`, which is where the pools return
+    what they were holding. Failures are logged, never raised — under compose
+    this process is the hunter, and it should come back rather than die on a
+    bad pass.
     """
 
     async def main() -> None:
@@ -50,27 +50,25 @@ def _supervised(job) -> None:
     except asyncio.CancelledError, KeyboardInterrupt:
         log.warning("Stopped by signal")
     except Exception as e:
-        log.error(f"Job failed: {e}")
+        log.error(f"Hunter stopped: {e}")
 
 
 if __name__ == "__main__":
-    # Imported lazily per mode: agent.py asserts PLAYWRIGHT_MCP_URL at import,
-    # and grounding needs no browser — --ground-only must run without one.
-    if "--ground-only" in sys.argv:
-        from pricing import ground_stale
+    parser = argparse.ArgumentParser(description="Snagr's hunter — the agent that works the queue.")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--serve", action="store_true", help="run until stopped (the daemon)")
+    mode.add_argument("--once", action="store_true", help="drain the queue once and exit (cron)")
+    args = parser.parse_args()
 
-        log.info("Market grounding job started.....")
-        _supervised(ground_stale())
-        log.info("Market grounding job finished")
-    elif "--consume" in sys.argv:
-        from agent import consume
+    # imported here so --once and --serve both pay the import cost only after
+    # the arguments have been accepted
+    from worker import once, serve
 
-        log.info("Run-queue consumer tick started.....")
-        _supervised(consume())
-        log.info("Run-queue consumer tick finished")
+    if args.serve:
+        log.info("Hunter starting.....")
+        _supervised(serve())
+        log.info("Hunter stopped")
     else:
-        from agent import run
-
-        log.info("Price scraper job started.....")
-        _supervised(run())
-        log.info("Price Scraper job finished")
+        log.info("Draining the queue.....")
+        _supervised(once())
+        log.info("Queue drained")

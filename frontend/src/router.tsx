@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import { AdminGuard, AuthGuard } from '@/features/auth/AuthGuard'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { RegisterPage } from '@/features/auth/RegisterPage'
@@ -7,8 +7,8 @@ import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { CategoryPage } from '@/features/categories/CategoryPage'
 import { ItemDetailPage } from '@/features/items/ItemDetailPage'
 import { SitesPage } from '@/features/sites/SitesPage'
-import { RunsPage } from '@/features/runs/RunsPage'
-import { RunDetailPage } from '@/features/runs/RunDetailPage'
+import { ActivityPage } from '@/features/activity/ActivityPage'
+import { JobPage } from '@/features/activity/JobPage'
 import { ReviewQueuePage } from '@/features/vision/ReviewQueuePage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { ApiSettingsPage } from '@/features/settings/ApiSettingsPage'
@@ -26,8 +26,12 @@ export const router = createBrowserRouter([
       { path: '/categories/:slug', element: <CategoryPage /> },
       { path: '/items/:id', element: <ItemDetailPage /> },
       { path: '/sites', element: <SitesPage /> },
-      { path: '/runs', element: <RunsPage /> },
-      { path: '/runs/:id', element: <RunDetailPage /> },
+      { path: '/activity', element: <ActivityPage /> },
+      { path: '/activity/:id', element: <JobPage /> },
+      // old bookmarks land somewhere: a run no longer exists, but the page
+      // that replaced it does
+      { path: '/runs', element: <Navigate to="/activity" replace /> },
+      { path: '/runs/:id', element: <Navigate to="/activity" replace /> },
       { path: '/review', element: <ReviewQueuePage /> },
       { path: '/settings', element: <SettingsPage /> },
       { path: '/settings/api', element: <ApiSettingsPage /> },

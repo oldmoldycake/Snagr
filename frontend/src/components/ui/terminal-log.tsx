@@ -2,9 +2,9 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 
 /**
- * The terminal voice: one glyph map for every log surface (activity sheet,
- * run pages, price checks, the agent ticker). Color never travels alone —
- * the glyph is the semantic channel.
+ * The terminal voice: one glyph map for every log surface (the activity page
+ * and sheet, job pages, price checks, the hunter ticker). Color never travels
+ * alone — the glyph is the semantic channel.
  */
 export type LogGlyphLevel = 'info' | 'success' | 'warn' | 'error' | 'skip' | 'new'
 

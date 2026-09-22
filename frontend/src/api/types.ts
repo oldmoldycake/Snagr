@@ -30,8 +30,6 @@ export interface ApiErrorBody {
     code: string
     message: string
     fields?: Record<string, string>
-    /** present on 409 run_in_progress */
-    run_id?: number
   }
 }
 
@@ -122,6 +120,9 @@ export interface Site {
   category_ids: number[]
   listing_count: number
   last_checked_at: string | null
+  /** set by the hunter's circuit breaker; null = the site is not paused */
+  paused_until: string | null
+  paused_reason: string | null
   created_at: string
 }
 
@@ -133,6 +134,9 @@ export interface SiteCreateRequest {
 export interface SiteUpdateRequest {
   name?: string
   base_url?: string
+  /** null is the ONLY accepted value: it clears the pause and the error
+   *  counter. The hunter sets pauses; a person can only lift one. */
+  paused_until?: null
 }
 
 // ---------------------------------------------------------------------------
@@ -213,11 +217,32 @@ export interface Listing {
   authenticity: AuthenticityRead | null
   last_checked_at: string | null
   created_at: string
-  discovered_by_run_id: number | null
+  /** the hunt job that saved this listing; null for rows older than jobs */
+  discovered_by_job_id: number | null
 }
 
+/** What the hunter will do next for one item — computed from its jobs. */
+export interface HuntFacts {
+  running: boolean
+  next_at: string | null
+  last_at: string | null
+  last_result: 'found' | 'nothing' | 'failed' | 'cancelled' | null
+  slots_open: number
+}
+
+export interface RecheckFacts {
+  /** how many of this item's rechecks are running right now */
+  running: number
+  next_at: string | null
+  /** minutes between checks for this item's listings; PR 2a = the instance default */
+  interval_minutes: number
+}
+
+/** Not on ItemSummary — list queries stay cheap. */
 export interface ItemDetail extends ItemSummary {
   listings: Listing[]
+  hunt: HuntFacts
+  recheck: RecheckFacts
 }
 
 export interface ItemCreateRequest {
@@ -439,102 +464,169 @@ export interface PriceDrop {
 }
 
 // ---------------------------------------------------------------------------
-// Agent runs
+// Jobs — the hunter's work queue
 //
-// Visibility (per-user run privacy): a viewer sees their own runs, system runs
-// (user_id null), and — as admin — everything. Another user's run is hidden
-// entirely: the list omits it and detail/events/cancel return 404 not_found
-// (hidden ≡ nonexistent). Within a visible run, events are filtered per viewer
-// by payload reference: item events show to watchers of that item, listing
-// events only to the listing's owner, payload-less events to everyone who can
-// see the run. GET /runs/:id/events returns up to `limit` VISIBLE events after
-// `after_seq` (filtered before the limit is applied).
+// Three kinds of work: a `hunt` searches one (watch, site) pair with the model
+// and the browser, a `recheck` re-reads one known listing's price with no model
+// in the loop, and a `ground` refreshes an item's market-price stats.
+//
+// Visibility: a caller sees jobs for their own watches, `ground` jobs for items
+// they watch, and — as admin — everything. A job the caller may not see is a
+// 404, never a 403 (hidden = nonexistent).
 
-export type RunScope = 'global' | 'category' | 'site' | 'item'
-export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type JobKind = 'hunt' | 'recheck' | 'ground'
+export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
+/** what a user may ask for; the four scopes the UI has always offered */
+export type JobScope = 'global' | 'category' | 'site' | 'item'
 
-export interface RunStats {
+export interface JobStats {
+  /** hunt: candidates the model looked at · recheck: 1 · ground: sources read */
   listings_checked: number
   prices_found: number
   new_listings: number
   errors: number
+  tokens_in: number
+  tokens_out: number
+  duration_ms: number | null
+  /** recheck only: how the price was read — 'llm' | 'jsonld' | 'meta' | 'microdata' | 'locator' */
+  method: string | null
+  /** recheck only: 'static' = a plain GET, no browser · 'browser' */
+  transport: 'static' | 'browser' | null
 }
 
-export interface AgentRun {
+export interface Job {
   id: number
-  /** owner; null = a system run (scheduled/operator-created), visible to every user */
+  kind: JobKind
+  status: JobStatus
+  /** who asked; null = the hunter queued it itself (scheduler) — shown as "system" */
   user_id: number | null
-  scope: RunScope
-  scope_id: number | null
-  /** human label: "Everything", "Category: GPUs", "Site: newegg.com", "Item: RTX 4070" */
-  scope_label: string
-  status: RunStatus
+  watch_id: number | null
+  item_id: number | null
+  item_name: string | null
+  site_id: number | null
+  site_name: string | null
+  listing_id: number | null
+  /** "Game Boy Color × eBay" (hunt) · "Game Boy Color · check" (recheck) · "Game Boy Color · market price" (ground) */
+  label: string
+  priority: number
+  /** ISO; the queue sorts pending jobs by this */
+  run_after: string
+  attempts: number
   started_at: string | null
   finished_at: string | null
-  stats: RunStats | null
+  /** one sentence for a human, e.g. "eBay answered a challenge page instead of the listing." */
   error: string | null
-  created_at: string
-  /** highest event seq written so far */
+  stats: JobStats | null
+  /** why it was queued: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' — the queue's grey text */
+  reason: string | null
+  /** highest event seq written so far (hunts and ground only; rechecks stay 0) */
   last_seq: number
+  created_at: string
 }
 
-export interface RunCreateRequest {
-  scope: RunScope
+export interface JobCreateRequest {
+  kind: 'hunt' | 'recheck'
+  scope: JobScope
+  /** required unless scope is 'global' */
   scope_id?: number
 }
 
-export type RunEventLevel = 'info' | 'success' | 'warn' | 'error'
+export interface JobListParams {
+  page?: number
+  per_page?: number
+  /** one kind or a comma-separated list, e.g. 'hunt,ground' */
+  kind?: string
+  /** one status or a comma-separated list, e.g. 'done,failed,cancelled' */
+  status?: string
+  item_id?: number
+}
 
-export type RunEventType =
-  | 'run_started'
-  | 'site_started'
-  | 'item_started'
+/** the presence sentence, the ticker and the queue's checks line read this one object */
+export interface JobsSummary {
+  hunts_running: number
+  checks_running: number
+  checks_pending: number
+  next_check_at: string | null
+  next_hunt_at: string | null
+  hunts_today: number
+  listings_watched: number
+  /** the most recent finished hunt visible to the viewer */
+  last_hunt: Job | null
+  paused_sites: PausedSite[]
+}
+
+export interface PausedSite {
+  site_id: number
+  site_name: string
+  paused_until: string
+  paused_reason: string
+}
+
+export type JobEventLevel = 'info' | 'success' | 'warn' | 'error'
+
+export type JobEventType =
+  | 'job_started'
   | 'listing_check'
-  | 'price_found'
   /** candidate scored against the item's criteria — payload: url, title, match_score, match_summary, tracked */
   | 'listing_evaluated'
+  | 'price_found'
   | 'listing_discovered'
   /** tracked listing sold/ended; slot freed — payload: listing_id, item_id */
   | 'listing_ended'
+  /** the breaker tripped on this job's site — payload: site_id, paused_until, paused_reason */
+  | 'site_paused'
   | 'error'
-  | 'run_finished'
+  | 'job_finished'
 
-export interface RunEvent {
-  run_id: number
+export interface JobEvent {
+  job_id: number
   seq: number
   ts: string
-  level: RunEventLevel
-  event_type: RunEventType
+  level: JobEventLevel
+  event_type: JobEventType
   message: string
   payload: Record<string, unknown> | null
 }
 
-export interface RunListParams {
-  status?: RunStatus
-  scope?: RunScope
-  page?: number
-  per_page?: number
+/** one recheck result, as the SSE frame carries it */
+export interface ListingChecked {
+  listing_id: number
+  item_id: number
+  item_name: string
+  site_name: string
+  price: string | null
+  currency: string
+  status: string | null
+  method: string | null
+  confirmed: boolean
+  /** true when this check ended or sold the listing and a slot opened */
+  slot_freed: boolean
+  checked_at: string
 }
 
 // ---------------------------------------------------------------------------
 // SSE stream (GET /api/events)
 //
-// Named events on the stream (all delivered per-viewer — runs and events the
-// viewer may not see are never sent):
-//   run.snapshot  → RunSnapshotData   (sent once on every connect/reconnect)
-//   run.started   → { run: AgentRun }
-//   run.event     → RunEvent
-//   run.finished  → { run: AgentRun }  (stats populated)
-//   run.failed    → { run: AgentRun }  (error populated)
+// Named events on the stream (all delivered per-viewer — jobs the viewer may
+// not see are never sent):
+//   job.snapshot  → JobSnapshotData  (sent once on every connect/reconnect)
+//   job.started   → { job: Job }
+//   job.event     → JobEvent         (id: "<job_id>:<seq>")
+//   job.finished  → { job: Job }     (stats populated)
+//   job.failed    → { job: Job }     (error populated)
+//   listing.checked → ListingChecked (every price check the agent writes)
 // Heartbeat: comment line `: ping` every 15s.
-// Reconnect contract: on every run.snapshot, refetch
-// GET /api/runs/{id}/events?after_seq=<highest seq held> and merge by seq —
-// the filtered response is authoritative. snapshot last_seq is the run's
+//
+// Rechecks emit no lifecycle frames and write no events: their result IS the
+// listing.checked frame. Reconnect contract: on every job.snapshot, refetch
+// GET /api/jobs/{id}/events?after_seq=<highest seq held> and merge by seq —
+// the filtered response is authoritative. snapshot last_seq is the job's
 // GLOBAL write cursor; a filtered viewer legitimately holds a sparse subset
 // of seqs, so never infer missed events from seq arithmetic.
 
-export interface RunSnapshotData {
-  active_runs: Pick<AgentRun, 'id' | 'user_id' | 'status' | 'scope' | 'scope_label' | 'last_seq'>[]
+export interface JobSnapshotData {
+  /** every non-terminal hunt and ground job the viewer may see */
+  jobs: Job[]
 }
 
 // ---------------------------------------------------------------------------
@@ -610,8 +702,9 @@ export interface NotificationChannelUpdateRequest {
   enabled?: boolean
 }
 
-/** read = every GET (and the SSE stream); write = mutations; runs = trigger/cancel a run */
-export type ApiTokenScope = 'read' | 'write' | 'runs'
+/** read = every GET (and the SSE stream); write = mutations; jobs = queue hunts
+ *  and price checks, cancel jobs */
+export type ApiTokenScope = 'read' | 'write' | 'jobs'
 
 /**
  * A personal access token — the bearer credential for the MCP endpoint and the
@@ -621,7 +714,7 @@ export type ApiTokenScope = 'read' | 'write' | 'runs'
 export interface ApiToken {
   id: number
   name: string
-  /** always in canonical order: read, write, runs */
+  /** always in canonical order: read, write, jobs */
   scopes: ApiTokenScope[]
   /** null = never expires */
   expires_at: string | null

@@ -4,10 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel
 
-ApiTokenScope = Literal["read", "write", "runs"]
+ApiTokenScope = Literal["read", "write", "jobs"]
 # canonical order — scopes are stored sorted this way so the UI's preset
 # detection (read / read+write / all three) is a plain list comparison
-KNOWN_SCOPES: tuple[str, ...] = ("read", "write", "runs")
+KNOWN_SCOPES: tuple[str, ...] = ("read", "write", "jobs")
 
 
 class ApiToken(BaseModel):

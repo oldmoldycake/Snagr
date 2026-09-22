@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.config import settings
 from app.core.security import API_TOKEN_PREFIX
-from app.models import ApiTokens
+from app.models import ApiTokens, User
 
 from tests.conftest import CSRF
 
@@ -85,8 +85,8 @@ async def test_never_expiring_token_has_null_expires_at(client):
 
 async def test_scopes_come_back_in_canonical_order(client):
     await _sign_in(client)
-    created = await _mint(client, scopes=("runs", "read"))
-    assert created["scopes"] == ["read", "runs"]
+    created = await _mint(client, scopes=("jobs", "read"))
+    assert created["scopes"] == ["read", "jobs"]
 
 
 async def test_create_field_validation(client):
@@ -175,31 +175,35 @@ async def test_write_token_mutates_without_the_csrf_header(client, make_client):
     assert res.json()["name"] == "Cameras"
 
 
-async def test_runs_need_the_runs_scope(client, make_client):
-    await _sign_in(client)
+async def test_asking_the_hunter_for_work_needs_the_jobs_scope(client, make_client, sc):
+    """A hunt spends LLM money, which is why it is its own scope: `write` lets
+    a token edit the user's data, not spend on their behalf."""
+    user_id = await _sign_in(client)
     writer = (await _mint(client, name="writer", scopes=("read", "write")))["token"]
-    runner = (await _mint(client, name="runner", scopes=("read", "write", "runs")))["token"]
+    runner = (await _mint(client, name="runner", scopes=("read", "write", "jobs")))["token"]
     agent = await make_client()
+    request = {"kind": "hunt", "scope": "global"}
 
-    res = await agent.post("/api/runs", json={"scope": "global"}, headers=_bearer(writer))
+    res = await agent.post("/api/jobs", json=request, headers=_bearer(writer))
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "insufficient_scope"
 
-    res = await agent.post("/api/runs", json={"scope": "global"}, headers=_bearer(runner))
-    assert res.status_code == 202, res.text
-    run_id = res.json()["run"]["id"]
+    item = await sc.item("Alpha")
+    watch = await sc.watch(item, user=await sc.db.get(User, user_id))
+    job = await sc.job(watch=watch, status="running")
+    await sc.commit()
 
-    res = await agent.post(f"/api/runs/{run_id}/cancel", headers=_bearer(writer))
+    res = await agent.post(f"/api/jobs/{job.id}/cancel", headers=_bearer(writer))
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "insufficient_scope"
-    res = await agent.post(f"/api/runs/{run_id}/cancel", headers=_bearer(runner))
+    res = await agent.post(f"/api/jobs/{job.id}/cancel", headers=_bearer(runner))
     assert res.status_code == 200, res.text
     assert res.json()["status"] == "cancelled"
 
 
 async def test_account_routes_are_cookie_only(client, make_client):
     await _sign_in(client)  # the first user is the admin
-    token = (await _mint(client, scopes=("read", "write", "runs")))["token"]
+    token = (await _mint(client, scopes=("read", "write", "jobs")))["token"]
     agent = await make_client()
     for res in (
         await agent.get("/api/me/tokens", headers=_bearer(token)),

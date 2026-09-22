@@ -29,14 +29,14 @@ from decimal import Decimal
 from itertools import count
 
 from app.models import (
-    AgentRuns,
     Categories,
     Items,
+    JobEvents,
+    Jobs,
     Listings,
     NotificationChannels,
     NotificationOutbox,
     PriceChecks,
-    RunEvents,
     Sites,
     User,
     VisionListingImages,
@@ -186,18 +186,25 @@ class Scenario:
             )
         await self.db.flush()
 
-    async def run(self, user=None, status="succeeded", days_ago=1, **overrides) -> AgentRuns:
-        """An agent run; user=None makes a system run (visible to everyone)."""
+    async def job(self, kind="hunt", watch=None, status="done", days_ago=1, **overrides) -> Jobs:
+        """One job. It hangs off a watch by default, which is what decides who
+        may see it; pass watch=None for a `ground` job, which every watcher of
+        its item can see."""
+        finished = status in ("done", "failed", "cancelled")
         fields = {
-            "user_id": user.id if user is not None else None,
-            "scope": "global",
-            "scope_id": None,
-            "scope_label": "Everything",
+            "kind": kind,
+            "user_id": None,
+            "watch_id": watch.id if watch is not None else None,
+            "item_id": watch.item_id if watch is not None else None,
+            "site_id": (await self.site()).id if kind != "ground" else None,
             "status": status,
             "created_at": self.ago(days_ago),
+            "run_after": self.ago(days_ago),
+            "started_at": self.ago(days_ago) if status != "pending" else None,
+            "finished_at": self.ago(days_ago) if finished else None,
             **overrides,
         }
-        row = AgentRuns(**fields)
+        row = Jobs(**fields)
         self.db.add(row)
         await self.db.flush()
         return row
@@ -247,11 +254,11 @@ class Scenario:
         await self.db.flush()
         return row
 
-    async def run_event(self, run, seq, message=None, payload=None, **overrides) -> RunEvents:
-        """One run_events row; the payload's item_id/listing_id references are
-        what the visibility predicate keys on. Keeps run.last_seq honest."""
+    async def job_event(self, job, seq, message=None, payload=None, **overrides) -> JobEvents:
+        """One job_events row. Keeps job.last_seq honest, the way the agent's
+        locked bump does."""
         fields = {
-            "run_id": run.id,
+            "job_id": job.id,
             "seq": seq,
             "ts": self.now - timedelta(seconds=1000 - seq),
             "level": "info",
@@ -260,8 +267,8 @@ class Scenario:
             "payload": payload,
             **overrides,
         }
-        row = RunEvents(**fields)
-        run.last_seq = max(run.last_seq, seq)
+        row = JobEvents(**fields)
+        job.last_seq = max(job.last_seq, seq)
         self.db.add(row)
         await self.db.flush()
         return row

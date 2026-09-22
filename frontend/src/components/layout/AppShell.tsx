@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Masthead } from './Masthead'
-import { ActivitySheet } from '@/features/runs/ActivitySheet'
+import { ActivitySheet } from '@/features/activity/ActivitySheet'
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (

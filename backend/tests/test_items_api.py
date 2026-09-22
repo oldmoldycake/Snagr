@@ -213,3 +213,138 @@ async def test_an_unbelieved_reading_is_absent_from_the_price_history(client, db
     ]
 
     assert prices and "4.49" not in prices
+
+
+# --- the hunter starts on a new watch, and stops on an untracked listing --------
+
+
+async def _catalog(client, sites=("eBay", "Mercari")) -> dict:
+    """A category linked to `sites`; returns {"category_id", "site_ids"}."""
+    cat = (await client.post("/api/categories", json={"name": "Handhelds"}, headers=CSRF)).json()
+    site_ids = []
+    for name in sites:
+        body = {"name": name, "base_url": f"https://{name.lower()}.test"}
+        site_ids.append((await client.post("/api/sites", json=body, headers=CSRF)).json()["id"])
+    await client.put(
+        f"/api/categories/{cat['id']}/sites", json={"site_ids": site_ids}, headers=CSRF
+    )
+    return {"category_id": cat["id"], "site_ids": site_ids}
+
+
+async def test_a_new_watch_is_hunting_before_the_request_returns(client):
+    """The queue rows are written in the same transaction as the watch: a
+    watch nothing will ever look for is not a state this API can produce."""
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    body = {"category_id": catalog["category_id"], "name": "Game Boy Color", "target_price": None}
+    item = (await client.post("/api/items", json=body, headers=CSRF)).json()
+
+    jobs = (await client.get("/api/jobs", params={"item_id": item["id"]})).json()["data"]
+    hunts = [j for j in jobs if j["kind"] == "hunt"]
+    assert sorted(j["site_name"] for j in hunts) == ["Mercari", "eBay"]
+    assert {j["reason"] for j in hunts} == {"created"}
+    # and the market stats its prompts read from
+    assert [j["kind"] for j in jobs if j["kind"] == "ground"] == ["ground"]
+
+
+async def test_a_pinned_site_subset_is_what_gets_hunted(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    body = {
+        "category_id": catalog["category_id"],
+        "name": "Game Boy Color",
+        "target_price": None,
+        "site_ids": [catalog["site_ids"][0]],
+    }
+    item = (await client.post("/api/items", json=body, headers=CSRF)).json()
+
+    jobs = (await client.get("/api/jobs", params={"item_id": item["id"], "kind": "hunt"})).json()
+    assert [j["site_name"] for j in jobs["data"]] == ["eBay"]
+
+
+async def test_untracking_a_listing_takes_it_out_of_the_rotation(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        await sc.job(kind="recheck", watch=watch, status="pending", listing_id=listing.id)
+        listing_id = listing.id
+
+    await client.patch(f"/api/listings/{listing_id}", json={"active": False}, headers=CSRF)
+
+    jobs = (await client.get("/api/jobs", params={"kind": "recheck"})).json()["data"]
+    assert [j["status"] for j in jobs] == ["cancelled"]
+
+
+async def test_tracking_it_again_puts_it_back(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item, active=False)
+        listing_id = listing.id
+
+    await client.patch(f"/api/listings/{listing_id}", json={"active": True}, headers=CSRF)
+
+    jobs = (await client.get("/api/jobs", params={"kind": "recheck", "status": "pending"})).json()
+    assert [j["listing_id"] for j in jobs["data"]] == [listing_id]
+
+
+async def test_a_listing_remembers_the_hunt_that_found_it(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        job = await sc.job(watch=watch, status="done")
+        listing = await sc.listing(watch, item)
+        listing.discovered_by_job_id = job.id
+        item_id, job_id = item.id, job.id
+
+    (row,) = (await client.get(f"/api/items/{item_id}")).json()["listings"]
+    assert row["discovered_by_job_id"] == job_id
+
+
+async def test_the_item_page_says_what_happens_next(client, db_session):
+    """The facts line is computed from the watch's jobs — nothing about it is
+    stored, and nothing about it is on ItemSummary (list queries stay cheap)."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        await sc.job(watch=watch, status="done", days_ago=0, stats={"new_listings": 2})
+        await sc.job(watch=watch, status="pending", days_ago=0, site_id=(await sc.site("B")).id)
+        await sc.job(kind="recheck", watch=watch, status="running", listing_id=listing.id)
+        item_id = item.id
+
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+
+    assert detail["hunt"]["running"] is False
+    assert detail["hunt"]["last_result"] == "found"
+    assert detail["hunt"]["next_at"] is not None
+    assert detail["hunt"]["slots_open"] == 2  # max_listings 3, one tracked
+    assert detail["recheck"]["running"] == 1
+    assert detail["recheck"]["interval_minutes"] == 30
+
+    summary = (await client.get("/api/items")).json()["data"][0]
+    assert "hunt" not in summary
+
+
+async def test_a_watch_the_hunter_has_never_touched_says_so(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        await sc.watch(item=item)
+        item_id = item.id
+
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+
+    assert detail["hunt"] == {
+        "running": False,
+        "next_at": None,
+        "last_at": None,
+        "last_result": None,
+        "slots_open": 3,
+    }
+    assert detail["recheck"]["next_at"] is None

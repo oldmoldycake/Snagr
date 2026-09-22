@@ -1,5 +1,5 @@
 """Async SQLAlchemy setup: engine/session factory, ORM models for the price
-tracker schema, and the query helpers the agent uses to plan its runs.
+tracker schema, and the query helpers the hunter uses to plan its work.
 
 The models are a column-compatible subset of backend/app/models.py, which owns
 the canonical schema and every migration (D1): new columns go through an
@@ -9,10 +9,11 @@ here against the live DB."""
 import logging
 import os
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from dotenv import load_dotenv
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -60,13 +61,20 @@ class User(Base):
 
 
 class Sites(Base):
-    """A marketplace/storefront the agent can search, keyed by base_url."""
+    """A marketplace/storefront the agent can search, keyed by base_url.
+
+    The pause columns are the circuit breaker (agent/breaker.py): consecutive
+    read errors, and the pause they trip. While a site is paused its jobs are
+    not claimed and no LLM reads it."""
 
     __tablename__ = "sites"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    consecutive_errors: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paused_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -137,6 +145,13 @@ class Listings(Base):
     locator_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     locator_failures: Mapped[int] = mapped_column(default=0, server_default="0")
     static_ok: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # the hunt job that saved this listing (jobs.id); NULL for rows older than jobs
+    # use_alter because jobs.listing_id points back here: the two tables
+    # reference each other, so one constraint has to be added after both exist
+    discovered_by_job_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("jobs.id", ondelete="SET NULL", use_alter=True, name="fk_listings_job"),
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
@@ -250,42 +265,53 @@ class VisionScans(Base):
     __table_args__ = (UniqueConstraint("watch_id", "listing_url", name="uq_vision_scan"),)
 
 
-class AgentRuns(Base):
-    """One row per agent run — mirrors backend/app/models.py (the backend owns
-    the schema, D1). Created status='queued' by the API; this agent claims and
-    drives it. The nightly sweep inserts its own row so it shows in history too."""
+class Jobs(Base):
+    """One unit of work — mirrors backend/app/models.py (the backend owns the
+    schema, D1). The daemon claims these one at a time (agent/jobs.py):
+    `hunt` searches a (watch, site) pair with the model, `recheck` re-reads one
+    listing's price without one, `ground` refreshes an item's market stats.
 
-    __tablename__ = "agent_runs"
+    The partial unique index on open jobs lives in migration 015, not here:
+    this mirror is read and written, never used to build a schema."""
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # NULL = system run (schedule fire, nightly sweep, deleted owner) — visible to all
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text)  # hunt | recheck | ground
+    # NULL = nobody asked; the hunter queued this itself
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
-    scope_id: Mapped[int | None] = mapped_column()
-    scope_label: Mapped[str] = mapped_column(Text)
+    watch_id: Mapped[int | None] = mapped_column(ForeignKey("watches.id", ondelete="CASCADE"))
+    site_id: Mapped[int | None] = mapped_column(ForeignKey("sites.id", ondelete="CASCADE"))
+    listing_id: Mapped[int | None] = mapped_column(ForeignKey("listings.id", ondelete="CASCADE"))
+    item_id: Mapped[int | None] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"))
     status: Mapped[str] = mapped_column(
-        Text, default="queued"
-    )  # queued|running|succeeded|failed|cancelled
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # stamped by the driving process while running — the liveness signal
-    # reap_stale_runs judges by; NULL on rows from before the column existed
+        Text, server_default=text("'pending'")
+    )  # pending|running|done|failed|cancelled
+    priority: Mapped[int] = mapped_column(server_default=text("0"))
+    run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    attempts: Mapped[int] = mapped_column(server_default=text("0"))
+    locked_by: Mapped[str | None] = mapped_column(Text)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    stats: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
-    last_seq: Mapped[int] = mapped_column(default=0)
+    reason: Mapped[str | None] = mapped_column(Text)  # user|created|slot_freed|sweep|paused
+    stats: Mapped[dict | None] = mapped_column(JSONB)
+    last_seq: Mapped[int] = mapped_column(server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class RunEvents(Base):
-    """Ordered progress log for a run — mirrors backend/app/models.py. The API's
-    /api/runs/{id}/events backfill reads these; seq is allocated by bumping
-    agent_runs.last_seq under a row lock (see append_run_event)."""
+class JobEvents(Base):
+    """Ordered progress log for a job — mirrors backend/app/models.py. Written
+    by hunts and grounding only; a recheck's whole output is its price check.
+    seq is allocated by bumping jobs.last_seq under a row lock (append_event)."""
 
-    __tablename__ = "run_events"
+    __tablename__ = "job_events"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id"), index=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    job_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("jobs.id", ondelete="CASCADE"), index=True
+    )
     seq: Mapped[int] = mapped_column()
     ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     level: Mapped[str] = mapped_column(Text)  # info|success|warn|error
@@ -293,28 +319,7 @@ class RunEvents(Base):
     message: Mapped[str] = mapped_column(Text)
     payload: Mapped[dict | None] = mapped_column(JSONB)
 
-    __table_args__ = (UniqueConstraint("run_id", "seq", name="uq_run_seq"),)
-
-
-class RunSchedules(Base):
-    """User-defined scheduled runs — mirrors backend/app/models.py (the
-    backend owns the schema, D1). Recurring rows (interval_minutes set) roll
-    next_due_at forward anchored when fired; one-shots (interval_minutes
-    NULL) flip enabled off and keep the row."""
-
-    __tablename__ = "run_schedules"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # NULL = system schedule; claim_due_schedule copies this onto the run it fires
-    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    scope: Mapped[str] = mapped_column(Text)  # global | category | site | item
-    scope_id: Mapped[int | None] = mapped_column()
-    scope_label: Mapped[str] = mapped_column(Text)
-    next_due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    interval_minutes: Mapped[int | None] = mapped_column()  # NULL = one-shot
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    __table_args__ = (UniqueConstraint("job_id", "seq", name="uq_job_seq"),)
 
 
 class NotificationOutbox(Base):
@@ -331,127 +336,135 @@ class NotificationOutbox(Base):
     payload: Mapped[dict] = mapped_column(JSONB)
 
 
-async def get_watched_item_list(
-    scope: str = "global", scope_id: int | None = None
-) -> Sequence[RowMapping]:
+async def get_hunt_unit(watch_id: int, site_id: int) -> RowMapping | None:
     """
-    Return the (watch, site) pairs to search: one row per site for every
-    watch, carrying that watch's own criteria/selection_mode/max_listings/
-    allow_reproductions. Every watch, muted or not: notify gates alerting
-    only (the UI calls it "Notify me when the target price is hit"), so a
-    muted watch keeps discovering listings and just stays quiet. A watch that
-    pinned a site subset (watch_sites — the API's site_ids) gets only those
-    sites; one with no rows gets every site its category is linked to.
+    The one (watch, site) pair a hunt job is about, carrying that watch's own
+    criteria/selection_mode/max_listings/allow_reproductions.
+
+    None means the pair is no longer one this watch searches — the site was
+    unlinked from the category, or dropped from the watch's own subset
+    (watch_sites, the API's site_ids), or either row is gone. A hunt job
+    outlives the decision that queued it, so the pair is re-validated here
+    rather than trusted; the worker treats None as "nothing to do", not as a
+    failure.
+
+    Muted watches are hunted like any other: notify gates alerting only (the
+    UI calls it "Notify me when the target price is hit"), so a muted watch
+    keeps discovering listings and just stays quiet about them.
 
     Args:
-      scope: A run's scope — "global" (everything), "category", "site", or
-        "item"; the scoped values narrow the pairs to that target.
-      scope_id: The scoped target's id; ignored for "global".
+      watch_id: The watch this hunt is for.
+      site_id: The site to search.
     Returns:
-      A sequence of row mappings with keys watch_id, user_id, criteria,
-      expected_price, condition_hint, selection_mode, max_listings,
-      allow_reproductions, item_id, item_name, category_id, site_id,
-      site_name, base_url. Returns an empty sequence if the query fails, so a
-      DB hiccup skips this run's searches instead of crashing it.
+      A row mapping with keys watch_id, user_id, criteria, expected_price,
+      condition_hint, selection_mode, max_listings, allow_reproductions,
+      item_id, item_name, category_id, site_id, site_name, base_url — or None.
+      A failed query PROPAGATES: the job must fail and be retried, not be
+      silently treated as an invalid pair.
     """
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                select(
-                    Watches.id.label("watch_id"),
-                    Watches.user_id.label("user_id"),
-                    Watches.criteria.label("criteria"),
-                    Watches.expected_price.label("expected_price"),
-                    Watches.condition_hint.label("condition_hint"),
-                    Watches.selection_mode.label("selection_mode"),
-                    Watches.max_listings.label("max_listings"),
-                    Watches.allow_reproductions.label("allow_reproductions"),
-                    Items.id.label("item_id"),
-                    Items.name.label("item_name"),
-                    Items.category_id.label("category_id"),
-                    Sites.id.label("site_id"),
-                    Sites.name.label("site_name"),
-                    Sites.base_url.label("base_url"),
-                )
-                .join(Items, Items.id == Watches.item_id)
-                .join(SiteCategories, SiteCategories.category_id == Items.category_id)
-                .join(Sites, Sites.id == SiteCategories.site_id)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(
+                Watches.id.label("watch_id"),
+                Watches.user_id.label("user_id"),
+                Watches.criteria.label("criteria"),
+                Watches.expected_price.label("expected_price"),
+                Watches.condition_hint.label("condition_hint"),
+                Watches.selection_mode.label("selection_mode"),
+                Watches.max_listings.label("max_listings"),
+                Watches.allow_reproductions.label("allow_reproductions"),
+                Items.id.label("item_id"),
+                Items.name.label("item_name"),
+                Items.category_id.label("category_id"),
+                Sites.id.label("site_id"),
+                Sites.name.label("site_name"),
+                Sites.base_url.label("base_url"),
             )
-            # The category join above yields every site the category is linked
-            # to; a watch's pins narrow that to its own subset. Correlated on
-            # the outer Watches row, so each watch is judged on its own pins.
-            pinned = select(WatchSites.site_id).where(WatchSites.watch_id == Watches.id)
-            stmt = stmt.where(or_(~pinned.exists(), Sites.id.in_(pinned)))
-            if scope == "category":
-                stmt = stmt.where(Items.category_id == scope_id)
-            elif scope == "site":
-                stmt = stmt.where(Sites.id == scope_id)
-            elif scope == "item":
-                stmt = stmt.where(Items.id == scope_id)
+            .join(Items, Items.id == Watches.item_id)
+            .join(SiteCategories, SiteCategories.category_id == Items.category_id)
+            .join(Sites, Sites.id == SiteCategories.site_id)
+            .where(Watches.id == watch_id)
+            .where(Sites.id == site_id)
+        )
+        # the category join says the site carries this kind of item; a watch's
+        # pins narrow that to its own subset. Correlated on the outer Watches
+        # row, so the watch is judged on its own pins.
+        pinned = select(WatchSites.site_id).where(WatchSites.watch_id == Watches.id)
+        stmt = stmt.where(or_(~pinned.exists(), Sites.id.in_(pinned)))
 
-            results = await session.execute(stmt)
-            return results.mappings().all()
-    except Exception as e:
-        log.error(f"Error fetching watched item list: {e}")
-        return []
+        return (await session.execute(stmt)).mappings().one_or_none()
 
 
-async def get_listed_items(
-    scope: str = "global", scope_id: int | None = None
-) -> Sequence[RowMapping]:
+async def get_recheck_unit(listing_id: int) -> RowMapping | None:
     """
-    Return every active listing with its watch and item context — the set of
-    already-tracked listings that need re-checking.
+    The one listing a recheck job is about, with its watch, site and item
+    context and whatever locator it has learned.
+
+    None means the listing is gone or no longer tracked — the user untracked
+    it, or a previous check found it sold — and there is nothing to re-read.
+    The queue's own rules make that rare (untracking cancels the pending
+    check), but a job claimed a moment before still has to cope.
 
     Args:
-      scope: A run's scope — "global" (everything), "category", "site", or
-        "item"; the scoped values narrow the listings to that target.
-      scope_id: The scoped target's id; ignored for "global".
+      listing_id: The listing to re-read.
     Returns:
-      A sequence of row mappings with keys listing_id, listing_url, watch_id,
-      user_id, condition_hint, site_id, site_name, site_base_url, item_id,
-      item_name, price_locator, locator_kind, locator_failures and static_ok
-      — the listing's context plus everything a deterministic recheck needs
-      to read it without a second query (agent/recheck.py). Returns an empty
-      sequence if the query fails, so a DB hiccup skips this run's rechecks
-      instead of crashing it.
+      A row mapping with keys listing_id, listing_url, watch_id, user_id,
+      condition_hint, site_id, site_name, site_base_url, item_id, item_name,
+      price_locator, locator_kind, locator_failures and static_ok — everything
+      a deterministic recheck needs to read the page without a second query
+      (agent/recheck.py) — or None. A failed query PROPAGATES.
     """
-    try:
-        async with AsyncSessionLocal() as session:
-            stmt = (
-                select(
-                    Listings.id.label("listing_id"),
-                    Listings.url.label("listing_url"),
-                    Listings.price_locator.label("price_locator"),
-                    Listings.locator_kind.label("locator_kind"),
-                    Listings.locator_failures.label("locator_failures"),
-                    Listings.static_ok.label("static_ok"),
-                    Watches.id.label("watch_id"),
-                    Watches.user_id.label("user_id"),
-                    Watches.condition_hint.label("condition_hint"),
-                    Sites.id.label("site_id"),
-                    Sites.name.label("site_name"),
-                    Sites.base_url.label("site_base_url"),
-                    Items.id.label("item_id"),
-                    Items.name.label("item_name"),
-                )
-                .join(Sites, Sites.id == Listings.site_id)
-                .join(Watches, Watches.id == Listings.watch_id)
-                .join(Items, Items.id == Listings.item_id)
-                .where(Listings.active)
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(
+                Listings.id.label("listing_id"),
+                Listings.url.label("listing_url"),
+                Listings.price_locator.label("price_locator"),
+                Listings.locator_kind.label("locator_kind"),
+                Listings.locator_failures.label("locator_failures"),
+                Listings.static_ok.label("static_ok"),
+                Watches.id.label("watch_id"),
+                Watches.user_id.label("user_id"),
+                Watches.condition_hint.label("condition_hint"),
+                Sites.id.label("site_id"),
+                Sites.name.label("site_name"),
+                Sites.base_url.label("site_base_url"),
+                Items.id.label("item_id"),
+                Items.name.label("item_name"),
             )
-            if scope == "category":
-                stmt = stmt.where(Items.category_id == scope_id)
-            elif scope == "site":
-                stmt = stmt.where(Listings.site_id == scope_id)
-            elif scope == "item":
-                stmt = stmt.where(Listings.item_id == scope_id)
+            .join(Sites, Sites.id == Listings.site_id)
+            .join(Watches, Watches.id == Listings.watch_id)
+            .join(Items, Items.id == Listings.item_id)
+            .where(Listings.id == listing_id)
+            .where(Listings.active)
+        )
 
-            results = await session.execute(stmt)
-            return results.mappings().all()
-    except Exception as e:
-        log.error(f"Error fetching listed items: {e}")
-        return []
+        return (await session.execute(stmt)).mappings().one_or_none()
+
+
+async def get_ground_unit(item_id: int) -> RowMapping | None:
+    """
+    The item a ground job is about — its name and category, which is all
+    grounding needs to start.
+
+    None means the item is gone. An unwatched item is still grounded if a job
+    says so: nobody is asking about it, but the job was queued when somebody
+    was, and refusing here would leave the row pending forever.
+
+    Args:
+      item_id: The item to refresh market stats for.
+    Returns:
+      A row mapping with keys item_id, item_name, category_id, or None. A
+      failed query PROPAGATES.
+    """
+    async with AsyncSessionLocal() as session:
+        stmt = select(
+            Items.id.label("item_id"),
+            Items.name.label("item_name"),
+            Items.category_id.label("category_id"),
+        ).where(Items.id == item_id)
+
+        return (await session.execute(stmt)).mappings().one_or_none()
 
 
 async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
@@ -1235,318 +1248,3 @@ async def upsert_market_price(
         except Exception as e:
             log.error(f"Error upserting market price for item {item_id}: {e}")
             return False
-
-
-async def claim_queued_run() -> dict | None:
-    """
-    Claim the oldest queued agent_runs row: flip it to running, stamp
-    started_at, and return it as a plain dict with keys id, scope, scope_id,
-    scope_label (captured before commit — sessions here expire on commit).
-    SKIP LOCKED makes concurrent consumer ticks safe: at most one claims a
-    given row. Returns None when the queue is empty.
-
-    Unlike the read helpers above, a failure here PROPAGATES: a swallowed
-    claim failure would strand a queued run invisibly, whereas the read
-    helpers' empty default merely skips optional work.
-    """
-    log.info("Claiming a queued run")
-    async with AsyncSessionLocal() as session:
-        stmt = (
-            select(AgentRuns)
-            .where(AgentRuns.status == "queued")
-            .order_by(AgentRuns.created_at, AgentRuns.id)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
-        run = (await session.execute(stmt)).scalar_one_or_none()
-        if run is None:
-            return None
-
-        now = datetime.now(UTC)
-        run.status = "running"
-        run.started_at = now
-        run.heartbeat_at = now
-        claimed = {
-            "id": run.id,
-            "scope": run.scope,
-            "scope_id": run.scope_id,
-            "scope_label": run.scope_label,
-        }
-        await session.commit()
-        log.info(f"Claimed run {claimed['id']} ({claimed['scope_label']})")
-        return claimed
-
-
-def roll_forward(due_at: datetime, interval_minutes: int, now: datetime) -> datetime:
-    """First due_at + k*interval (k >= 1) strictly after now. Anchored: steps
-    from the original due time, so "daily at 02:00" stays at 02:00 after
-    downtime, and missed periods collapse into the one fire that just happened."""
-    step = timedelta(minutes=interval_minutes)
-    return due_at + max((now - due_at) // step + 1, 1) * step
-
-
-async def claim_due_schedule() -> dict | None:
-    """
-    Fire the most-overdue due schedule, if the instance is free: insert a
-    running agent_runs row carrying the schedule's scope, stamp
-    last_fired_at, and roll next_due_at forward (recurring) or flip enabled
-    off (one-shot) — all in one transaction, so a crash can't fire twice or
-    roll without firing. Returns the same dict claim_queued_run does, plus
-    "scheduled": True, or None when nothing is due or a run is already
-    queued/running (a busy skip rolls back, leaving the schedule due for the
-    next free tick — a one-shot drop fires late-but-once).
-
-    The API can enqueue a run between this transaction's active-run check
-    and its commit; the queued row then just waits behind the scheduled run,
-    exactly like clicking Run during the nightly sweep. Failures PROPAGATE
-    like claim_queued_run's — a swallowed failure would silently stop every
-    schedule.
-    """
-    async with AsyncSessionLocal() as session:
-        now = datetime.now(UTC)
-        stmt = (
-            select(RunSchedules)
-            .where(RunSchedules.enabled)
-            .where(RunSchedules.next_due_at <= now)
-            .order_by(RunSchedules.next_due_at)
-            .limit(1)
-            .with_for_update(skip_locked=True)
-        )
-        schedule = (await session.execute(stmt)).scalar_one_or_none()
-        if schedule is None:
-            return None
-
-        active = (
-            await session.execute(
-                select(AgentRuns.id).where(AgentRuns.status.in_(("queued", "running"))).limit(1)
-            )
-        ).scalar_one_or_none()
-        if active is not None:
-            log.info(f"Schedule {schedule.id} due but run {active} is active; skipping this tick")
-            return None
-
-        run = AgentRuns(
-            user_id=schedule.user_id,
-            scope=schedule.scope,
-            scope_id=schedule.scope_id,
-            scope_label=schedule.scope_label,
-            status="running",
-            started_at=now,
-            heartbeat_at=now,
-        )
-        session.add(run)
-        await session.flush()
-
-        schedule.last_fired_at = now
-        if schedule.interval_minutes is not None:
-            schedule.next_due_at = roll_forward(
-                schedule.next_due_at, schedule.interval_minutes, now
-            )
-        else:
-            schedule.enabled = False
-
-        claimed = {
-            "id": run.id,
-            "scope": run.scope,
-            "scope_id": run.scope_id,
-            "scope_label": run.scope_label,
-            "scheduled": True,
-        }
-        await session.commit()
-        log.info(f"Fired schedule for run {claimed['id']} ({claimed['scope_label']})")
-        return claimed
-
-
-async def create_global_run() -> dict:
-    """
-    Insert the row a scheduled sweep records itself under: a global-scope run
-    born running (nothing enqueued it, so it never has a queued phase).
-    Returns the same dict shape claim_queued_run does. Failures propagate —
-    an unrecorded sweep would be invisible in run history.
-    """
-    log.info("Recording a global sweep run")
-    async with AsyncSessionLocal() as session:
-        now = datetime.now(UTC)
-        run = AgentRuns(
-            scope="global",
-            scope_id=None,
-            scope_label="Everything",
-            status="running",
-            started_at=now,
-            heartbeat_at=now,
-        )
-        session.add(run)
-        await session.flush()
-        created = {"id": run.id, "scope": "global", "scope_id": None, "scope_label": "Everything"}
-        await session.commit()
-        return created
-
-
-async def get_run_status(run_id: int) -> str | None:
-    """
-    Return a run's current status — the cooperative-cancellation poll read
-    between units of work. Returns None if the run is missing or the query
-    fails; None means "keep going", because a DB hiccup mid-run must not
-    kill the run (only an explicit 'cancelled' aborts it).
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            stmt = select(AgentRuns.status).where(AgentRuns.id == run_id)
-            return (await session.execute(stmt)).scalar_one_or_none()
-        except Exception as e:
-            log.error(f"Error fetching status for run {run_id}: {e}")
-            return None
-
-
-async def beat_run(run_id: int) -> bool:
-    """
-    Stamp a running run's heartbeat_at — the liveness signal reap_stale_runs
-    judges by. Best-effort like append_run_event: returns False on failure
-    and never raises, because one missed beat costs nothing until several
-    are missed in a row, whereas taking the run down over one would.
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            await session.execute(
-                update(AgentRuns)
-                .where(AgentRuns.id == run_id)
-                .where(AgentRuns.status == "running")
-                .values(heartbeat_at=datetime.now(UTC))
-            )
-            await session.commit()
-            return True
-        except Exception as e:
-            log.error(f"Error stamping heartbeat for run {run_id}: {e}")
-            return False
-
-
-async def append_run_event(
-    run_id: int, level: str, event_type: str, message: str, payload: dict | None = None
-) -> int | None:
-    """
-    Append one progress event to a run's log and return its seq.
-
-    seq comes from bumping agent_runs.last_seq under SELECT ... FOR UPDATE —
-    the same discipline the API's cancel_run uses — so concurrent writers
-    never collide on uq_run_seq; deriving seq from MAX(seq)+1 unlocked would.
-    Returns None if the run is missing or the write fails: progress events
-    are best-effort and must never take the run down.
-    """
-    async with AsyncSessionLocal() as session:
-        try:
-            run = await session.get(AgentRuns, run_id, with_for_update=True)
-            if run is None:
-                log.error(f"Cannot append event to unknown run {run_id}")
-                return None
-
-            run.last_seq += 1
-            seq = run.last_seq
-            session.add(
-                RunEvents(
-                    run_id=run_id,
-                    seq=seq,
-                    ts=datetime.now(UTC),
-                    level=level,
-                    event_type=event_type,
-                    message=message,
-                    payload=payload,
-                )
-            )
-            await session.commit()
-            return seq
-        except Exception as e:
-            log.error(f"Error appending event to run {run_id}: {e}")
-            return None
-
-
-async def finish_run(
-    run_id: int, status: str, stats: dict | None = None, error: str | None = None
-) -> bool:
-    """
-    Write a run's terminal state ("succeeded" or "failed") plus its terminal
-    run_finished event, in one locked transaction.
-
-    If the row is already 'cancelled', the API wrote the terminal state while
-    this run was finishing — leave it untouched and return False (the row
-    lock makes the check atomic against cancel_run). Returns False on any
-    failure too, logged loudly: the row then stays 'running' until its
-    heartbeat goes stale and reap_stale_runs fails it.
-    """
-    log.info(f"Finishing run {run_id} as {status}")
-    async with AsyncSessionLocal() as session:
-        try:
-            run = await session.get(AgentRuns, run_id, with_for_update=True)
-            if run is None:
-                log.error(f"Cannot finish unknown run {run_id}")
-                return False
-            if run.status == "cancelled":
-                log.info(f"Run {run_id} was cancelled; keeping the API's terminal state")
-                return False
-
-            now = datetime.now(UTC)
-            run.status = status
-            run.finished_at = now
-            run.stats = stats
-            run.error = error
-            run.last_seq += 1
-            if status == "succeeded":
-                level = "success"
-                message = (
-                    f"Run complete — {stats['listings_checked']} checked, "
-                    f"{stats['prices_found']} prices, {stats['new_listings']} new listings, "
-                    f"{stats['errors']} errors"
-                )
-            else:
-                level = "error"
-                message = f"Run failed: {error}"
-            session.add(
-                RunEvents(
-                    run_id=run_id,
-                    seq=run.last_seq,
-                    ts=now,
-                    level=level,
-                    event_type="run_finished",
-                    message=message,
-                    payload=None,
-                )
-            )
-            await session.commit()
-            return True
-        except Exception as e:
-            log.error(f"Error finishing run {run_id}: {e}")
-            return False
-
-
-async def reap_stale_runs(stale_after: timedelta) -> list[int]:
-    """
-    Fail every 'running' run whose heartbeat is older than stale_after — the
-    rows a dead process (SIGKILL, OOM, power loss) leaves behind. Left alone,
-    one such row blocks every enqueue (409 run_in_progress) and every
-    schedule forever, and nothing else ever touches it. A live run beats
-    every RUN_HEARTBEAT_INTERVAL_SECONDS, so a merely slow run is never
-    mistaken for a dead one. Rows from before the column existed have no
-    heartbeat and are judged on started_at instead.
-
-    Each terminal write goes through finish_run, so the UI sees the same
-    run_finished event a crash-free failure produces. Returns the ids
-    reaped. The select PROPAGATES like the claim helpers' failures do: a
-    swallowed failure here would leave the queue wedged in silence.
-    """
-    cutoff = datetime.now(UTC) - stale_after
-    async with AsyncSessionLocal() as session:
-        stmt = (
-            select(AgentRuns.id)
-            .where(AgentRuns.status == "running")
-            .where(func.coalesce(AgentRuns.heartbeat_at, AgentRuns.started_at) < cutoff)
-            .order_by(AgentRuns.id)
-        )
-        stale = list((await session.execute(stmt)).scalars().all())
-
-    minutes = int(stale_after.total_seconds() // 60)
-    reaped = []
-    for run_id in stale:
-        log.warning(f"Run {run_id} has had no heartbeat for over {minutes} min; failing it")
-        error = f"Agent stopped responding (no heartbeat for over {minutes} min)"
-        if await finish_run(run_id, "failed", error=error):
-            reaped.append(run_id)
-    return reaped

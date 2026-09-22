@@ -28,7 +28,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { relativeTime } from '@/lib/time'
-import { RunButton } from '@/features/runs/RunButton'
+import { HuntButton } from '@/features/activity/HuntButton'
 
 function SiteDialog({
   site,
@@ -200,7 +200,7 @@ export function SitesPage() {
                     <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(site.last_checked_at)}</TD>
                     <TD>
                       <div className="flex items-center justify-end gap-1">
-                        <RunButton scope="site" scopeId={site.id} label="Run" variant="ghost" size="sm" />
+                        <HuntButton scope="site" scopeId={site.id} label="Hunt this site" variant="ghost" size="sm" />
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="iconSm" aria-label={`Actions for ${site.name}`}>

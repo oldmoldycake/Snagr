@@ -1,9 +1,9 @@
 import { cn } from '@/lib/cn'
 
 /**
- * The radar — proof the agent is prowling. Sweeps only while a run is live;
- * idle (or reduced motion) shows the static wedge. Decorative: always paired
- * with a text state ("Sweeping…", "Idle") by the caller.
+ * The radar — proof the hunter is prowling. Sweeps only while something is
+ * running; idle (or reduced motion) shows the static wedge. Decorative:
+ * always paired with a text state ("Sweeping…", "Idle") by the caller.
  */
 export function Radar({
   size = 24,

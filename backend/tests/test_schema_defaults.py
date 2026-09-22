@@ -28,16 +28,47 @@ async def test_notification_channels_are_enabled_by_default(sc):
     assert await sc.db.scalar(text("SELECT enabled FROM notification_channels")) is True
 
 
-async def test_run_schedules_are_enabled_by_default(sc):
-    """Migration 006 gives the column DEFAULT true."""
+async def test_a_job_is_born_pending_and_due_now(sc):
+    """Migration 015 gives jobs every default the queue reads.
+
+    The agent inserts a successor recheck with nothing but its target, so a
+    missing DEFAULT on status, run_after, priority or attempts would either
+    reject the insert or hand the claim query a row it can never sort."""
+    item = await sc.item()
+    watch = await sc.watch(item=item)
+
     await sc.db.execute(
-        text(
-            "INSERT INTO run_schedules (scope, scope_label, next_due_at) "
-            "VALUES ('global', 'Everything', now())"
-        )
+        text("INSERT INTO jobs (kind, watch_id, item_id) VALUES ('hunt', :w, :i)"),
+        {"w": watch.id, "i": item.id},
     )
 
-    assert await sc.db.scalar(text("SELECT enabled FROM run_schedules")) is True
+    row = (
+        await sc.db.execute(
+            text("SELECT status, priority, attempts, last_seq, run_after <= now() FROM jobs")
+        )
+    ).one()
+
+    assert row == ("pending", 0, 0, 0, True)
+
+
+async def test_a_site_starts_with_no_errors_and_no_pause(sc):
+    """Migration 015 gives consecutive_errors DEFAULT 0, NOT NULL — the
+    breaker counts up from it, and a null would make "five in a row" never
+    arrive."""
+    await sc.db.execute(
+        text("INSERT INTO sites (name, base_url) VALUES ('fresh.test', 'https://fresh.test')")
+    )
+
+    row = (
+        await sc.db.execute(
+            text(
+                "SELECT consecutive_errors, paused_until, paused_reason "
+                "FROM sites WHERE name = 'fresh.test'"
+            )
+        )
+    ).one()
+
+    assert row == (0, None, None)
 
 
 async def test_a_price_check_is_believed_by_default(sc):

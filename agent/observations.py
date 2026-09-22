@@ -19,12 +19,13 @@ commit-then-notify-separately shape protected against.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from config import NOTIFY_COOLDOWN_HOURS
 from database import Items, Listings, NotificationOutbox, PriceChecks, Sites, Watches
+from jobs import add_event
 from locators import PageReader
 from notify import target_hit_payload
 from sqlalchemy import func, select, update
@@ -35,6 +36,11 @@ log = logging.getLogger(__name__)
 COOLDOWN = timedelta(hours=NOTIFY_COOLDOWN_HOURS)
 
 
+def new_tally() -> dict[str, int]:
+    """A fresh per-unit tally — what the job's terminal stats are built from."""
+    return {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
+
+
 @dataclass(frozen=True)
 class UnitContext:
     """What one unit of work is about.
@@ -42,11 +48,15 @@ class UnitContext:
     Bound by the orchestrator, read by every tool (agent/tools.py) and by the
     deterministic recheck. listing_id is set on a recheck unit — the one
     listing being revisited is the only one a price may be recorded against;
-    a scan unit leaves it None, and any listing of the watch is writable
+    a hunt unit leaves it None, and any listing of the watch is writable
     (save_listing is what creates them). browser is the handle on the open
     session, so a tool can read the page the model is looking at; like the
     ids, it is never a model-supplied argument. site_base_url is what every
     URL the model types is checked against (S2).
+
+    job_id is the job this unit runs under: where its progress events go. The
+    tally rides here rather than in a module global because workers run
+    several jobs at once, and a job's stats have to be its own.
 
     It lives here, next to the one writer of observations, because that is
     what it exists to constrain — the tools import it from here.
@@ -58,6 +68,14 @@ class UnitContext:
     site_base_url: str | None = None
     listing_id: int | None = None
     browser: PageReader | None = None
+    job_id: int | None = None
+    stats: dict[str, int] = field(default_factory=new_tally)
+
+    @property
+    def is_hunt(self) -> bool:
+        """A hunt is not bound to one listing — that is exactly what makes it
+        a hunt, and what decides whether its writes have a story to tell."""
+        return self.listing_id is None
 
 
 class UnitMismatch(Exception):
@@ -152,6 +170,19 @@ async def record_price_check(
         )
     ).scalar_one()
 
+    # A page the reader could not get a price out of is a failed read of that
+    # site, and the tally is where the worker learns it: the model reports
+    # this by recording status="error" rather than by raising, so nothing
+    # upstream would otherwise notice a marketplace that has stopped
+    # answering (§4.4, the circuit breaker).
+    if status == "error":
+        unit.stats["errors"] += 1
+
+    # A hunt has a log; a recheck has none, because its whole output is the
+    # price_checks row the trigger turns into a listing.checked frame.
+    if unit.is_hunt and unit.job_id is not None:
+        await _announce(session, unit.job_id, listing_id, unit.item_id, price, currency, status)
+
     notified = False
     # A priceless, out-of-stock, unbelieved or foreign-currency check can
     # never be a snag, so it never reaches the notification path at all.
@@ -169,6 +200,40 @@ async def record_price_check(
 
     await session.commit()
     return Recorded(check_id=check_id, notified=notified)
+
+
+async def _announce(
+    session,
+    job_id: int,
+    listing_id: int,
+    item_id: int,
+    price: Decimal | None,
+    currency: str,
+    status: str,
+) -> None:
+    """Write this observation into the hunt's log, in the same transaction.
+
+    Two of the contract's event types come from here because this is where
+    they are true: a price the hunt read, and a listing it found already over.
+    """
+    if status in ("sold", "ended"):
+        await add_event(
+            session,
+            job_id,
+            "warn",
+            "listing_ended",
+            f"Listing {status} — the slot is free again",
+            {"listing_id": listing_id, "item_id": item_id},
+        )
+    elif price is not None:
+        await add_event(
+            session,
+            job_id,
+            "success",
+            "price_found",
+            f"Price read {price} {currency}",
+            {"listing_id": listing_id, "item_id": item_id, "price": str(price)},
+        )
 
 
 async def _queue_target_hit(

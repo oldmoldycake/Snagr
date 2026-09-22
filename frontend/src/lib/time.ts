@@ -74,3 +74,63 @@ export function tickFormatterFor(range: TimeRange): (ts: number) => string {
     return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '")
   }
 }
+
+/**
+ * How long until something happens, the way the Activity page says it:
+ * under a minute `in 0:42`, under an hour `in 12m`, under a day `in 2h` or
+ * `in 4h 12m`, and beyond that the clock time — a countdown in days is a
+ * date, not a countdown.
+ */
+export function countdown(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const then = new Date(iso).getTime()
+  if (!Number.isFinite(then)) return '—'
+  const secs = Math.round((then - Date.now()) / 1000)
+  if (secs <= 0) return 'now'
+  if (secs < 60) return `in 0:${String(secs).padStart(2, '0')}`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `in ${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours >= 24) return clockTime(iso)
+  const rest = mins % 60
+  return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`
+}
+
+/** `15:04`, or `yesterday` / `Sep 18` once it is not today's clock. */
+export function clockTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const then = new Date(iso)
+  if (!Number.isFinite(then.getTime())) return '—'
+  const today = new Date()
+  if (then.toDateString() === today.toDateString()) {
+    return then.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+  }
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (then.toDateString() === yesterday.toDateString()) return 'yesterday'
+  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+/** `14:02:11` — the timestamp every log line carries. */
+export function logTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+}
+
+/** `12.4k` — token counts are read at a glance, never audited. */
+export function formatTokens(n: number): string {
+  return n < 1000 ? String(n) : `${(n / 1000).toFixed(1)}k`
+}
+
+/** `1.8s` — how long one job took. */
+export function formatMillis(ms: number | null | undefined): string {
+  if (ms == null) return '—'
+  if (ms < 1000) return `${ms}ms`
+  const secs = ms / 1000
+  if (secs < 60) return `${secs < 10 ? secs.toFixed(1) : Math.round(secs)}s`
+  return `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s`
+}

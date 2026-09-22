@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # on the REST API). False removes both and hides the Settings tab.
     MCP_ENABLED: bool = True
 
+    # How often the hunter re-reads a tracked listing's price. The agent owns
+    # the cadence; the backend only reports it, on the item page's facts line.
+    # Set the SAME value in agent/.env — the two components do not share a
+    # file (the VISION_SIDECAR_URL precedent).
+    RECHECK_INTERVAL_MINUTES: int = 30
+
     # Instance / notifications
     APP_VERSION: str = "0.2.1"  # x-release-please-version
     NTFY_SERVER_URL: str | None = None  # drives InstanceInfo.ntfy_server_url

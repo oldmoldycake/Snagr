@@ -1,25 +1,25 @@
 /**
  * Mock SSE: a per-viewer hub feeding every open /api/events stream, plus the
- * scripted "demo run" that plays out an agent run in real time, writing real
- * price checks into the fixture store as it goes. Every frame is gated by the
- * run-privacy predicate (runVisible / eventVisible in fixtures.ts), mirroring
- * the backend hub.
+ * two scripts that make the hunter look alive — a demo hunt that plays out in
+ * real time when someone presses Hunt now, and a check loop that re-reads one
+ * listing every ~20 s for as long as a stream is open. Both write real rows
+ * into the fixture store, so what the page announces is what the next fetch
+ * returns. Every frame is gated by the job-visibility predicate (jobVisible in
+ * fixtures.ts), mirroring the backend hub.
  */
 
 import {
   activeListings,
-  eventVisible,
+  jobVisible,
   latestCheck,
   newId,
-  runVisible,
   store,
-  type MockItem,
+  type MockJob,
+  type MockJobEvent,
   type MockListing,
-  type MockRun,
-  type MockRunEvent,
   type MockUser,
 } from './fixtures'
-import { toRun, toRunEvent } from './serializers'
+import { toJob, toJobEvent } from './serializers'
 
 export type StreamClient = { user: MockUser; enqueue: (chunk: string) => void }
 
@@ -27,353 +27,292 @@ const clients = new Set<StreamClient>()
 
 export function addClient(client: StreamClient) {
   clients.add(client)
-  // per-viewer snapshot on every (re)connect — the client refetches the
-  // backfill from it (the filtered response is authoritative; no gap inference)
-  const active = store.runs.filter(
-    (r) => (r.status === 'queued' || r.status === 'running') && runVisible(r, client.user),
+  // per-viewer snapshot on every (re)connect — the client rebuilds its live
+  // set from it and refetches each backfill (the filtered response is
+  // authoritative; no gap inference). Rechecks are not in it: they have no
+  // events and are over in seconds.
+  const live = store.jobs.filter(
+    (j) =>
+      j.kind !== 'recheck' &&
+      (j.status === 'pending' || j.status === 'running') &&
+      jobVisible(j, client.user),
   )
-  client.enqueue(
-    encode('run.snapshot', {
-      active_runs: active.map((r) => ({
-        id: r.id,
-        user_id: r.user_id,
-        status: r.status,
-        scope: r.scope,
-        scope_label: r.scope_label,
-        last_seq: r.last_seq,
-      })),
-    }),
-  )
+  client.enqueue(encode('job.snapshot', { jobs: live.map(toJob) }))
+  startCheckLoop()
 }
 
 export function removeClient(client: StreamClient) {
   clients.delete(client)
+  if (clients.size === 0) stopCheckLoop()
 }
 
 function encode(event: string, data: unknown, id?: string): string {
   return `event: ${event}\n${id ? `id: ${id}\n` : ''}data: ${JSON.stringify(data)}\n\n`
 }
 
-/** Lifecycle envelopes (run.started / run.finished) go to viewers of the run. */
-function broadcastRun(event: string, run: MockRun) {
-  const chunk = encode(event, { run: toRun(run) })
+/** Lifecycle envelopes (job.started / job.finished / job.failed). */
+function broadcastJob(event: string, job: MockJob) {
+  const chunk = encode(event, { job: toJob(job) })
   for (const client of clients) {
-    if (runVisible(run, client.user)) client.enqueue(chunk)
+    if (jobVisible(job, client.user)) client.enqueue(chunk)
   }
 }
 
-/** run.event frames apply the full composed predicate per viewer. */
-function broadcastEvent(run: MockRun, event: MockRunEvent) {
-  const chunk = encode('run.event', toRunEvent(event), `${run.id}:${event.seq}`)
+function broadcastJobEvent(job: MockJob, event: MockJobEvent) {
+  const chunk = encode('job.event', toJobEvent(event), `${job.id}:${event.seq}`)
   for (const client of clients) {
-    if (runVisible(run, client.user) && eventVisible(event, client.user)) client.enqueue(chunk)
+    if (jobVisible(job, client.user)) client.enqueue(chunk)
   }
 }
 
-const timers = new Map<number, ReturnType<typeof setTimeout>[]>()
-
-export function hasActiveRun(): MockRun | undefined {
-  return store.runs.find((r) => r.status === 'queued' || r.status === 'running')
-}
-
-export function cancelDemoRun(run: MockRun) {
-  for (const t of timers.get(run.id) ?? []) clearTimeout(t)
-  timers.delete(run.id)
-  run.status = 'cancelled'
-  run.finished_at = Date.now()
-  emit(run, 'warn', 'run_finished', 'Run cancelled')
-  broadcastRun('run.finished', run)
+/** listing.checked goes to the listing's owner (and to admins). */
+function broadcastCheck(listing: MockListing, data: unknown) {
+  const chunk = encode('listing.checked', data)
+  for (const client of clients) {
+    const owns = store.watches.some(
+      (w) => w.item_id === listing.item_id && w.user_id === client.user.id,
+    )
+    if (owns || client.user.role === 'admin') client.enqueue(chunk)
+  }
 }
 
 function emit(
-  run: MockRun,
-  level: 'info' | 'success' | 'warn' | 'error',
+  job: MockJob,
+  level: MockJobEvent['level'],
   event_type: string,
   message: string,
   payload: Record<string, unknown> | null = null,
 ) {
-  run.last_seq += 1
+  job.last_seq += 1
   const event = {
-    run_id: run.id,
-    seq: run.last_seq,
+    job_id: job.id,
+    seq: job.last_seq,
     ts: Date.now(),
     level,
     event_type,
     message,
     payload,
   }
-  store.runEvents.push(event)
-  broadcastEvent(run, event)
+  store.jobEvents.push(event)
+  broadcastJobEvent(job, event)
 }
 
-function scopeListings(run: MockRun): MockListing[] {
-  const all = store.listings.filter((l) => l.active)
-  switch (run.scope) {
-    case 'global':
-      return all
-    case 'category': {
-      const itemIds = new Set(store.items.filter((i) => i.category_id === run.scope_id).map((i) => i.id))
-      return all.filter((l) => itemIds.has(l.item_id))
-    }
-    case 'site':
-      return all.filter((l) => l.site_id === run.scope_id)
-    case 'item':
-      return all.filter((l) => l.item_id === run.scope_id)
+// --- the demo hunt ---------------------------------------------------------
+
+const timers = new Map<number, ReturnType<typeof setTimeout>[]>()
+
+export function cancelDemoHunt(job: MockJob) {
+  for (const t of timers.get(job.id) ?? []) clearTimeout(t)
+  timers.delete(job.id)
+  const wasRunning = job.status === 'running'
+  job.status = 'cancelled'
+  job.finished_at = Date.now()
+  if (wasRunning) emit(job, 'warn', 'job_finished', 'Cancelled by you')
+  broadcastJob('job.finished', job)
+}
+
+/**
+ * One hunt, played out over ~12 s: it looks at a few candidates, rejects some
+ * against the item's criteria, and saves one — writing a real listing and a
+ * real price check, so the item page shows the find the moment it lands.
+ */
+export function startDemoHunt(job: MockJob) {
+  const jobTimers: ReturnType<typeof setTimeout>[] = []
+  timers.set(job.id, jobTimers)
+  const at = (ms: number, fn: () => void) => jobTimers.push(setTimeout(fn, ms))
+
+  const item = store.items.find((i) => i.id === job.item_id)!
+  const site = store.sites.find((s) => s.id === job.site_id)!
+  const slotsOpen = Math.max(0, item.max_listings - activeListings(item.id).length)
+  const stats = {
+    listings_checked: 0,
+    prices_found: 0,
+    new_listings: 0,
+    errors: 0,
+    tokens_in: 0,
+    tokens_out: 0,
+    duration_ms: null as number | null,
+    method: null,
+    transport: null,
   }
-}
-
-/** best_match items in scope — the run plays out a criteria-evaluation sequence for one. */
-function bestMatchItems(run: MockRun): MockItem[] {
-  return store.items.filter((item) => {
-    if (item.selection_mode !== 'best_match') return false
-    switch (run.scope) {
-      case 'global':
-        return true
-      case 'category':
-        return item.category_id === run.scope_id
-      case 'item':
-        return item.id === run.scope_id
-      case 'site': {
-        const category = store.categories.find((c) => c.id === item.category_id)
-        const effective = item.site_ids ?? category?.site_ids ?? []
-        return effective.includes(run.scope_id!)
-      }
-    }
-  })
-}
-
-/** Items in scope that have no listings — the run "discovers" one. */
-function discoverableItems(run: MockRun) {
-  const inScope = (itemId: number) => {
-    const item = store.items.find((i) => i.id === itemId)!
-    if (run.scope === 'global') return true
-    if (run.scope === 'category') return item.category_id === run.scope_id
-    if (run.scope === 'item') return item.id === run.scope_id
-    return false
-  }
-  return store.items.filter((i) => activeListings(i.id).length === 0 && inScope(i.id))
-}
-
-export function startDemoRun(run: MockRun) {
-  const runTimers: ReturnType<typeof setTimeout>[] = []
-  timers.set(run.id, runTimers)
-  const at = (ms: number, fn: () => void) => runTimers.push(setTimeout(fn, ms))
-
-  // Sample down to ~10 listings so the demo stays ~15s
-  const listings = scopeListings(run)
-  const step = Math.max(1, Math.floor(listings.length / 10))
-  const sampled = listings.filter((_, i) => i % step === 0).slice(0, 10)
-  const discoveries = discoverableItems(run).slice(0, 1)
-
-  const stats = { listings_checked: 0, prices_found: 0, new_listings: 0, errors: 0 }
   let clock = 400
 
   at(clock, () => {
-    run.status = 'running'
-    run.started_at = Date.now()
-    broadcastRun('run.started', run)
-    emit(run, 'info', 'run_started', `Run started — ${run.scope_label}`)
+    job.status = 'running'
+    job.started_at = Date.now()
+    broadcastJob('job.started', job)
+    emit(
+      job,
+      'info',
+      'job_started',
+      `Hunting ${site.name} for "${item.name}" — ${slotsOpen} open slot${slotsOpen === 1 ? '' : 's'}` +
+        `, ${item.selection_mode === 'best_match' ? 'best match' : 'cheapest'} mode`,
+    )
   })
 
-  const seenSites = new Set<number>()
-  for (const listing of sampled) {
-    const site = store.sites.find((s) => s.id === listing.site_id)!
-    const item = store.items.find((i) => i.id === listing.item_id)!
+  clock += 900
+  at(clock, () =>
+    emit(job, 'info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 6 results, 2 already tracked`),
+  )
 
-    if (!seenSites.has(site.id)) {
-      seenSites.add(site.id)
-      clock += 350
-      at(clock, () => emit(run, 'info', 'site_started', `Opening ${site.name}…`))
-    }
-
-    clock += 500 + Math.floor(Math.random() * 500)
-    at(clock, () => emit(run, 'info', 'listing_check', `Checking ${site.name} for ${item.name}…`, { listing_id: listing.id, item_id: item.id }))
-
-    clock += 400 + Math.floor(Math.random() * 400)
+  const REJECTED = [
+    { title: `${item.name} — parts only, not working`, score: 14, why: 'parts, not a working unit' },
+    { title: `${item.name} bundle with accessories`, score: 41, why: 'bundle — extras excluded by criteria' },
+  ]
+  for (const candidate of REJECTED) {
+    clock += 1400
     at(clock, () => {
-      stats.listings_checked++
-      const prev = latestCheck(listing.id)
-      // occasionally fail one check to exercise the error rendering
-      if (stats.errors === 0 && Math.random() < 0.12) {
-        stats.errors++
-        emit(run, 'error', 'error', `${site.name} — price element not found for ${item.name}`, { listing_id: listing.id })
-        return
-      }
-      const base = prev?.price_cents ?? 30000
-      const move = Math.random() < 0.15 ? -(0.05 + Math.random() * 0.1) : (Math.random() - 0.5) * 0.02
-      const price = Math.max(500, Math.round(base * (1 + move)))
-      store.checks.push({
-        id: newId(),
-        listing_id: listing.id,
-        ts: Date.now(),
-        price_cents: price,
-        in_stock: true,
-        status: 'ok',
-        // a live recheck replays the listing's locator; no model is involved
-        method: 'jsonld',
-        confirmed: true,
-      })
-      stats.prices_found++
-      const dollars = (price / 100).toFixed(2)
-      emit(run, 'success', 'price_found', `${site.name} — ${item.name}: $${dollars} ✓`, {
-        listing_id: listing.id,
-        item_id: item.id,
-        price: dollars,
-      })
+      stats.listings_checked += 1
+      emit(
+        job,
+        'info',
+        'listing_evaluated',
+        `Skipped "${candidate.title}" — ${candidate.why} (match ${candidate.score})`,
+        {
+          item_id: item.id,
+          url: `${site.base_url}/itm/${Math.floor(100000000 + Math.random() * 899999999)}`,
+          title: candidate.title,
+          match_score: candidate.score,
+          match_summary: candidate.why,
+          tracked: false,
+        },
+      )
     })
   }
 
-  for (const item of discoveries) {
-    const category = store.categories.find((c) => c.id === item.category_id)!
-    const site = store.sites.find((s) => s.id === category.site_ids[0])!
-    clock += 700
-    at(clock, () => emit(run, 'info', 'item_started', `Searching ${site.name} for "${item.name}"…`, { item_id: item.id }))
-    clock += 900
-    at(clock, () => {
-      const listing: MockListing = {
-        id: newId(),
-        item_id: item.id,
-        site_id: site.id,
-        url: `${site.base_url}/p/${item.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-        title: item.name,
-        site_sku: null,
-        active: true,
-        match_score: null,
-        match_summary: null,
-        created_at: Date.now(),
-        discovered_by_run_id: run.id,
-      }
-      store.listings.push(listing)
-      const price = Math.round((item.target_cents ?? 20000) * (1.05 + Math.random() * 0.2))
-      store.checks.push({
-        id: newId(),
-        listing_id: listing.id,
-        ts: Date.now(),
-        price_cents: price,
-        in_stock: true,
-        status: 'ok',
-        method: 'jsonld',
-        confirmed: true,
-      })
-      stats.new_listings++
-      stats.prices_found++
-      emit(run, 'success', 'listing_discovered', `Found new listing on ${site.name} for ${item.name} — $${(price / 100).toFixed(2)}`, {
-        listing_id: listing.id,
-        item_id: item.id,
-      })
-    })
-  }
-
-  const bmItem = bestMatchItems(run)[0]
-  if (bmItem) {
-    const category = store.categories.find((c) => c.id === bmItem.category_id)!
-    const siteId = (bmItem.site_ids ?? category.site_ids)[0]
-    const site = store.sites.find((s) => s.id === siteId)!
-    const itmUrl = () => `${site.base_url}/itm/${Math.floor(100000000 + Math.random() * 899999999)}`
-
-    clock += 700
-    at(clock, () =>
-      emit(run, 'info', 'item_started', `Evaluating ${site.name} candidates for ${bmItem.name} against your criteria…`, {
-        item_id: bmItem.id,
-      }),
-    )
-
-    clock += 900
-    at(clock, () => {
-      const title = `${bmItem.name} — Mint, Sealed`
-      emit(run, 'info', 'listing_evaluated', `${site.name} — "${title}" — match 34, below threshold, skipped`, {
-        item_id: bmItem.id,
-        url: itmUrl(),
-        title,
-        match_score: 34,
-        match_summary: 'condition too good — does not fit your criteria',
-        tracked: false,
-      })
-    })
-
-    clock += 800
-    at(clock, () => {
-      const tracked = store.listings.filter((l) => l.item_id === bmItem.id && l.active)
-      const lowest = [...tracked].sort((a, b) => (a.match_score ?? 0) - (b.match_score ?? 0))[0]
-      if (!lowest) return
-      lowest.active = false
-      store.checks.push({
-        id: newId(),
-        listing_id: lowest.id,
-        ts: Date.now(),
-        price_cents: null,
-        in_stock: false,
-        status: 'sold',
-        method: 'locator',
-        confirmed: true,
-      })
-      emit(run, 'warn', 'listing_ended', `${site.name} — "${lowest.title ?? bmItem.name}" sold — slot freed`, {
-        listing_id: lowest.id,
-        item_id: bmItem.id,
-      })
-    })
-
-    clock += 1000
-    at(clock, () => {
-      const trackedCount = store.listings.filter((l) => l.item_id === bmItem.id && l.active).length
-      if (trackedCount >= bmItem.max_listings) return
-      const title = `${bmItem.name} — Used, Heavy Wear, Tested & Working`
-      const score = 79 + Math.floor(Math.random() * 10)
-      const listing: MockListing = {
-        id: newId(),
-        item_id: bmItem.id,
-        site_id: site.id,
-        url: itmUrl(),
-        title,
-        site_sku: null,
-        active: true,
-        match_score: score,
-        match_summary: 'fits your criteria — condition and authenticity check out',
-        created_at: Date.now(),
-        discovered_by_run_id: run.id,
-      }
-      store.listings.push(listing)
-      const basis = bmItem.target_cents ?? 15000
-      const price = Math.round(basis * (0.95 + Math.random() * 0.25))
-      store.checks.push({
-        id: newId(),
-        listing_id: listing.id,
-        ts: Date.now(),
-        price_cents: price,
-        in_stock: true,
-        status: 'ok',
-        method: 'jsonld',
-        confirmed: true,
-      })
-      stats.new_listings++
-      stats.prices_found++
-      emit(run, 'info', 'listing_evaluated', `${site.name} — "${title}" — match ${score} ✓`, {
-        item_id: bmItem.id,
-        url: listing.url,
-        title,
-        match_score: score,
-        match_summary: listing.match_summary,
-        tracked: true,
-      })
-      emit(run, 'success', 'listing_discovered', `Filled the freed slot with the next best match — $${(price / 100).toFixed(2)}`, {
-        listing_id: listing.id,
-        item_id: bmItem.id,
-      })
-    })
-  }
-
-  clock += 600
+  clock += 1600
   at(clock, () => {
-    run.status = 'succeeded'
-    run.finished_at = Date.now()
-    run.stats = stats
+    stats.listings_checked += 1
+    if (slotsOpen === 0) return
+    const title = `${item.name} — Used, Tested & Working`
+    const score = 78 + Math.floor(Math.random() * 12)
+    const listing: MockListing = {
+      id: newId(),
+      item_id: item.id,
+      site_id: site.id,
+      url: `${site.base_url}/itm/${Math.floor(100000000 + Math.random() * 899999999)}`,
+      title,
+      site_sku: null,
+      active: true,
+      match_score: score,
+      match_summary: 'fits your criteria — condition and authenticity check out',
+      created_at: Date.now(),
+      discovered_by_job_id: job.id,
+    }
+    store.listings.push(listing)
+    const price = Math.round((item.target_cents ?? 20000) * (0.95 + Math.random() * 0.2))
+    store.checks.push({
+      id: newId(),
+      listing_id: listing.id,
+      ts: Date.now(),
+      price_cents: price,
+      in_stock: true,
+      status: 'ok',
+      method: 'jsonld',
+      confirmed: true,
+    })
+    stats.prices_found += 1
+    stats.new_listings += 1
     emit(
-      run,
+      job,
       'success',
-      'run_finished',
-      `Run complete — ${stats.listings_checked} checked, ${stats.prices_found} prices, ${stats.new_listings} new listing${stats.new_listings === 1 ? '' : 's'}, ${stats.errors} error${stats.errors === 1 ? '' : 's'}`,
+      'price_found',
+      `Price read $${(price / 100).toFixed(2)} · in stock · "${title}" (match ${score})`,
+      { listing_id: listing.id, item_id: item.id, price: (price / 100).toFixed(2) },
     )
-    broadcastRun('run.finished', run)
-    timers.delete(run.id)
+    emit(
+      job,
+      'success',
+      'listing_discovered',
+      `Saved as listing #${listing.id} — ${activeListings(item.id).length} of ${item.max_listings} slots filled · locator learned (jsonld)`,
+      { listing_id: listing.id, item_id: item.id },
+    )
+  })
+
+  clock += 1200
+  at(clock, () => {
+    job.status = 'done'
+    job.finished_at = Date.now()
+    stats.duration_ms = job.finished_at - (job.started_at ?? job.finished_at)
+    stats.tokens_in = 8_200 + Math.floor(Math.random() * 4_000)
+    stats.tokens_out = 600 + Math.floor(Math.random() * 500)
+    job.stats = stats
+    const left = Math.max(0, item.max_listings - activeListings(item.id).length)
+    emit(
+      job,
+      'success',
+      'job_finished',
+      stats.new_listings > 0
+        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} seen · ${left} slots left`
+        : `Hunt complete — nothing new · ${stats.listings_checked} seen`,
+    )
+    broadcastJob('job.finished', job)
+    timers.delete(job.id)
+  })
+}
+
+// --- the check loop --------------------------------------------------------
+
+/** Cycled so the checks tail shows every way a price can be read. */
+const CHECK_METHODS = ['jsonld', 'meta', 'locator', 'llm']
+let checkLoop: ReturnType<typeof setInterval> | null = null
+let checkCount = 0
+
+function startCheckLoop() {
+  if (checkLoop != null) return
+  checkLoop = setInterval(runOneCheck, 20_000)
+}
+
+function stopCheckLoop() {
+  if (checkLoop == null) return
+  clearInterval(checkLoop)
+  checkLoop = null
+}
+
+/**
+ * One recheck, the way the daemon does it: a real price_checks row and the
+ * frame the trigger would raise. Rechecks write no job events and emit no
+ * lifecycle frames — this one frame is the whole of their output.
+ */
+function runOneCheck() {
+  const tracked = store.listings.filter((l) => l.active)
+  if (tracked.length === 0) return
+  const listing = tracked[checkCount % tracked.length]
+  const item = store.items.find((i) => i.id === listing.item_id)!
+  const site = store.sites.find((s) => s.id === listing.site_id)!
+  const method = CHECK_METHODS[checkCount % CHECK_METHODS.length]
+  // one in twelve is a reading the bands did not believe — it shows in the
+  // tail as unconfirmed and in nothing else
+  const confirmed = checkCount % 12 !== 11
+  checkCount += 1
+
+  const base = latestCheck(listing.id)?.price_cents ?? 20000
+  const price = confirmed
+    ? Math.max(500, Math.round(base * (0.98 + Math.random() * 0.04)))
+    : Math.round(base / 10)
+  const check = {
+    id: newId(),
+    listing_id: listing.id,
+    ts: Date.now(),
+    price_cents: price,
+    in_stock: true,
+    status: 'ok',
+    method,
+    confirmed,
+  }
+  store.checks.push(check)
+
+  broadcastCheck(listing, {
+    listing_id: listing.id,
+    item_id: item.id,
+    item_name: item.name,
+    site_name: site.name,
+    price: (price / 100).toFixed(2),
+    currency: 'USD',
+    status: 'ok',
+    method,
+    confirmed,
+    slot_freed: false,
+    checked_at: new Date(check.ts).toISOString(),
   })
 }

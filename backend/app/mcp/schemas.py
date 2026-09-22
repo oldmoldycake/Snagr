@@ -4,7 +4,7 @@ is the REST schema itself (schemas/*), so an agent and the UI see one shape."""
 from pydantic import BaseModel
 
 from app.schemas.auth import User
-from app.schemas.runs import AgentRun, RunEvent
+from app.schemas.jobs import Job, JobEvent
 
 
 class Whoami(BaseModel):
@@ -14,7 +14,7 @@ class Whoami(BaseModel):
     scopes: list[str]
 
 
-class RunDetail(AgentRun):
-    """A run with the tail of its log — the events the viewer may see."""
+class JobDetail(Job):
+    """A job with the tail of its log."""
 
-    events: list[RunEvent]
+    events: list[JobEvent]

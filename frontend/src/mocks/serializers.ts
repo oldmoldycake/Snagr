@@ -1,16 +1,18 @@
 import type {
   AdminUser,
-  AgentRun,
   ApiToken,
   Category,
+  HuntFacts,
   Invite,
+  Job,
+  JobEvent,
   NotificationChannel,
   ItemDetail,
   ItemSummary,
   Listing,
+  RecheckFacts,
   ReferenceImage,
   ReviewQueueEntry,
-  RunEvent,
   Site,
   User,
 } from '@/api/types'
@@ -31,12 +33,12 @@ import {
   targetMet,
   type MockApiToken,
   type MockItem,
+  type MockJob,
+  type MockJobEvent,
   type MockListing,
   type MockNotificationChannel,
   type MockQueueEntry,
   type MockReference,
-  type MockRun,
-  type MockRunEvent,
   type MockUser,
 } from './fixtures'
 
@@ -91,6 +93,8 @@ export function toSite(s: (typeof store.sites)[number]): Site {
     category_ids: store.categories.filter((c) => c.site_ids.includes(s.id)).map((c) => c.id),
     listing_count: listings.filter((l) => l.active).length,
     last_checked_at: iso(lastChecked),
+    paused_until: iso(s.paused_until),
+    paused_reason: s.paused_reason,
     created_at: iso(s.created_at)!,
   }
 }
@@ -172,7 +176,7 @@ export function toListing(l: MockListing): Listing {
       : null,
     last_checked_at: iso(lastAny?.ts ?? null),
     created_at: iso(l.created_at)!,
-    discovered_by_run_id: l.discovered_by_run_id,
+    discovered_by_job_id: l.discovered_by_job_id,
   }
 }
 
@@ -210,33 +214,88 @@ export function toItemDetail(item: MockItem, range: TimeRange = '30d'): ItemDeta
   return {
     ...toItemSummary(item, range),
     listings: itemListings(item.id).map(toListing),
+    hunt: huntFacts(item),
+    recheck: recheckFacts(item),
   }
 }
 
-export function toRun(r: MockRun): AgentRun {
+/** PR 2a has no per-watch interval: every listing is re-read on the instance default. */
+export const RECHECK_INTERVAL_MINUTES = 30
+
+/** What the hunter will do next for this item — read off its jobs, never stored. */
+function huntFacts(item: MockItem): HuntFacts {
+  const hunts = store.jobs.filter((j) => j.kind === 'hunt' && j.item_id === item.id)
+  const pending = hunts.filter((j) => j.status === 'pending').map((j) => j.run_after)
+  const last = hunts
+    .filter((j) => j.finished_at != null)
+    .reduce<MockJob | null>((newest, j) => (newest == null || j.finished_at! > newest.finished_at! ? j : newest), null)
   return {
-    id: r.id,
-    user_id: r.user_id,
-    scope: r.scope,
-    scope_id: r.scope_id,
-    scope_label: r.scope_label,
-    status: r.status,
-    started_at: iso(r.started_at),
-    finished_at: iso(r.finished_at),
-    stats: r.stats,
-    error: r.error,
-    created_at: iso(r.created_at)!,
-    last_seq: r.last_seq,
+    running: hunts.some((j) => j.status === 'running'),
+    next_at: pending.length ? iso(Math.min(...pending)) : null,
+    last_at: iso(last?.finished_at ?? null),
+    last_result: last == null ? null : lastResult(last),
+    slots_open: Math.max(0, item.max_listings - activeListings(item.id).length),
   }
 }
 
-export function toRunEvent(e: MockRunEvent): RunEvent {
+function lastResult(job: MockJob): HuntFacts['last_result'] {
+  if (job.status === 'failed') return 'failed'
+  if (job.status === 'cancelled') return 'cancelled'
+  return (job.stats?.new_listings ?? 0) > 0 ? 'found' : 'nothing'
+}
+
+function recheckFacts(item: MockItem): RecheckFacts {
+  const checks = store.jobs.filter((j) => j.kind === 'recheck' && j.item_id === item.id)
+  const pending = checks.filter((j) => j.status === 'pending').map((j) => j.run_after)
   return {
-    run_id: e.run_id,
+    running: checks.filter((j) => j.status === 'running').length,
+    next_at: pending.length ? iso(Math.min(...pending)) : null,
+    interval_minutes: RECHECK_INTERVAL_MINUTES,
+  }
+}
+
+/** Kind is said in words, not glyphs — the label is what every list row shows. */
+export function jobLabel(job: MockJob): string {
+  const itemName = store.items.find((i) => i.id === job.item_id)?.name ?? 'Unknown item'
+  const siteName = store.sites.find((s) => s.id === job.site_id)?.name
+  if (job.kind === 'hunt') return `${itemName} × ${siteName ?? 'every site'}`
+  if (job.kind === 'ground') return `${itemName} · market price`
+  return `${itemName} · check`
+}
+
+export function toJob(j: MockJob): Job {
+  return {
+    id: j.id,
+    kind: j.kind,
+    status: j.status,
+    user_id: j.user_id,
+    watch_id: j.watch_id,
+    item_id: j.item_id,
+    item_name: store.items.find((i) => i.id === j.item_id)?.name ?? null,
+    site_id: j.site_id,
+    site_name: store.sites.find((s) => s.id === j.site_id)?.name ?? null,
+    listing_id: j.listing_id,
+    label: jobLabel(j),
+    priority: j.priority,
+    run_after: iso(j.run_after)!,
+    attempts: j.attempts,
+    started_at: iso(j.started_at),
+    finished_at: iso(j.finished_at),
+    error: j.error,
+    stats: j.stats,
+    reason: j.reason,
+    last_seq: j.last_seq,
+    created_at: iso(j.created_at)!,
+  }
+}
+
+export function toJobEvent(e: MockJobEvent): JobEvent {
+  return {
+    job_id: e.job_id,
     seq: e.seq,
     ts: iso(e.ts)!,
     level: e.level,
-    event_type: e.event_type as RunEvent['event_type'],
+    event_type: e.event_type as JobEvent['event_type'],
     message: e.message,
     payload: e.payload,
   }

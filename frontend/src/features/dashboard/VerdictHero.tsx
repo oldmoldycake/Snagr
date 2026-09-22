@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { listRuns } from '@/api/endpoints'
+import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemSummary, PriceDrop } from '@/api/types'
 import { effectiveTarget, isFreshDrop } from '@/features/items/WatchList'
@@ -83,17 +83,15 @@ export function VerdictHero({
 /**
  * Tonight's totals: counts and money only, never item names. The strike/drop
  * split, and the money shaved, come from the drops the page already fetched;
- * new-listings/checked come from the ticker's own last-run query (same key,
- * so React Query dedupes). Hidden until the agent has run at least once.
+ * new-listings/checked come from the last hunt, read off the same summary the
+ * ticker uses (same key, so React Query dedupes). Hidden until the hunter has
+ * finished something.
  */
 function PulseLine({ items, drops }: { items: ItemSummary[]; drops: Map<number, PriceDrop> }) {
-  const lastRun = useQuery({
-    queryKey: qk.runs({ per_page: 1 }),
-    queryFn: () => listRuns({ per_page: 1 }),
-  })
+  const summary = useQuery({ queryKey: qk.jobsSummary, queryFn: getJobsSummary })
 
-  const stats = lastRun.data?.data[0]?.stats
-  if (lastRun.data == null || lastRun.data.data.length === 0) return null
+  const stats = summary.data?.last_hunt?.stats
+  if (summary.data == null || summary.data.last_hunt == null) return null
 
   const snaggedIds = new Set(items.filter((item) => item.target_met).map((item) => item.id))
   let struck = 0

@@ -4,14 +4,12 @@ export class ApiError extends Error {
   status: number
   code: string
   fields?: Record<string, string>
-  runId?: number
 
   constructor(status: number, body: ApiErrorBody | null) {
     super(body?.error.message ?? `Request failed (${status})`)
     this.status = status
     this.code = body?.error.code ?? 'unknown'
     this.fields = body?.error.fields
-    this.runId = body?.error.run_id
   }
 }
 

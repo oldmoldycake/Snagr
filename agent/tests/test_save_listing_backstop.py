@@ -98,14 +98,14 @@ async def _seed_watch(auto_reject: bool | None) -> dict:
         return ids
 
 
-def _save(ids) -> int | str:
+def _save(ids, runtime=None) -> int | str:
     return db(
         tools.save_listing(
             url="https://example.test/candidate",
             title="Widget — very real",
             match_score=80,
             match_summary="fits, no repro flags",
-            runtime=unit_runtime(**ids),
+            runtime=runtime or unit_runtime(**ids),
         )
     )
 
@@ -119,14 +119,14 @@ async def _listing_count() -> int:
 
 def test_auto_rejected_scan_refuses_the_save():
     ids = db(_seed_watch(auto_reject=True))
-    tools.reset_run_stats()
+    runtime = unit_runtime(**ids)
 
-    result = _save(ids)
+    result = _save(ids, runtime)
     assert isinstance(result, str)
     assert result.startswith("REFUSED:")
     assert "log_listing_check" in result
     assert db(_listing_count()) == 0
-    assert tools.read_run_stats()["new_listings"] == 0
+    assert runtime.config["configurable"]["unit"].stats["new_listings"] == 0
 
 
 def test_a_scan_below_threshold_saves_as_before():

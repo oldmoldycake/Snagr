@@ -54,6 +54,9 @@ export interface MockSite {
   id: number
   name: string
   base_url: string
+  /** set by the hunter's circuit breaker; null = not paused */
+  paused_until: number | null
+  paused_reason: string | null
   created_at: number
 }
 
@@ -91,7 +94,7 @@ export interface MockListing {
   /** optional so existing fixtures default to "never scanned" (null) */
   authenticity?: MockAuthenticity | null
   created_at: number
-  discovered_by_run_id: number | null
+  discovered_by_job_id: number | null
 }
 
 export interface MockReference {
@@ -142,23 +145,42 @@ export interface MockWatch {
   target_cents: number | null
 }
 
-export interface MockRun {
-  id: number
-  user_id: number | null
-  scope: 'global' | 'category' | 'site' | 'item'
-  scope_id: number | null
-  scope_label: string
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
-  started_at: number | null
-  finished_at: number | null
-  stats: { listings_checked: number; prices_found: number; new_listings: number; errors: number } | null
-  error: string | null
-  created_at: number
-  last_seq: number
+export interface MockJobStats {
+  listings_checked: number
+  prices_found: number
+  new_listings: number
+  errors: number
+  tokens_in: number
+  tokens_out: number
+  duration_ms: number | null
+  method: string | null
+  transport: 'static' | 'browser' | null
 }
 
-export interface MockRunEvent {
-  run_id: number
+export interface MockJob {
+  id: number
+  kind: 'hunt' | 'recheck' | 'ground'
+  status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
+  /** null = the hunter queued it itself; shown as "system" */
+  user_id: number | null
+  watch_id: number | null
+  item_id: number | null
+  site_id: number | null
+  listing_id: number | null
+  priority: number
+  run_after: number
+  attempts: number
+  started_at: number | null
+  finished_at: number | null
+  error: string | null
+  stats: MockJobStats | null
+  reason: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | null
+  last_seq: number
+  created_at: number
+}
+
+export interface MockJobEvent {
+  job_id: number
   seq: number
   ts: number
   level: 'info' | 'success' | 'warn' | 'error'
@@ -196,7 +218,7 @@ export interface MockApiToken {
   id: number
   user_id: number
   name: string
-  scopes: ('read' | 'write' | 'runs')[]
+  scopes: ('read' | 'write' | 'jobs')[]
   expires_at: number | null
   last_used_at: number | null
   created_at: number
@@ -218,8 +240,8 @@ export const store = {
   listings: [] as MockListing[],
   checks: [] as MockCheck[],
   watches: [] as MockWatch[],
-  runs: [] as MockRun[],
-  runEvents: [] as MockRunEvent[],
+  jobs: [] as MockJob[],
+  jobEvents: [] as MockJobEvent[],
   invites: [] as MockInvite[],
   notificationChannels: [] as MockNotificationChannel[],
   tokens: [] as MockApiToken[],
@@ -429,6 +451,8 @@ function seed() {
     id: i + 1,
     name,
     base_url,
+    paused_until: null,
+    paused_reason: null,
     created_at: NOW - 190 * DAY,
   }))
 
@@ -477,7 +501,7 @@ function seed() {
           match_score: null,
           match_summary: null,
           created_at: NOW - Math.floor(20 + rng() * 140) * DAY,
-          discovered_by_run_id: null,
+          discovered_by_job_id: null,
         })
         generateChecks(listingId, seedItem.base, 0xbeef + listingId * 7)
       }
@@ -488,7 +512,7 @@ function seed() {
 
   seedGuestWatches()
 
-  seedHistoricalRuns()
+  seedJobs()
 
   seedVisionLibrary()
 }
@@ -683,7 +707,7 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
       match_score: spec.score,
       match_summary: spec.summary,
       created_at: NOW - Math.floor(15 + rng() * 30) * DAY,
-      discovered_by_run_id: 901,
+      discovered_by_job_id: null,
     })
     generateChecks(listingId, spec.base, 0xeade + listingId * 11, spec.soldDaysAgo ?? 0, spec.soldDaysAgo != null ? 'sold' : undefined)
   }
@@ -717,36 +741,378 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
       match_score: null,
       match_summary: null,
       created_at: NOW - Math.floor(20 + rng() * 40) * DAY,
-      discovered_by_run_id: null,
+      discovered_by_job_id: null,
     })
     generateChecks(listingId, 3999 + i * 600, 0xcafe + listingId * 13)
   }
 }
 
-function seedHistoricalRuns() {
-  // a couple of finished historical runs for the runs page
-  const historicalRun = (idOffset: number, daysAgo: number, scope_label: string, user_id: number | null): MockRun => ({
-    id: 900 + idOffset,
-    user_id,
-    scope: idOffset % 2 === 0 ? 'global' : 'category',
-    scope_id: idOffset % 2 === 0 ? null : 1,
-    scope_label,
-    status: 'succeeded',
-    started_at: NOW - daysAgo * DAY,
-    finished_at: NOW - daysAgo * DAY + 4 * 60_000,
-    stats: {
-      listings_checked: 40 + Math.floor(rng() * 20),
-      prices_found: 38 + Math.floor(rng() * 18),
-      new_listings: Math.floor(rng() * 3),
-      errors: Math.floor(rng() * 2),
-    },
-    error: null,
-    created_at: NOW - daysAgo * DAY,
+const HOUR = 3_600_000
+const MINUTE = 60_000
+
+function jobStats(over: Partial<MockJobStats> = {}): MockJobStats {
+  return {
+    listings_checked: 0,
+    prices_found: 0,
+    new_listings: 0,
+    errors: 0,
+    tokens_in: 0,
+    tokens_out: 0,
+    duration_ms: null,
+    method: null,
+    transport: null,
+    ...over,
+  }
+}
+
+/** Every (watch, site) pair the hunter could work — a watch with no pinned
+ *  subset hunts every site its category is linked to. */
+function huntPairs(): { watch: MockWatch; item: MockItem; siteId: number }[] {
+  const pairs: { watch: MockWatch; item: MockItem; siteId: number }[] = []
+  for (const watch of store.watches) {
+    const item = store.items.find((i) => i.id === watch.item_id)!
+    const category = store.categories.find((c) => c.id === item.category_id)!
+    for (const siteId of item.site_ids ?? category.site_ids) pairs.push({ watch, item, siteId })
+  }
+  return pairs
+}
+
+/**
+ * The hunter's ledger and its queue.
+ *
+ * Three days of finished work — ~20 hunts and ~200 rechecks — so History
+ * paginates and the Checks filter has rows to debug a site with. Then the
+ * queue the live page reads: one pending recheck per active listing spread
+ * over the next half hour, a pending hunt for every watch with an open slot,
+ * and a grounding job. One site is paused so the breaker's surfaces (banner,
+ * ticker state, "waiting for eBay to resume") are reachable without waiting
+ * for a demo hunt to trip it.
+ */
+function seedJobs() {
+  const paused = store.sites.find((s) => s.name === 'ebay.com')!
+  paused.paused_until = NOW + HOUR
+  paused.paused_reason = '5 consecutive read errors: challenge page'
+
+  const pairs = huntPairs()
+  const pushJob = (job: MockJob): MockJob => {
+    store.jobs.push(job)
+    return job
+  }
+
+  const finishedHunt = (
+    watch: MockWatch,
+    item: MockItem,
+    siteId: number,
+    over: Partial<MockJob> = {},
+  ): MockJob => {
+    const startedAt = NOW - Math.floor(1 + rng() * 70) * HOUR
+    const duration = 20_000 + Math.floor(rng() * 45_000)
+    const seen = 3 + Math.floor(rng() * 4)
+    const found = rng() < 0.3 ? 1 + Math.floor(rng() * 2) : 0
+    return pushJob({
+      id: newId(),
+      kind: 'hunt',
+      status: 'done',
+      user_id: watch.user_id,
+      watch_id: watch.id,
+      item_id: item.id,
+      site_id: siteId,
+      listing_id: null,
+      priority: 0,
+      run_after: startedAt - MINUTE,
+      attempts: 1,
+      started_at: startedAt,
+      finished_at: startedAt + duration,
+      error: null,
+      stats: jobStats({
+        listings_checked: seen,
+        prices_found: found,
+        new_listings: found,
+        tokens_in: 7000 + Math.floor(rng() * 8000),
+        tokens_out: 400 + Math.floor(rng() * 900),
+        duration_ms: duration,
+      }),
+      reason: 'sweep',
+      last_seq: 0,
+      created_at: startedAt - MINUTE,
+      ...over,
+    })
+  }
+
+  for (let i = 0; i < 18; i++) {
+    const { watch, item, siteId } = pairs[(i * 5) % pairs.length]
+    // one system hunt every few rows: nobody asked, the hunter queued itself
+    finishedHunt(watch, item, siteId, i % 6 === 0 ? { user_id: null } : {})
+  }
+
+  // one hunt the breaker killed, and one the owner cancelled mid-flight
+  const failedPair = pairs.find((pair) => pair.siteId === paused.id) ?? pairs[0]
+  const failedAt = NOW - 75 * MINUTE
+  pushJob({
+    id: newId(),
+    kind: 'hunt',
+    status: 'failed',
+    user_id: failedPair.watch.user_id,
+    watch_id: failedPair.watch.id,
+    item_id: failedPair.item.id,
+    site_id: failedPair.siteId,
+    listing_id: null,
+    priority: 100,
+    run_after: failedAt - MINUTE,
+    attempts: 3,
+    started_at: failedAt,
+    finished_at: failedAt + 12_000,
+    error: `${paused.name} answered a challenge page instead of the listing.`,
+    stats: jobStats({ errors: 1, duration_ms: 12_000 }),
+    reason: 'user',
     last_seq: 0,
+    created_at: failedAt - MINUTE,
   })
-  const system = historicalRun(0, 1, 'Everything', null)
-  store.runs.push(system, historicalRun(1, 2, 'Category: GPUs', 1), historicalRun(2, 4, 'Everything', 2))
-  seedSystemRunEvents(system)
+
+  const cancelledPair = pairs[2]
+  const cancelledAt = NOW - 100 * MINUTE
+  pushJob({
+    id: newId(),
+    kind: 'hunt',
+    status: 'cancelled',
+    user_id: cancelledPair.watch.user_id,
+    watch_id: cancelledPair.watch.id,
+    item_id: cancelledPair.item.id,
+    site_id: cancelledPair.siteId,
+    listing_id: null,
+    priority: 100,
+    run_after: cancelledAt - MINUTE,
+    attempts: 1,
+    started_at: cancelledAt,
+    finished_at: cancelledAt + 9_000,
+    error: null,
+    stats: jobStats({ listings_checked: 1, tokens_in: 1800, tokens_out: 200, duration_ms: 9_000 }),
+    reason: 'user',
+    last_seq: 0,
+    created_at: cancelledAt - MINUTE,
+  })
+
+  seedShowcaseHunt()
+  seedFinishedChecks()
+  seedQueue()
+}
+
+/**
+ * The hunt the job page is built to show: the criteria-driven item's eBay
+ * hunt, with the listings it discovered pointing back at it and the event log
+ * a reader actually learns something from.
+ */
+function seedShowcaseHunt() {
+  const item = store.items.find((i) => i.name === 'Pokemon Emerald (GBA)')!
+  const watch = store.watches.find((w) => w.item_id === item.id)!
+  const site = store.sites.find((s) => s.name === 'ebay.com')!
+  const startedAt = NOW - 4 * HOUR
+  const duration = 48_000
+  const listings = itemListings(item.id)
+
+  const job: MockJob = {
+    id: newId(),
+    kind: 'hunt',
+    status: 'done',
+    user_id: watch.user_id,
+    watch_id: watch.id,
+    item_id: item.id,
+    site_id: site.id,
+    listing_id: null,
+    priority: 100,
+    run_after: startedAt - MINUTE,
+    attempts: 1,
+    started_at: startedAt,
+    finished_at: startedAt + duration,
+    error: null,
+    stats: jobStats({
+      listings_checked: 4,
+      prices_found: 2,
+      new_listings: 2,
+      tokens_in: 11_400,
+      tokens_out: 1_000,
+      duration_ms: duration,
+    }),
+    reason: 'user',
+    last_seq: 0,
+    created_at: startedAt - MINUTE,
+  }
+  store.jobs.push(job)
+  for (const listing of listings) listing.discovered_by_job_id = job.id
+
+  const saved = listings.find((l) => l.active)!
+  const price = latestCheck(saved.id)?.price_cents ?? 11800
+  const push = (
+    level: MockJobEvent['level'],
+    event_type: string,
+    message: string,
+    payload: Record<string, unknown> | null = null,
+  ) => {
+    job.last_seq += 1
+    store.jobEvents.push({
+      job_id: job.id,
+      seq: job.last_seq,
+      ts: startedAt + job.last_seq * 6_000,
+      level,
+      event_type,
+      message,
+      payload,
+    })
+  }
+
+  push('info', 'job_started', `Hunting ${site.name} for "${item.name}" — 3 open slots, best match mode`)
+  push('info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 6 results, 2 already tracked`)
+  push('info', 'listing_evaluated', `Skipped "Pokemon Emerald repro cart" — reproduction, not authentic (match 12)`, {
+    item_id: item.id,
+    url: `${site.base_url}/itm/181000001`,
+    title: 'Pokemon Emerald repro cart',
+    match_score: 12,
+    match_summary: 'reproduction, not authentic',
+    tracked: false,
+  })
+  push('success', 'price_found', `Price read $${(price / 100).toFixed(2)} · in stock · "${saved.title}" (match ${saved.match_score})`, {
+    listing_id: saved.id,
+    item_id: item.id,
+    price: (price / 100).toFixed(2),
+  })
+  push('success', 'listing_discovered', `Saved as listing #${saved.id} — 3 of 5 slots filled · locator learned (jsonld) · static ok`, {
+    listing_id: saved.id,
+    item_id: item.id,
+  })
+  push('success', 'job_finished', `Hunt complete — 2 new · 4 seen · 3 slots left · 11.4k tokens`)
+}
+
+/** ~200 finished rechecks over three days — the Checks filter's rows. */
+function seedFinishedChecks() {
+  const METHODS: [string, 'static' | 'browser'][] = [
+    ['jsonld', 'static'],
+    ['jsonld', 'browser'],
+    ['locator', 'browser'],
+    ['meta', 'static'],
+    ['llm', 'browser'],
+  ]
+  const tracked = store.listings.filter((l) => l.active)
+  for (let i = 0; i < 200; i++) {
+    const listing = tracked[i % tracked.length]
+    const watch = store.watches.find((w) => w.item_id === listing.item_id)!
+    const [method, transport] = METHODS[i % METHODS.length]
+    const startedAt = NOW - Math.floor(1 + rng() * 71) * HOUR
+    const duration = transport === 'static' ? 300 + Math.floor(rng() * 900) : 1_200 + Math.floor(rng() * 2_500)
+    store.jobs.push({
+      id: newId(),
+      kind: 'recheck',
+      status: 'done',
+      user_id: null,
+      watch_id: watch.id,
+      item_id: listing.item_id,
+      site_id: listing.site_id,
+      listing_id: listing.id,
+      priority: 0,
+      run_after: startedAt,
+      attempts: 1,
+      started_at: startedAt,
+      finished_at: startedAt + duration,
+      error: null,
+      stats: jobStats({
+        listings_checked: 1,
+        prices_found: 1,
+        tokens_in: method === 'llm' ? 3_200 : 0,
+        tokens_out: method === 'llm' ? 180 : 0,
+        duration_ms: duration,
+        method,
+        transport,
+      }),
+      reason: null,
+      last_seq: 0,
+      created_at: startedAt,
+    })
+  }
+}
+
+/** What the hunter will do next: the pending rows the live page reads. */
+function seedQueue() {
+  const paused = store.sites.find((s) => s.name === 'ebay.com')!
+
+  // one pending recheck per active listing, spread over the next half hour —
+  // a site that is paused waits for its pause to lift instead
+  for (const [i, listing] of store.listings.filter((l) => l.active).entries()) {
+    const watch = store.watches.find((w) => w.item_id === listing.item_id)!
+    const due =
+      listing.site_id === paused.id ? paused.paused_until! : NOW + 42_000 + i * 28_000
+    store.jobs.push({
+      id: newId(),
+      kind: 'recheck',
+      status: 'pending',
+      user_id: null,
+      watch_id: watch.id,
+      item_id: listing.item_id,
+      site_id: listing.site_id,
+      listing_id: listing.id,
+      priority: 0,
+      run_after: due,
+      attempts: 0,
+      started_at: null,
+      finished_at: null,
+      error: null,
+      stats: null,
+      reason: listing.site_id === paused.id ? 'paused' : null,
+      last_seq: 0,
+      created_at: NOW - 28 * MINUTE,
+    })
+  }
+
+  // a hunt waiting for every watch that still has room for another listing
+  for (const { watch, item, siteId } of huntPairs()) {
+    if (activeListings(item.id).length >= item.max_listings) continue
+    if (store.jobs.some((j) => j.kind === 'hunt' && j.watch_id === watch.id && j.status === 'pending')) {
+      continue
+    }
+    const onPaused = siteId === paused.id
+    store.jobs.push({
+      id: newId(),
+      kind: 'hunt',
+      status: 'pending',
+      user_id: null,
+      watch_id: watch.id,
+      item_id: item.id,
+      site_id: siteId,
+      listing_id: null,
+      priority: 0,
+      run_after: onPaused ? paused.paused_until! : NOW + 10 * MINUTE + item.id * MINUTE,
+      attempts: 0,
+      started_at: null,
+      finished_at: null,
+      error: null,
+      stats: null,
+      reason: onPaused ? 'paused' : 'sweep',
+      last_seq: 0,
+      created_at: NOW - 40 * MINUTE,
+    })
+  }
+
+  // market stats go stale on their own; one refresh is always due next
+  const grounded = store.items[0]
+  store.jobs.push({
+    id: newId(),
+    kind: 'ground',
+    status: 'pending',
+    user_id: null,
+    watch_id: null,
+    item_id: grounded.id,
+    site_id: null,
+    listing_id: null,
+    priority: 0,
+    run_after: NOW + 2 * HOUR,
+    attempts: 0,
+    started_at: null,
+    finished_at: null,
+    error: null,
+    stats: null,
+    reason: 'sweep',
+    last_seq: 0,
+    created_at: NOW - 10 * MINUTE,
+  })
+
   seedDisbelievedCheck()
 }
 
@@ -773,83 +1139,27 @@ function seedDisbelievedCheck() {
   })
 }
 
-/**
- * The system run's event log — mixed-ownership references so each viewer's
- * filtered slice differs: the guest sees the lifecycle rows plus their own
- * and the shared item; the demo admin sees all six.
- */
-function seedSystemRunEvents(run: MockRun) {
-  const item = (name: string) => store.items.find((i) => i.name === name)!
-  const listingOf = (itemId: number) => store.listings.find((l) => l.item_id === itemId)!
-  const siteName = (siteId: number) => store.sites.find((s) => s.id === siteId)!.name
-
-  const demoOnly = item('Steam Deck OLED 512GB') // watched by the demo user only
-  const guestOwn = item('Sony WH-1000XM5') // the guest's watch
-  const shared = item('RTX 4070 Super') // watched by both users
-  const demoListing = listingOf(demoOnly.id)
-  const priceCents = latestCheck(demoListing.id)?.price_cents ?? 52999
-
-  const push = (
-    seq: number,
-    level: MockRunEvent['level'],
-    event_type: string,
-    message: string,
-    payload: Record<string, unknown> | null = null,
-  ) => store.runEvents.push({ run_id: run.id, seq, ts: run.started_at! + seq * 30_000, level, event_type, message, payload })
-
-  push(1, 'info', 'run_started', `Run started — ${run.scope_label}`)
-  push(2, 'info', 'item_started', `Searching ${siteName(demoListing.site_id)} for "${demoOnly.name}"…`, {
-    item_id: demoOnly.id,
-    site_id: demoListing.site_id,
-  })
-  push(3, 'success', 'price_found', `${siteName(demoListing.site_id)} — ${demoOnly.name}: $${(priceCents / 100).toFixed(2)} ✓`, {
-    listing_id: demoListing.id,
-    item_id: demoOnly.id,
-    price: (priceCents / 100).toFixed(2),
-  })
-  push(4, 'info', 'item_started', `Searching ${siteName(listingOf(guestOwn.id).site_id)} for "${guestOwn.name}"…`, {
-    item_id: guestOwn.id,
-    site_id: listingOf(guestOwn.id).site_id,
-  })
-  push(5, 'info', 'item_started', `Searching ${siteName(listingOf(shared.id).site_id)} for "${shared.name}"…`, {
-    item_id: shared.id,
-    site_id: listingOf(shared.id).site_id,
-  })
-  const s = run.stats!
-  push(
-    6,
-    'success',
-    'run_finished',
-    `Run complete — ${s.listings_checked} checked, ${s.prices_found} prices, ${s.new_listings} new listing${s.new_listings === 1 ? '' : 's'}, ${s.errors} error${s.errors === 1 ? '' : 's'}`,
-  )
-  run.last_seq = 6
-}
-
 seed()
 
-// --- per-user run visibility (runs/SSE surfaces only) -----------------------------
-
-/** A viewer sees their own runs, system runs (user_id null), and — as admin — everything. */
-export function runVisible(run: MockRun, user: MockUser): boolean {
-  return user.role === 'admin' || run.user_id === null || run.user_id === user.id
-}
+// --- per-user job visibility (jobs/SSE surfaces only) -----------------------------
 
 /**
- * Event-level predicate, applied within a visible run: payload-less events show
- * to everyone; item references show to that item's watchers; listing references
- * only to the listing's owner. MockListing has no watch_id, so a listing
- * resolves through its item — same observable behavior while mock listings map
- * 1:1 to a single watch per item.
+ * A viewer sees jobs for their own watches, `ground` jobs for items they
+ * watch, and — as admin — everything. A hidden job must behave exactly like a
+ * nonexistent one (404, absent from lists) so its existence never leaks.
+ *
+ * Unlike a run, a job belongs to one watch, so there is no event-level rule:
+ * seeing the job is seeing its events.
  */
-export function eventVisible(event: MockRunEvent, user: MockUser): boolean {
+export function jobVisible(job: MockJob, user: MockUser): boolean {
   if (user.role === 'admin') return true
-  const itemId = event.payload?.item_id
-  const listingId = event.payload?.listing_id
-  if (itemId == null && listingId == null) return true
-  const watches = (id: number) => store.watches.some((w) => w.item_id === id && w.user_id === user.id)
-  if (typeof itemId === 'number' && watches(itemId)) return true
-  const listing = typeof listingId === 'number' ? store.listings.find((l) => l.id === listingId) : undefined
-  return listing != null && watches(listing.item_id)
+  if (job.watch_id != null) {
+    return store.watches.some((w) => w.id === job.watch_id && w.user_id === user.id)
+  }
+  if (job.item_id != null) {
+    return store.watches.some((w) => w.item_id === job.item_id && w.user_id === user.id)
+  }
+  return false
 }
 
 // --- shared query helpers (used by handlers) --------------------------------------

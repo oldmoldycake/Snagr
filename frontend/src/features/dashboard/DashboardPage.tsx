@@ -14,7 +14,7 @@ import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { CategoryChips } from '@/features/categories/CategoryChips'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
-import { AgentTicker } from '@/features/runs/AgentTicker'
+import { HunterTicker } from '@/features/activity/HunterTicker'
 import { VerdictHero } from './VerdictHero'
 
 /** One page of everything: the self-hosted watch fits in a single fetch. */
@@ -91,7 +91,7 @@ export function DashboardPage() {
         <VerdictHero items={rows} drops={dropsByItem} className={cn(items.isFetching && 'opacity-60')} />
       )}
 
-      {search ? null : <AgentTicker className="mt-9" />}
+      {search ? null : <HunterTicker className="mt-9" />}
 
       <section className={search ? undefined : 'mt-7'}>
         <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">

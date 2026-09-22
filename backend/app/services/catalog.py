@@ -6,15 +6,16 @@ last_checked_at are computed at query time (house pattern #2), never stored.
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
 from app.models import (
     Categories,
     Items,
+    Jobs,
     ListingChecks,
     Listings,
     PriceChecks,
@@ -204,6 +205,8 @@ def site_out(
         listing_count=counts.get(s.id, 0),
         category_ids=category_ids.get(s.id, []),
         last_checked_at=(t.isoformat() if (t := checked.get(s.id)) else None),
+        paused_until=s.paused_until.isoformat() if s.paused_until is not None else None,
+        paused_reason=s.paused_reason,
     )
 
 
@@ -235,11 +238,23 @@ async def create_site(db: AsyncSession, name: str, base_url: str) -> Site:
 
 
 async def update_site(
-    db: AsyncSession, site_id: int, name: str | None, base_url: str | None
+    db: AsyncSession,
+    site_id: int,
+    name: str | None,
+    base_url: str | None,
+    clear_pause: bool = False,
 ) -> Site:
     """Edit a site; 404 unknown. Falsy fields are skipped (an empty string
     is "leave it"), values are trimmed, base_url loses one trailing slash —
-    mock parity. Commits."""
+    mock parity. Commits.
+
+    clear_pause is the manual lift of a circuit-breaker pause: it clears the
+    error count too, because leaving it at the threshold would trip the
+    breaker again on the very next failed read — a person lifting a pause is
+    saying "try again properly", not "try once more". The site's waiting jobs
+    are brought forward so they do not sit until a run_after that no longer
+    means anything.
+    """
     site = await db.get(Sites, site_id)
     if site is None:
         raise err(404, "not_found", f"Site {site_id} does not exist")
@@ -248,6 +263,17 @@ async def update_site(
         site.name = name.strip()
     if base_url:
         site.base_url = base_url.strip().removesuffix("/")
+    if clear_pause:
+        site.paused_until = None
+        site.paused_reason = None
+        site.consecutive_errors = 0
+        await db.execute(
+            update(Jobs)
+            .where(Jobs.site_id == site_id)
+            .where(Jobs.status == "pending")
+            .where(Jobs.reason == "paused")
+            .values(run_after=datetime.now(UTC), reason="sweep")
+        )
     await db.commit()
 
     counts = await listing_counts(db)

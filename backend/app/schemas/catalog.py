@@ -42,6 +42,9 @@ class Site(BaseModel):
     category_ids: list[int]
     listing_count: int
     last_checked_at: str | None
+    # set by the hunter's circuit breaker; null = the site is not paused
+    paused_until: str | None
+    paused_reason: str | None
     created_at: str
 
 
@@ -53,3 +56,7 @@ class SiteCreateRequest(BaseModel):
 class SiteUpdateRequest(BaseModel):
     name: str | None = None
     base_url: str | None = None
+    # null is the ONLY accepted value: the hunter sets pauses, a person can
+    # only lift one. Typed loosely so any other value is a 422 in the envelope
+    # rather than FastAPI's default detail shape.
+    paused_until: str | None = None

@@ -2,7 +2,7 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { useSession } from './useSession'
 import { AppShell } from '@/components/layout/AppShell'
-import { RunEventsProvider } from '@/features/runs/RunEventsProvider'
+import { JobsProvider } from '@/features/activity/JobsProvider'
 
 export function AuthGuard() {
   const location = useLocation()
@@ -21,11 +21,11 @@ export function AuthGuard() {
   }
 
   return (
-    <RunEventsProvider>
+    <JobsProvider>
       <AppShell>
         <Outlet />
       </AppShell>
-    </RunEventsProvider>
+    </JobsProvider>
   )
 }
 

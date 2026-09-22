@@ -323,8 +323,8 @@ function ExpandedRow({
           <>unchanged over {RANGE_LABELS[range]} · </>
         ) : null}
         {stockText(listing)} · checked {relativeTime(listing.last_checked_at)} · {listing.site_name} ·{' '}
-        {listing.discovered_by_run_id != null ? (
-          <Link to={`/runs/${listing.discovered_by_run_id}`} className="hover:text-ink hover:underline">
+        {listing.discovered_by_job_id != null ? (
+          <Link to={`/activity/${listing.discovered_by_job_id}`} className="hover:text-ink hover:underline">
             found {relativeTime(listing.created_at)}
           </Link>
         ) : (
