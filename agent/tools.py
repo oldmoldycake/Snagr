@@ -462,8 +462,10 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
                 .values(active=False, inactive_reason=reason)
             )
             # an untracked listing is not re-read: the check chain ends here,
-            # in the same transaction that ended the tracking
+            # in the same transaction that ended the tracking — and the slot
+            # it held wakes the watch's hunts
             await job_queue.cancel_recheck(session, listing_id)
+            await job_queue.add_hunt_wakes(session, unit.watch_id)
             await session.commit()
 
             log.info(f"Listing {listing_id} marked inactive ({reason})")

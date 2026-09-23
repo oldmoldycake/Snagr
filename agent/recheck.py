@@ -23,6 +23,7 @@ unit.
 import logging
 from dataclasses import dataclass
 
+import jobs as job_queue
 import static
 from config import EXPECTED_CURRENCY, LOCATOR_MAX_FAILURES
 from database import (
@@ -118,7 +119,8 @@ async def recheck_deterministic(browser: PageReader, row) -> Outcome:
 
     gone = _terminal(extract)
     if gone:
-        await deactivate_listing(listing_id, gone)
+        if await deactivate_listing(listing_id, gone):
+            await job_queue.wake_hunts(unit.watch_id)
         # method 'locator' = code read the page; which signal decided it is
         # in the log, and status is what the checks log and the UI show
         await _record(unit, listing_id, None, None, "locator", status=gone, in_stock=False)
@@ -127,7 +129,8 @@ async def recheck_deterministic(browser: PageReader, row) -> Outcome:
     if context["markers"].get("auction") and not context["markers"].get("buy_now"):
         # this listing converted to auction-only since it was saved; a bid is
         # not a price anyone can pay, so it stops being tracked
-        await deactivate_listing(listing_id, "auction")
+        if await deactivate_listing(listing_id, "auction"):
+            await job_queue.wake_hunts(unit.watch_id)
         return Outcome(True, "locator", note="auction")
 
     return await _read_ladder(unit, listing_id, row, stored, extract, context)

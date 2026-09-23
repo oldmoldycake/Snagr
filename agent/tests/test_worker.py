@@ -97,6 +97,7 @@ def wire(monkeypatch, **overrides):
         "grounded": [],
         "reaped": 0,
         "pruned": 0,
+        "swept": 0,
         "recheck_units": [],
         "hunt_units": [],
     }
@@ -134,6 +135,10 @@ def wire(monkeypatch, **overrides):
         seen["pruned"] += 1
         return 0
 
+    async def sweep():
+        seen["swept"] += 1
+        return 0
+
     async def enqueue_ground(item_id):
         seen["grounded"].append(item_id)
         return True
@@ -151,6 +156,7 @@ def wire(monkeypatch, **overrides):
         ("release_all", release_all),
         ("reap", reap),
         ("prune", prune),
+        ("sweep", sweep),
         ("enqueue_ground", enqueue_ground),
     ):
         monkeypatch.setattr(worker.job_queue, name, overrides.get(name, fake))
@@ -472,6 +478,19 @@ class TestPool:
         assert ("x#check-0", ("recheck",)) in seen["claimed"]
         assert ("x#hunt-0", ("hunt", "ground")) in seen["claimed"]
 
+    def test_with_hunting_off_the_hunt_pool_only_grounds(self, monkeypatch):
+        # the kill switch: a queued hunt is left waiting, never claimed
+        seen = wire(monkeypatch, queue=[])
+        monkeypatch.setattr(worker, "HUNT_ENABLED", False)
+
+        asyncio.run(worker.once())
+
+        hunt_pool = [kinds for worker_id, kinds in seen["claimed"] if "#hunt-" in worker_id]
+        check_pool = [kinds for worker_id, kinds in seen["claimed"] if "#check-" in worker_id]
+        assert hunt_pool and all(kinds == ("ground",) for kinds in hunt_pool)
+        # checks are what the operator still wants
+        assert check_pool and all(kinds == ("recheck",) for kinds in check_pool)
+
 
 class TestShutdown:
     def test_stopping_hands_every_in_flight_job_back(self, monkeypatch):
@@ -560,6 +579,32 @@ class TestHousekeeping:
         asyncio.run(worker.housekeeping(ticks=0))
         asyncio.run(worker.housekeeping(ticks=1))
         assert (seen["reaped"], seen["pruned"]) == (2, 1)
+
+    def test_the_sweep_runs_on_wake_and_then_hourly(self, monkeypatch):
+        # tick 0 is the scheduler's first pass — the hunter starting — and a
+        # pass every minute makes tick 60 an hour later
+        seen = wire(monkeypatch)
+
+        async def candidates():
+            return []
+
+        monkeypatch.setattr(worker, "get_grounding_candidates", candidates)
+        for ticks in range(worker.SWEEP_EVERY_TICKS + 1):
+            asyncio.run(worker.housekeeping(ticks=ticks))
+        assert seen["swept"] == 2
+        assert worker.SWEEP_EVERY_TICKS * worker.SCHEDULER_INTERVAL_SECONDS == 3600
+
+    def test_a_one_shot_drain_sweeps_first(self, monkeypatch):
+        # --once under cron is a wake too: what the chain dropped is queued
+        # before the drain, so this very run works it
+        seen = wire(monkeypatch, queue=[])
+
+        async def candidates():
+            return []
+
+        monkeypatch.setattr(worker, "get_grounding_candidates", candidates)
+        asyncio.run(worker.once())
+        assert seen["swept"] == 1
 
 
 class TestBrowserFailureDetection:
