@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { type RefObject, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { getPriceHistory, updateListing } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, Listing } from '@/api/types'
 import { chart } from '@/components/charts/chartTheme'
+import { useMeasuredWidth } from '@/components/charts/pricePlot'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
@@ -13,10 +14,11 @@ import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
 import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
+import { labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
 import { prepareSeries } from './seriesPrep'
 
-// Rail geometry: fold threshold, sub-$1 dot threshold, label-flip rail position,
-// shared grid, and price→rail-position mapping.
+// Fold threshold, sub-$1 dot threshold, stale age, the label-flip position used
+// before the rail has been measured, and the shared grid.
 const FOLD_SCORE = 70
 const UNCHANGED_CENTS = 100
 const STALE_MS = 24 * 3_600_000
@@ -24,38 +26,6 @@ const LABEL_FLIP_PCT = 78
 
 const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_34px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_34px]'
 const COL_LABEL = 'font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase'
-
-interface Rail {
-  place: (cents: number) => { pct: number; clamp: '«' | '»' | null }
-  targetPct: number | null
-}
-
-function makeRail(mainRows: Listing[], startCents: Map<number, number>, targetC: number | null): Rail | null {
-  const cents: number[] = []
-  for (const l of mainRows) {
-    const now = toCents(l.latest_price)
-    if (now != null) cents.push(now)
-    const start = startCents.get(l.id)
-    if (start != null) cents.push(start)
-  }
-  if (targetC != null) cents.push(targetC)
-  if (cents.length === 0) return null
-
-  // Domain covers the unfolded rows + target; opened folded rows may clamp.
-  const hi = Math.max(...cents)
-  const lo = Math.min(...cents)
-  const pad = Math.max(Math.round((hi - lo) * 0.04), 200)
-  const left = hi + pad
-  const right = lo - pad
-  const place = (c: number) => {
-    const raw = ((left - c) / (left - right)) * 100
-    return {
-      pct: Math.max(0, Math.min(100, raw)),
-      clamp: raw < 0 ? ('«' as const) : raw > 100 ? ('»' as const) : null,
-    }
-  }
-  return { place, targetPct: targetC != null ? place(targetC).pct : null }
-}
 
 function stockText(listing: Listing): string {
   return listing.in_stock == null ? 'stock unknown' : listing.in_stock ? 'in stock' : 'out of stock'
@@ -76,11 +46,15 @@ function exceptionChip(listing: Listing): string | null {
 
 function AxisStrip({
   rail,
+  railRef,
+  railPx,
   target,
   currency,
   range,
 }: {
   rail: Rail | null
+  railRef: RefObject<HTMLDivElement | null>
+  railPx: number
   target: string | null
   currency: string
   range: TimeRange
@@ -88,10 +62,10 @@ function AxisStrip({
   return (
     <div className={cn('hidden items-end gap-3 px-4 pt-1.5 pb-1 sm:grid', GRID_COLS)}>
       <span className={COL_LABEL}>Listing</span>
-      <div className="relative pt-3.5">
+      <div ref={railRef} className="relative pt-3.5">
         {rail ? (
           <span className="absolute top-0 left-0 font-mono text-[10px] text-ink-3">
-            ◂ pricier · drift {RANGE_LABELS[range]}
+            drift {RANGE_LABELS[range]}
           </span>
         ) : null}
         {rail?.targetPct != null ? (
@@ -107,17 +81,45 @@ function AxisStrip({
             ⌖ {formatMoney(target, currency)}
           </span>
         ) : null}
-        {/* graduated ruler — same treatment as the header Ladder, so both rails read as one instrument */}
-        <div
-          className="h-3.5"
-          style={{
-            backgroundImage:
-              'linear-gradient(var(--color-hairline-strong), var(--color-hairline-strong)), repeating-linear-gradient(90deg, var(--color-hairline-strong) 0 1px, transparent 1px 10%)',
-            backgroundSize: '100% 1px, 100% 6px',
-            backgroundPosition: '0 9px, 0 6px',
-            backgroundRepeat: 'no-repeat',
-          }}
-        />
+        {/* graduated ruler — the Ladder's baseline, with ticks at real prices placed by the dots' own scale */}
+        <div className="relative h-3.5">
+          <span className="absolute inset-x-0 top-[9px] h-px bg-hairline-strong" />
+          {rail?.ticks.map((t) => (
+            <span
+              key={t.cents}
+              className="absolute top-1 h-2.5 w-px bg-hairline-strong"
+              style={{ left: `${rail.place(t.cents).pct}%` }}
+            />
+          ))}
+          {rail?.targetPct != null ? (
+            <span
+              className="absolute top-0 h-3.5 w-0.5 -translate-x-1/2 rounded-full bg-drop"
+              style={{ left: `${rail.targetPct}%` }}
+            />
+          ) : null}
+        </div>
+        <div className="relative h-3">
+          {rail
+            ? labeledTicks(rail, railPx).map((c) => {
+                const pct = rail.place(c).pct
+                return (
+                  <span
+                    key={c}
+                    className="absolute top-0 font-mono text-[10px] whitespace-nowrap text-ink-3 tnum"
+                    style={
+                      pct < 6
+                        ? { left: 0 }
+                        : pct > 94
+                          ? { right: 0 }
+                          : { left: `${pct}%`, transform: 'translateX(-50%)' }
+                    }
+                  >
+                    {formatMoney(fromCents(c), currency).replace(/\.00$/, '')}
+                  </span>
+                )
+              })
+            : null}
+        </div>
       </div>
       <span className={cn(COL_LABEL, 'text-right')}>vs ⌖</span>
       <span className={COL_LABEL}>Fit</span>
@@ -130,6 +132,7 @@ function Track({
   color,
   startC,
   rail,
+  railPx,
   targetC,
   currency,
 }: {
@@ -137,24 +140,27 @@ function Track({
   color: string
   startC: number | null
   rail: Rail | null
+  railPx: number
   targetC: number | null
   currency: string
 }) {
   const nowC = toCents(listing.latest_price)
-  const zone =
+  // ⌖ as a notch on each row's own baseline — nothing spans rows, so the
+  // under-target rows don't fuse into one block.
+  const notch =
     rail?.targetPct != null ? (
       <span
         aria-hidden
-        className="absolute inset-y-0.5 border-l border-dashed border-drop/50 bg-drop/10"
-        style={{ left: `${rail.targetPct}%`, right: 0 }}
+        className="absolute top-3.5 h-[11px] w-0.5 -translate-x-1/2 rounded-full bg-drop/55"
+        style={{ left: `${rail.targetPct}%` }}
       />
     ) : null
 
   if (rail == null || nowC == null) {
     return (
       <div aria-hidden className="relative hidden h-7 sm:block">
-        {zone}
         <span className="absolute inset-x-0 top-[19px] h-px bg-overlay" />
+        {notch}
       </div>
     )
   }
@@ -164,11 +170,13 @@ function Track({
   const start = moved ? rail.place(startC) : null
   const falling = start != null && startC != null && startC > nowC
   const under = targetC != null && nowC <= targetC
+  const label = formatMoney(listing.latest_price, currency)
+  const flipLeft = labelFlipsLeft(now.pct, rail.targetPct, label, railPx, LABEL_FLIP_PCT)
 
   return (
     <div aria-hidden className="relative hidden h-7 sm:block">
-      {zone}
       <span className="absolute inset-x-0 top-[19px] h-px bg-overlay" />
+      {notch}
       {start ? (
         <>
           <span className="absolute top-3.5 h-2.5 w-px bg-ink-3" style={{ left: `${start.pct}%` }} />
@@ -199,7 +207,8 @@ function Track({
       {now.clamp ? (
         <span
           className="absolute top-3 font-mono text-[10px] text-ink-3"
-          style={now.clamp === '»' ? { right: 0 } : { left: 0 }}
+          // inset so the glyph doesn't overprint the edge-pinned dot
+          style={now.clamp === '»' ? { right: 8 } : { left: 8 }}
         >
           {now.clamp}
         </span>
@@ -210,12 +219,12 @@ function Track({
           under ? 'text-drop' : 'text-ink',
         )}
         style={
-          now.pct > LABEL_FLIP_PCT
+          flipLeft
             ? { left: `calc(${now.pct}% - 9px)`, transform: 'translateX(-100%)' }
             : { left: `calc(${now.pct}% + 9px)` }
         }
       >
-        {formatMoney(listing.latest_price, currency)}
+        {label}
       </span>
     </div>
   )
@@ -351,6 +360,7 @@ function BoardRow({
   listing,
   detail,
   rail,
+  railPx,
   color,
   startC,
   targetC,
@@ -363,6 +373,7 @@ function BoardRow({
   listing: Listing
   detail: ItemDetail
   rail: Rail | null
+  railPx: number
   color: string
   startC: number | null
   targetC: number | null
@@ -439,6 +450,7 @@ function BoardRow({
           color={color}
           startC={startC}
           rail={rail}
+          railPx={railPx}
           targetC={targetC}
           currency={detail.currency}
         />
@@ -451,14 +463,16 @@ function BoardRow({
 }
 
 /**
- * The listings "target board": one price rail per listing, running range-high
- * (left) → target ⌖ (right) like the header Ladder, with drift marks from the
+ * The listings "target board": one log-scale price rail per listing, running
+ * range-high (left) → cheapest (right) with a ⌖ notch per row, and drift marks from the
  * chart's selected range. Healthy rows stay quiet; the rationale, drift
  * detail, and active switch live in the click-to-expand row.
  */
 export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: TimeRange }) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [foldOpen, setFoldOpen] = useState(false)
+  // The strip's rail cell shares GRID_COLS with every row, so its width is every row's rail width.
+  const { ref: railRef, width: railPx } = useMeasuredWidth()
 
   // Same key as ChartPanel's per-listing tab — React Query shares the fetch.
   const history = useQuery({
@@ -531,6 +545,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
       listing={listing}
       detail={detail}
       rail={rail}
+      railPx={railPx}
       color={colorOf(listing.id)}
       startC={startCents.get(listing.id) ?? null}
       targetC={targetC}
@@ -544,7 +559,14 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
 
   return (
     <div>
-      <AxisStrip rail={rail} target={target} currency={detail.currency} range={range} />
+      <AxisStrip
+        rail={rail}
+        railRef={railRef}
+        railPx={railPx}
+        target={target}
+        currency={detail.currency}
+        range={range}
+      />
       <div className="divide-y divide-hairline border-t border-hairline">
         {main.map((l) => row(l, false))}
       </div>
