@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.models import Jobs, User
+from app.models import Jobs, Listings, User
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -446,6 +446,26 @@ async def test_untracking_a_listing_takes_it_out_of_the_rotation(client, db_sess
 
     jobs = (await client.get("/api/jobs", params={"kind": "recheck"})).json()["data"]
     assert [j["status"] for j in jobs] == ["cancelled"]
+
+
+async def test_untracking_a_listing_says_the_user_did_it(client, db_session):
+    """inactive_reason tells a user's untrack apart from a sale the hunter
+    saw; tracking it again clears the reason."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing_id = (await sc.listing(watch, item)).id
+
+    async def reason():
+        async with db_session() as session:
+            return (await session.get(Listings, listing_id)).inactive_reason
+
+    await client.patch(f"/api/listings/{listing_id}", json={"active": False}, headers=CSRF)
+    assert await reason() == "untracked"
+
+    await client.patch(f"/api/listings/{listing_id}", json={"active": True}, headers=CSRF)
+    assert await reason() is None
 
 
 async def test_tracking_it_again_puts_it_back(client, db_session):

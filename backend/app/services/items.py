@@ -552,6 +552,8 @@ async def update_listing(db: AsyncSession, user_id: int, listing_id: int, active
         raise err(404, "not_found", f"Listing {listing_id} does not exist")
 
     listing.active = active
+    # the user's own switch; a listing tracked again has no reason to be off
+    listing.inactive_reason = None if active else "untracked"
     # tracking and the queue move together: an untracked listing is not
     # re-read, and tracking one again puts it back in the rotation
     if active:
