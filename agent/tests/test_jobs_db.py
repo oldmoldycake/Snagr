@@ -44,6 +44,7 @@ from database import (
     Watches,
     WatchSites,
     clear_static_ok,
+    deactivate_listing,
     engine,
     get_active_listing_count,
     get_hunt_unit,
@@ -1031,6 +1032,31 @@ class TestUnitTally:
         result, row = db(scenario())
         assert result.startswith("Listing")
         assert row["status"] == "cancelled"
+
+    @pytest.mark.parametrize("reason", ["sold", "ended", "auction"])
+    def test_a_disabled_listing_records_why(self, reason):
+        async def scenario():
+            ids = await seed_scope_graph()
+            result = await tools.disable_listing(ids["listing_a"], reason, runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                return result, listing.active, listing.inactive_reason
+
+        result, active, stored = db(scenario())
+        assert result.startswith("Listing")
+        assert (active, stored) == (False, reason)
+
+    def test_a_listing_a_recheck_saw_end_records_why_too(self):
+        # the code path's twin of disable_listing: a deterministic recheck
+        # that reads "sold" ends tracking without a model in the loop
+        async def scenario():
+            ids = await seed_scope_graph()
+            await deactivate_listing(ids["listing_a"], "sold")
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                return listing.active, listing.inactive_reason
+
+        assert db(scenario()) == (False, "sold")
 
 
 class TestListingOwnership:

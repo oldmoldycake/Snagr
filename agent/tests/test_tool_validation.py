@@ -95,9 +95,12 @@ class TestLogListingCheck:
 
 
 class TestDisableListing:
-    def test_reason_must_not_be_blank(self):
-        result = run(tools.disable_listing(1, "", runtime=unit_runtime()))
-        assert result.startswith("Error: reason must")
+    @pytest.mark.parametrize("reason", ["", "listing removed", "replaced", "untracked"])
+    def test_only_the_three_reasons_the_model_can_see_are_accepted(self, reason):
+        # replaced and untracked are real inactive_reasons, but not the
+        # model's to give: swap hunts and the user write those
+        result = run(tools.disable_listing(1, reason, runtime=unit_runtime()))
+        assert result.startswith("Error: reason must be one of sold, ended, auction")
 
 
 class TestTextCaps:

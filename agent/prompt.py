@@ -295,9 +295,10 @@ FOR EACH LISTING YOU DECIDE TO SAVE
                      "sold"/"ended" only when the listing has terminally
                      concluded.
      Call `save_price_check` exactly ONCE per listing. If status was "sold" or
-     "ended", immediately follow it with `disable_listing` (same listing_id)
-     so it stops being tracked. Once done, that listing is finished — do not
-     call `save_price_check` again for it this run.
+     "ended", immediately follow it with `disable_listing` (same listing_id,
+     reason = that same status) so it stops being tracked. Once done, that
+     listing is finished — do not call `save_price_check` again for it this
+     run.
      If `save_listing` returned an error string instead of an id, do NOT call
      `save_price_check` for it — note the error and move on.
   3. If `save_listing` errors, call it AT MOST once more for that same listing,
@@ -467,7 +468,8 @@ WHEN DONE
   if the first call errors) — never with placeholder/dummy values.
 
   If status was "sold" or "ended", immediately follow up with `disable_listing`
-  using listing_id={listing_id} so it stops being tracked. Do not call
+  using listing_id={listing_id} and that same status as the reason, so it
+  stops being tracked. Do not call
   `disable_listing` for status "ok" or "error". Then stop.
 """
 

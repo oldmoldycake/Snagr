@@ -773,7 +773,8 @@ async def deactivate_listing(listing_id: int, reason: str) -> bool:
 
     Args:
       listing_id: The listing to stop tracking.
-      reason: Why, for the log — "sold" or "ended".
+      reason: Why — "sold", "ended" or "auction", stored as the listing's
+        inactive_reason.
     Returns:
       True on success.
     """
@@ -781,7 +782,9 @@ async def deactivate_listing(listing_id: int, reason: str) -> bool:
     async with AsyncSessionLocal() as session:
         try:
             await session.execute(
-                update(Listings).where(Listings.id == listing_id).values(active=False)
+                update(Listings)
+                .where(Listings.id == listing_id)
+                .values(active=False, inactive_reason=reason)
             )
             await session.commit()
             return True
