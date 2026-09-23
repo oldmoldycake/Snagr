@@ -9,12 +9,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Textarea } from '@/components/ui/textarea'
+import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
+import { formatInterval } from '@/lib/time'
 
 export interface TrackingValue {
   criteria: string
   selectionMode: SelectionMode
   maxListings: number
+  /** minutes between price checks; null = the instance default */
+  recheckIntervalMinutes: number | null
   /** null = all of the category's sites */
   siteIds: number[] | null
 }
@@ -23,21 +27,29 @@ export const DEFAULT_TRACKING: TrackingValue = {
   criteria: '',
   selectionMode: 'cheapest',
   maxListings: 5,
+  recheckIntervalMinutes: null,
   siteIds: null,
 }
+
+const INTERVAL_PRESETS = [15, 30, 60, 360]
+const INTERVAL_OPTIONS = [
+  ...INTERVAL_PRESETS.map((m) => ({ value: String(m), label: formatInterval(m) })),
+  { value: 'custom', label: 'Custom' },
+]
 
 export function trackingPayload(value: TrackingValue) {
   return {
     criteria: value.criteria.trim() || null,
     selection_mode: value.selectionMode,
     max_listings: value.maxListings,
+    recheck_interval_minutes: value.recheckIntervalMinutes,
     site_ids: value.siteIds,
   }
 }
 
 /**
- * Criteria textarea + collapsed "Tracking options" (mode, slots, sites),
- * shared by the add and edit item dialogs.
+ * Criteria textarea + collapsed "Tracking options" (mode, slots, check
+ * interval, sites), shared by the add and edit item dialogs.
  */
 export function TrackingFields({
   categoryId,
@@ -51,6 +63,11 @@ export function TrackingFields({
   const [open, setOpen] = useState(false)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
+  // a stored interval that is not a preset opens on the custom field
+  const [customInterval, setCustomInterval] = useState(
+    value.recheckIntervalMinutes != null && !INTERVAL_PRESETS.includes(value.recheckIntervalMinutes),
+  )
+  const defaultInterval = useInstance().data?.recheck_interval_default
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
@@ -84,6 +101,17 @@ export function TrackingFields({
     })
   }
 
+  const setIntervalChoice = (choice: string) => {
+    if (choice === 'custom') {
+      setCustomInterval(true)
+      return
+    }
+    setCustomInterval(false)
+    onChange({ ...value, recheckIntervalMinutes: Number(choice) })
+  }
+
+  const interval = value.recheckIntervalMinutes ?? defaultInterval
+
   const siteSummary =
     value.siteIds == null
       ? 'all sites'
@@ -113,10 +141,12 @@ export function TrackingFields({
       <Collapsible open={open} onOpenChange={setOpen}>
         <CollapsibleTrigger className="flex w-full items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
           {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          Tracking options
-          <span className="ml-1 text-ink-3/80">
+          <span className="shrink-0">Tracking options</span>
+          <span className="ml-1 text-left text-ink-3/80">
             — {value.selectionMode === 'best_match' ? 'Best match' : 'Cheapest'} · up to{' '}
-            {value.maxListings} listing{value.maxListings === 1 ? '' : 's'} · {siteSummary}
+            {value.maxListings} listing{value.maxListings === 1 ? '' : 's'} ·{' '}
+            {interval != null ? `every ${formatInterval(interval)} · ` : ''}
+            {siteSummary}
           </span>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -158,6 +188,66 @@ export function TrackingFields({
                 />
                 <span className="text-xs text-ink-3">listings at once</span>
               </div>
+            </div>
+
+            <div>
+              <Label>Check every</Label>
+              <Segmented
+                options={INTERVAL_OPTIONS}
+                value={
+                  customInterval
+                    ? 'custom'
+                    : value.recheckIntervalMinutes != null
+                      ? String(value.recheckIntervalMinutes)
+                      : null
+                }
+                onChange={setIntervalChoice}
+                ariaLabel="Check interval"
+              />
+              {customInterval ? (
+                <div className="mt-2 flex items-center gap-2">
+                  <Input
+                    id="item-recheck-interval"
+                    type="number"
+                    min={1}
+                    max={1440}
+                    aria-label="Check interval in minutes"
+                    placeholder={defaultInterval != null ? String(defaultInterval) : undefined}
+                    className="w-20 font-mono tnum"
+                    value={value.recheckIntervalMinutes ?? ''}
+                    onChange={(e) => {
+                      const n = Math.round(Number(e.target.value))
+                      onChange({
+                        ...value,
+                        recheckIntervalMinutes: e.target.value.trim() && Number.isFinite(n) ? n : null,
+                      })
+                    }}
+                  />
+                  <span className="text-xs text-ink-3">minutes</span>
+                </div>
+              ) : null}
+              <p className="mt-1.5 text-xs text-ink-3">
+                {value.recheckIntervalMinutes == null ? (
+                  defaultInterval != null ? (
+                    `Every ${formatInterval(defaultInterval)} — this instance's default.`
+                  ) : null
+                ) : (
+                  <>
+                    How often each tracked listing's price is re-read.{' '}
+                    <button
+                      type="button"
+                      className="text-lume hover:underline"
+                      onClick={() => {
+                        setCustomInterval(false)
+                        onChange({ ...value, recheckIntervalMinutes: null })
+                      }}
+                    >
+                      Use the default
+                      {defaultInterval != null ? ` (${formatInterval(defaultInterval)})` : ''}
+                    </button>
+                  </>
+                )}
+              </p>
             </div>
 
             <div>
