@@ -33,7 +33,9 @@ MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_R
 
 # The work queue. RECHECK_INTERVAL_MINUTES is the whole recheck cadence: a
 # completed check inserts its own successor that far ahead, so there is no
-# schedule to keep anywhere else.
+# schedule to keep anywhere else. A watch may carry its own interval instead;
+# RECHECK_INTERVAL_FLOOR_MINUTES is the least any watch gets, so no setting
+# can turn the hunter into a tight loop against one site.
 #
 # The heartbeat is the liveness signal the job reaper judges by: a 'running'
 # row whose heartbeat is older than JOB_STALE_AFTER_SECONDS was left behind by
@@ -42,6 +44,7 @@ MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_R
 # a check is a heartbeat, not history — price_checks is the history — so it is
 # kept for days, while a hunt is a story worth months.
 RECHECK_INTERVAL_MINUTES = int(os.getenv("RECHECK_INTERVAL_MINUTES", "30"))
+RECHECK_INTERVAL_FLOOR_MINUTES = int(os.getenv("RECHECK_INTERVAL_FLOOR_MINUTES", "5"))
 # Two pools, because they cost different things. Checks are cheap and mostly
 # browserless, so several run at once and a wedged page never blocks the
 # listing behind it; hunts carry the model, so one at a time until a operator

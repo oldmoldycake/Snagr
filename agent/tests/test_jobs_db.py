@@ -436,6 +436,38 @@ class TestCompletion:
         (successor,) = db(scenario())
         assert successor["run_after"] > NOW + timedelta(hours=2)
 
+    def _successor_due_in(self, interval):
+        """Finish one check of a watch whose interval is `interval`; how far
+        ahead its successor was queued."""
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                watch = await session.get(Watches, ids["watch_a"])
+                watch.recheck_interval_minutes = interval
+                await session.commit()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            await job_queue.complete(job_id, {})
+            return await read_jobs(status="pending")
+
+        (successor,) = db(scenario())
+        return successor["run_after"] - datetime.now(UTC)
+
+    def test_a_successor_follows_the_watchs_own_interval(self):
+        due_in = self._successor_due_in(120)
+        assert timedelta(minutes=115) < due_in <= timedelta(minutes=120)
+
+    def test_a_watch_with_no_interval_follows_the_instance_default(self):
+        due_in = self._successor_due_in(None)
+        assert timedelta(minutes=25) < due_in <= timedelta(minutes=30)
+
+    def test_an_interval_below_the_floor_is_floored(self):
+        # the backend refuses one, but a row written by hand still must not
+        # turn the hunter into a tight loop against one site
+        due_in = self._successor_due_in(1)
+        assert timedelta(minutes=4) < due_in <= timedelta(minutes=5)
+
     def test_a_hunt_leaves_no_successor(self):
         async def scenario():
             ids = await seed_scope_graph()
