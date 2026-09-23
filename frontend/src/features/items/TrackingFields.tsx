@@ -8,6 +8,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
+import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
@@ -19,6 +20,8 @@ export interface TrackingValue {
   maxListings: number
   /** minutes between price checks; null = the instance default */
   recheckIntervalMinutes: number | null
+  /** false = hunted only when someone presses Hunt now */
+  hunt: boolean
   /** null = all of the category's sites */
   siteIds: number[] | null
 }
@@ -28,6 +31,7 @@ export const DEFAULT_TRACKING: TrackingValue = {
   selectionMode: 'cheapest',
   maxListings: 5,
   recheckIntervalMinutes: null,
+  hunt: true,
   siteIds: null,
 }
 
@@ -43,13 +47,14 @@ export function trackingPayload(value: TrackingValue) {
     selection_mode: value.selectionMode,
     max_listings: value.maxListings,
     recheck_interval_minutes: value.recheckIntervalMinutes,
+    hunt: value.hunt,
     site_ids: value.siteIds,
   }
 }
 
 /**
- * Criteria textarea + collapsed "Tracking options" (mode, slots, check
- * interval, sites), shared by the add and edit item dialogs.
+ * Criteria textarea + collapsed "Tracking options" (mode, slots, hunting,
+ * check interval, sites), shared by the add and edit item dialogs.
  */
 export function TrackingFields({
   categoryId,
@@ -147,6 +152,7 @@ export function TrackingFields({
             {value.maxListings} listing{value.maxListings === 1 ? '' : 's'} ·{' '}
             {interval != null ? `every ${formatInterval(interval)} · ` : ''}
             {siteSummary}
+            {value.hunt ? '' : ' · hunting off'}
           </span>
         </CollapsibleTrigger>
         <CollapsibleContent>
@@ -188,6 +194,23 @@ export function TrackingFields({
                 />
                 <span className="text-xs text-ink-3">listings at once</span>
               </div>
+            </div>
+
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Label htmlFor="item-hunt">Hunting</Label>
+                <p className="text-xs text-ink-3">
+                  {value.hunt
+                    ? 'Look for new listings on its own while slots are open.'
+                    : 'Only when you press Hunt now. Prices are still checked.'}
+                </p>
+              </div>
+              <Switch
+                id="item-hunt"
+                className="mt-0.5"
+                checked={value.hunt}
+                onCheckedChange={(hunt) => onChange({ ...value, hunt })}
+              />
             </div>
 
             <div>

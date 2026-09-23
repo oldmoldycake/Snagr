@@ -26,6 +26,7 @@ export function EditItemDialog({
     selectionMode: item.selection_mode,
     maxListings: item.max_listings,
     recheckIntervalMinutes: item.recheck_interval_minutes,
+    hunt: item.hunt,
     siteIds: item.site_ids,
   })
   const queryClient = useQueryClient()

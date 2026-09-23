@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail } from '@/api/types'
+import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
 import { useJobs } from './JobsProvider'
@@ -22,6 +23,7 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
     return () => clearInterval(id)
   }, [live])
 
+  const huntingOff = useInstance().data?.hunt_enabled === false
   const summary = useQuery({ queryKey: qk.jobsSummary, queryFn: getJobsSummary })
   const paused = (summary.data?.paused_sites ?? []).find((site) =>
     detail.listings.some((listing) => listing.site_id === site.site_id),
@@ -64,8 +66,17 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
       <span aria-hidden className="mx-2">
         │
       </span>
-      <span className={cn(detail.hunt.slots_open === 0 && 'text-ink-3')}>hunting</span>{' '}
-      {huntingHalf(detail)}
+      {huntingOff ? (
+        <>
+          <span>hunting</span> paused by the operator
+        </>
+      ) : (
+        <>
+          <span className={cn(detail.hunt.slots_open === 0 && 'text-ink-3')}>hunting</span>
+          {detail.hunt.enabled ? ' ' : ' off — only when you press Hunt now · '}
+          {huntingHalf(detail)}
+        </>
+      )}
     </p>
   )
 }
@@ -82,9 +93,13 @@ const LAST_RESULT = {
 function huntingHalf(detail: ItemDetail): string {
   const { hunt } = detail
   const full = hunt.slots_open === 0
-  const slots = full
+  let slots = full
     ? `${detail.max_listings} of ${detail.max_listings} slots filled · waiting for one to free`
     : `${hunt.slots_open} of ${detail.max_listings} slots open`
+  // a switched-off watch has nothing queued on its own, so there is no "next"
+  if (hunt.enabled && !full && hunt.next_at != null) {
+    slots += ` · next hunt ${countdown(hunt.next_at)}${hunt.backoff_minutes != null ? ' (backoff)' : ''}`
+  }
   if (hunt.last_at == null || hunt.last_result == null) return slots
   // a full watch was never going to save anything, so "nothing new" would be
   // describing the rule rather than the hunt

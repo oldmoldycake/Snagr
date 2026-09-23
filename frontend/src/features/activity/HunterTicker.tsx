@@ -4,8 +4,9 @@ import { useQuery } from '@tanstack/react-query'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { Radar } from '@/components/ui/radar'
+import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
-import { countdown, formatDuration, relativeTime } from '@/lib/time'
+import { countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
 import { GLYPHS, checkLine, glyphFor, resultText } from './lines'
 import { useJobs } from './JobsProvider'
 
@@ -36,6 +37,8 @@ export function HunterTicker({ className }: { className?: string }) {
     refetchInterval: SUMMARY_POLL_MS,
   })
 
+  const instance = useInstance().data
+  const huntingOff = instance?.hunt_enabled === false
   const hunt = live.find((job) => job.kind === 'hunt')
   const elapsed = useElapsed(hunt?.started_at, hunt != null)
   const checksRunning = summary.data?.checks_running ?? 0
@@ -90,7 +93,7 @@ export function HunterTicker({ className }: { className?: string }) {
           checksRunning > 0 ? 'text-lume' : 'text-ink-3',
         )}
       >
-        {checksRunning > 0 ? `Checking · ${checksRunning} live` : 'Hunter idle'}
+        {checksRunning > 0 ? `Checking · ${checksRunning} live` : huntingOff ? 'Hunting off' : 'Hunter idle'}
       </span>
       <span aria-hidden className="shrink-0 text-ink-3">
         │
@@ -98,6 +101,11 @@ export function HunterTicker({ className }: { className?: string }) {
       <span className="min-w-0 flex-1 truncate text-ink-2">
         {checksRunning > 0 && lastCheck ? (
           <TickerCheck check={lastCheck} />
+        ) : huntingOff ? (
+          <>
+            paused by the operator · prices are still checked every{' '}
+            {formatInterval(instance.recheck_interval_default)}
+          </>
         ) : (
           <IdleMessage summary={summary.data} pending={summary.isPending} />
         )}
