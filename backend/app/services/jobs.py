@@ -367,11 +367,13 @@ async def enqueue(
     """Turn "hunt this category" or "check this item's prices" into jobs.
 
     Asking twice is asking once — the open-job index means a pair that is
-    already queued is simply brought forward and handed back, never a 409. An
-    empty list is a legitimate answer: a watch with every slot filled has
-    nothing to hunt for. The one 409 is the operator's kill switch: a hunt
-    asked for under HUNT_ENABLED=false would sit in the queue unclaimed,
-    which is a silent fake, so it is refused instead.
+    already queued is simply brought forward and handed back, never a 409. A
+    watch with every slot filled still gets its hunts — swap hunts, which
+    look for something better than its weakest listing — and an empty list
+    is a legitimate answer for one with no site to search. The one 409 is
+    the operator's kill switch: a hunt asked for under HUNT_ENABLED=false
+    would sit in the queue unclaimed, which is a silent fake, so it is
+    refused instead.
     """
     _validate(kind, scope, scope_id)
     if kind == "hunt" and not settings.HUNT_ENABLED:
@@ -474,12 +476,17 @@ async def _hunts(
 ) -> list[Jobs]:
     queued = []
     for watch in watches:
-        if await open_slots(db, watch) <= 0:
-            continue  # a full watch has nothing to hunt for (decision 9)
+        # A full watch is never hunted on its own (decision 9), but a person
+        # asking is the one hunt it gets: a swap hunt, looking for something
+        # better than its weakest listing (decision 10). The flag rides on
+        # the job so the hunter knows which hunt it is.
+        payload = {"swap": True} if await open_slots(db, watch) <= 0 else None
         for site_id in await watch_sites(db, watch):
             if scope == "site" and site_id != scope_id:
                 continue
-            job = await enqueue_hunt(db, watch, site_id, user_id=user_id, reason="user")
+            job = await enqueue_hunt(
+                db, watch, site_id, user_id=user_id, reason="user", payload=payload
+            )
             if job is not None:
                 queued.append(job)
     return queued
@@ -493,14 +500,16 @@ async def enqueue_hunt(
     user_id: int | None,
     reason: str,
     priority: int = USER_PRIORITY,
+    payload: dict | None = None,
 ) -> Jobs | None:
     """Queue one (watch, site) hunt, in the caller's transaction.
 
     At most one open hunt per pair: the insert is ON CONFLICT DO NOTHING, and
     when it does nothing the open job is brought forward and handed back
     instead — its backoff forgotten, because a person asking is the strongest
-    reason there is to look again. A running one is left exactly as it is —
-    it is already doing what was asked.
+    reason there is to look again, and its payload replaced by this one. A
+    running one is left exactly as it is — it is already doing what was
+    asked.
     """
     inserted = await db.scalar(
         insert(Jobs)
@@ -512,6 +521,7 @@ async def enqueue_hunt(
             site_id=site_id,
             priority=priority,
             reason=reason,
+            payload=payload,
         )
         .on_conflict_do_nothing()
         .returning(Jobs.id)
@@ -532,7 +542,7 @@ async def enqueue_hunt(
         open_job.priority = priority
         open_job.reason = reason
         open_job.user_id = user_id
-        open_job.payload = None
+        open_job.payload = payload
     return open_job
 
 
