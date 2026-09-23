@@ -536,10 +536,11 @@ async def enqueue_hunt(
     return open_job
 
 
-async def wake_hunts(db: AsyncSession, watch: Watches) -> None:
+async def wake_hunts(db: AsyncSession, watch: Watches, *, reason: str = "slot_freed") -> None:
     """Start a watch's hunts over, in the caller's transaction — what a freed
-    slot means to the queue. The agent does the same when the hunter itself
-    retires a listing (agent/jobs.py::add_hunt_wakes).
+    slot means to the queue, and more room or hunting switched back on. The
+    agent does the same when the hunter itself retires a listing
+    (agent/jobs.py::add_hunt_wakes).
 
     Nothing when the watch is still full, is switched off, or hunting is off
     for the instance. A waiting hunt is brought forward with its backoff
@@ -554,7 +555,7 @@ async def wake_hunts(db: AsyncSession, watch: Watches) -> None:
         .where(Jobs.watch_id == watch.id)
         .where(Jobs.status == "pending")
         .where(Jobs.user_id.is_(None))
-        .values(run_after=datetime.now(UTC), payload=None, reason="slot_freed")
+        .values(run_after=datetime.now(UTC), payload=None, reason=reason)
     )
     for site_id in await watch_sites(db, watch):
         await db.execute(
@@ -564,23 +565,24 @@ async def wake_hunts(db: AsyncSession, watch: Watches) -> None:
                 watch_id=watch.id,
                 item_id=watch.item_id,
                 site_id=site_id,
-                reason="slot_freed",
+                reason=reason,
             )
             .on_conflict_do_nothing()
         )
 
 
 async def cancel_waiting_hunts(db: AsyncSession, watch: Watches) -> None:
-    """Drop the hunts the hunter queued for itself, in the caller's
+    """Drop every waiting hunt but a person's "hunt now", in the caller's
     transaction — what switching a watch's hunting off means to the queue.
-    A person's own pending request still runs: off means "only when you
-    press Hunt now", and they pressed it."""
+    Off means "only when you press Hunt now", and a pending request is a
+    press. Keyed on the reason, not the user: the hunts queued when the
+    watch was created carry its creator too, and they were no press."""
     await db.execute(
         update(Jobs)
         .where(Jobs.kind == "hunt")
         .where(Jobs.watch_id == watch.id)
         .where(Jobs.status == "pending")
-        .where(Jobs.user_id.is_(None))
+        .where(Jobs.reason.is_distinct_from("user"))
         .values(status="cancelled", finished_at=datetime.now(UTC))
     )
 

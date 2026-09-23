@@ -187,10 +187,11 @@ Find any `endpoints.ts` function here:
    agent chains each pair's hunts (at once after a save, a doubling backoff
    after an empty one) and sweeps hourly; the backend only touches the chain
    where a person does: a watch created with `hunt: false` queues no hunt,
-   switching `hunt` off cancels the hunts the hunter queued itself, untracking
-   a listing wakes the watch's hunts with their backoff forgotten
-   (`wake_hunts`, the twin of `agent/jobs.py::add_hunt_wakes`), and a user's
-   "hunt now" forgets it too. `HUNT_ENABLED` is the operator's kill switch,
+   switching `hunt` off cancels every waiting hunt but a pending "hunt now"
+   (by `reason`, since creation hunts carry the creator's id too), untracking
+   a listing, raising `max_listings` or switching `hunt` back on wakes the
+   watch's hunts with their backoff forgotten (`wake_hunts`, the twin of
+   `agent/jobs.py::add_hunt_wakes`), and a user's "hunt now" forgets it too. `HUNT_ENABLED` is the operator's kill switch,
    set in both env files: under `false` the agent claims no hunts, so
    `POST /api/jobs {kind: 'hunt'}` answers 409 `hunting_disabled` rather than
    queueing work nothing will claim, and a new watch queues none (the agent's

@@ -179,21 +179,23 @@ function enqueueHunt(
 }
 
 /**
- * A freed slot starts the watch's hunts over: a waiting one the hunter queued
- * itself is brought forward with its backoff forgotten, a site with none gets
- * one. Nothing for a watch switched off, or with hunting off for the instance.
+ * A freed slot — or more room, or hunting switched back on — starts the
+ * watch's hunts over: a waiting one the hunter queued itself is brought
+ * forward with its backoff forgotten, a site with none gets one. Nothing for
+ * a full watch, one switched off, or with hunting off for the instance.
  */
-function wakeHunts(watchId: number, itemId: number) {
+function wakeHunts(watchId: number, itemId: number, reason: MockJob['reason'] = 'slot_freed') {
   const item = store.items.find((i) => i.id === itemId)!
   if (!HUNT_ENABLED || item.hunt === false) return
+  if (activeListings(itemId).length >= item.max_listings) return
   for (const job of store.jobs) {
     if (job.kind !== 'hunt' || job.watch_id !== watchId || job.status !== 'pending') continue
     if (job.user_id != null) continue
     job.run_after = Date.now()
     job.payload = null
-    job.reason = 'slot_freed'
+    job.reason = reason
   }
-  for (const siteId of sitesOf(itemId)) enqueueHunt(watchId, itemId, siteId, { reason: 'slot_freed' })
+  for (const siteId of sitesOf(itemId)) enqueueHunt(watchId, itemId, siteId, { reason })
 }
 
 /** The caller's watches inside a scope, or null when the scope target is unknown. */
@@ -814,6 +816,8 @@ export const handlers = [
     const category = store.categories.find((c) => c.id === item.category_id)!
     const tracking = validateTracking(body, category, item)
     if (tracking instanceof HttpResponse) return tracking
+    const roomBefore = item.max_listings
+    const huntingBefore = item.hunt ?? true
     if (body.name !== undefined) item.name = body.name.trim()
     if (body.target_price !== undefined) {
       item.target_cents = body.target_price != null ? Math.round(Number(body.target_price) * 100) : null
@@ -823,18 +827,24 @@ export const handlers = [
     item.max_listings = tracking.max_listings
     item.allow_reproductions = tracking.allow_reproductions
     item.recheck_interval_minutes = tracking.recheck_interval_minutes
-    // switching hunting off drops the hunts the hunter queued for itself; a
-    // pending "hunt now" is the person's own and still runs
-    if ((item.hunt ?? true) && !tracking.hunt) {
+    // switching hunting off drops every waiting hunt but a pending "hunt now"
+    // — the created ones carry the creator's id, but were no press
+    if (huntingBefore && !tracking.hunt) {
       for (const job of store.jobs) {
         if (job.kind !== 'hunt' || job.item_id !== item.id || job.status !== 'pending') continue
-        if (job.user_id != null) continue
+        if (job.reason === 'user') continue
         job.status = 'cancelled'
         job.finished_at = Date.now()
       }
     }
     item.hunt = tracking.hunt
     item.site_ids = tracking.site_ids
+    // more room, or hunting back on, is a reason to look now rather than at
+    // the hunter's next hourly sweep
+    if (item.hunt && (!huntingBefore || item.max_listings > roomBefore)) {
+      const watch = store.watches.find((w) => w.item_id === item.id)!
+      wakeHunts(watch.id, item.id, 'sweep')
+    }
     // a shorter interval brings pending checks forward; a longer one is picked
     // up by the successors. Checks on a paused site stay behind the pause, and
     // only tracked listings' checks move.

@@ -479,6 +479,7 @@ async def update_item(
         raise err(404, "not_found", f"Item {item_id} does not exist")
 
     item, watch, category = row
+    room_before, hunting_before = watch.max_listings, watch.hunt
     if body.name is not None:
         item.name = body.name
     if body.target_price is not None:
@@ -498,6 +499,10 @@ async def update_item(
         if watch.hunt and not body.hunt:
             await jobs_service.cancel_waiting_hunts(db, watch)
         watch.hunt = body.hunt
+    # more room, or hunting back on, is a reason to look now rather than at
+    # the agent's next hourly sweep
+    if watch.hunt and (not hunting_before or watch.max_listings > room_before):
+        await jobs_service.wake_hunts(db, watch, reason="sweep")
 
     await db.commit()
     return await build_item_detail(db, watch, item, category)

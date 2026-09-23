@@ -164,8 +164,9 @@ async def test_a_watch_created_while_the_operator_has_hunting_off_waits(client, 
 
 
 async def test_switching_hunting_off_drops_what_the_hunter_queued_itself(client, db_session):
-    """A waiting backoff hunt would otherwise still run once. A person's own
-    request is theirs to keep."""
+    """A waiting backoff hunt would otherwise still run once, and so would the
+    hunts queued at creation — they carry the creator's id, but creating a
+    watch is no press of Hunt now. A person's own request is theirs to keep."""
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:
         item = await sc.item()
@@ -178,6 +179,13 @@ async def test_switching_hunting_off_drops_what_the_hunter_queued_itself(client,
             user_id=owner_id,
             reason="user",
         )
+        await sc.job(
+            watch=watch,
+            status="pending",
+            site_id=(await sc.site("C")).id,
+            user_id=owner_id,
+            reason="created",
+        )
         item_id = item.id
 
     res = await client.patch(f"/api/items/{item_id}", json={"hunt": False}, headers=CSRF)
@@ -187,6 +195,7 @@ async def test_switching_hunting_off_drops_what_the_hunter_queued_itself(client,
     hunts = (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"]
     assert sorted((j["reason"], j["status"]) for j in hunts) == [
         ("backoff", "cancelled"),
+        ("created", "cancelled"),
         ("user", "pending"),
     ]
 
@@ -626,6 +635,50 @@ async def test_untracking_while_the_operator_has_hunting_off_wakes_nothing(
     monkeypatch.setattr(settings, "HUNT_ENABLED", False)
 
     await client.patch(f"/api/listings/{ids['listing_id']}", json={"active": False}, headers=CSRF)
+
+    assert (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"] == []
+
+
+async def test_switching_hunting_back_on_looks_now(client, db_session):
+    """Rather than at the agent's next hourly sweep."""
+    owner_id = await _sign_in(client)
+    ids = await _full_watch(db_session, owner_id)
+    async with db_session() as session:
+        await session.execute(
+            Listings.__table__.update().where(Listings.id == ids["listing_id"]).values(active=False)
+        )
+        await session.commit()
+    await client.patch(f"/api/items/{ids['item_id']}", json={"hunt": False}, headers=CSRF)
+    assert (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"] == []
+
+    await client.patch(f"/api/items/{ids['item_id']}", json={"hunt": True}, headers=CSRF)
+
+    hunts = (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"]
+    assert [(j["watch_id"], j["reason"], j["status"]) for j in hunts] == [
+        (ids["watch_id"], "sweep", "pending")
+    ]
+
+
+async def test_more_room_on_a_full_watch_looks_now(client, db_session):
+    owner_id = await _sign_in(client)
+    ids = await _full_watch(db_session, owner_id)
+
+    await client.patch(f"/api/items/{ids['item_id']}", json={"max_listings": 2}, headers=CSRF)
+
+    hunts = (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"]
+    assert [(j["watch_id"], j["reason"]) for j in hunts] == [(ids["watch_id"], "sweep")]
+
+
+@pytest.mark.parametrize("body", [{"name": "Renamed"}, {"max_listings": 1}])
+async def test_an_edit_that_adds_no_room_queues_no_hunt(client, db_session, body):
+    owner_id = await _sign_in(client)
+    ids = await _full_watch(db_session, owner_id)
+    await client.patch(f"/api/items/{ids['item_id']}", json={"max_listings": 3}, headers=CSRF)
+    async with db_session() as session:
+        await session.execute(Jobs.__table__.delete())
+        await session.commit()
+
+    await client.patch(f"/api/items/{ids['item_id']}", json=body, headers=CSRF)
 
     assert (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"] == []
 
