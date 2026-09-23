@@ -606,6 +606,33 @@ class TestHuntChain:
 
         assert db(scenario()) == []
 
+    def test_a_hunt_on_a_site_the_watch_no_longer_searches_leaves_nothing(self):
+        # pinned to CardBay since the hunt was queued: the GameBay hunt must
+        # not chain empty hunts on a pair get_hunt_unit refuses forever
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(SiteCategories(site_id=ids["site_b"], category_id=ids["cat_a"]))
+            await seed(WatchSites(watch_id=ids["watch_a"], site_id=ids["site_b"]))
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await finish_hunt(job_id)
+            return await read_hunts(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_a_hunt_that_failed_for_good_leaves_nothing_behind(self):
+        # the sweep puts the pair back within the hour; a chain off a failing
+        # hunt would retry it on the backoff clock instead of the retry one
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt", attempts=2))
+            await job_queue.claim("w1", ("hunt",))
+            await job_queue.fail_or_retry(job_id, "the page timed out")
+            return await read_job(job_id), await read_hunts(status="pending")
+
+        failed, pending = db(scenario())
+        assert failed["status"] == "failed"
+        assert pending == []
+
     def test_a_cancelled_hunt_leaves_nothing_behind(self):
         async def scenario():
             ids = await seed_scope_graph()
@@ -690,6 +717,32 @@ class TestSweep:
         assert [h["id"] for h in hunts] == [waiting]
         assert hunts[0]["run_after"] == later
         assert hunts[0]["payload"] == {"backoff_minutes": 120}
+
+    def test_a_pair_whose_hunts_have_finished_is_swept_again(self):
+        # the sweep exists for exactly this: a hunt that failed for good (or
+        # finished on a watch that has since found room) left no successor
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(
+                pending_job(ids, kind="hunt", status="failed"),
+                pending_job(ids, kind="hunt", status="done"),
+            )
+            await job_queue.sweep()
+            return await read_hunts(watch_id=ids["watch_a"], status="pending")
+
+        (hunt,) = db(scenario())
+        assert hunt["reason"] == "sweep"
+
+    def test_an_open_hunt_on_one_site_does_not_hide_the_others(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(SiteCategories(site_id=ids["site_b"], category_id=ids["cat_a"]))
+            await seed(pending_job(ids, kind="hunt"))
+            await job_queue.sweep()
+            return ids, await read_hunts(watch_id=ids["watch_a"])
+
+        ids, hunts = db(scenario())
+        assert sorted(h["site_id"] for h in hunts) == [ids["site_a"], ids["site_b"]]
 
     def test_a_running_hunt_is_not_doubled(self):
         async def scenario():
@@ -788,6 +841,91 @@ class TestFreedSlotWakesTheHunt:
 
         (hunt,) = db(scenario())
         assert (hunt["reason"], hunt["priority"]) == ("user", 100)
+
+    def test_a_wake_touches_only_this_watchs_waiting_system_hunts(self):
+        # two of two slots taken, so disabling one frees a slot; the other
+        # listing's check, a running hunt and another watch's backoff must
+        # all be exactly where they were
+        async def scenario():
+            ids = await self._full()
+            await set_watch(ids["watch_a"], max_listings=2)
+            (other_listing,) = await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/l2",
+                )
+            )
+            later = datetime.now(UTC) + timedelta(hours=3)
+            jobs = await seed(
+                pending_job(ids, listing_id=other_listing, run_after=later),
+                pending_job(ids, kind="hunt", status="running", run_after=later),
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    watch_id=ids["watch_b"],
+                    item_id=ids["item_b"],
+                    site_id=ids["site_b"],
+                    run_after=later,
+                    payload={"backoff_minutes": 180},
+                    reason="backoff",
+                ),
+            )
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                rows = [await session.get(Jobs, job_id) for job_id in jobs]
+                return later, [(r.status, r.run_after, r.reason, r.payload) for r in rows]
+
+        later, (check, running, other) = db(scenario())
+        assert check == ("pending", later, None, None)
+        assert running == ("running", later, None, None)
+        assert other == ("pending", later, "backoff", {"backoff_minutes": 180})
+
+    def test_a_watch_still_full_after_a_disable_is_not_woken(self):
+        # over-full: max_listings lowered below what it holds, so one ending
+        # still leaves no room, and its waiting hunt keeps its backoff
+        async def scenario():
+            ids = await self._full()
+            await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/l2",
+                )
+            )
+            later = datetime.now(UTC) + timedelta(hours=2)
+            await seed(
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    run_after=later,
+                    payload={"backoff_minutes": 120},
+                    reason="backoff",
+                )
+            )
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return later, await read_hunts()
+
+        later, (hunt,) = db(scenario())
+        assert (hunt["run_after"], hunt["payload"]) == (later, {"backoff_minutes": 120})
+
+    def test_a_failed_wake_never_undoes_the_ending(self, monkeypatch):
+        async def broken(session, watch_id):
+            raise RuntimeError("connection reset")
+
+        monkeypatch.setattr(job_queue, "add_hunt_wakes", broken)
+
+        async def scenario():
+            ids = await self._full()
+            result = await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                return result, (await session.get(Listings, ids["listing_a"])).active
+
+        result, active = db(scenario())
+        assert "inactive" in result
+        assert active is False
 
     def test_a_watch_switched_off_is_not_woken(self):
         async def scenario():

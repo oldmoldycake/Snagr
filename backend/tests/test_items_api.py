@@ -580,6 +580,80 @@ async def _full_watch(db_session, owner_id) -> dict:
         return {"item_id": item.id, "watch_id": watch.id, "listing_id": listing.id}
 
 
+async def _job_states(db_session, job_ids) -> list[tuple]:
+    async with db_session() as session:
+        rows = [await session.get(Jobs, job_id) for job_id in job_ids]
+        return [(j.status, j.run_after, j.reason, j.payload) for j in rows]
+
+
+async def test_switching_hunting_back_on_a_full_watch_queues_nothing(client, db_session):
+    """Decision 9 holds here too: a full watch has nothing to hunt for."""
+    owner_id = await _sign_in(client)
+    ids = await _full_watch(db_session, owner_id)
+    await client.patch(f"/api/items/{ids['item_id']}", json={"hunt": False}, headers=CSRF)
+
+    await client.patch(f"/api/items/{ids['item_id']}", json={"hunt": True}, headers=CSRF)
+
+    assert (await client.get("/api/jobs", params={"kind": "hunt"})).json()["data"] == []
+
+
+async def test_a_wake_touches_only_this_watchs_waiting_system_hunts(client, db_session):
+    """Two of two slots taken, so untracking one frees a slot. The other
+    listing's check, a running hunt, a person's own request and another
+    watch's backoff must all be exactly where they were."""
+    owner_id = await _sign_in(client)
+    later = datetime.now(UTC) + timedelta(hours=3)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        sc.db.add(SiteCategories(site_id=(await sc.site()).id, category_id=item.category_id))
+        watch = await sc.watch(item=item)
+        watch.max_listings = 2
+        freed = await sc.listing(watch, item, tag="freed")
+        kept = await sc.listing(watch, item, tag="kept")
+        other_watch = await sc.watch(item=await sc.item("Beta"))
+        pending = {"status": "pending", "days_ago": 0, "run_after": later}
+        jobs = [
+            await sc.job(kind="recheck", watch=watch, listing_id=kept.id, **pending),
+            await sc.job(watch=watch, **{**pending, "status": "running"}),
+            await sc.job(
+                watch=watch,
+                site_id=(await sc.site("B")).id,
+                user_id=owner_id,
+                reason="user",
+                **pending,
+            ),
+            await sc.job(
+                watch=other_watch, payload={"backoff_minutes": 180}, reason="backoff", **pending
+            ),
+        ]
+        job_ids, freed_id = [j.id for j in jobs], freed.id
+    before = await _job_states(db_session, job_ids)
+
+    await client.patch(f"/api/listings/{freed_id}", json={"active": False}, headers=CSRF)
+
+    assert await _job_states(db_session, job_ids) == before
+
+
+async def test_switching_off_touches_only_this_watchs_waiting_hunts(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item()
+        watch = await sc.watch(item=item)
+        listing = await sc.listing(watch, item)
+        other_watch = await sc.watch(item=await sc.item("Beta"))
+        jobs = [
+            await sc.job(watch=watch, status="done", reason="backoff"),
+            await sc.job(kind="recheck", watch=watch, status="pending", listing_id=listing.id),
+            await sc.job(watch=other_watch, status="pending", reason="backoff"),
+        ]
+        item_id, job_ids = item.id, [j.id for j in jobs]
+    before = await _job_states(db_session, job_ids)
+
+    await client.patch(f"/api/items/{item_id}", json={"hunt": False}, headers=CSRF)
+
+    assert await _job_states(db_session, job_ids) == before
+
+
 async def test_untracking_a_listing_wakes_the_hunt_for_its_slot(client, db_session):
     """A full watch has no hunt waiting (decision 9), so the slot the user
     just freed is the only thing that will start one."""

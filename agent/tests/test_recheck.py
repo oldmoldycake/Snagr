@@ -218,6 +218,21 @@ class TestAvailability:
 
         assert seams["woken"] == [row()["watch_id"]]
 
+    def test_an_auction_conversion_wakes_the_hunts_too(self, seams):
+        run(recheck.recheck_deterministic(FakeBrowser(page("ebay_auction")), row()))
+
+        assert seams["woken"] == [row()["watch_id"]]
+
+    def test_a_deactivation_that_failed_wakes_nothing(self, seams, monkeypatch):
+        # the listing is still tracked, so no slot opened
+        async def unchanged(listing_id, reason):
+            return False
+
+        monkeypatch.setattr(recheck, "deactivate_listing", unchanged)
+        run(recheck.recheck_deterministic(FakeBrowser(page("ebay_sold")), row()))
+
+        assert seams["woken"] == []
+
     def test_the_ending_is_recorded_before_the_hunts_are_woken(self, seams):
         # the wake is best-effort and the observation is not: a wake that
         # failed first would take the sold reading down with it

@@ -234,6 +234,17 @@ class TestEnqueue:
         )
         assert res.status_code == 202
 
+    async def test_the_kill_switch_answers_before_the_scope_is_looked_up(self, client, monkeypatch):
+        # the mock's order too: nothing about the scope matters while no hunt
+        # could run in it
+        await _sign_in(client)
+        monkeypatch.setattr(settings, "HUNT_ENABLED", False)
+        res = await client.post(
+            "/api/jobs", json={"kind": "hunt", "scope": "item", "scope_id": 9999}, headers=CSRF
+        )
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "hunting_disabled"
+
     async def test_a_scope_holding_none_of_your_watches_is_a_404(self, client):
         await _sign_in(client)
         await _watched_item(client)
