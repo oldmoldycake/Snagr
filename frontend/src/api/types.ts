@@ -50,6 +50,9 @@ export interface InstanceInfo {
   /** false when the operator turned agent access off (MCP_ENABLED): no MCP endpoint,
    *  no bearer auth, and Settings hides the MCP & API tab */
   mcp_enabled: boolean
+  /** minutes between rechecks for a watch with no interval of its own
+   *  (RECHECK_INTERVAL_MINUTES) — the item form's placeholder */
+  recheck_interval_default: number
 }
 
 export type UserRole = 'admin' | 'user'
@@ -173,6 +176,8 @@ export interface ItemSummary {
   max_listings: number
   /** true = skip the agent's reproduction/counterfeit screening for this item */
   allow_reproductions: boolean
+  /** minutes between rechecks of this item's listings; null = the instance default */
+  recheck_interval_minutes: number | null
   /** subset of the category's linked sites to search; null = all of them */
   site_ids: number[] | null
   best_price: string | null
@@ -234,7 +239,8 @@ export interface RecheckFacts {
   /** how many of this item's rechecks are running right now */
   running: number
   next_at: string | null
-  /** minutes between checks for this item's listings; PR 2a = the instance default */
+  /** minutes between checks for this item's listings: the watch's own interval,
+   *  else the instance default, never below the floor — what the hunter schedules by */
   interval_minutes: number
 }
 
@@ -257,6 +263,9 @@ export interface ItemCreateRequest {
   max_listings?: number
   /** default false */
   allow_reproductions?: boolean
+  /** default null (the instance default); 422 below the instance floor
+   *  (RECHECK_INTERVAL_FLOOR_MINUTES, 5 unless changed) or above 1440 */
+  recheck_interval_minutes?: number | null
   /** must be a subset of the category's sites (422 otherwise); empty/full set normalizes to null */
   site_ids?: number[] | null
 }
@@ -268,6 +277,9 @@ export interface ItemUpdateRequest {
   selection_mode?: SelectionMode
   max_listings?: number
   allow_reproductions?: boolean
+  /** the one field where null changes something: back to the instance default;
+   *  omitted = unchanged. Same 422s as create */
+  recheck_interval_minutes?: number | null
   site_ids?: number[] | null
 }
 

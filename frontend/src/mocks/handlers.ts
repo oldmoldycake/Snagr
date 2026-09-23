@@ -45,6 +45,10 @@ import {
   type MockUser,
 } from './fixtures'
 import {
+  effectiveInterval,
+  MAX_RECHECK_INTERVAL_MINUTES,
+  RECHECK_INTERVAL_FLOOR_MINUTES,
+  RECHECK_INTERVAL_MINUTES,
   toAdminUser,
   toCategory,
   toInvite,
@@ -63,6 +67,7 @@ import {
 import { addClient, cancelDemoHunt, removeClient, startDemoHunt, type StreamClient } from './sse'
 
 const DAY = 86_400_000
+const MINUTE = 60_000
 const TOKEN_SCOPES: ApiTokenScope[] = ['read', 'write', 'jobs']
 const SESSION_KEY = 'snagr:mock-session'
 
@@ -201,12 +206,15 @@ interface TrackingFields {
   selection_mode: 'cheapest' | 'best_match'
   max_listings: number
   allow_reproductions: boolean
+  recheck_interval_minutes: number | null
   site_ids: number[] | null
 }
 
 /**
  * Normalize + validate the tracking fields shared by item create/update.
  * `existing` supplies defaults on PATCH; omitted fields keep their value.
+ * recheck_interval_minutes is the one field where an explicit null changes
+ * something: back to the instance default.
  * site_ids must be a subset of the category's sites; empty/full set → null.
  */
 function validateTracking(
@@ -233,6 +241,22 @@ function validateTracking(
 
   const allow_reproductions = body.allow_reproductions ?? existing?.allow_reproductions ?? false
 
+  const recheck_interval_minutes =
+    body.recheck_interval_minutes !== undefined
+      ? body.recheck_interval_minutes
+      : (existing?.recheck_interval_minutes ?? null)
+  if (
+    recheck_interval_minutes != null &&
+    (!Number.isInteger(recheck_interval_minutes) ||
+      recheck_interval_minutes < RECHECK_INTERVAL_FLOOR_MINUTES ||
+      recheck_interval_minutes > MAX_RECHECK_INTERVAL_MINUTES)
+  ) {
+    const range = `between ${RECHECK_INTERVAL_FLOOR_MINUTES} and ${MAX_RECHECK_INTERVAL_MINUTES} minutes`
+    return err(422, 'validation_error', `Check interval must be ${range}`, {
+      fields: { recheck_interval_minutes: `Must be ${range}` },
+    })
+  }
+
   let site_ids = body.site_ids !== undefined ? body.site_ids : (existing?.site_ids ?? null)
   if (site_ids != null) {
     if (site_ids.some((id) => !category.site_ids.includes(id))) {
@@ -243,7 +267,14 @@ function validateTracking(
     if (site_ids.length === 0 || site_ids.length === category.site_ids.length) site_ids = null
   }
 
-  return { criteria, selection_mode, max_listings, allow_reproductions, site_ids }
+  return {
+    criteria,
+    selection_mode,
+    max_listings,
+    allow_reproductions,
+    recheck_interval_minutes,
+    site_ids,
+  }
 }
 
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
@@ -313,6 +344,7 @@ export const handlers = [
       oidc_provider_name: null,
       vision_enabled: true,
       mcp_enabled: true,
+      recheck_interval_default: RECHECK_INTERVAL_MINUTES,
     })
   }),
 
@@ -720,6 +752,7 @@ export const handlers = [
       selection_mode: tracking.selection_mode,
       max_listings: tracking.max_listings,
       allow_reproductions: tracking.allow_reproductions,
+      recheck_interval_minutes: tracking.recheck_interval_minutes,
       site_ids: tracking.site_ids,
       created_at: Date.now(),
     }
@@ -759,7 +792,18 @@ export const handlers = [
     item.selection_mode = tracking.selection_mode
     item.max_listings = tracking.max_listings
     item.allow_reproductions = tracking.allow_reproductions
+    item.recheck_interval_minutes = tracking.recheck_interval_minutes
     item.site_ids = tracking.site_ids
+    // a shorter interval brings pending checks forward; a longer one is picked
+    // up by the successors. Checks on a paused site stay behind the pause.
+    const due = Date.now() + effectiveInterval(item) * MINUTE
+    for (const job of store.jobs) {
+      const site = store.sites.find((s) => s.id === job.site_id)
+      const paused = site?.paused_until != null && site.paused_until > Date.now()
+      const pulled =
+        job.kind === 'recheck' && job.item_id === item.id && job.status === 'pending' && job.run_after > due
+      if (pulled && !paused) job.run_after = due
+    }
     return HttpResponse.json(toItemDetail(item))
   }),
 

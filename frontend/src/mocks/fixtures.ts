@@ -70,6 +70,8 @@ export interface MockItem {
   max_listings: number
   /** optional so existing fixtures default to false */
   allow_reproductions?: boolean
+  /** optional so existing fixtures follow the instance default (null) */
+  recheck_interval_minutes?: number | null
   site_ids: number[] | null
   created_at: number
 }

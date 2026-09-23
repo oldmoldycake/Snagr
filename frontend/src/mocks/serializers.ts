@@ -132,6 +132,7 @@ export function toItemSummary(item: MockItem, range: TimeRange = '30d'): ItemSum
     selection_mode: item.selection_mode,
     max_listings: item.max_listings,
     allow_reproductions: item.allow_reproductions ?? false,
+    recheck_interval_minutes: item.recheck_interval_minutes ?? null,
     site_ids: item.site_ids,
     best_price: best ? cents(best.cents) : null,
     best_listing_id: best?.listing.id ?? null,
@@ -219,8 +220,18 @@ export function toItemDetail(item: MockItem, range: TimeRange = '30d'): ItemDeta
   }
 }
 
-/** PR 2a has no per-watch interval: every listing is re-read on the instance default. */
+/** The instance's RECHECK_INTERVAL_MINUTES and RECHECK_INTERVAL_FLOOR_MINUTES. */
 export const RECHECK_INTERVAL_MINUTES = 30
+export const RECHECK_INTERVAL_FLOOR_MINUTES = 5
+export const MAX_RECHECK_INTERVAL_MINUTES = 1440
+
+/** Minutes between an item's rechecks: its own interval, else the default, never below the floor. */
+export function effectiveInterval(item: MockItem): number {
+  return Math.max(
+    item.recheck_interval_minutes ?? RECHECK_INTERVAL_MINUTES,
+    RECHECK_INTERVAL_FLOOR_MINUTES,
+  )
+}
 
 /** What the hunter will do next for this item — read off its jobs, never stored. */
 function huntFacts(item: MockItem): HuntFacts {
@@ -250,7 +261,7 @@ function recheckFacts(item: MockItem): RecheckFacts {
   return {
     running: checks.filter((j) => j.status === 'running').length,
     next_at: pending.length ? iso(Math.min(...pending)) : null,
-    interval_minutes: RECHECK_INTERVAL_MINUTES,
+    interval_minutes: effectiveInterval(item),
   }
 }
 
