@@ -713,6 +713,18 @@ class TestSweep:
         ids, hunts = db(scenario())
         assert [h["site_id"] for h in hunts] == [ids["site_a"]]
 
+    def test_a_deactivated_account_is_not_hunted(self):
+        # an admin switched the owner off; nothing may spend tokens for them
+        async def scenario():
+            await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                # both scope-graph watches belong to the one user
+                (await session.scalar(select(User))).is_active = False
+                await session.commit()
+            return await job_queue.sweep(), await read_hunts()
+
+        assert db(scenario()) == (0, [])
+
     def test_with_hunting_off_the_sweep_queues_nothing(self, monkeypatch):
         monkeypatch.setattr(job_queue, "HUNT_ENABLED", False)
 
@@ -797,6 +809,14 @@ class TestFreedSlotWakesTheHunt:
 
         ids, hunts = db(scenario())
         assert [(h["watch_id"], h["reason"]) for h in hunts] == [(ids["watch_a"], "slot_freed")]
+
+    def test_a_failed_wake_is_logged_not_raised(self, monkeypatch):
+        # its caller has already written the observation; the sweep catches up
+        async def broken(session, watch_id):
+            raise RuntimeError("connection reset")
+
+        monkeypatch.setattr(job_queue, "add_hunt_wakes", broken)
+        assert db(job_queue.wake_hunts(1)) is False
 
     def test_with_hunting_off_a_freed_slot_wakes_nothing(self, monkeypatch):
         monkeypatch.setattr(job_queue, "HUNT_ENABLED", False)

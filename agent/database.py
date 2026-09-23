@@ -58,6 +58,9 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(Text, unique=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    # false = an admin deactivated the account; its watches are not hunted on
+    # their own (jobs._huntable_pairs)
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

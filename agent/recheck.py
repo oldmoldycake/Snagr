@@ -119,11 +119,14 @@ async def recheck_deterministic(browser: PageReader, row) -> Outcome:
 
     gone = _terminal(extract)
     if gone:
-        if await deactivate_listing(listing_id, gone):
-            await job_queue.wake_hunts(unit.watch_id)
+        deactivated = await deactivate_listing(listing_id, gone)
         # method 'locator' = code read the page; which signal decided it is
         # in the log, and status is what the checks log and the UI show
         await _record(unit, listing_id, None, None, "locator", status=gone, in_stock=False)
+        # only once the observation is written: the wake is best-effort, the
+        # sold/ended reading is not
+        if deactivated:
+            await job_queue.wake_hunts(unit.watch_id)
         return Outcome(True, "locator", note=gone)
 
     if context["markers"].get("auction") and not context["markers"].get("buy_now"):

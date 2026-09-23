@@ -109,6 +109,8 @@ def seams(monkeypatch):
 
     async def fake_wake(watch_id):
         seen["woken"].append(watch_id)
+        seen["recorded_before_wake"] = len(seen["recorded"])
+        return True
 
     async def fake_miss(listing_id, max_failures):
         seen["misses"].append(listing_id)
@@ -215,6 +217,13 @@ class TestAvailability:
         run(recheck.recheck_deterministic(FakeBrowser(page("ebay_sold")), row()))
 
         assert seams["woken"] == [row()["watch_id"]]
+
+    def test_the_ending_is_recorded_before_the_hunts_are_woken(self, seams):
+        # the wake is best-effort and the observation is not: a wake that
+        # failed first would take the sold reading down with it
+        run(recheck.recheck_deterministic(FakeBrowser(page("ebay_sold")), row()))
+
+        assert seams["recorded_before_wake"] == 1
 
     def test_a_sold_page_records_no_price(self, seams):
         # the page still shows what it sold for; recording that as this

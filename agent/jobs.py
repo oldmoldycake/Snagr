@@ -56,6 +56,7 @@ from database import (
     Listings,
     SiteCategories,
     Sites,
+    User,
     Watches,
     WatchSites,
 )
@@ -303,10 +304,11 @@ async def _queue_successor(session, job: Jobs) -> None:
 def _huntable_pairs():
     """Every (watch, site) pair the hunter searches on its own.
 
-    The watch has an open slot and its own switch on, and the site is one it
-    searches: its category carries it and, when the watch pins sites, it is
-    one of the pins — the same rule get_hunt_unit re-validates a claimed hunt
-    by. Callers narrow it to one watch or one pair.
+    The watch has an open slot and its own switch on, its owner's account is
+    active, and the site is one it searches: its category carries it and,
+    when the watch pins sites, it is one of the pins — the same rule
+    get_hunt_unit re-validates a claimed hunt by. Callers narrow it to one
+    watch or one pair.
     """
     tracked = (
         select(func.count())
@@ -324,7 +326,10 @@ def _huntable_pairs():
         )
         .join(Items, Items.id == Watches.item_id)
         .join(SiteCategories, SiteCategories.category_id == Items.category_id)
+        .join(User, User.id == Watches.user_id)
         .where(Watches.hunt)
+        # a deactivated account's watches would otherwise be hunted forever
+        .where(User.is_active)
         .where(tracked < Watches.max_listings)
         .where(or_(~pinned.exists(), SiteCategories.site_id.in_(pinned)))
     )
@@ -453,13 +458,26 @@ async def add_hunt_wakes(session, watch_id: int) -> None:
         )
 
 
-async def wake_hunts(watch_id: int) -> None:
+async def wake_hunts(watch_id: int) -> bool:
     """add_hunt_wakes in a transaction of its own, for a caller that freed
-    the slot in one it has already committed. Losing this to a crash costs
-    at most the wait until the next sweep."""
+    the slot in one it has already committed.
+
+    Best-effort, unlike the rest of this module: the caller has already
+    written the observation that freed the slot, and failing its job over a
+    wake would count an error against a site that answered. A lost wake costs
+    at most the wait until the next sweep.
+
+    Returns:
+      False if the write failed.
+    """
     async with AsyncSessionLocal() as session:
-        await add_hunt_wakes(session, watch_id)
-        await session.commit()
+        try:
+            await add_hunt_wakes(session, watch_id)
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error waking the hunts of watch {watch_id}: {e}")
+            return False
 
 
 async def _insert(session, **values) -> None:
