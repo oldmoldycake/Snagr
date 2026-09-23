@@ -2,7 +2,8 @@ import { cn } from '@/lib/cn'
 
 /**
  * The one segmented control: mono caps, lume-glow active pill. Used for time
- * ranges, chart tabs, status filters, and the selection-mode picker.
+ * ranges, chart tabs, status filters, and the selection-mode picker. A null
+ * value presses nothing — the check-interval picker's "instance default".
  */
 export function Segmented<T extends string>({
   options,
@@ -12,7 +13,7 @@ export function Segmented<T extends string>({
   className,
 }: {
   options: readonly { value: T; label: string }[]
-  value: T
+  value: T | null
   onChange: (value: T) => void
   ariaLabel: string
   className?: string

@@ -33,6 +33,7 @@ import jobs as job_queue
 import static
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
 from database import (
+    DISABLE_REASONS,
     AsyncSessionLocal,
     ListingChecks,
     Listings,
@@ -266,7 +267,7 @@ async def save_price_check(
 
     This only records the observation - it does NOT change whether the listing
     is tracked. If status is "sold" or "ended", also call `disable_listing`
-    afterward to stop tracking it.
+    afterward, with that same status as its reason, to stop tracking it.
 
     Args:
       listing_id: The exact listing id returned by save_listing, or the listing_id you
@@ -433,29 +434,32 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
     """
     Mark a listing inactive so it is no longer tracked/rechecked.
 
-    Use this when a listing is confirmed sold, ended, or otherwise no longer
-    a live offer for the item - after recording that outcome with
-    `save_price_check`. Call this once per listing; disabling an
+    Use this when a listing is no longer a live offer for the item: it sold or
+    ended (after recording that outcome with `save_price_check`), or its only
+    price is now an auction bid. Call this once per listing; disabling an
     already-inactive listing is harmless.
 
     Args:
       listing_id: The exact listing id to disable - the listing_id you were given to
         re-check, or one save_listing returned. Any other id is refused.
-      reason: Short note on why it's being disabled, e.g. "sold" or "listing removed".
+      reason: Exactly one of "sold", "ended", "auction" - "sold"/"ended" matching the
+        status you just saved, "auction" when the page offers only bids.
     Returns:
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
     unit = unit_of(runtime)
-    if not reason.strip():
-        return 'Error: reason must say why the listing is being disabled, e.g. "sold"'
+    if reason not in DISABLE_REASONS:
+        return f"Error: reason must be one of {', '.join(DISABLE_REASONS)}, got {reason!r}"
 
     log.info(f"Disabling listing {listing_id}: {reason}")
     async with AsyncSessionLocal() as session:
         try:
             await assert_writable(session, listing_id, unit)
             await session.execute(
-                update(Listings).where(Listings.id == listing_id).values(active=False)
+                update(Listings)
+                .where(Listings.id == listing_id)
+                .values(active=False, inactive_reason=reason)
             )
             # an untracked listing is not re-read: the check chain ends here,
             # in the same transaction that ended the tracking

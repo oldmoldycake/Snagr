@@ -36,6 +36,9 @@ class ItemSummary(BaseModel):
     selection_mode: SelectionMode
     max_listings: int
     allow_reproductions: bool
+    # minutes between rechecks of this watch's listings; null = the instance
+    # default (InstanceInfo.recheck_interval_default)
+    recheck_interval_minutes: int | None
     site_ids: list[int] | None  # null = all of the category's sites
     best_price: str | None
     best_listing_id: int | None
@@ -86,8 +89,9 @@ class HuntFacts(BaseModel):
 class RecheckFacts(BaseModel):
     running: int  # how many of this item's checks are running right now
     next_at: str | None
-    # minutes between checks for this item's listings; PR 2a = the instance
-    # default (settings.RECHECK_INTERVAL_MINUTES)
+    # minutes between checks for this item's listings: the watch's own
+    # interval, else the instance default, never below the floor — the value
+    # the agent schedules with (services/jobs.py::effective_interval)
     interval_minutes: int
 
 
@@ -118,6 +122,7 @@ class ItemCreateRequest(BaseModel):
     selection_mode: SelectionMode = "cheapest"
     max_listings: int = 5  # contract default (note: DB column defaults to 3)
     allow_reproductions: bool = False
+    recheck_interval_minutes: int | None = None  # null = the instance default
     site_ids: list[int] | None = None
 
 
@@ -128,6 +133,9 @@ class ItemUpdateRequest(BaseModel):
     selection_mode: SelectionMode | None = None
     max_listings: int | None = None
     allow_reproductions: bool | None = None
+    # the one field here where an explicit null means something: back to the
+    # instance default. Omitted = unchanged (model_fields_set tells them apart)
+    recheck_interval_minutes: int | None = None
     site_ids: list[int] | None = None
 
 

@@ -10,6 +10,7 @@ import logging
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Literal, get_args
 
 from dotenv import load_dotenv
 from sqlalchemy import (
@@ -152,9 +153,18 @@ class Listings(Base):
         BigInteger,
         ForeignKey("jobs.id", ondelete="SET NULL", use_alter=True, name="fk_listings_job"),
     )
+    # sold | ended | auction | replaced | untracked; null while active
+    inactive_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
+
+
+# The reasons the hunter ends a listing with, stored as listings.inactive_reason.
+# 'replaced' and 'untracked' are the other two the column's CHECK allows,
+# written by swap hunts and by the user.
+DisableReason = Literal["sold", "ended", "auction"]
+DISABLE_REASONS: tuple[str, ...] = get_args(DisableReason)
 
 
 class PriceChecks(Base):
@@ -214,6 +224,8 @@ class Watches(Base):
     selection_mode: Mapped[str] = mapped_column(Text, default="cheapest")
     max_listings: Mapped[int] = mapped_column(default=3)
     allow_reproductions: Mapped[bool] = mapped_column(Boolean, default=False)
+    # null = RECHECK_INTERVAL_MINUTES; jobs.py floors it when queueing a check
+    recheck_interval_minutes: Mapped[int | None] = mapped_column()
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -759,7 +771,7 @@ async def clear_static_ok(listing_id: int) -> bool:
             return False
 
 
-async def deactivate_listing(listing_id: int, reason: str) -> bool:
+async def deactivate_listing(listing_id: int, reason: DisableReason) -> bool:
     """
     Mark a listing inactive because a deterministic recheck saw it end.
 
@@ -769,15 +781,24 @@ async def deactivate_listing(listing_id: int, reason: str) -> bool:
 
     Args:
       listing_id: The listing to stop tracking.
-      reason: Why, for the log — "sold" or "ended".
+      reason: Why — "sold", "ended" or "auction", stored as the listing's
+        inactive_reason.
     Returns:
       True on success.
+    Raises:
+      ValueError: for any other reason. Only code calls this, so a wrong
+        reason is a bug — and past this point the CHECK's refusal would be
+        swallowed below, leaving the listing tracked with nobody told.
     """
+    if reason not in DISABLE_REASONS:
+        raise ValueError(f"reason must be one of {', '.join(DISABLE_REASONS)}, got {reason!r}")
     log.info(f"Listing {listing_id} marked inactive ({reason})")
     async with AsyncSessionLocal() as session:
         try:
             await session.execute(
-                update(Listings).where(Listings.id == listing_id).values(active=False)
+                update(Listings)
+                .where(Listings.id == listing_id)
+                .values(active=False, inactive_reason=reason)
             )
             await session.commit()
             return True

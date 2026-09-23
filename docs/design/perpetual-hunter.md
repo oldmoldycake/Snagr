@@ -690,9 +690,11 @@ wins, the other renumbers on rebase.**
 |---|---|---|
 | 014 | 1 | `listings.price_locator text`, `locator_kind text`, `locator_verified_at timestamptz`, `locator_failures int NOT NULL DEFAULT 0`, `static_ok bool NOT NULL DEFAULT false`; `price_checks.method text` (backfill `'llm'`), `price_checks.confirmed bool NOT NULL DEFAULT true`. |
 | 015 | 2a | `jobs`, `job_events`, the three triggers (DDL also copied into `backend/tests/conftest.py::_NOTIFY_DDL` like 007/010); `listings.discovered_by_job_id bigint FK jobs NULL ON DELETE SET NULL`; `sites.consecutive_errors int NOT NULL DEFAULT 0`, `sites.paused_until timestamptz NULL`, `sites.paused_reason text NULL`; **drop** `run_events`, `agent_runs`, `run_schedules` (downgrade recreates them empty); `api_tokens` scopes `'runs'` → `'jobs'`. |
-| 016 | 2b | `watches.hunt bool NOT NULL DEFAULT true`, `watches.recheck_interval_minutes int NULL`, `listings.inactive_reason text NULL` (backfill: existing inactive rows → `'ended'`; CHECK on the five values). |
-| 017 | 3 | Reserved for cheap scans (expected: `watch_sites.search_url` + `search_url_verified_at`, `sites.listing_url_pattern`); designed with the PR. |
-| 018 | 4 | `sites.min_gap_seconds int NULL`, `sites.max_concurrency int NULL`. |
+| 016 | 2b, step 1 | Data only: queue a first recheck for every tracked listing saved before 015 created the queue. |
+| 017 | 2b, step 2 | `watches.recheck_interval_minutes int NULL`, `listings.inactive_reason text NULL` (backfill: existing inactive rows → `'ended'`; CHECK `ck_listings_inactive_reason` on the five values). |
+| 018 | 2b, step 3 | `watches.hunt bool NOT NULL DEFAULT true`. |
+| — | 3 | Numbered when it lands. Reserved for cheap scans (expected: `watch_sites.search_url` + `search_url_verified_at`, `sites.listing_url_pattern`); designed with the PR. |
+| — | 4 | Numbered when it lands. `sites.min_gap_seconds int NULL`, `sites.max_concurrency int NULL`. |
 
 Agent mirror (`agent/database.py`): `Listings` gains the locator columns,
 `static_ok` and `discovered_by_job_id`; `PriceChecks` gains `method` /

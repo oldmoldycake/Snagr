@@ -44,6 +44,7 @@ from database import (
     Watches,
     WatchSites,
     clear_static_ok,
+    deactivate_listing,
     engine,
     get_active_listing_count,
     get_hunt_unit,
@@ -435,6 +436,38 @@ class TestCompletion:
 
         (successor,) = db(scenario())
         assert successor["run_after"] > NOW + timedelta(hours=2)
+
+    def _successor_due_in(self, interval):
+        """Finish one check of a watch whose interval is `interval`; how far
+        ahead its successor was queued."""
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                watch = await session.get(Watches, ids["watch_a"])
+                watch.recheck_interval_minutes = interval
+                await session.commit()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            await job_queue.complete(job_id, {})
+            return await read_jobs(status="pending")
+
+        (successor,) = db(scenario())
+        return successor["run_after"] - datetime.now(UTC)
+
+    def test_a_successor_follows_the_watchs_own_interval(self):
+        due_in = self._successor_due_in(120)
+        assert timedelta(minutes=115) < due_in <= timedelta(minutes=120)
+
+    def test_a_watch_with_no_interval_follows_the_instance_default(self):
+        due_in = self._successor_due_in(None)
+        assert timedelta(minutes=25) < due_in <= timedelta(minutes=30)
+
+    def test_an_interval_below_the_floor_is_floored(self):
+        # the backend refuses one, but a row written by hand still must not
+        # turn the hunter into a tight loop against one site
+        due_in = self._successor_due_in(1)
+        assert timedelta(minutes=4) < due_in <= timedelta(minutes=5)
 
     def test_a_hunt_leaves_no_successor(self):
         async def scenario():
@@ -999,6 +1032,44 @@ class TestUnitTally:
         result, row = db(scenario())
         assert result.startswith("Listing")
         assert row["status"] == "cancelled"
+
+    @pytest.mark.parametrize("reason", ["sold", "ended", "auction"])
+    def test_a_disabled_listing_records_why(self, reason):
+        async def scenario():
+            ids = await seed_scope_graph()
+            result = await tools.disable_listing(ids["listing_a"], reason, runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                return result, listing.active, listing.inactive_reason
+
+        result, active, stored = db(scenario())
+        assert result.startswith("Listing")
+        assert (active, stored) == (False, reason)
+
+    def test_a_listing_a_recheck_saw_end_records_why_too(self):
+        # the code path's twin of disable_listing: a deterministic recheck
+        # that reads "sold" ends tracking without a model in the loop
+        async def scenario():
+            ids = await seed_scope_graph()
+            await deactivate_listing(ids["listing_a"], "sold")
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                return listing.active, listing.inactive_reason
+
+        assert db(scenario()) == (False, "sold")
+
+    def test_an_unknown_reason_is_a_bug_not_a_skipped_write(self):
+        # the helper swallows DB errors, so the CHECK alone would leave the
+        # listing tracked and only log it — the guard raises before that
+        async def scenario():
+            ids = await seed_scope_graph()
+            with pytest.raises(ValueError, match="sold, ended, auction"):
+                await deactivate_listing(ids["listing_a"], "gone")
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                return listing.active, listing.inactive_reason
+
+        assert db(scenario()) == (True, None)
 
 
 class TestListingOwnership:

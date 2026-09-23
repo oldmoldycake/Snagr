@@ -4,7 +4,7 @@ import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail } from '@/api/types'
 import { cn } from '@/lib/cn'
-import { countdown, formatDuration, relativeTime } from '@/lib/time'
+import { countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
 import { useJobs } from './JobsProvider'
 
 /**
@@ -57,7 +57,7 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
           {' · '}
         </>
       ) : null}
-      <span>checks</span> every {detail.recheck.interval_minutes}m ·{' '}
+      <span>checks</span> every {formatInterval(detail.recheck.interval_minutes)} ·{' '}
       {detail.recheck.running > 0
         ? `${detail.recheck.running} running now`
         : `next ${countdown(detail.recheck.next_at)}`}

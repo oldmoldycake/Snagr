@@ -11,7 +11,9 @@ the real deployment fills in for it.
 These tests INSERT with raw SQL precisely to skip the ORM's default.
 """
 
+import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 
 async def test_notification_channels_are_enabled_by_default(sc):
@@ -119,3 +121,42 @@ async def test_a_listing_starts_with_no_locator_and_no_failures(sc):
     ).one()
 
     assert row == (None, None, None, 0, False)
+
+
+async def test_a_watch_starts_on_the_instance_interval(sc):
+    """Migration 017's recheck_interval_minutes has no default on either side:
+    null is the value that means "the instance's RECHECK_INTERVAL_MINUTES".
+    Built through the factory — watches has several NOT NULL columns with
+    only an ORM default, and none of them is what this is about."""
+    watch = await sc.watch(item=await sc.item())
+
+    assert (
+        await sc.db.scalar(
+            text("SELECT recheck_interval_minutes FROM watches WHERE id = :w"), {"w": watch.id}
+        )
+        is None
+    )
+
+
+async def test_a_listing_only_ends_for_a_known_reason(sc):
+    """Migration 017's CHECK: inactive_reason is null or one of five words —
+    the item page and the Activity feed switch on it."""
+    item = await sc.item()
+    watch = await sc.watch(item=item)
+    params = {"w": watch.id, "i": item.id, "s": (await sc.site()).id}
+
+    await sc.db.execute(
+        text(
+            "INSERT INTO listings (watch_id, item_id, site_id, url, active, inactive_reason) "
+            "VALUES (:w, :i, :s, 'https://example.test/sold', false, 'sold')"
+        ),
+        params,
+    )
+    with pytest.raises(IntegrityError):
+        await sc.db.execute(
+            text(
+                "INSERT INTO listings (watch_id, item_id, site_id, url, active, inactive_reason) "
+                "VALUES (:w, :i, :s, 'https://example.test/gone', false, 'gone')"
+            ),
+            params,
+        )

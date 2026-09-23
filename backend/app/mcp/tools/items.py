@@ -1,5 +1,7 @@
 """Item tools — the user's watches, their listings, and raw price checks."""
 
+from typing import Literal
+
 from fastmcp import FastMCP
 
 from app.mcp.refs import Ref, resolve_category, resolve_site
@@ -113,6 +115,7 @@ def register(mcp: FastMCP) -> None:
         selection_mode: SelectionMode = "cheapest",
         max_listings: int = 5,
         allow_reproductions: bool = False,
+        recheck_interval_minutes: int | None = None,
         site_ids: list[Ref] | None = None,
     ) -> ItemSummary:
         """Start watching an item. If the shared catalog already has an item of
@@ -129,6 +132,9 @@ def register(mcp: FastMCP) -> None:
           selection_mode: cheapest | best_match — how the tracked slots are filled
           max_listings: how many listings to track at once, 1–10
           allow_reproductions: true skips the counterfeit screening
+          recheck_interval_minutes: how often to re-read each tracked listing's
+            price, in minutes: from the instance's floor (5 unless the
+            operator changed it) up to 1440; omitted = the instance default
           site_ids: subset of the category's sites to search (ids or names);
             omitted = all of them
         """
@@ -142,6 +148,7 @@ def register(mcp: FastMCP) -> None:
                 selection_mode=selection_mode,
                 max_listings=max_listings,
                 allow_reproductions=allow_reproductions,
+                recheck_interval_minutes=recheck_interval_minutes,
                 site_ids=[(await resolve_site(db, ref)).id for ref in site_ids]
                 if site_ids
                 else None,
@@ -157,13 +164,26 @@ def register(mcp: FastMCP) -> None:
         selection_mode: SelectionMode | None = None,
         max_listings: int | None = None,
         allow_reproductions: bool | None = None,
+        recheck_interval_minutes: int | Literal["default"] | None = None,
         notify: bool | None = None,
     ) -> ItemDetail:
         """Change a watched item's settings — every create_item field except
         site_ids (the site subset can't be changed yet) — plus `notify`:
         whether hitting the target should push a notification. Only the
-        arguments you pass change; the rest stay as they are."""
+        arguments you pass change; the rest stay as they are. Pass
+        recheck_interval_minutes="default" to go back to the instance default."""
         async with caller_session() as (db, user):
+            # null already means "unchanged" here, so clearing the interval
+            # needs a word of its own; the REST PATCH says it with null
+            interval = (
+                {}
+                if recheck_interval_minutes is None
+                else {
+                    "recheck_interval_minutes": None
+                    if recheck_interval_minutes == "default"
+                    else recheck_interval_minutes
+                }
+            )
             body = ItemUpdateRequest(
                 name=name,
                 target_price=target_price,
@@ -171,6 +191,7 @@ def register(mcp: FastMCP) -> None:
                 selection_mode=selection_mode,
                 max_listings=max_listings,
                 allow_reproductions=allow_reproductions,
+                **interval,
             )
             detail = await items_service.update_item(db, user.id, item, body)
             if notify is not None:

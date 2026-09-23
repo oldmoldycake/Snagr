@@ -110,8 +110,8 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 
 | File | The important ones |
 |---|---|
-| [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL`, `MCP_ENABLED` |
-| [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `SEAR_XNG_URL`, `EXPECTED_CURRENCY`, `VISION_SIDECAR_URL`, `NOTIFY_COOLDOWN_HOURS`, `RECHECK_INTERVAL_MINUTES` and the pool sizes, the `JOB_*` lifecycle caps, the `SITE_BREAKER_*` thresholds, the `PRICE_BAND_*` plausibility bands; optional LangSmith / Langfuse tracing |
+| [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL`, `MCP_ENABLED`, `RECHECK_INTERVAL_MINUTES` / `RECHECK_INTERVAL_FLOOR_MINUTES` (same values as the agent's) |
+| [`agent/.env.example`](agent/.env.example) | `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY`, `PLAYWRIGHT_MCP_URL`, `DATABASE_URL`, `SEAR_XNG_URL`, `EXPECTED_CURRENCY`, `VISION_SIDECAR_URL`, `NOTIFY_COOLDOWN_HOURS`, `RECHECK_INTERVAL_MINUTES` (the default a watch's own "Check every" overrides) / `RECHECK_INTERVAL_FLOOR_MINUTES` and the pool sizes, the `JOB_*` lifecycle caps, the `SITE_BREAKER_*` thresholds, the `PRICE_BAND_*` plausibility bands; optional LangSmith / Langfuse tracing |
 | [`vision/.env.example`](vision/.env.example) | `DATABASE_URL` (sync `postgresql+psycopg://` driver), `S3_*`, `HF_TOKEN`, `VISION_MODEL` (must embed at dim 384), `VISION_RETENTION_DAYS` |
 | compose environment (root `.env` or your shell; `vision` profile only) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` — must match `S3_ACCESS_KEY` / `S3_SECRET_KEY` in `vision/.env` |
 

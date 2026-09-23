@@ -127,7 +127,7 @@ Find any `endpoints.ts` function here:
 
 1. **An API "item" is three tables.** `items` (shared name/category) + the caller's
    `watches` row (target_price, criteria, selection_mode, max_listings,
-   allow_reproductions, notify) + `watch_sites` (the `site_ids` subset). Handled in
+   allow_reproductions, recheck_interval_minutes, notify) + `watch_sites` (the `site_ids` subset). Handled in
    `services/items.py`. `GET /api/items` lists *the user's watches*, not the catalog.
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
@@ -151,8 +151,8 @@ Find any `endpoints.ts` function here:
    run tables that came with them (`agent_runs`, `run_events`, `run_schedules`)
    were dropped by migration 015, which replaced them with `jobs` and
    `job_events`. Per-watch config (`criteria`, `selection_mode`, `max_listings`,
-   `allow_reproductions`) lives on `watches`, not `items`: `items` stays a pure
-   shared catalog row.
+   `allow_reproductions`, `recheck_interval_minutes`) lives on `watches`, not
+   `items`: `items` stays a pure shared catalog row.
 
 4. **Job visibility is per-user, enforced by ONE predicate** (`services/jobs.py`):
    `visible_to(user_id, is_admin)` is a SQL clause — jobs for the viewer's own
@@ -176,9 +176,21 @@ Find any `endpoints.ts` function here:
    sides is `ON CONFLICT DO NOTHING` and `POST /api/jobs` answers 202 with
    whatever it queued or brought forward — never a 409. Creating a watch queues
    its hunts and its grounding in the same transaction; untracking a listing
-   cancels its pending check. `ItemDetail.hunt` / `.recheck` are computed from
-   the watch's jobs and exist on the detail shape only, so list queries stay
-   cheap.
+   cancels its pending check and stamps `inactive_reason = 'untracked'`.
+   `ItemDetail.hunt` / `.recheck` are computed from the watch's jobs and exist
+   on the detail shape only, so list queries stay cheap.
+
+   **The check interval is the agent's to keep and the backend's to report.**
+   The agent schedules each successor at the watch's `recheck_interval_minutes`,
+   else `RECHECK_INTERVAL_MINUTES`, never below `RECHECK_INTERVAL_FLOOR_MINUTES`;
+   `services/jobs.py::effective_interval` is the same rule, for
+   `ItemDetail.recheck.interval_minutes`. Both settings live in `backend/.env`
+   *and* the agent's env with the same values (the `VISION_SIDECAR_URL`
+   precedent): the backend needs the default for `InstanceInfo` and the floor
+   for the 422. On `PATCH /api/items/{id}` this is the one field where an
+   explicit null means something (back to the default — `model_fields_set`
+   tells it from an absent key), and a shorter interval pulls the watch's
+   pending checks forward in the same transaction.
 
 5. **Vision visibility splits three ways (D-V11), enforced in three places.**
    An item's reference *library* is communal — every watcher of the item reads

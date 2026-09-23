@@ -18,6 +18,7 @@ from decimal import Decimal
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.core.errors import err
 from app.models import (
     Categories,
@@ -46,6 +47,9 @@ from app.schemas.vision import AuthenticityRead
 from app.services import jobs as jobs_service
 from app.services.aggregates import item_rollups
 from app.services.vision import authenticity_for_listings
+
+# A day: past it a price stops being tracked in any sense the item page means.
+MAX_RECHECK_INTERVAL_MINUTES = 1440
 
 # --- serializers --------------------------------------------------------------
 
@@ -78,6 +82,7 @@ async def build_item_summary(
         selection_mode=watch.selection_mode,
         max_listings=watch.max_listings,
         allow_reproductions=watch.allow_reproductions,
+        recheck_interval_minutes=watch.recheck_interval_minutes,
         site_ids=list(site_ids) or None,
         **await item_rollups(db, watch.user_id, item, watch, range),
         created_at=item.created_at.isoformat(),
@@ -379,14 +384,32 @@ async def list_price_checks(
 # --- writes -------------------------------------------------------------------
 
 
+def _check_interval(minutes: int | None) -> None:
+    """422 unless null (the instance default) or between the floor and a day.
+    The floor is the agent's RECHECK_INTERVAL_FLOOR_MINUTES, set in both env
+    files; the agent floors again when it schedules, so this is the polite
+    half."""
+    floor = settings.RECHECK_INTERVAL_FLOOR_MINUTES
+    if minutes is not None and not floor <= minutes <= MAX_RECHECK_INTERVAL_MINUTES:
+        bounds = f"between {floor} and {MAX_RECHECK_INTERVAL_MINUTES} minutes"
+        raise err(
+            422,
+            "validation_error",
+            f"Check interval must be {bounds}",
+            fields={"recheck_interval_minutes": f"Must be {bounds}"},
+        )
+
+
 async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -> ItemSummary:
     """Find-or-create the shared items row, create the caller's watch, insert
     the watch_sites subset. Commits.
 
     The contract's 404 for an unknown category and the 422s (selection_mode,
     max_listings 1-10, site_ids ⊆ the category's sites) are not enforced yet —
-    an unknown category surfaces as the FK violation's 503.
+    an unknown category surfaces as the FK violation's 503. The
+    recheck_interval_minutes range (the floor to 1440) is enforced.
     """
+    _check_interval(body.recheck_interval_minutes)
     stmt = select(Items).where(Items.name == body.name).where(Items.category_id == body.category_id)
     item = (await db.execute(stmt)).scalar_one_or_none()
 
@@ -404,6 +427,7 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
         max_listings=body.max_listings,
         selection_mode=body.selection_mode,
         allow_reproductions=body.allow_reproductions,
+        recheck_interval_minutes=body.recheck_interval_minutes,
     )
     db.add(watch)
     await db.flush()
@@ -433,7 +457,10 @@ async def update_item(
 ) -> ItemDetail:
     """Write item fields to items and watch fields to the caller's watch;
     404 when unwatched. Only fields that are not null change (a JSON null
-    can't clear anything); site_ids is accepted but not applied yet. Commits."""
+    can't clear anything) — except recheck_interval_minutes, where a sent
+    null means "back to the instance default"; site_ids is accepted but not
+    applied yet. Commits."""
+    _check_interval(body.recheck_interval_minutes)
     stmt = (
         select(Items, Watches, Categories)
         .join(Watches, Items.id == Watches.item_id)
@@ -458,6 +485,9 @@ async def update_item(
         watch.max_listings = body.max_listings
     if body.allow_reproductions is not None:
         watch.allow_reproductions = body.allow_reproductions
+    if "recheck_interval_minutes" in body.model_fields_set:
+        watch.recheck_interval_minutes = body.recheck_interval_minutes
+        await jobs_service.pull_rechecks_forward(db, watch)
 
     await db.commit()
     return await build_item_detail(db, watch, item, category)
@@ -522,6 +552,8 @@ async def update_listing(db: AsyncSession, user_id: int, listing_id: int, active
         raise err(404, "not_found", f"Listing {listing_id} does not exist")
 
     listing.active = active
+    # the user's own switch; a listing tracked again has no reason to be off
+    listing.inactive_reason = None if active else "untracked"
     # tracking and the queue move together: an untracked listing is not
     # re-read, and tracking one again puts it back in the rotation
     if active:

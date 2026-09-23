@@ -18,7 +18,7 @@ Callers: routers/jobs.py, routers/items.py (through services/items.py),
 mcp/tools/jobs.py and services/events.py.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import and_, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
@@ -602,6 +602,42 @@ async def cancel_recheck(db: AsyncSession, listing_id: int) -> None:
     )
 
 
+def effective_interval(watch: Watches) -> int:
+    """Minutes between a watch's rechecks — the rule agent/jobs.py schedules
+    successors by: the watch's own interval, else the instance default, never
+    below the floor."""
+    return max(
+        watch.recheck_interval_minutes or settings.RECHECK_INTERVAL_MINUTES,
+        settings.RECHECK_INTERVAL_FLOOR_MINUTES,
+    )
+
+
+async def pull_rechecks_forward(db: AsyncSession, watch: Watches) -> None:
+    """Bring a watch's pending checks within its interval, in the caller's
+    transaction — what shortening the interval means to the queue.
+
+    Without it the new interval only applies from each listing's next
+    successor, so a 6 h watch switched to 15 m would still wait out the 6 h.
+    A longer interval moves nothing: the successors pick it up. Checks on a
+    paused site stay where the breaker put them, and only tracked listings'
+    checks move — untracking cancels a check, so one left pending on an
+    untracked listing is a stray, not work.
+    """
+    now = datetime.now(UTC)
+    due = now + timedelta(minutes=effective_interval(watch))
+    tracked = select(Listings.id).where(Listings.watch_id == watch.id).where(Listings.active)
+    await db.execute(
+        update(Jobs)
+        .where(Jobs.kind == "recheck")
+        .where(Jobs.watch_id == watch.id)
+        .where(Jobs.status == "pending")
+        .where(Jobs.listing_id.in_(tracked))
+        .where(Jobs.run_after > due)
+        .where(Jobs.site_id.not_in(select(Sites.id).where(Sites.paused_until > now)))
+        .values(run_after=due)
+    )
+
+
 async def enqueue_recheck(db: AsyncSession, listing: Listings) -> Jobs | None:
     """Put a listing back in the check rotation — what re-tracking it means.
     None when it already has one open."""
@@ -734,5 +770,5 @@ async def recheck_facts(db: AsyncSession, watch: Watches) -> RecheckFacts:
     return RecheckFacts(
         running=running,
         next_at=next_at.isoformat() if next_at is not None else None,
-        interval_minutes=settings.RECHECK_INTERVAL_MINUTES,
+        interval_minutes=effective_interval(watch),
     )

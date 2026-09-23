@@ -64,6 +64,13 @@ export function formatDuration(startIso: string | null, endIso?: string | null):
   return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
+/** A check interval the way the facts line says it: `30m`, `1h`, `6h`, `1h 30m`. */
+export function formatInterval(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`
+  const rest = minutes % 60
+  return rest === 0 ? `${minutes / 60}h` : `${Math.floor(minutes / 60)}h ${rest}m`
+}
+
 /** Axis tick formatter per range: 7d/30d → "Jun 24", 90d+ → "Jun '26" */
 export function tickFormatterFor(range: TimeRange): (ts: number) => string {
   return (ts: number) => {
