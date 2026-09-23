@@ -429,8 +429,8 @@ async def add_hunt_wakes(session, watch_id: int) -> None:
     """Start this watch's hunts over, in the caller's transaction — what a
     freed slot means to the queue.
 
-    The caller has already made the listing inactive in the same
-    transaction, which is what opens the slot this counts. A waiting hunt is
+    The slot this counts must already be free — made inactive earlier in
+    the caller's transaction, or committed before it. A waiting hunt is
     brought forward with its backoff forgotten; a site with none gets one. A
     person's own request is left as it is — it is already at the front.
     """
