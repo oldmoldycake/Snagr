@@ -39,6 +39,8 @@ class ItemSummary(BaseModel):
     # minutes between rechecks of this watch's listings; null = the instance
     # default (InstanceInfo.recheck_interval_default)
     recheck_interval_minutes: int | None
+    # false = hunted only when someone presses Hunt now; rechecks carry on
+    hunt: bool
     site_ids: list[int] | None  # null = all of the category's sites
     best_price: str | None
     best_listing_id: int | None
@@ -77,13 +79,16 @@ class Listing(BaseModel):
 
 class HuntFacts(BaseModel):
     """What the hunter will do next for one item — computed from its jobs,
-    never stored."""
+    never stored (except `enabled`, the watch's own switch)."""
 
+    enabled: bool  # the watch's `hunt` switch
     running: bool
     next_at: str | None
     last_at: str | None
     last_result: Literal["found", "nothing", "failed", "cancelled"] | None
     slots_open: int
+    # the wait the next hunt is on after coming back empty; null = not backing off
+    backoff_minutes: int | None
 
 
 class RecheckFacts(BaseModel):
@@ -97,7 +102,8 @@ class RecheckFacts(BaseModel):
 
 class ItemDetail(ItemSummary):
     """The facts line's two objects are here and not on ItemSummary — list
-    queries stay cheap."""
+    queries stay cheap. `hunt` here is the facts object and replaces the
+    summary's boolean, which it carries as `hunt.enabled`."""
 
     listings: list[Listing]
     hunt: HuntFacts
@@ -123,6 +129,7 @@ class ItemCreateRequest(BaseModel):
     max_listings: int = 5  # contract default (note: DB column defaults to 3)
     allow_reproductions: bool = False
     recheck_interval_minutes: int | None = None  # null = the instance default
+    hunt: bool = True
     site_ids: list[int] | None = None
 
 
@@ -136,6 +143,7 @@ class ItemUpdateRequest(BaseModel):
     # the one field here where an explicit null means something: back to the
     # instance default. Omitted = unchanged (model_fields_set tells them apart)
     recheck_interval_minutes: int | None = None
+    hunt: bool | None = None
     site_ids: list[int] | None = None
 
 

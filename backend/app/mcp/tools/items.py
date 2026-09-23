@@ -116,6 +116,7 @@ def register(mcp: FastMCP) -> None:
         max_listings: int = 5,
         allow_reproductions: bool = False,
         recheck_interval_minutes: int | None = None,
+        hunt: bool = True,
         site_ids: list[Ref] | None = None,
     ) -> ItemSummary:
         """Start watching an item. If the shared catalog already has an item of
@@ -135,6 +136,9 @@ def register(mcp: FastMCP) -> None:
           recheck_interval_minutes: how often to re-read each tracked listing's
             price, in minutes: from the instance's floor (5 unless the
             operator changed it) up to 1440; omitted = the instance default
+          hunt: false = look for new listings only when asked (enqueue_jobs
+            with kind="hunt"); true lets the hunter keep looking on its own
+            while slots are open. Tracked prices are rechecked either way.
           site_ids: subset of the category's sites to search (ids or names);
             omitted = all of them
         """
@@ -149,6 +153,7 @@ def register(mcp: FastMCP) -> None:
                 max_listings=max_listings,
                 allow_reproductions=allow_reproductions,
                 recheck_interval_minutes=recheck_interval_minutes,
+                hunt=hunt,
                 site_ids=[(await resolve_site(db, ref)).id for ref in site_ids]
                 if site_ids
                 else None,
@@ -165,6 +170,7 @@ def register(mcp: FastMCP) -> None:
         max_listings: int | None = None,
         allow_reproductions: bool | None = None,
         recheck_interval_minutes: int | Literal["default"] | None = None,
+        hunt: bool | None = None,
         notify: bool | None = None,
     ) -> ItemDetail:
         """Change a watched item's settings — every create_item field except
@@ -191,6 +197,7 @@ def register(mcp: FastMCP) -> None:
                 selection_mode=selection_mode,
                 max_listings=max_listings,
                 allow_reproductions=allow_reproductions,
+                hunt=hunt,
                 **interval,
             )
             detail = await items_service.update_item(db, user.id, item, body)

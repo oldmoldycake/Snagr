@@ -67,7 +67,7 @@ class Job(BaseModel):
     finished_at: str | None
     error: str | None  # one sentence for a human
     stats: JobStats | None
-    reason: str | None  # user | created | slot_freed | sweep | paused
+    reason: str | None  # user | created | slot_freed | sweep | paused | backoff
     last_seq: int  # highest event seq written so far (hunts and ground only)
     created_at: str
 

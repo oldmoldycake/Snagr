@@ -246,6 +246,7 @@ async def test_get_instance_and_whoami(client):
         assert instance["mcp_enabled"] is True
         assert instance["vision_enabled"] is False
         assert instance["recheck_interval_default"] == 30
+        assert instance["hunt_enabled"] is True
 
         me = await _ok(agent, "whoami")
         assert me["user"]["email"] == OWNER["email"]
@@ -548,6 +549,37 @@ async def test_the_check_interval_over_mcp(client, db_session):
             ):
                 assert error["code"] == "validation_error"
                 assert set(error["fields"]) == {"recheck_interval_minutes"}
+
+
+async def test_the_hunting_switch_over_mcp(client, db_session):
+    """The allow_reproductions pattern: set on create, changed on update, and
+    left alone when the argument is left out."""
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        created = await _ok(
+            agent, "create_item", category=seed["slug"], name="Leica M6", hunt=False
+        )
+        assert created["hunt"] is False
+        listed = await _ok(agent, "list_items", search="Leica")
+        assert listed["data"][0]["hunt"] is False
+
+        untouched = await _ok(agent, "update_item", item=created["id"], criteria="boxed")
+        assert untouched["hunt"]["enabled"] is False
+
+        updated = await _ok(agent, "update_item", item=created["id"], hunt=True)
+        assert updated["hunt"]["enabled"] is True
+        assert updated["hunt"]["backoff_minutes"] is None
+
+
+async def test_a_hunt_while_hunting_is_off_is_a_tool_error(client, monkeypatch):
+    await _sign_in(client)
+    item = await _watched_item(client)
+    monkeypatch.setattr(settings, "HUNT_ENABLED", False)
+    async with _agent(await _token(client, scopes=("read", "jobs"))) as agent:
+        error = await _error(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
+        assert error["code"] == "hunting_disabled"
+        assert (await _ok(agent, "get_instance"))["hunt_enabled"] is False
 
 
 async def test_job_tools_need_the_jobs_scope(client):

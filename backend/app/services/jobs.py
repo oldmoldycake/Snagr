@@ -366,12 +366,16 @@ async def enqueue(
 ) -> list[Job]:
     """Turn "hunt this category" or "check this item's prices" into jobs.
 
-    Never 409s: the open-job index means asking twice is asking once, so a
-    pair that is already queued is simply brought forward and handed back. An
-    empty list is a legitimate answer — a watch with every slot filled has
-    nothing to hunt for (PR 2b turns that into a swap hunt).
+    Asking twice is asking once — the open-job index means a pair that is
+    already queued is simply brought forward and handed back, never a 409. An
+    empty list is a legitimate answer: a watch with every slot filled has
+    nothing to hunt for. The one 409 is the operator's kill switch: a hunt
+    asked for under HUNT_ENABLED=false would sit in the queue unclaimed,
+    which is a silent fake, so it is refused instead.
     """
     _validate(kind, scope, scope_id)
+    if kind == "hunt" and not settings.HUNT_ENABLED:
+        raise err(409, "hunting_disabled", "Hunting is paused by the operator")
     watches = await _scoped_watches(db, viewer, scope, scope_id)
     # an unknown target and one holding none of the caller's watches are the
     # same 404: neither is anything this caller can ask the hunter about
@@ -494,8 +498,9 @@ async def enqueue_hunt(
 
     At most one open hunt per pair: the insert is ON CONFLICT DO NOTHING, and
     when it does nothing the open job is brought forward and handed back
-    instead. A running one is left exactly as it is — it is already doing
-    what was asked.
+    instead — its backoff forgotten, because a person asking is the strongest
+    reason there is to look again. A running one is left exactly as it is —
+    it is already doing what was asked.
     """
     inserted = await db.scalar(
         insert(Jobs)
@@ -527,7 +532,57 @@ async def enqueue_hunt(
         open_job.priority = priority
         open_job.reason = reason
         open_job.user_id = user_id
+        open_job.payload = None
     return open_job
+
+
+async def wake_hunts(db: AsyncSession, watch: Watches) -> None:
+    """Start a watch's hunts over, in the caller's transaction — what a freed
+    slot means to the queue. The agent does the same when the hunter itself
+    retires a listing (agent/jobs.py::add_hunt_wakes).
+
+    Nothing when the watch is still full, is switched off, or hunting is off
+    for the instance. A waiting hunt is brought forward with its backoff
+    forgotten; a site with none gets one; a person's own request is left as
+    it is — it is already at the front.
+    """
+    if not settings.HUNT_ENABLED or not watch.hunt or await open_slots(db, watch) <= 0:
+        return
+    await db.execute(
+        update(Jobs)
+        .where(Jobs.kind == "hunt")
+        .where(Jobs.watch_id == watch.id)
+        .where(Jobs.status == "pending")
+        .where(Jobs.user_id.is_(None))
+        .values(run_after=datetime.now(UTC), payload=None, reason="slot_freed")
+    )
+    for site_id in await watch_sites(db, watch):
+        await db.execute(
+            insert(Jobs)
+            .values(
+                kind="hunt",
+                watch_id=watch.id,
+                item_id=watch.item_id,
+                site_id=site_id,
+                reason="slot_freed",
+            )
+            .on_conflict_do_nothing()
+        )
+
+
+async def cancel_waiting_hunts(db: AsyncSession, watch: Watches) -> None:
+    """Drop the hunts the hunter queued for itself, in the caller's
+    transaction — what switching a watch's hunting off means to the queue.
+    A person's own pending request still runs: off means "only when you
+    press Hunt now", and they pressed it."""
+    await db.execute(
+        update(Jobs)
+        .where(Jobs.kind == "hunt")
+        .where(Jobs.watch_id == watch.id)
+        .where(Jobs.status == "pending")
+        .where(Jobs.user_id.is_(None))
+        .values(status="cancelled", finished_at=datetime.now(UTC))
+    )
 
 
 async def enqueue_hunts_for_watch(
@@ -718,11 +773,15 @@ async def hunt_facts(db: AsyncSession, watch: Watches) -> HuntFacts:
         .where(Jobs.status == "running")
         .limit(1)
     )
-    next_at = await db.scalar(
-        select(func.min(Jobs.run_after))
+    # the soonest waiting hunt is the one the facts line counts down to, and
+    # its backoff is the one worth saying
+    upcoming = await db.scalar(
+        select(Jobs)
         .where(Jobs.kind == "hunt")
         .where(Jobs.watch_id == watch.id)
         .where(Jobs.status == "pending")
+        .order_by(Jobs.run_after, Jobs.id)
+        .limit(1)
     )
     last = await db.scalar(
         select(Jobs)
@@ -733,11 +792,13 @@ async def hunt_facts(db: AsyncSession, watch: Watches) -> HuntFacts:
         .limit(1)
     )
     return HuntFacts(
+        enabled=watch.hunt,
         running=running is not None,
-        next_at=next_at.isoformat() if next_at is not None else None,
+        next_at=upcoming.run_after.isoformat() if upcoming is not None else None,
         last_at=last.finished_at.isoformat() if last is not None and last.finished_at else None,
         last_result=_last_result(last),
         slots_open=await open_slots(db, watch),
+        backoff_minutes=(upcoming.payload or {}).get("backoff_minutes") if upcoming else None,
     )
 
 

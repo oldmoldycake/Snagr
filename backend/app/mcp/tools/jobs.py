@@ -97,7 +97,8 @@ def register(mcp: FastMCP) -> None:
         forward, never duplicated, so there is no "already running" error. An
         empty list means there was nothing to do — every watch in scope is
         full. Errors: `not_found` for a target that does not exist or holds
-        none of your watches."""
+        none of your watches; `hunting_disabled` for a hunt while the
+        operator has switched hunting off (rechecks still work)."""
         async with caller_session() as (db, user):
             scope_id = await _scope_id(db, scope, target)
             return await jobs_service.enqueue(db, user, kind, scope, scope_id)
