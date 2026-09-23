@@ -225,13 +225,14 @@ async def test_a_below_floor_row_reads_as_the_floor(client, db_session):
     assert detail["recheck"]["interval_minutes"] == 5
 
 
-async def _pending_check_due_in(db_session, owner_id, hours, paused=False):
-    """A watch with one tracked listing whose next check is `hours` away, on
-    a site paused for a day when `paused`. Returns (item_id, job_id)."""
+async def _pending_check_due_in(db_session, owner_id, hours, paused=False, active=True):
+    """A watch with one listing whose next check is `hours` away, on a site
+    paused for a day when `paused`, untracked when not `active`. Returns
+    (item_id, job_id)."""
     async with _seed_for(db_session, owner_id) as sc:
         item = await sc.item()
         watch = await sc.watch(item=item)
-        listing = await sc.listing(watch, item)
+        listing = await sc.listing(watch, item, active=active)
         if paused:
             (await sc.site()).paused_until = datetime.now(UTC) + timedelta(days=1)
         job = await sc.job(
@@ -268,6 +269,19 @@ async def test_a_longer_interval_leaves_the_next_check_where_it_is(client, db_se
     await client.patch(
         f"/api/items/{item_id}", json={"recheck_interval_minutes": 360}, headers=CSRF
     )
+
+    assert await _run_after(db_session, job_id) == before
+
+
+async def test_a_stray_check_on_an_untracked_listing_is_left_alone(client, db_session):
+    """Untracking cancels a listing's check, so a pending one on an untracked
+    listing should not exist — and bringing it forward would be scheduling
+    work for a listing nobody watches."""
+    owner_id = await _sign_in(client)
+    item_id, job_id = await _pending_check_due_in(db_session, owner_id, hours=6, active=False)
+    before = await _run_after(db_session, job_id)
+
+    await client.patch(f"/api/items/{item_id}", json={"recheck_interval_minutes": 15}, headers=CSRF)
 
     assert await _run_after(db_session, job_id) == before
 

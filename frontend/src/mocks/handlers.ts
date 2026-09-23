@@ -795,14 +795,16 @@ export const handlers = [
     item.recheck_interval_minutes = tracking.recheck_interval_minutes
     item.site_ids = tracking.site_ids
     // a shorter interval brings pending checks forward; a longer one is picked
-    // up by the successors. Checks on a paused site stay behind the pause.
+    // up by the successors. Checks on a paused site stay behind the pause, and
+    // only tracked listings' checks move.
     const due = Date.now() + effectiveInterval(item) * MINUTE
     for (const job of store.jobs) {
       const site = store.sites.find((s) => s.id === job.site_id)
       const paused = site?.paused_until != null && site.paused_until > Date.now()
+      const tracked = store.listings.some((l) => l.id === job.listing_id && l.active)
       const pulled =
         job.kind === 'recheck' && job.item_id === item.id && job.status === 'pending' && job.run_after > due
-      if (pulled && !paused) job.run_after = due
+      if (pulled && tracked && !paused) job.run_after = due
     }
     return HttpResponse.json(toItemDetail(item))
   }),

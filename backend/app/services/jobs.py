@@ -619,15 +619,19 @@ async def pull_rechecks_forward(db: AsyncSession, watch: Watches) -> None:
     Without it the new interval only applies from each listing's next
     successor, so a 6 h watch switched to 15 m would still wait out the 6 h.
     A longer interval moves nothing: the successors pick it up. Checks on a
-    paused site stay where the breaker put them.
+    paused site stay where the breaker put them, and only tracked listings'
+    checks move — untracking cancels a check, so one left pending on an
+    untracked listing is a stray, not work.
     """
     now = datetime.now(UTC)
     due = now + timedelta(minutes=effective_interval(watch))
+    tracked = select(Listings.id).where(Listings.watch_id == watch.id).where(Listings.active)
     await db.execute(
         update(Jobs)
         .where(Jobs.kind == "recheck")
         .where(Jobs.watch_id == watch.id)
         .where(Jobs.status == "pending")
+        .where(Jobs.listing_id.in_(tracked))
         .where(Jobs.run_after > due)
         .where(Jobs.site_id.not_in(select(Sites.id).where(Sites.paused_until > now)))
         .values(run_after=due)
