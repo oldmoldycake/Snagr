@@ -226,6 +226,9 @@ class Watches(Base):
     allow_reproductions: Mapped[bool] = mapped_column(Boolean, default=False)
     # null = RECHECK_INTERVAL_MINUTES; jobs.py floors it when queueing a check
     recheck_interval_minutes: Mapped[int | None] = mapped_column()
+    # false = hunted only on a user's "hunt now"; the sweep and every hunt
+    # successor skip it (jobs.py)
+    hunt: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -307,7 +310,9 @@ class Jobs(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
-    reason: Mapped[str | None] = mapped_column(Text)  # user|created|slot_freed|sweep|paused
+    # user|created|slot_freed|sweep|paused|backoff
+    reason: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict | None] = mapped_column(JSONB)  # {"backoff_minutes": 30} on a hunt chain
     stats: Mapped[dict | None] = mapped_column(JSONB)
     last_seq: Mapped[int] = mapped_column(server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

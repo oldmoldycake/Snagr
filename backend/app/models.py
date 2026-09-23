@@ -232,6 +232,9 @@ class Watches(Base):
     # minutes between rechecks of this watch's listings; null = the instance's
     # RECHECK_INTERVAL_MINUTES. The agent floors it at RECHECK_INTERVAL_FLOOR_MINUTES.
     recheck_interval_minutes: Mapped[int | None] = mapped_column()  # + api
+    # perpetual hunting: false = hunted only when someone presses Hunt now;
+    # rechecks of its tracked listings continue either way
+    hunt: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))  # + api
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -349,7 +352,11 @@ class Jobs(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
-    reason: Mapped[str | None] = mapped_column(Text)  # user|created|slot_freed|sweep|paused
+    # user|created|slot_freed|sweep|paused|backoff
+    reason: Mapped[str | None] = mapped_column(Text)
+    # what a job hands its successor: {"backoff_minutes": 30} on a hunt that
+    # found nothing, so the next one knows to wait twice as long
+    payload: Mapped[dict | None] = mapped_column(JSONB)
     stats: Mapped[dict | None] = mapped_column(JSONB)
     last_seq: Mapped[int] = mapped_column(server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -138,6 +138,23 @@ async def test_a_watch_starts_on_the_instance_interval(sc):
     )
 
 
+async def test_a_watch_hunts_on_its_own_by_default(sc):
+    """Migration 018's server default: a watch inserted without saying
+    otherwise is hunted perpetually, the behaviour it had before the switch."""
+    item = await sc.item()
+    user = await sc.user()
+    watch_id = await sc.db.scalar(
+        text(
+            "INSERT INTO watches (user_id, item_id, selection_mode, max_listings, "
+            "allow_reproductions, notify) VALUES (:u, :i, 'cheapest', 3, false, true) "
+            "RETURNING id"
+        ),
+        {"u": user.id, "i": item.id},
+    )
+
+    assert await sc.db.scalar(text("SELECT hunt FROM watches WHERE id = :w"), {"w": watch_id})
+
+
 async def test_a_listing_only_ends_for_a_known_reason(sc):
     """Migration 017's CHECK: inactive_reason is null or one of five words —
     the item page and the Activity feed switch on it."""
