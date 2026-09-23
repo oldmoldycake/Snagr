@@ -41,6 +41,23 @@ def new_tally() -> dict[str, int]:
     return {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
 
 
+@dataclass
+class Swap:
+    """What a swap hunt has traded so far. Mutable, like the tally: the unit
+    is frozen so its ids cannot move, not so its progress cannot.
+
+    A swap hunt runs on a full watch at a person's request, and its only way
+    to save anything is to trade the weakest tracked listing for something
+    better (decision 10). disable_listing(reason="replaced") only picks the
+    listing to give up; the next save_listing makes the trade, both halves in
+    one transaction, so a refused save leaves the watch exactly as it was.
+    done is set by that save: one trade per hunt, and a hunt is one site.
+    """
+
+    replaced_listing_id: int | None = None
+    done: bool = False
+
+
 @dataclass(frozen=True)
 class UnitContext:
     """What one unit of work is about.
@@ -58,6 +75,10 @@ class UnitContext:
     tally rides here rather than in a module global because workers run
     several jobs at once, and a job's stats have to be its own.
 
+    swap is set on a swap hunt only — a person's "hunt now" on a full watch —
+    and None everywhere else, which is what keeps reason="replaced" out of
+    every other unit's reach.
+
     It lives here, next to the one writer of observations, because that is
     what it exists to constrain — the tools import it from here.
     """
@@ -70,6 +91,7 @@ class UnitContext:
     browser: PageReader | None = None
     job_id: int | None = None
     stats: dict[str, int] = field(default_factory=new_tally)
+    swap: Swap | None = None
 
     @property
     def is_hunt(self) -> bool:

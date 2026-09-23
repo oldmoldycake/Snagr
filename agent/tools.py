@@ -37,7 +37,9 @@ from database import (
     AsyncSessionLocal,
     ListingChecks,
     Listings,
+    MarketPrices,
     VisionScans,
+    Watches,
     enqueue_new_listing,
     get_price_context,
     save_locator,
@@ -45,7 +47,7 @@ from database import (
 from langchain.tools import ToolRuntime
 from locators import select_locator
 from observations import UnitContext, UnitMismatch, assert_writable, record_price_check
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from validation import (
     MAX_NOTES,
@@ -95,6 +97,8 @@ async def save_listing(
     match_score: int,
     match_summary: str,
     site_sku: str | None = None,
+    price: float | None = None,
+    currency: str = "USD",
     *,
     runtime: ToolRuntime,
 ) -> int | str:
@@ -113,13 +117,23 @@ async def save_listing(
         (examples: 67, 4, 42). Be calibrated - do not default to high.
       match_summary: One short line justifying the score, e.g. "dry battery ok, cart only,
         authentic per photos". Keep it to one line; long text is truncated.
+      price: REQUIRED when this save replaces a tracked listing (right after
+        disable_listing with reason "replaced"): the numeric price shown on the page, no
+        currency symbol, for a listing you can buy now. Whenever you pass it, it is
+        recorded as this listing's price, so do NOT also call save_price_check for it.
+        On any other save you may leave it out and call save_price_check afterwards.
+      currency: The three-letter code of that price's currency, e.g. "USD"
     Returns:
-      One of these four:
+      One of these five:
         listing_id: The internal ID for the listing. If it is already tracked, returns the
           existing listing_id instead.
         SKIPPED: A string starting with "SKIPPED:" — this listing is already known and no
           longer tracked (it sold, ended, or the user untracked it). Record nothing for it
           and do not log it as a rejection either; move on.
+        SLOTS FULL: A string starting with "SLOTS FULL:" — every slot of this watch is
+          taken, or the replacement you asked for is not allowed; the reason is spelled
+          out. Nothing was saved and nothing changed. Do not log the candidate as a
+          rejection; move on.
         REFUSED: A string starting with "REFUSED:" — this listing's photos crossed the
           user's authenticity auto-reject threshold (see check_images). Do not retry;
           call log_listing_check with reason "authenticity" instead and move on.
@@ -133,9 +147,15 @@ async def save_listing(
         return refused
     if not 0 <= match_score <= 100:
         return f"Error: match_score must be an integer from 0 to 100, got {match_score}"
+    if price is not None and price <= 0:
+        return "Error: price must be the real price shown on the page, greater than zero"
+    currency = currency.upper()
+    if not re.fullmatch(r"[A-Z]{3}", currency):
+        return f"Error: currency must be a three-letter code like USD, got {currency!r}"
     # both reach a notification body and the next scan's prompt (S5)
     title = clip_text(title, MAX_TITLE)
     match_summary = clip_text(match_summary, MAX_SUMMARY)
+    parsed = parse_price(price) if price is not None else None
 
     log.info(f"Saving listing for item {item_id} on site {site_id} (watch {watch_id})")
 
@@ -160,47 +180,29 @@ async def save_listing(
                     "log_listing_check with reason 'authenticity' instead and move on."
                 )
 
-            stmt = (
-                insert(Listings)
-                .values(
-                    watch_id=watch_id,
-                    item_id=item_id,
-                    site_id=site_id,
-                    url=url,
-                    title=title,
-                    site_sku=site_sku,
-                    active=True,
-                    match_score=match_score,
-                    match_summary=match_summary,
-                    discovered_by_job_id=unit.job_id,
+            # Every save of this watch queues behind this lock, so the slot
+            # count below is the count the write lands on: two hunts of one
+            # watch on two sites cannot both take its last slot.
+            watch = (
+                await session.execute(
+                    select(Watches.max_listings, Watches.selection_mode)
+                    .where(Watches.id == watch_id)
+                    .with_for_update()
                 )
-                .on_conflict_do_nothing(constraint="uq_watch_site_url")
-            )
-
-            result = await session.execute(stmt)
-            # rowcount 1 = a genuinely new row; 0 = the conflict target existed
-            is_new = result.rowcount == 1
-
-            stmt = (
+            ).one()
+            listing = await session.scalar(
                 select(Listings)
-                .where(
-                    Listings.watch_id == watch_id, Listings.site_id == site_id, Listings.url == url
-                )
+                .where(Listings.watch_id == watch_id)
+                .where(Listings.site_id == site_id)
+                .where(Listings.url == url)
                 .limit(1)
             )
-
-            results = await session.execute(stmt)
-            listing = results.scalar()
-            if listing is None:
-                await session.commit()
-                log.info(f"Unable to fetch the listing id for the item {item_id} on site {site_id}")
-                return f"Unable to fetch the listing id for the item {item_id} on site {site_id}"
-
-            if not listing.active:
+            if listing is not None and listing.active:
+                return int(listing.id)
+            if listing is not None and listing.inactive_reason != "replaced":
                 # Sold, ended, or untracked by the user: not a discovery, and
                 # handing back its id would let price checks pile up on a row
                 # the UI no longer shows.
-                await session.commit()
                 log.info(f"Skipping listing save for watch {watch_id}: known, inactive ({url})")
                 return (
                     "SKIPPED: this listing is already known and no longer tracked (it "
@@ -208,48 +210,234 @@ async def save_listing(
                     "do not log it as a rejection; move on."
                 )
 
-            listing_id = int(listing.id)
-            if is_new:
-                unit.stats["new_listings"] += 1
-                # the discovery is watched before the hunt that found it has
-                # even finished — one transaction, so a listing can never
-                # exist without a check ahead of it
-                await job_queue.enqueue_recheck(
-                    session,
-                    listing_id=listing_id,
-                    watch_id=watch_id,
-                    item_id=item_id,
-                    site_id=site_id,
+            verdict = None
+            if parsed is not None:
+                context = await _price_context(session, listing, item_id)
+                verdict = validate_observation(
+                    parsed, currency, listing=context, market=context["market"]
                 )
-                if unit.job_id is not None:
+                if not verdict.ok:
+                    return f"Error: {verdict.reason} — re-read the page and report what it shows"
+
+            # From here the save takes a slot — a new row, or a replaced one
+            # coming back — and a full watch only has one to give by trading.
+            tracked = await session.scalar(
+                select(func.count())
+                .select_from(Listings)
+                .where(Listings.watch_id == watch_id)
+                .where(Listings.active)
+            )
+            replaced = None
+            if tracked >= watch.max_listings:
+                replaced, refusal = await _replacement(
+                    session, unit, watch.selection_mode, parsed, verdict
+                )
+                if refusal:
+                    log.info(f"Refusing listing save for watch {watch_id}: {refusal}")
+                    return refusal
+                replaced.active = False
+                replaced.inactive_reason = "replaced"
+                # the chain of checks ends with the tracking, in the same breath
+                await job_queue.cancel_recheck(session, replaced.id)
+
+            if listing is None:
+                listing_id = await session.scalar(
+                    insert(Listings)
+                    .values(
+                        watch_id=watch_id,
+                        item_id=item_id,
+                        site_id=site_id,
+                        url=url,
+                        title=title,
+                        site_sku=site_sku,
+                        active=True,
+                        match_score=match_score,
+                        match_summary=match_summary,
+                        discovered_by_job_id=unit.job_id,
+                    )
+                    .returning(Listings.id)
+                )
+            else:
+                # A listing a swap traded away, found again: the same row
+                # comes back with its price history, judged afresh.
+                listing_id = int(listing.id)
+                listing.active = True
+                listing.inactive_reason = None
+                listing.title = title
+                listing.site_sku = site_sku
+                listing.match_score = match_score
+                listing.match_summary = match_summary
+            is_new = listing is None
+
+            unit.stats["new_listings"] += 1
+            # the discovery is watched before the hunt that found it has
+            # even finished — one transaction, so a listing can never
+            # exist without a check ahead of it
+            await job_queue.enqueue_recheck(
+                session,
+                listing_id=listing_id,
+                watch_id=watch_id,
+                item_id=item_id,
+                site_id=site_id,
+            )
+            if unit.job_id is not None:
+                if replaced is not None:
+                    # the ending comes first, as it happened; its ts is also
+                    # the clock that hides the old URL from the next hunts
                     await job_queue.add_event(
                         session,
                         unit.job_id,
-                        "success",
-                        "listing_discovered",
-                        f'Saved as listing #{listing_id} — "{title}" (match {match_score})',
-                        {"listing_id": listing_id, "item_id": item_id},
+                        "info",
+                        "listing_ended",
+                        f'Replaced listing #{replaced.id} "{replaced.title}" with listing '
+                        f'#{listing_id} "{title}"',
+                        {
+                            "listing_id": int(replaced.id),
+                            "item_id": item_id,
+                            "reason": "replaced",
+                            "replaced_by": listing_id,
+                        },
                     )
-            await session.commit()
-
-            log.info(f"Successfully created listing for item {item_id} on site {site_id}")
-            if is_new:
-                # committed above, so this is a pure side effect — a failed
-                # enqueue can't change what this tool returns
-                await enqueue_new_listing(
-                    watch_id,
-                    item_id,
-                    site_id,
-                    listing_id,
-                    url,
-                    title,
-                    match_score,
-                    match_summary,
+                await job_queue.add_event(
+                    session,
+                    unit.job_id,
+                    "success",
+                    "listing_discovered",
+                    (
+                        f'Saved as listing #{listing_id} — "{title}" (match {match_score})'
+                        if is_new
+                        else f'Tracking listing #{listing_id} again — "{title}" '
+                        f"(match {match_score})"
+                    ),
+                    {"listing_id": listing_id, "item_id": item_id},
                 )
-            return listing_id
+            if replaced is not None:
+                unit.swap.done = True
+
+            if parsed is None:
+                await session.commit()
+            else:
+                # the price the save was judged on is the price on record,
+                # written in the same transaction as the save itself
+                await record_price_check(
+                    session,
+                    unit,
+                    listing_id=listing_id,
+                    price=parsed,
+                    currency=currency,
+                    in_stock=True,
+                    status="ok",
+                    method="llm",
+                    confirmed=verdict.confirmed,
+                    notifiable=verdict.notifiable,
+                )
+                unit.stats["listings_checked"] += 1
+                unit.stats["prices_found"] += 1
         except Exception as e:
             log.error(f"Error recording listing for item {item_id} on site {site_id}: {e}")
             return f"Error recording listing for item {item_id} on site {site_id}: {e}"
+
+    log.info(f"Successfully saved listing {listing_id} for item {item_id} on site {site_id}")
+    if is_new:
+        # committed above, so this is a pure side effect — a failed enqueue
+        # can't change what this tool returns. A listing brought back was
+        # announced the first time it was found.
+        await enqueue_new_listing(
+            watch_id,
+            item_id,
+            site_id,
+            listing_id,
+            url,
+            title,
+            match_score,
+            match_summary,
+        )
+    if parsed is not None and verdict.confirmed:
+        await learn_locator(unit, listing_id, parsed)
+    return listing_id
+
+
+async def _price_context(session, listing: Listings | None, item_id: int) -> dict:
+    """What validate_observation judges a price given to save_listing against.
+
+    A listing brought back has its own history, read the same way a price
+    check reads it; a new one has only the item's market.
+    """
+    if listing is not None:
+        return await get_price_context(int(listing.id))
+    market = await session.get(MarketPrices, item_id)
+    return {
+        "last_price": None,
+        "unconfirmed_price": None,
+        "market": (
+            {"status": market.status, "tiers": market.tiers, "currency": market.currency}
+            if market
+            else None
+        ),
+    }
+
+
+async def _replacement(
+    session, unit: UnitContext, selection_mode: str, price: Decimal | None, verdict
+) -> tuple[Listings | None, str | None]:
+    """The listing a save on a full watch trades away, or why it may not.
+
+    The model proposes the trade; this is where code checks it (decision 10).
+    Only a swap hunt may trade, once, for the listing it picked with
+    disable_listing(reason="replaced"), and only with a price it can stand
+    behind. In cheapest mode that price must be strictly lower than the
+    traded listing's last confirmed one — a swap never trades sideways. In
+    best-match mode fit is the model's call; the price is still recorded.
+
+    Returns:
+      (the listing to retire, None), or (None, the model-facing refusal).
+    """
+    full = "SLOTS FULL: every slot of this watch is filled"
+    leftover = "Leftover good candidates are not rejections — do not log them; move on."
+    if unit.swap is None:
+        return None, f"{full}, so nothing more can be saved on this hunt. {leftover}"
+    if unit.swap.done:
+        return None, f"SLOTS FULL: this hunt has already made its one swap. {leftover}"
+    if unit.swap.replaced_listing_id is None:
+        return None, (
+            f"{full}. To trade this candidate in, first call disable_listing with the "
+            f'weakest tracked listing\'s id and reason "replaced", then call save_listing '
+            f"again with price."
+        )
+
+    replaced_id = unit.swap.replaced_listing_id
+    replaced = await session.get(Listings, replaced_id)
+    if replaced is None or not replaced.active or replaced.watch_id != unit.watch_id:
+        unit.swap.replaced_listing_id = None
+        return None, (
+            f"{full}, and listing {replaced_id} is no longer tracked. Pick again from "
+            f"TRACKED LISTINGS."
+        )
+    if price is None:
+        return None, (
+            f"Error: a save that replaces listing {replaced_id} needs price — the price shown "
+            f"on this listing's page."
+        )
+    if not verdict.confirmed:
+        return None, (
+            f"SLOTS FULL: {price} is out of line with this item's market ({verdict.reason}), "
+            f"and a trade needs a price that can be believed, so listing {replaced_id} stays "
+            f"tracked. Re-read the page; if that is really the price, move on."
+        )
+    if selection_mode == "cheapest":
+        if not verdict.notifiable:
+            return None, (
+                f"SLOTS FULL: a price in another currency cannot be compared with listing "
+                f"{replaced_id}'s, so it stays tracked. {leftover}"
+            )
+        replaced_price = (await get_price_context(replaced_id))["last_price"]
+        if replaced_price is not None and price >= replaced_price:
+            return None, (
+                f"SLOTS FULL: {price} is not lower than listing {replaced_id}'s {replaced_price}"
+                f" — in cheapest mode a replacement must be strictly cheaper, so listing "
+                f"{replaced_id} stays tracked. {leftover}"
+            )
+    return replaced, None
 
 
 async def save_price_check(
@@ -439,16 +627,27 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
     price is now an auction bid. Call this once per listing; disabling an
     already-inactive listing is harmless.
 
+    On a hunt for something better (your instructions show a TRACKED LISTINGS
+    block), reason "replaced" picks the tracked listing your next save_listing
+    will replace. It does not untrack anything by itself: the listing stays
+    tracked until that save goes through, and if code refuses the save, nothing
+    changes.
+
     Args:
       listing_id: The exact listing id to disable - the listing_id you were given to
-        re-check, or one save_listing returned. Any other id is refused.
+        re-check, one save_listing returned, or (with "replaced") one from TRACKED
+        LISTINGS. Any other id is refused.
       reason: Exactly one of "sold", "ended", "auction" - "sold"/"ended" matching the
-        status you just saved, "auction" when the page offers only bids.
+        status you just saved, "auction" when the page offers only bids. "replaced"
+        only on a hunt for something better, for the weakest tracked listing, right
+        before the save_listing that replaces it.
     Returns:
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
     unit = unit_of(runtime)
+    if reason == "replaced":
+        return await _pick_replacement(listing_id, unit)
     if reason not in DISABLE_REASONS:
         return f"Error: reason must be one of {', '.join(DISABLE_REASONS)}, got {reason!r}"
 
@@ -477,6 +676,50 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
     # commit, so a failed wake never undoes the ending (the sweep catches up)
     await job_queue.wake_hunts(unit.watch_id)
     return f"Listing {listing_id} marked inactive"
+
+
+async def _pick_replacement(listing_id: int, unit: UnitContext) -> str:
+    """disable_listing(reason="replaced"): remember which listing the next
+    save gives up, and write nothing.
+
+    Nothing is untracked here because the trade is not decided here. Only
+    save_listing knows the candidate's price, so only it can tell whether the
+    trade is allowed; retiring the old listing now would leave the watch a
+    listing short whenever that save is refused. No hunt is woken either: the
+    slot this frees is refilled in the same transaction that frees it.
+    """
+    if unit.swap is None:
+        return (
+            'Error: reason "replaced" is only for a hunt looking for something better than '
+            'a full watch\'s weakest listing, and this hunt is not one. Use "sold", "ended" '
+            'or "auction".'
+        )
+    if unit.swap.done:
+        return "Error: this hunt has already made its one swap — replace nothing more."
+
+    async with AsyncSessionLocal() as session:
+        try:
+            await assert_writable(session, listing_id, unit)
+            active = await session.scalar(select(Listings.active).where(Listings.id == listing_id))
+        except UnitMismatch as e:
+            log.info(f"Refusing replacement pick: {e}")
+            return str(e)
+        except Exception as e:
+            log.error(f"Error reading listing {listing_id}: {e}")
+            return f"Error reading listing {listing_id}: {e}"
+    if not active:
+        return (
+            f"Error: listing {listing_id} is not tracked any more — pick the weakest listing "
+            f"from TRACKED LISTINGS."
+        )
+
+    unit.swap.replaced_listing_id = listing_id
+    log.info(f"Listing {listing_id} picked for replacement (watch {unit.watch_id})")
+    return (
+        f"Listing {listing_id} will be replaced by your next save_listing call — pass that "
+        f"call the new listing's price. Listing {listing_id} stays tracked until then, and "
+        f"if the save is refused, nothing changes."
+    )
 
 
 async def log_listing_check(

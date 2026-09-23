@@ -646,6 +646,22 @@ class TestHuntChain:
 
         assert db(scenario()) == []
 
+    def test_a_swap_hunt_that_leaves_the_watch_full_leaves_nothing_behind(self):
+        # the swap traded one listing for another; the watch is as full as
+        # it was, so decision 9 holds and nothing is queued after it
+        async def scenario():
+            ids = await seed_scope_graph()
+            await set_watch(ids["watch_a"], max_listings=1)
+            (job_id,) = await seed(pending_job(ids, kind="hunt", payload={"swap": True}))
+            claimed = await job_queue.claim("w1", ("hunt",))
+            await job_queue.complete(job_id, {"new_listings": 1, "listings_checked": 4})
+            return claimed, await read_hunts(status="pending")
+
+        claimed, pending = db(scenario())
+        # the flag reaches the worker with the claim
+        assert claimed["payload"] == {"swap": True}
+        assert pending == []
+
     def test_with_hunting_off_nothing_follows(self, monkeypatch):
         monkeypatch.setattr(job_queue, "HUNT_ENABLED", False)
 
@@ -674,6 +690,8 @@ class TestSweep:
             [(ids["watch_a"], ids["site_a"]), (ids["watch_b"], ids["site_b"])]
         )
         assert all(h["reason"] == "sweep" and h["user_id"] is None for h in hunts)
+        # a swap is only ever a person's request (decision 10)
+        assert all(h["payload"] is None for h in hunts)
 
     def test_a_full_watch_gets_nothing(self):
         async def scenario():

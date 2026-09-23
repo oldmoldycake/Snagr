@@ -66,6 +66,7 @@ def job(kind="recheck", job_id=1, **overrides):
         "priority": 0,
         "attempts": 1,
         "reason": None,
+        "payload": None,
         **overrides,
     }
 
@@ -196,8 +197,9 @@ def wire(monkeypatch, **overrides):
             },
         )
 
-    async def hunt(agent_, job_id, row, browser):
+    async def hunt(agent_, job_id, row, browser, *, swap):
         seen.setdefault("hunts", []).append(job_id)
+        seen.setdefault("swaps", []).append(swap)
         if "hunt_raises" in overrides:
             raise overrides["hunt_raises"]
         return overrides.get(
@@ -326,6 +328,13 @@ class TestHuntPath:
         stats = asyncio.run(worker.run_job(job("hunt")))
         assert stats["new_listings"] == 2
         assert stats["duration_ms"] >= 0
+
+    def test_only_a_job_flagged_swap_runs_as_a_swap_hunt(self, monkeypatch):
+        seen = wire(monkeypatch)
+        asyncio.run(worker.run_job(job("hunt", payload={"swap": True})))
+        asyncio.run(worker.run_job(job("hunt", payload={"backoff_minutes": 30})))
+        asyncio.run(worker.run_job(job("hunt")))
+        assert seen["swaps"] == [True, False, False]
 
 
 class TestGroundPath:

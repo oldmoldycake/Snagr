@@ -41,6 +41,7 @@ from database import (
     get_known_listing_urls,
     get_market_price,
     get_price_context,
+    get_tracked_listings,
     has_verified_locator,
 )
 from jobs import append_event, status
@@ -51,7 +52,7 @@ from langchain_mcp_adapters.tools import load_mcp_tools
 from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 from locators import PageReader, reply_text
-from observations import UnitContext
+from observations import Swap, UnitContext
 from prompt import generate_prompt, generate_recheck_prompt
 from tools import (
     check_images,
@@ -329,12 +330,17 @@ async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str
         log.warning(f"Post-unit locator learn failed for listing {listing_id}: {e}")
 
 
-async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
+async def run_hunt_job(agent, job_id: int, row, browser, *, swap: bool = False) -> dict:
     """One hunt: search a site for listings that fit one watch.
 
     The model is told how many of the watch's slots are already in use and
     which URLs this pair already knows, so it neither re-judges a rejection
     nor over-fills the watch. Raises on failure — the worker counts it.
+
+    A swap hunt (swap=True, a person's "hunt now" on a full watch) is the one
+    hunt that runs with no open slot: the model is shown the tracked listings
+    weakest first and may trade the weakest for something better, once.
+    Should a slot have freed since it was queued, it is an ordinary hunt.
 
     Returns:
       The unit's tally plus the tokens it spent, which becomes the job's stats.
@@ -346,13 +352,16 @@ async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
     item_id = row["item_id"]
     item_name = row["item_name"]
     max_listings = int(row["max_listings"])
+    mode = "best match" if row["selection_mode"] == "best_match" else "cheapest"
 
     # Re-read right before searching: a slot can fill between the moment the
     # job was queued and the moment it runs, and a full watch should cost no
-    # browser time and no tokens (decision 9).
+    # browser time and no tokens (decision 9) — unless a person asked for
+    # something better than what it holds.
     tracked = await get_active_listing_count(watch_id)
     open_slots = max_listings - tracked
-    if open_slots <= 0:
+    swap_listings = None
+    if open_slots <= 0 and not swap:
         log.info(f"Skipping {site_name} for {item_name}: all {max_listings} slots in use")
         await append_event(
             job_id,
@@ -361,18 +370,28 @@ async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
             f"All {max_listings} slots for {item_name} are filled — nothing to hunt for",
         )
         return {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
+    if open_slots <= 0:
+        swap_listings = await get_tracked_listings(watch_id)
+        started = (
+            f'Hunting {site_name} for something better than "{item_name}"\'s weakest '
+            f"tracked listing — all {max_listings} slots filled, {mode} mode"
+        )
+    else:
+        started = (
+            f'Hunting {site_name} for "{item_name}" — {open_slots} open '
+            f"slot{'' if open_slots == 1 else 's'}, {mode} mode"
+        )
 
     log.info(
         f"Hunting {site_name} for watch {watch_id} (user {user_id}): "
         f"item {item_id} ({item_name}) at {row['base_url']}"
+        + (" — swap hunt" if swap_listings is not None else "")
     )
     await append_event(
         job_id,
         "info",
         "job_started",
-        f'Hunting {site_name} for "{item_name}" — {open_slots} open '
-        f"slot{'' if open_slots == 1 else 's'}, "
-        f"{'best match' if row['selection_mode'] == 'best_match' else 'cheapest'} mode",
+        started,
         {"item_id": int(item_id), "site_id": int(site_id)},
     )
 
@@ -402,6 +421,7 @@ async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
         market=dict(market_row) if market_row else None,
         expected_price=str(expected_price) if expected_price is not None else None,
         condition_hint=row["condition_hint"],
+        swap_listings=swap_listings,
     )
     unit = UnitContext(
         watch_id=int(watch_id),
@@ -410,6 +430,7 @@ async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
         site_base_url=row["base_url"],
         browser=browser,
         job_id=job_id,
+        swap=Swap() if swap_listings is not None else None,
     )
 
     messages = await _stream(agent, prompt, agent_config(f"job-{job_id}", user_id, unit), job_id)

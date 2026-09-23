@@ -9,7 +9,7 @@ here against the live DB."""
 import logging
 import os
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal, get_args
 
 from dotenv import load_dotenv
@@ -168,6 +168,12 @@ class Listings(Base):
 # written by swap hunts and by the user.
 DisableReason = Literal["sold", "ended", "auction"]
 DISABLE_REASONS: tuple[str, ...] = get_args(DisableReason)
+
+# How long a listing a swap hunt traded away stays out of that pair's
+# discoveries. A churn guard, not a tunable: shorter lets two near-identical
+# listings flip-flop on every "hunt for better", longer hides a real bargain
+# for days. §8 item 13 of docs/design/perpetual-hunter.md.
+REPLACED_HIDDEN_FOR = timedelta(hours=24)
 
 
 class PriceChecks(Base):
@@ -530,6 +536,12 @@ async def get_known_listing_urls(watch_id: int, site_id: int) -> Sequence[str]:
     and re-saving it would silently reattach price checks to a row the UI
     no longer shows.
 
+    The one exception is a listing a swap hunt traded away: it is hidden for
+    REPLACED_HIDDEN_FOR, so two similar listings cannot flip-flop hunt after
+    hunt, and then it is findable again — save_listing brings that row back
+    rather than skipping it. The clock is the swap's own listing_ended event,
+    written in the same transaction as the trade.
+
     Args:
       watch_id: The internal id of the watch to look up listings for.
       site_id: The internal id of the site to look up listings for.
@@ -541,10 +553,23 @@ async def get_known_listing_urls(watch_id: int, site_id: int) -> Sequence[str]:
     log.info(f"Fetching known listing urls for watch {watch_id} on site {site_id}")
     async with AsyncSessionLocal() as session:
         try:
+            recently_replaced = (
+                select(JobEvents.id)
+                .where(JobEvents.event_type == "listing_ended")
+                .where(JobEvents.payload["listing_id"].as_integer() == Listings.id)
+                .where(JobEvents.payload["reason"].as_string() == "replaced")
+                .where(JobEvents.ts > datetime.now(UTC) - REPLACED_HIDDEN_FOR)
+            )
             stmt = (
                 select(Listings.url)
                 .where(Listings.watch_id == watch_id)
                 .where(Listings.site_id == site_id)
+                .where(
+                    or_(
+                        Listings.inactive_reason.is_distinct_from("replaced"),
+                        recently_replaced.exists(),
+                    )
+                )
                 .order_by(Listings.id)
             )
 
@@ -581,6 +606,47 @@ async def get_active_listing_count(watch_id: int) -> int:
             .where(Listings.active)
         )
         return (await session.execute(stmt)).scalar_one()
+
+
+async def get_tracked_listings(watch_id: int) -> list[dict]:
+    """
+    The watch's active listings as a swap hunt weighs them: each with its
+    site, last confirmed price and match score — the facts the TRACKED
+    LISTINGS block ranks them by.
+
+    Raises on a failed query, like get_active_listing_count: a swap hunt
+    that cannot see what it would be trading away has no business trading.
+
+    Args:
+      watch_id: The internal id of the watch.
+    Returns:
+      One dict per active listing with keys listing_id, site_name, title,
+      price (a Decimal, or None when no price was ever believed) and
+      match_score. Unordered — the prompt ranks them by selection mode.
+    """
+    last_price = (
+        select(PriceChecks.price)
+        .where(PriceChecks.listing_id == Listings.id)
+        .where(PriceChecks.price > 0)
+        .where(PriceChecks.confirmed)
+        .order_by(PriceChecks.checked_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(
+                Listings.id.label("listing_id"),
+                Sites.name.label("site_name"),
+                Listings.title,
+                last_price.label("price"),
+                Listings.match_score,
+            )
+            .join(Sites, Sites.id == Listings.site_id)
+            .where(Listings.watch_id == watch_id)
+            .where(Listings.active)
+        )
+        return [dict(row) for row in rows.mappings()]
 
 
 async def get_price_context(listing_id: int) -> dict:

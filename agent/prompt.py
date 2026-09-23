@@ -22,6 +22,7 @@ async def generate_prompt(
     market: dict | None = None,
     expected_price: str | None = None,
     condition_hint: str | None = None,
+    swap_listings: list[dict] | None = None,
 ) -> str:
     """
     Build the instruction prompt for the LLM agent for ONE (watch, site) pair.
@@ -60,6 +61,11 @@ async def generate_prompt(
                               string; overrides market stats as the reference.
         condition_hint:       The condition tier this watch cares about, to
                               emphasize in the market digest.
+        swap_listings:        Set on a swap hunt only — a person's "hunt now"
+                              on a full watch: the watch's tracked listings
+                              (get_tracked_listings rows). Replaces the slot
+                              budget with the TRACKED LISTINGS block and its
+                              one-trade rule.
 
     return:
         str: The prompt for the LLM agent.
@@ -84,6 +90,7 @@ async def generate_prompt(
         f"them with `log_listing_check`; a later run will find them again once a slot "
         f"frees up."
     )
+    stop_line = f"once you have saved the selected listings (up to {open_slots})"
 
     # --- Selection/ranking block: branches on selection_mode. -----------------
     if selection_mode == "best_match":
@@ -110,6 +117,14 @@ async def generate_prompt(
             f"{open_slots} cheapest listing(s) that are genuinely the item described. "
             f"Ignore the criteria for ranking; price is the only ranking signal."
         )
+
+    # --- Swap hunt: a full watch, hunted because a person asked (decision 10).
+    # There are no open slots, so the only save is a trade for the weakest.
+    if swap_listings is not None:
+        slots_block, selection_block = swap_blocks(
+            swap_listings, max_listings, selection_mode, criteria
+        )
+        stop_line = "once you have made your one swap"
 
     # --- Authenticity block: skipped entirely if the user opted in. ----------
     if allow_reproductions:
@@ -281,8 +296,11 @@ FOR EACH LISTING YOU DECIDE TO SAVE
                         Example: "dry battery ✓, damaged case ✓, cart only, no repro flags"
      `save_listing` returns a `listing_id` (int) on success, "SKIPPED: …" for a
      listing already known and no longer tracked (record nothing, log nothing,
-     move on), or an error string.
-  2. If you got a numeric `listing_id`, immediately call `save_price_check` with:
+     move on), "SLOTS FULL: …" when there is no slot to give it (nothing was
+     saved; log nothing, move on), or an error string.
+  2. If you got a numeric `listing_id`, immediately call `save_price_check`
+     (skip this step if you passed `price` to `save_listing` — it already
+     recorded it) with:
        - listing_id: the EXACT id returned by that save_listing call. NEVER
                      guess, infer, or reuse a listing_id you did not just
                      receive — a wrong id silently attaches this price to a
@@ -315,11 +333,97 @@ FOR EACH CANDIDATE YOU EVALUATE BUT DO NOT SAVE
   or listings you never opened.
 
 WHEN DONE
-  Stop once you have saved the selected listings (up to {open_slots}), or once
-  you are confident the site has no reasonable match. Do not loop endlessly.
+  Stop {stop_line}, or once you are confident the site has no
+  reasonable match. Do not loop endlessly.
 """
 
     return prompt
+
+
+def swap_blocks(
+    tracked: list[dict], max_listings: int, selection_mode: str, criteria: str
+) -> tuple[str, str]:
+    """Build the TRACKED LISTINGS block and its selection rule for a swap hunt.
+
+    The listings are shown weakest first under the watch's own mode, because
+    the weakest is the only one a candidate has to beat: in cheapest mode the
+    highest price (no believed price at all is weakest of all), in best-match
+    mode the lowest match score with the higher price breaking a tie. Code
+    checks the trade in save_listing either way; the order is what lets the
+    model name the right listing without doing the ranking itself.
+
+    Returns:
+      (the TRACKED LISTINGS block, the selection block), in place of the slot
+      budget and the count-based selection rule, which a full watch has no
+      use for.
+    """
+
+    def price_key(row: dict):
+        # higher is weaker; unpriced sorts before every priced listing
+        return (row["price"] is not None, -(row["price"] or 0))
+
+    if selection_mode == "best_match":
+        ranked = sorted(
+            tracked,
+            key=lambda row: (row["match_score"] or 0, *price_key(row), row["listing_id"]),
+        )
+    else:
+        ranked = sorted(tracked, key=lambda row: (*price_key(row), row["listing_id"]))
+
+    lines = [
+        f"    - listing_id={row['listing_id']} · {row['site_name']} · "
+        + (f"${row['price']}" if row["price"] is not None else "no confirmed price")
+        + f" · match {row['match_score'] if row['match_score'] is not None else '?'}"
+        + f' · "{row["title"] or ""}"'
+        for row in ranked
+    ]
+    weakest = ranked[0]
+    tracked_block = (
+        f"TRACKED LISTINGS: all {max_listings} slot(s) are filled\n"
+        f"  This watch already tracks its {max_listings} listing(s), across every site. "
+        f"This hunt is looking for something BETTER than the weakest of them, which is "
+        f"listed first (weakest to strongest):\n" + "\n".join(lines) + "\n"
+        "  Save a candidate only if it beats the weakest listing above. To make the trade:\n"
+        f"    1. call `disable_listing` with listing_id={weakest['listing_id']} and reason "
+        f'"replaced";\n'
+        "    2. then call `save_listing` for the new listing, WITH its `price` (and\n"
+        "       `currency`). That price is recorded for you — do NOT call\n"
+        "       `save_price_check` for the new listing.\n"
+        '  Code checks the trade and answers "SLOTS FULL: …" if it is not allowed; then\n'
+        "  nothing has changed and the weakest listing stays tracked.\n"
+        "  At most ONE swap this hunt: after it, save nothing more. If nothing beats the\n"
+        "  weakest, save nothing — that is a normal outcome. Leftover good candidates are\n"
+        "  NOT rejections — do not log them with `log_listing_check`."
+    )
+
+    if selection_mode == "best_match":
+        score_bar = (
+            f" (a higher match_score than {weakest['match_score']})"
+            if weakest["match_score"] is not None
+            else ""
+        )
+        selection_block = (
+            f"SELECTION MODE: best_match.\n"
+            f'The user is looking for: "{criteria}".\n'
+            f"Search the site thoroughly, judge every reasonable candidate against the "
+            f"criteria, and pick the best fit. It beats the weakest tracked listing only if "
+            f"it fits the criteria clearly better{score_bar}; when the fit is equal, "
+            f"only a lower price beats it. Do not trade for a candidate whose match_score "
+            f"would be below 50."
+        )
+    else:
+        bar = (
+            f"strictly lower than ${weakest['price']}"
+            if weakest["price"] is not None
+            else "any believable price (the weakest has no confirmed price)"
+        )
+        selection_block = (
+            f"SELECTION MODE: cheapest.\n"
+            f"Find the cheapest listing on this site that is genuinely the item described. "
+            f"It beats the weakest tracked listing only if its price is {bar}. Ignore the "
+            f"criteria for ranking; price is the only ranking signal."
+        )
+    return tracked_block, selection_block
 
 
 def market_price_block(
