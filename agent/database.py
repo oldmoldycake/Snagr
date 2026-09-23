@@ -152,6 +152,8 @@ class Listings(Base):
         BigInteger,
         ForeignKey("jobs.id", ondelete="SET NULL", use_alter=True, name="fk_listings_job"),
     )
+    # sold | ended | auction | replaced | untracked; null while active
+    inactive_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
@@ -214,6 +216,8 @@ class Watches(Base):
     selection_mode: Mapped[str] = mapped_column(Text, default="cheapest")
     max_listings: Mapped[int] = mapped_column(default=3)
     allow_reproductions: Mapped[bool] = mapped_column(Boolean, default=False)
+    # null = RECHECK_INTERVAL_MINUTES; jobs.py floors it when queueing a check
+    recheck_interval_minutes: Mapped[int | None] = mapped_column()
     last_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

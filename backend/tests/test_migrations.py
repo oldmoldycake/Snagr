@@ -1,10 +1,10 @@
-"""Migrations 015 and 016, up and down, against a scratch database.
+"""Migrations 015 to 017, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
 and rewrites stored token scopes, and both of those are only reversible if the
-downgrade really puts them back; 016 is a data backfill, and the rows it
-writes are the only thing there is to test. It builds its own database
+downgrade really puts them back; 016 and 017 are data backfills, and the rows
+they write are the only thing there is to test. It builds its own database
 (`snagr_test_...`) rather than touching the suite's, and drops it again on the
 way out.
 """
@@ -190,3 +190,27 @@ async def test_016_queues_a_first_check_for_listings_that_predate_the_queue(scra
     _alembic("downgrade", "015")
     _alembic("upgrade", "016")
     assert await scratch.fetchval("SELECT count(*) FROM jobs WHERE kind = 'recheck'") == 2
+
+
+async def test_017_marks_listings_already_inactive_as_ended(scratch):
+    """The reason used to be logged and nowhere else, so an inactive row
+    upgraded from before 017 gets the one reason true of all of them; a
+    tracked row has no reason at all."""
+    _alembic("upgrade", "015")
+    ids = await _seed_listings(scratch)
+
+    _alembic("upgrade", "017")
+
+    reasons = {
+        row["id"]: row["inactive_reason"]
+        for row in await scratch.fetch("SELECT id, inactive_reason FROM listings")
+    }
+    assert reasons == {ids["unqueued"]: None, ids["queued"]: None, ids["untracked"]: "ended"}
+    assert await scratch.fetchval("SELECT recheck_interval_minutes FROM watches") is None
+
+    _alembic("downgrade", "016")
+    columns = await scratch.fetchval(
+        "SELECT count(*) FROM information_schema.columns "
+        "WHERE column_name IN ('inactive_reason', 'recheck_interval_minutes')"
+    )
+    assert columns == 0
