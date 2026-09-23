@@ -29,4 +29,5 @@ async def get_instance(db: AsyncSession = Depends(get_db)) -> InstanceInfo:
         oidc_provider_name=settings.OIDC_PROVIDER_NAME if settings.oidc_enabled else None,
         vision_enabled=settings.vision_enabled,
         mcp_enabled=settings.MCP_ENABLED,
+        recheck_interval_default=settings.RECHECK_INTERVAL_MINUTES,
     )

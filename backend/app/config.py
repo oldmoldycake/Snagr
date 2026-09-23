@@ -51,10 +51,12 @@ class Settings(BaseSettings):
     MCP_ENABLED: bool = True
 
     # How often the hunter re-reads a tracked listing's price. The agent owns
-    # the cadence; the backend only reports it, on the item page's facts line.
-    # Set the SAME value in agent/.env — the two components do not share a
-    # file (the VISION_SIDECAR_URL precedent).
+    # the cadence; the backend reports the default (InstanceInfo, the facts
+    # line) and refuses a per-watch interval below the floor. Set the SAME
+    # values in agent/.env — the two components do not share a file (the
+    # VISION_SIDECAR_URL precedent).
     RECHECK_INTERVAL_MINUTES: int = 30
+    RECHECK_INTERVAL_FLOOR_MINUTES: int = 5
 
     # Instance / notifications
     APP_VERSION: str = "0.2.1"  # x-release-please-version

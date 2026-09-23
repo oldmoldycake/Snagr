@@ -245,6 +245,7 @@ async def test_get_instance_and_whoami(client):
         instance = await _ok(agent, "get_instance")
         assert instance["mcp_enabled"] is True
         assert instance["vision_enabled"] is False
+        assert instance["recheck_interval_default"] == 30
 
         me = await _ok(agent, "whoami")
         assert me["user"]["email"] == OWNER["email"]
@@ -499,6 +500,54 @@ async def test_item_writes(client, db_session):
         assert (await _error(agent, "create_item", category="nope", name="x"))[
             "code"
         ] == "not_found"
+
+
+async def test_the_check_interval_over_mcp(client, db_session):
+    """Same field, same 422s as REST. The one difference: a tool's null
+    already means "leave it", so going back to the instance default is the
+    word "default"."""
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        created = await _ok(
+            agent,
+            "create_item",
+            category=seed["slug"],
+            name="Leica M6",
+            recheck_interval_minutes=15,
+        )
+        assert created["recheck_interval_minutes"] == 15
+        listed = await _ok(agent, "list_items", search="Leica")
+        assert listed["data"][0]["recheck_interval_minutes"] == 15
+
+        untouched = await _ok(agent, "update_item", item=created["id"], criteria="boxed")
+        assert untouched["recheck_interval_minutes"] == 15
+
+        updated = await _ok(agent, "update_item", item=created["id"], recheck_interval_minutes=60)
+        assert updated["recheck_interval_minutes"] == 60
+        assert updated["recheck"]["interval_minutes"] == 60
+
+        cleared = await _ok(
+            agent, "update_item", item=created["id"], recheck_interval_minutes="default"
+        )
+        assert cleared["recheck_interval_minutes"] is None
+        assert cleared["recheck"]["interval_minutes"] == 30
+
+        for minutes in (4, 1441):
+            for error in (
+                await _error(
+                    agent,
+                    "create_item",
+                    category=seed["slug"],
+                    name="Nikon F3",
+                    recheck_interval_minutes=minutes,
+                ),
+                await _error(
+                    agent, "update_item", item=created["id"], recheck_interval_minutes=minutes
+                ),
+            ):
+                assert error["code"] == "validation_error"
+                assert set(error["fields"]) == {"recheck_interval_minutes"}
 
 
 async def test_job_tools_need_the_jobs_scope(client):
