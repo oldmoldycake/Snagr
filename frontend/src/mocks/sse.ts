@@ -124,6 +124,8 @@ export function startDemoHunt(job: MockJob) {
   const item = store.items.find((i) => i.id === job.item_id)!
   const site = store.sites.find((s) => s.id === job.site_id)!
   const slotsOpen = Math.max(0, item.max_listings - activeListings(item.id).length)
+  // a person's hunt on a full watch: its one save is a trade for the weakest
+  const swap = slotsOpen === 0 && job.payload?.swap === true
   const stats = {
     listings_checked: 0,
     prices_found: 0,
@@ -145,7 +147,10 @@ export function startDemoHunt(job: MockJob) {
       job,
       'info',
       'job_started',
-      `Hunting ${site.name} for "${item.name}" — ${slotsOpen} open slot${slotsOpen === 1 ? '' : 's'}` +
+      (swap
+        ? `Hunting ${site.name} for something better than "${item.name}"'s weakest tracked listing — ` +
+          `all ${item.max_listings} slots filled`
+        : `Hunting ${site.name} for "${item.name}" — ${slotsOpen} open slot${slotsOpen === 1 ? '' : 's'}`) +
         `, ${item.selection_mode === 'best_match' ? 'best match' : 'cheapest'} mode`,
     )
   })
@@ -183,7 +188,13 @@ export function startDemoHunt(job: MockJob) {
   clock += 1600
   at(clock, () => {
     stats.listings_checked += 1
-    if (slotsOpen === 0) return
+    if (slotsOpen === 0 && !swap) return
+    // cheapest mode's weakest: the highest last price
+    const weakest = swap
+      ? activeListings(item.id)
+          .map((l) => ({ listing: l, cents: latestCheck(l.id)?.price_cents ?? Infinity }))
+          .sort((a, b) => b.cents - a.cents)[0]
+      : null
     const title = `${item.name} — Used, Tested & Working`
     const score = 78 + Math.floor(Math.random() * 12)
     const listing: MockListing = {
@@ -200,7 +211,20 @@ export function startDemoHunt(job: MockJob) {
       discovered_by_job_id: job.id,
     }
     store.listings.push(listing)
-    const price = Math.round((item.target_cents ?? 20000) * (0.95 + Math.random() * 0.2))
+    const price =
+      weakest && Number.isFinite(weakest.cents)
+        ? Math.round(weakest.cents * 0.9)
+        : Math.round((item.target_cents ?? 20000) * (0.95 + Math.random() * 0.2))
+    if (weakest) {
+      weakest.listing.active = false
+      emit(
+        job,
+        'info',
+        'listing_ended',
+        `Replaced listing #${weakest.listing.id} "${weakest.listing.title}" with listing #${listing.id} "${title}"`,
+        { listing_id: weakest.listing.id, item_id: item.id, reason: 'replaced', replaced_by: listing.id },
+      )
+    }
     store.checks.push({
       id: newId(),
       listing_id: listing.id,

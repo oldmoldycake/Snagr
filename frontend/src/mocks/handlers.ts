@@ -155,7 +155,8 @@ function enqueueHunt(
   over: Partial<MockJob> = {},
 ): MockJob | null {
   const item = store.items.find((i) => i.id === itemId)!
-  if (activeListings(itemId).length >= item.max_listings) return null
+  // a full watch is hunted only as a person's swap hunt (decision 10)
+  if (activeListings(itemId).length >= item.max_listings && !over.payload?.swap) return null
   const open = store.jobs.find(
     (j) =>
       j.kind === 'hunt' &&
@@ -169,7 +170,7 @@ function enqueueHunt(
       open.priority = over.priority ?? open.priority
       open.reason = (over.reason as MockJob['reason']) ?? open.reason
       open.user_id = over.user_id ?? open.user_id
-      open.payload = null
+      open.payload = over.payload ?? null
     }
     return open
   }
@@ -1340,11 +1341,16 @@ export const handlers = [
     if (body.kind === 'hunt') {
       for (const watch of watches) {
         const sites = sitesOf(watch.item_id).filter((id) => body.scope !== 'site' || id === scopeId)
+        const item = store.items.find((i) => i.id === watch.item_id)!
+        // a full watch still gets a person's hunt: a swap hunt, for something
+        // better than its weakest listing
+        const full = activeListings(item.id).length >= item.max_listings
         for (const siteId of sites) {
           const job = enqueueHunt(watch.id, watch.item_id, siteId, {
             user_id: user.id,
             reason: 'user',
             priority: 100,
+            payload: full ? { swap: true } : null,
           })
           if (job) queued.push(job)
         }
@@ -1365,7 +1371,7 @@ export const handlers = [
         queued.push(job)
       }
     }
-    // an empty data is still a 202 — a full watch asked nothing of the hunter
+    // an empty data is still a 202 — a watch with no site to search asks nothing
     return HttpResponse.json({ data: queued.map(toJob) }, { status: 202 })
   }),
 
