@@ -115,11 +115,12 @@ class TestEnqueue:
         # brought forward, not left sitting two hours out
         assert datetime.fromisoformat(again[0]["run_after"]) <= datetime.now(UTC)
 
-    async def test_a_full_watch_has_nothing_to_hunt_for(self, client, db_session):
-        """Decision 9: a watch with every slot filled costs nothing until one
-        frees. An empty data is still a 202 — the request was understood."""
+    async def test_a_hunt_on_a_full_watch_is_a_swap_hunt(self, client, db_session):
+        """Decision 9 keeps a full watch from hunting on its own; decision 10
+        makes a person's "hunt now" on one the hunt that looks for something
+        better than its weakest listing. The flag rides on the job."""
         user_id = await _sign_in(client)
-        item = await _watched_item(client)
+        item = await _watched_item(client, sites=("eBay", "Mercari"))
         async with _seed_for(db_session, user_id) as sc:
             watch = await _watch_row(sc, user_id)
             item_row = await sc.item(item["name"])
@@ -131,8 +132,38 @@ class TestEnqueue:
             json={"kind": "hunt", "scope": "item", "scope_id": item["id"]},
             headers=CSRF,
         )
-        assert res.status_code == 202
-        assert res.json()["data"] == []
+        assert res.status_code == 202, res.text
+        queued = res.json()["data"]
+        assert sorted(j["site_name"] for j in queued) == ["Mercari", "eBay"]
+        assert {j["reason"] for j in queued} == {"user"}
+        async with db_session() as session:
+            payloads = (
+                await session.execute(select(Jobs.payload).where(Jobs.kind == "hunt"))
+            ).scalars()
+        assert list(payloads) == [{"swap": True}, {"swap": True}]
+
+    async def test_a_hunt_with_room_to_fill_is_no_swap(self, client, db_session):
+        user_id = await _sign_in(client)
+        item = await _watched_item(client)
+        async with _seed_for(db_session, user_id) as sc:
+            # a backing-off hunt, brought forward with its backoff forgotten
+            await sc.db.execute(
+                Jobs.__table__.update()
+                .where(Jobs.kind == "hunt")
+                .values(payload={"backoff_minutes": 60})
+            )
+
+        res = await client.post(
+            "/api/jobs",
+            json={"kind": "hunt", "scope": "item", "scope_id": item["id"]},
+            headers=CSRF,
+        )
+        assert res.status_code == 202, res.text
+        async with db_session() as session:
+            payloads = (
+                await session.execute(select(Jobs.payload).where(Jobs.kind == "hunt"))
+            ).scalars()
+        assert list(payloads) == [None]
 
     async def test_a_recheck_bumps_every_pending_check_in_scope(self, client, db_session):
         user_id = await _sign_in(client)

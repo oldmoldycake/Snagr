@@ -191,7 +191,11 @@ Find any `endpoints.ts` function here:
    (by `reason`, since creation hunts carry the creator's id too), untracking
    a listing, raising `max_listings` or switching `hunt` back on wakes the
    watch's hunts with their backoff forgotten (`wake_hunts`, the twin of
-   `agent/jobs.py::add_hunt_wakes`), and a user's "hunt now" forgets it too. `HUNT_ENABLED` is the operator's kill switch,
+   `agent/jobs.py::add_hunt_wakes`), and a user's "hunt now" forgets it too.
+   On a full watch "hunt now" is still queued, flagged `payload.swap = true`:
+   the swap hunt, the one hunt a full watch gets, which may trade its
+   weakest listing for a better one (decision 10; the agent does the trade).
+   `HUNT_ENABLED` is the operator's kill switch,
    set in both env files: under `false` the agent claims no hunts, so
    `POST /api/jobs {kind: 'hunt'}` answers 409 `hunting_disabled` rather than
    queueing work nothing will claim, and a new watch queues none (the agent's

@@ -14,6 +14,7 @@ import asyncio
 import pytest
 import tools
 from conftest import SITE_BASE_URL, unit_runtime
+from observations import Swap
 from validation import MAX_NOTES, MAX_SUMMARY, MAX_TITLE, clip_text
 
 LISTING_URL = f"{SITE_BASE_URL}/l1"
@@ -72,6 +73,13 @@ class TestSaveListing:
         )
         assert not str(result).startswith("Error: url")
 
+    @pytest.mark.parametrize("price", [0, -5])
+    def test_a_given_price_must_be_real(self, price):
+        result = run(
+            tools.save_listing(LISTING_URL, "t", 80, "f", price=price, runtime=unit_runtime())
+        )
+        assert result.startswith("Error: price must be the real price")
+
     @pytest.mark.parametrize("score", [-1, 101])
     def test_match_score_stays_within_0_100(self, score):
         result = run(
@@ -95,12 +103,23 @@ class TestLogListingCheck:
 
 
 class TestDisableListing:
-    @pytest.mark.parametrize("reason", ["", "listing removed", "replaced", "untracked"])
+    @pytest.mark.parametrize("reason", ["", "listing removed", "untracked"])
     def test_only_the_three_reasons_the_model_can_see_are_accepted(self, reason):
-        # replaced and untracked are real inactive_reasons, but not the
-        # model's to give: swap hunts and the user write those
+        # untracked is a real inactive_reason, but not the model's to give:
+        # the user writes it
         result = run(tools.disable_listing(1, reason, runtime=unit_runtime()))
         assert result.startswith("Error: reason must be one of sold, ended, auction")
+
+    def test_replaced_is_refused_outside_a_swap_hunt(self):
+        # only a person's "hunt now" on a full watch may trade a listing away;
+        # anywhere else "replaced" would just be an untrack with extra steps
+        result = run(tools.disable_listing(1, "replaced", runtime=unit_runtime()))
+        assert result.startswith('Error: reason "replaced" is only for a hunt')
+
+    def test_replaced_is_refused_after_the_one_swap(self):
+        runtime = unit_runtime(swap=Swap(done=True))
+        result = run(tools.disable_listing(1, "replaced", runtime=runtime))
+        assert result.startswith("Error: this hunt has already made its one swap")
 
 
 class TestTextCaps:

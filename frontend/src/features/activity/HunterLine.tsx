@@ -94,7 +94,7 @@ function huntingHalf(detail: ItemDetail): string {
   const { hunt } = detail
   const full = hunt.slots_open === 0
   let slots = full
-    ? `${detail.max_listings} of ${detail.max_listings} slots filled · waiting for one to free`
+    ? `${detail.max_listings} of ${detail.max_listings} slots filled · paused until a slot frees`
     : `${hunt.slots_open} of ${detail.max_listings} slots open`
   // a switched-off watch has nothing queued on its own, so there is no "next"
   if (hunt.enabled && !full && hunt.next_at != null) {

@@ -70,7 +70,9 @@ TERMINAL_STATUSES = ("done", "failed", "cancelled")
 
 # Everything the worker needs to run a job without a second query for the
 # basics; the pools load the unit's own context separately.
-_CLAIMED = "id, kind, user_id, watch_id, site_id, listing_id, item_id, priority, attempts, reason"
+_CLAIMED = (
+    "id, kind, user_id, watch_id, site_id, listing_id, item_id, priority, attempts, reason, payload"
+)
 
 # One statement, so the window between picking a row and owning it does not
 # exist. SKIP LOCKED is what lets several workers claim concurrently; FOR

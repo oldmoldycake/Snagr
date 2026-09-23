@@ -179,8 +179,9 @@ export interface MockJob {
   error: string | null
   stats: MockJobStats | null
   reason: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | 'backoff' | null
-  /** a hunt chain's state: how long this hunt waited after the last came back empty */
-  payload?: { backoff_minutes: number } | null
+  /** a hunt chain's state: how long this hunt waited after the last came back empty;
+   *  swap = a person's hunt on a full watch, trading its weakest listing up */
+  payload?: { backoff_minutes?: number; swap?: boolean } | null
   last_seq: number
   created_at: number
 }
