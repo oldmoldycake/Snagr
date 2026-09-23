@@ -47,6 +47,7 @@ import {
 import {
   effectiveInterval,
   MAX_RECHECK_INTERVAL_MINUTES,
+  HUNT_ENABLED,
   RECHECK_INTERVAL_FLOOR_MINUTES,
   RECHECK_INTERVAL_MINUTES,
   toAdminUser,
@@ -143,9 +144,9 @@ function newJob(kind: MockJob['kind'], over: Partial<MockJob> = {}): MockJob {
 
 /**
  * At most one open hunt per (watch, site) — the partial unique index, in mock
- * form. A pending one is bumped to now, a running one is handed back
- * untouched, and a watch with no open slot gets nothing at all (PR 2b turns
- * that into a swap hunt).
+ * form. A pending one is bumped to now with its backoff forgotten, a running
+ * one is handed back untouched, and a watch with no open slot gets nothing at
+ * all.
  */
 function enqueueHunt(
   watchId: number,
@@ -168,12 +169,31 @@ function enqueueHunt(
       open.priority = over.priority ?? open.priority
       open.reason = (over.reason as MockJob['reason']) ?? open.reason
       open.user_id = over.user_id ?? open.user_id
+      open.payload = null
     }
     return open
   }
   const job = newJob('hunt', { watch_id: watchId, item_id: itemId, site_id: siteId, ...over })
   store.jobs.push(job)
   return job
+}
+
+/**
+ * A freed slot starts the watch's hunts over: a waiting one the hunter queued
+ * itself is brought forward with its backoff forgotten, a site with none gets
+ * one. Nothing for a watch switched off, or with hunting off for the instance.
+ */
+function wakeHunts(watchId: number, itemId: number) {
+  const item = store.items.find((i) => i.id === itemId)!
+  if (!HUNT_ENABLED || item.hunt === false) return
+  for (const job of store.jobs) {
+    if (job.kind !== 'hunt' || job.watch_id !== watchId || job.status !== 'pending') continue
+    if (job.user_id != null) continue
+    job.run_after = Date.now()
+    job.payload = null
+    job.reason = 'slot_freed'
+  }
+  for (const siteId of sitesOf(itemId)) enqueueHunt(watchId, itemId, siteId, { reason: 'slot_freed' })
 }
 
 /** The caller's watches inside a scope, or null when the scope target is unknown. */
@@ -207,6 +227,7 @@ interface TrackingFields {
   max_listings: number
   allow_reproductions: boolean
   recheck_interval_minutes: number | null
+  hunt: boolean
   site_ids: number[] | null
 }
 
@@ -257,6 +278,8 @@ function validateTracking(
     })
   }
 
+  const hunt = body.hunt ?? existing?.hunt ?? true
+
   let site_ids = body.site_ids !== undefined ? body.site_ids : (existing?.site_ids ?? null)
   if (site_ids != null) {
     if (site_ids.some((id) => !category.site_ids.includes(id))) {
@@ -273,6 +296,7 @@ function validateTracking(
     max_listings,
     allow_reproductions,
     recheck_interval_minutes,
+    hunt,
     site_ids,
   }
 }
@@ -345,6 +369,7 @@ export const handlers = [
       vision_enabled: true,
       mcp_enabled: true,
       recheck_interval_default: RECHECK_INTERVAL_MINUTES,
+      hunt_enabled: HUNT_ENABLED,
     })
   }),
 
@@ -753,6 +778,7 @@ export const handlers = [
       max_listings: tracking.max_listings,
       allow_reproductions: tracking.allow_reproductions,
       recheck_interval_minutes: tracking.recheck_interval_minutes,
+      hunt: tracking.hunt,
       site_ids: tracking.site_ids,
       created_at: Date.now(),
     }
@@ -760,9 +786,13 @@ export const handlers = [
     const watch = { id: newId(), item_id: item.id, user_id: user.id, notify: true, target_cents: null }
     store.watches.push(watch)
     // a new watch starts hunting at once — one job per site it will search,
-    // plus the market-price grounding the scan prompts read from
-    for (const siteId of tracking.site_ids ?? category.site_ids) {
-      enqueueHunt(watch.id, item.id, siteId, { user_id: user.id, reason: 'created', priority: 100 })
+    // plus the market-price grounding the scan prompts read from. Hunting off
+    // (for the watch, or for the instance) queues no hunt: creating it is not
+    // a press of Hunt now.
+    if (tracking.hunt && HUNT_ENABLED) {
+      for (const siteId of tracking.site_ids ?? category.site_ids) {
+        enqueueHunt(watch.id, item.id, siteId, { user_id: user.id, reason: 'created', priority: 100 })
+      }
     }
     store.jobs.push(newJob('ground', { item_id: item.id, user_id: user.id, reason: 'created' }))
     return HttpResponse.json(toItemSummary(item), { status: 201 })
@@ -793,6 +823,17 @@ export const handlers = [
     item.max_listings = tracking.max_listings
     item.allow_reproductions = tracking.allow_reproductions
     item.recheck_interval_minutes = tracking.recheck_interval_minutes
+    // switching hunting off drops the hunts the hunter queued for itself; a
+    // pending "hunt now" is the person's own and still runs
+    if ((item.hunt ?? true) && !tracking.hunt) {
+      for (const job of store.jobs) {
+        if (job.kind !== 'hunt' || job.item_id !== item.id || job.status !== 'pending') continue
+        if (job.user_id != null) continue
+        job.status = 'cancelled'
+        job.finished_at = Date.now()
+      }
+    }
+    item.hunt = tracking.hunt
     item.site_ids = tracking.site_ids
     // a shorter interval brings pending checks forward; a longer one is picked
     // up by the successors. Checks on a paused site stay behind the pause, and
@@ -846,10 +887,15 @@ export const handlers = [
     const pending = store.jobs.find(
       (j) => j.kind === 'recheck' && j.listing_id === listing.id && j.status === 'pending',
     )
-    if (!body.active && pending) {
-      pending.status = 'cancelled'
-      pending.finished_at = Date.now()
-    } else if (body.active && !pending) {
+    if (!body.active) {
+      if (pending) {
+        pending.status = 'cancelled'
+        pending.finished_at = Date.now()
+      }
+      // the slot it held wakes the watch's hunts
+      const watch = store.watches.find((w) => w.item_id === listing.item_id)!
+      wakeHunts(watch.id, listing.item_id)
+    } else if (!pending) {
       const watch = store.watches.find((w) => w.item_id === listing.item_id)!
       store.jobs.push(
         newJob('recheck', {
@@ -1266,6 +1312,10 @@ export const handlers = [
     }
     if (Object.keys(fields).length > 0) {
       return err(422, 'validation_error', 'Check the job request', { fields })
+    }
+    // the operator's kill switch: nothing would claim a hunt, so none is queued
+    if (body.kind === 'hunt' && !HUNT_ENABLED) {
+      return err(409, 'hunting_disabled', 'Hunting is paused by the operator')
     }
 
     const scopeId = body.scope === 'global' ? null : (body.scope_id ?? null)

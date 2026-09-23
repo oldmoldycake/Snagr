@@ -133,6 +133,7 @@ export function toItemSummary(item: MockItem, range: TimeRange = '30d'): ItemSum
     max_listings: item.max_listings,
     allow_reproductions: item.allow_reproductions ?? false,
     recheck_interval_minutes: item.recheck_interval_minutes ?? null,
+    hunt: item.hunt ?? true,
     site_ids: item.site_ids,
     best_price: best ? cents(best.cents) : null,
     best_listing_id: best?.listing.id ?? null,
@@ -224,6 +225,8 @@ export function toItemDetail(item: MockItem, range: TimeRange = '30d'): ItemDeta
 export const RECHECK_INTERVAL_MINUTES = 30
 export const RECHECK_INTERVAL_FLOOR_MINUTES = 5
 export const MAX_RECHECK_INTERVAL_MINUTES = 1440
+/** The instance's HUNT_ENABLED — flip it to see the kill switch's 409 and "hunting off" states. */
+export const HUNT_ENABLED: boolean = true
 
 /** Minutes between an item's rechecks: its own interval, else the default, never below the floor. */
 export function effectiveInterval(item: MockItem): number {
@@ -236,16 +239,21 @@ export function effectiveInterval(item: MockItem): number {
 /** What the hunter will do next for this item — read off its jobs, never stored. */
 function huntFacts(item: MockItem): HuntFacts {
   const hunts = store.jobs.filter((j) => j.kind === 'hunt' && j.item_id === item.id)
-  const pending = hunts.filter((j) => j.status === 'pending').map((j) => j.run_after)
+  // the soonest waiting hunt is the one counted down to, and its backoff the one said
+  const next = hunts
+    .filter((j) => j.status === 'pending')
+    .reduce<MockJob | null>((soonest, j) => (soonest == null || j.run_after < soonest.run_after ? j : soonest), null)
   const last = hunts
     .filter((j) => j.finished_at != null)
     .reduce<MockJob | null>((newest, j) => (newest == null || j.finished_at! > newest.finished_at! ? j : newest), null)
   return {
+    enabled: item.hunt ?? true,
     running: hunts.some((j) => j.status === 'running'),
-    next_at: pending.length ? iso(Math.min(...pending)) : null,
+    next_at: iso(next?.run_after ?? null),
     last_at: iso(last?.finished_at ?? null),
     last_result: last == null ? null : lastResult(last),
     slots_open: Math.max(0, item.max_listings - activeListings(item.id).length),
+    backoff_minutes: next?.payload?.backoff_minutes ?? null,
   }
 }
 
