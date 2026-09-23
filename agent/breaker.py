@@ -29,7 +29,7 @@ from datetime import UTC, datetime, timedelta
 from config import SITE_BREAKER_CAP_MINUTES, SITE_BREAKER_ERRORS, SITE_BREAKER_MINUTES
 from database import AsyncSessionLocal, Jobs, Sites
 from jobs import append_event
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 
 log = logging.getLogger(__name__)
 
@@ -87,13 +87,18 @@ async def record_outcome(
         site.paused_until = until
         site.paused_reason = reason
         # nothing for this site runs before the pause lifts, and spreading the
-        # backlog is the resume's problem, not this transaction's
+        # backlog is the resume's problem, not this transaction's. A person's
+        # own request keeps saying so: switching a watch's hunting off keeps
+        # exactly the hunts whose reason is 'user'.
         await session.execute(
             update(Jobs)
             .where(Jobs.site_id == site_id)
             .where(Jobs.status == "pending")
             .where(Jobs.run_after < until)
-            .values(run_after=until, reason="paused")
+            .values(
+                run_after=until,
+                reason=case((Jobs.reason == "user", Jobs.reason), else_="paused"),
+            )
         )
         pause = Pause(site_id=site_id, site_name=site.name, until=until, reason=reason)
         await session.commit()
