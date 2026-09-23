@@ -42,6 +42,8 @@ export function reasonText(job: Job): string {
       return 'a slot freed'
     case 'sweep':
       return 'hunting on its own'
+    case 'backoff':
+      return 'found nothing last time'
     case 'paused':
       return `waiting for ${job.site_name ?? 'the site'} to resume`
     default:

@@ -53,6 +53,9 @@ export interface InstanceInfo {
   /** minutes between rechecks for a watch with no interval of its own
    *  (RECHECK_INTERVAL_MINUTES) — the item form's placeholder */
   recheck_interval_default: number
+  /** false when the operator switched hunting off (HUNT_ENABLED): nothing is hunted,
+   *  "hunt now" answers 409 hunting_disabled, and prices are still rechecked */
+  hunt_enabled: boolean
 }
 
 export type UserRole = 'admin' | 'user'
@@ -178,6 +181,9 @@ export interface ItemSummary {
   allow_reproductions: boolean
   /** minutes between rechecks of this item's listings; null = the instance default */
   recheck_interval_minutes: number | null
+  /** true = the hunter looks for new listings on its own while slots are open;
+   *  false = only when someone presses Hunt now. ItemDetail carries it as hunt.enabled */
+  hunt: boolean
   /** subset of the category's linked sites to search; null = all of them */
   site_ids: number[] | null
   best_price: string | null
@@ -228,11 +234,16 @@ export interface Listing {
 
 /** What the hunter will do next for one item — computed from its jobs. */
 export interface HuntFacts {
+  /** the watch's own switch — ItemSummary.hunt */
+  enabled: boolean
   running: boolean
   next_at: string | null
   last_at: string | null
   last_result: 'found' | 'nothing' | 'failed' | 'cancelled' | null
   slots_open: number
+  /** how long the next hunt waits after the last came back empty
+   *  (15 → 30 → … → 360); null = not backing off */
+  backoff_minutes: number | null
 }
 
 export interface RecheckFacts {
@@ -244,8 +255,9 @@ export interface RecheckFacts {
   interval_minutes: number
 }
 
-/** Not on ItemSummary — list queries stay cheap. */
-export interface ItemDetail extends ItemSummary {
+/** Not on ItemSummary — list queries stay cheap. `hunt` here is the facts
+ *  object; the summary's boolean is its `enabled`. */
+export interface ItemDetail extends Omit<ItemSummary, 'hunt'> {
   listings: Listing[]
   hunt: HuntFacts
   recheck: RecheckFacts
@@ -266,6 +278,8 @@ export interface ItemCreateRequest {
   /** default null (the instance default); 422 below the instance floor
    *  (RECHECK_INTERVAL_FLOOR_MINUTES, 5 unless changed) or above 1440 */
   recheck_interval_minutes?: number | null
+  /** default true; false queues no hunt on create */
+  hunt?: boolean
   /** must be a subset of the category's sites (422 otherwise); empty/full set normalizes to null */
   site_ids?: number[] | null
 }
@@ -280,6 +294,8 @@ export interface ItemUpdateRequest {
   /** the one field where null changes something: back to the instance default;
    *  omitted = unchanged. Same 422s as create */
   recheck_interval_minutes?: number | null
+  /** false drops the hunts the hunter queued for itself; a pending "hunt now" still runs */
+  hunt?: boolean
   site_ids?: number[] | null
 }
 
@@ -529,7 +545,8 @@ export interface Job {
   /** one sentence for a human, e.g. "eBay answered a challenge page instead of the listing." */
   error: string | null
   stats: JobStats | null
-  /** why it was queued: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' — the queue's grey text */
+  /** why it was queued: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | 'backoff'
+   *  — the queue's grey text */
   reason: string | null
   /** highest event seq written so far (hunts and ground only; rechecks stay 0) */
   last_seq: number

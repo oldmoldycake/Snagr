@@ -83,6 +83,7 @@ async def build_item_summary(
         max_listings=watch.max_listings,
         allow_reproductions=watch.allow_reproductions,
         recheck_interval_minutes=watch.recheck_interval_minutes,
+        hunt=watch.hunt,
         site_ids=list(site_ids) or None,
         **await item_rollups(db, watch.user_id, item, watch, range),
         created_at=item.created_at.isoformat(),
@@ -272,7 +273,8 @@ async def build_item_detail(
     mono line reads — both computed from the watch's jobs, never stored."""
     summary = await build_item_summary(watch, item, category, db)
     return ItemDetail(
-        **summary.model_dump(),
+        # the summary's `hunt` boolean becomes the facts object's `enabled`
+        **summary.model_dump(exclude={"hunt"}),
         listings=await load_listings(db, watch),
         hunt=await jobs_service.hunt_facts(db, watch),
         recheck=await jobs_service.recheck_facts(db, watch),
@@ -428,6 +430,7 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
         selection_mode=body.selection_mode,
         allow_reproductions=body.allow_reproductions,
         recheck_interval_minutes=body.recheck_interval_minutes,
+        hunt=body.hunt,
     )
     db.add(watch)
     await db.flush()
@@ -442,8 +445,11 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     # The hunter starts on this watch in the same transaction that creates it:
     # a hunt per site it will search, plus the market-price grounding the hunt
     # prompts read from. Same transaction because a watch with no hunts is a
-    # watch nothing will ever look for — the two facts belong together.
-    await jobs_service.enqueue_hunts_for_watch(db, watch, user_id=user_id, reason="created")
+    # watch nothing will ever look for — the two facts belong together. Unless
+    # hunting is off, for the watch ("only when you press Hunt now") or for
+    # the instance (the agent's sweep picks it up when the switch is back on).
+    if watch.hunt and settings.HUNT_ENABLED:
+        await jobs_service.enqueue_hunts_for_watch(db, watch, user_id=user_id, reason="created")
     await jobs_service.enqueue_ground(db, item.id, user_id=user_id)
 
     await db.commit()
@@ -473,6 +479,7 @@ async def update_item(
         raise err(404, "not_found", f"Item {item_id} does not exist")
 
     item, watch, category = row
+    room_before, hunting_before = watch.max_listings, watch.hunt
     if body.name is not None:
         item.name = body.name
     if body.target_price is not None:
@@ -488,6 +495,14 @@ async def update_item(
     if "recheck_interval_minutes" in body.model_fields_set:
         watch.recheck_interval_minutes = body.recheck_interval_minutes
         await jobs_service.pull_rechecks_forward(db, watch)
+    if body.hunt is not None:
+        if watch.hunt and not body.hunt:
+            await jobs_service.cancel_waiting_hunts(db, watch)
+        watch.hunt = body.hunt
+    # more room, or hunting back on, is a reason to look now rather than at
+    # the agent's next hourly sweep
+    if watch.hunt and (not hunting_before or watch.max_listings > room_before):
+        await jobs_service.wake_hunts(db, watch, reason="sweep")
 
     await db.commit()
     return await build_item_detail(db, watch, item, category)
@@ -555,11 +570,13 @@ async def update_listing(db: AsyncSession, user_id: int, listing_id: int, active
     # the user's own switch; a listing tracked again has no reason to be off
     listing.inactive_reason = None if active else "untracked"
     # tracking and the queue move together: an untracked listing is not
-    # re-read, and tracking one again puts it back in the rotation
+    # re-read, and tracking one again puts it back in the rotation — and the
+    # slot it held wakes the watch's hunts
     if active:
         await jobs_service.enqueue_recheck(db, listing)
     else:
         await jobs_service.cancel_recheck(db, listing.id)
+        await jobs_service.wake_hunts(db, await db.get(Watches, listing.watch_id))
     await db.commit()
 
     site_name = (

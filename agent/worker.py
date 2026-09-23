@@ -35,6 +35,7 @@ import jobs as job_queue
 from config import (
     CHEAP_RECHECK,
     HUNT_CONCURRENCY,
+    HUNT_ENABLED,
     JOB_HEARTBEAT_INTERVAL_SECONDS,
     RECHECK_CONCURRENCY,
 )
@@ -71,9 +72,22 @@ TICK_SECONDS = 30
 # retention sweep does not.
 SCHEDULER_INTERVAL_SECONDS = 60
 PRUNE_EVERY_TICKS = 60
+# The sweep is a safety net under the hunt chain, not its engine, so hourly
+# is plenty; it also runs on the first pass, so a hunter that was down picks
+# every dropped pair back up the moment it starts.
+SWEEP_EVERY_TICKS = 60
 
 CHECK_KINDS = ("recheck",)
 HUNT_KINDS = ("hunt", "ground")
+
+
+def kinds_for(worker: str) -> tuple[str, ...]:
+    """What one pool member claims. With hunting switched off the hunt pool
+    still grounds: queued hunts wait, untouched, for the switch to come back
+    on rather than being run or lost."""
+    if "#check-" in worker:
+        return CHECK_KINDS
+    return HUNT_KINDS if HUNT_ENABLED else ("ground",)
 
 
 def worker_ids() -> list[str]:
@@ -345,9 +359,12 @@ async def queue_grounding() -> int:
 
 async def housekeeping(ticks: int = 0) -> None:
     """One scheduler pass: take back abandoned jobs, queue due grounding, and
-    now and then sweep terminal rows past their retention."""
+    now and then queue the hunts the chain dropped and sweep terminal rows
+    past their retention."""
     await job_queue.reap()
     await queue_grounding()
+    if ticks % SWEEP_EVERY_TICKS == 0:
+        await job_queue.sweep()
     if ticks % PRUNE_EVERY_TICKS == 0:
         await job_queue.prune()
 
@@ -369,18 +386,29 @@ async def _scheduler() -> None:
 # --- entry points ----------------------------------------------------------
 
 
+def _say_if_hunting_is_off() -> None:
+    """Once, at startup: the only place the kill switch is announced, because
+    every sweep it skips would otherwise log the same line hourly."""
+    if not HUNT_ENABLED:
+        log.warning(
+            "Hunting is off (HUNT_ENABLED=false): no hunts are queued or run; "
+            "prices are still rechecked"
+        )
+
+
 async def serve() -> None:
     """Run until stopped: the pools, the listener and the scheduler."""
     workers = worker_ids()
     wakes = [asyncio.Event() for _ in workers]
     pools = [
-        asyncio.create_task(_pool(worker, CHECK_KINDS if "#check-" in worker else HUNT_KINDS, wake))
+        asyncio.create_task(_pool(worker, kinds_for(worker), wake))
         for worker, wake in zip(workers, wakes, strict=True)
     ]
     tasks = [*pools, asyncio.create_task(_listen(wakes)), asyncio.create_task(_scheduler())]
     log.info(
         f"Hunter serving — {RECHECK_CONCURRENCY} check worker(s), {HUNT_CONCURRENCY} hunt worker(s)"
     )
+    _say_if_hunting_is_off()
     try:
         await asyncio.gather(*tasks)
     finally:
@@ -399,11 +427,11 @@ async def once() -> None:
     finished.
     """
     workers = worker_ids()
+    _say_if_hunting_is_off()
     await housekeeping()
     try:
         for worker in workers:
-            kinds = CHECK_KINDS if "#check-" in worker else HUNT_KINDS
-            while (job := await job_queue.claim(worker, kinds)) is not None:
+            while (job := await job_queue.claim(worker, kinds_for(worker))) is not None:
                 await _work_one(worker, job)
     finally:
         await job_queue.release_all(workers)

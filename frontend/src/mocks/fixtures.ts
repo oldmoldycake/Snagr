@@ -72,6 +72,8 @@ export interface MockItem {
   allow_reproductions?: boolean
   /** optional so existing fixtures follow the instance default (null) */
   recheck_interval_minutes?: number | null
+  /** optional so existing fixtures hunt on their own (true) */
+  hunt?: boolean
   site_ids: number[] | null
   created_at: number
 }
@@ -176,7 +178,9 @@ export interface MockJob {
   finished_at: number | null
   error: string | null
   stats: MockJobStats | null
-  reason: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | null
+  reason: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | 'backoff' | null
+  /** a hunt chain's state: how long this hunt waited after the last came back empty */
+  payload?: { backoff_minutes: number } | null
   last_seq: number
   created_at: number
 }
@@ -1063,13 +1067,21 @@ function seedQueue() {
     })
   }
 
+  // one watch hunted only when asked — the item page's "hunting off" state
+  store.items.find((i) => i.name === 'Retroid Pocket 5')!.hunt = false
+
   // a hunt waiting for every watch that still has room for another listing
+  // and hunts on its own; the first to come back empty is backing off
+  let backingOff = false
   for (const { watch, item, siteId } of huntPairs()) {
     if (activeListings(item.id).length >= item.max_listings) continue
+    if (item.hunt === false) continue
     if (store.jobs.some((j) => j.kind === 'hunt' && j.watch_id === watch.id && j.status === 'pending')) {
       continue
     }
     const onPaused = siteId === paused.id
+    const backoff: boolean = !onPaused && !backingOff
+    backingOff ||= backoff
     store.jobs.push({
       id: newId(),
       kind: 'hunt',
@@ -1080,13 +1092,18 @@ function seedQueue() {
       site_id: siteId,
       listing_id: null,
       priority: 0,
-      run_after: onPaused ? paused.paused_until! : NOW + 10 * MINUTE + item.id * MINUTE,
+      run_after: onPaused
+        ? paused.paused_until!
+        : backoff
+          ? NOW + 5 * MINUTE // queued an hour out, 55 minutes ago
+          : NOW + 10 * MINUTE + item.id * MINUTE,
       attempts: 0,
       started_at: null,
       finished_at: null,
       error: null,
       stats: null,
-      reason: onPaused ? 'paused' : 'sweep',
+      reason: onPaused ? 'paused' : backoff ? 'backoff' : 'sweep',
+      payload: backoff ? { backoff_minutes: 60 } : null,
       last_seq: 0,
       created_at: NOW - 40 * MINUTE,
     })

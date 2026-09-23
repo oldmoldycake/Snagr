@@ -57,6 +57,18 @@ JOB_STALE_AFTER_SECONDS = int(os.getenv("JOB_STALE_AFTER_SECONDS", "300"))
 JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
 JOB_RETENTION_DAYS = int(os.getenv("JOB_RETENTION_DAYS", "7"))
 HUNT_RETENTION_DAYS = int(os.getenv("HUNT_RETENTION_DAYS", "90"))
+
+# Perpetual hunting. A watch with open slots is hunted on its own; a full one
+# is not hunted at all until a slot frees. A hunt that saves nothing queues the
+# next one HUNT_BACKOFF_MIN_MINUTES out, doubling each time it comes back empty
+# up to HUNT_BACKOFF_CAP_MINUTES, so a pair with nothing to find costs a few
+# hunts a day instead of one per tick. HUNT_ENABLED=false is the operator's
+# panic button: no hunt is queued or claimed at all, while rechecks carry on.
+# Set the same value in backend/.env, which refuses "hunt now" under it and
+# tells the UI.
+HUNT_ENABLED = os.getenv("HUNT_ENABLED", "true").lower() != "false"
+HUNT_BACKOFF_MIN_MINUTES = int(os.getenv("HUNT_BACKOFF_MIN_MINUTES", "15"))
+HUNT_BACKOFF_CAP_MINUTES = int(os.getenv("HUNT_BACKOFF_CAP_MINUTES", "360"))
 # Per-unit budgets. One unit is one LLM stream (a listing recheck or a site
 # scan); a model looping on a blocked page is otherwise bounded only by
 # prompt text. Tripping either cap fails that unit and the run moves on.

@@ -1,4 +1,4 @@
-"""Migrations 015 to 017, up and down, against a scratch database.
+"""Migrations 015 to 018, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
@@ -212,5 +212,25 @@ async def test_017_marks_listings_already_inactive_as_ended(scratch):
     columns = await scratch.fetchval(
         "SELECT count(*) FROM information_schema.columns "
         "WHERE column_name IN ('inactive_reason', 'recheck_interval_minutes')"
+    )
+    assert columns == 0
+
+
+async def test_018_hunts_every_existing_watch_on_its_own(scratch):
+    """Perpetual hunting is what every watch did before 018 made it optional,
+    so an upgraded watch keeps doing it; a job carries no chain state until a
+    hunt hands some on."""
+    _alembic("upgrade", "017")
+    await _seed_listings(scratch)
+
+    _alembic("upgrade", "018")
+
+    assert await scratch.fetchval("SELECT hunt FROM watches") is True
+    assert await scratch.fetchval("SELECT payload FROM jobs") is None
+
+    _alembic("downgrade", "017")
+    columns = await scratch.fetchval(
+        "SELECT count(*) FROM information_schema.columns "
+        "WHERE (table_name, column_name) IN (('watches', 'hunt'), ('jobs', 'payload'))"
     )
     assert columns == 0

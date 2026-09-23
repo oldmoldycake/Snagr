@@ -19,6 +19,14 @@ listing that dropped out of the queue would silently stop being watched, which
 is the one failure nobody would notice. Untracking the listing is what ends
 the chain.
 
+**A watch with open slots is hunted on its own; a full one is not hunted at
+all.** A finished hunt queues the next one for its pair while there is room:
+at once when it saved something, further out each time it came back empty
+(15 → 30 → 60 … → 360 minutes, carried in `payload.backoff_minutes`). A slot
+freeing starts the waiting hunts over, and the hourly sweep puts back any
+pair that fell out of the chain — a failed hunt, a raised max_listings, a
+watch switched back on.
+
 Failures here PROPAGATE. Unlike the read helpers in database.py, which answer
 with an empty default so a hiccup skips optional work, a swallowed failure in
 this module strands a job in 'running' forever or loses a listing's next check.
@@ -30,6 +38,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from config import (
+    HUNT_BACKOFF_CAP_MINUTES,
+    HUNT_BACKOFF_MIN_MINUTES,
+    HUNT_ENABLED,
     HUNT_RETENTION_DAYS,
     JOB_MAX_ATTEMPTS,
     JOB_RETENTION_DAYS,
@@ -37,8 +48,19 @@ from config import (
     RECHECK_INTERVAL_FLOOR_MINUTES,
     RECHECK_INTERVAL_MINUTES,
 )
-from database import AsyncSessionLocal, JobEvents, Jobs, Listings, Sites, Watches
-from sqlalchemy import bindparam, delete, func, select, text, update
+from database import (
+    AsyncSessionLocal,
+    Items,
+    JobEvents,
+    Jobs,
+    Listings,
+    SiteCategories,
+    Sites,
+    User,
+    Watches,
+    WatchSites,
+)
+from sqlalchemy import bindparam, delete, func, literal, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
 log = logging.getLogger(__name__)
@@ -238,6 +260,7 @@ async def _finish(job_id: int, outcome: str, stats: dict | None) -> bool:
             job.status = outcome
             job.finished_at = datetime.now(UTC)
             job.stats = stats
+            await _queue_next_hunt(session, job)
         await _queue_successor(session, job)
         await session.commit()
         return not cancelled
@@ -276,6 +299,185 @@ async def _queue_successor(session, job: Jobs) -> None:
         run_after=max(due, paused_until) if paused_until is not None else due,
         reason="paused" if paused_until is not None and paused_until > due else None,
     )
+
+
+def _huntable_pairs():
+    """Every (watch, site) pair the hunter searches on its own.
+
+    The watch has an open slot and its own switch on, its owner's account is
+    active, and the site is one it searches: its category carries it and,
+    when the watch pins sites, it is one of the pins — the same rule
+    get_hunt_unit re-validates a claimed hunt by. Callers narrow it to one
+    watch or one pair.
+    """
+    tracked = (
+        select(func.count())
+        .select_from(Listings)
+        .where(Listings.watch_id == Watches.id)
+        .where(Listings.active)
+        .scalar_subquery()
+    )
+    pinned = select(WatchSites.site_id).where(WatchSites.watch_id == Watches.id)
+    return (
+        select(
+            Watches.id.label("watch_id"),
+            Watches.item_id.label("item_id"),
+            SiteCategories.site_id.label("site_id"),
+        )
+        .join(Items, Items.id == Watches.item_id)
+        .join(SiteCategories, SiteCategories.category_id == Items.category_id)
+        .join(User, User.id == Watches.user_id)
+        .where(Watches.hunt)
+        # a deactivated account's watches would otherwise be hunted forever
+        .where(User.is_active)
+        .where(tracked < Watches.max_listings)
+        .where(or_(~pinned.exists(), SiteCategories.site_id.in_(pinned)))
+    )
+
+
+def next_backoff(previous: int | None) -> int:
+    """How long an empty hunt's successor waits: the floor the first time,
+    then twice the last wait, never past the cap."""
+    if not previous:
+        return HUNT_BACKOFF_MIN_MINUTES
+    return min(previous * 2, HUNT_BACKOFF_CAP_MINUTES)
+
+
+async def _queue_next_hunt(session, job: Jobs) -> None:
+    """Queue the next hunt of this job's pair, in the caller's transaction.
+
+    Only while the pair is still huntable — a hunt that filled the watch's
+    last slot, or ran on a watch switched off, leaves nothing behind (decision
+    9: a full watch costs nothing until a slot frees). A hunt that saved
+    something is followed at once, because the pair evidently has more to
+    give; one that saved nothing waits twice as long as it did.
+    """
+    if job.kind != "hunt" or not HUNT_ENABLED:
+        return
+    pair = _huntable_pairs().where(Watches.id == job.watch_id)
+    if not await session.scalar(select(pair.where(SiteCategories.site_id == job.site_id).exists())):
+        return
+
+    now = datetime.now(UTC)
+    if (job.stats or {}).get("new_listings", 0) > 0:
+        run_after, payload, reason = now, None, "sweep"
+    else:
+        minutes = next_backoff((job.payload or {}).get("backoff_minutes"))
+        run_after, payload, reason = (
+            now + timedelta(minutes=minutes),
+            {"backoff_minutes": minutes},
+            "backoff",
+        )
+    await _insert(
+        session,
+        kind="hunt",
+        watch_id=job.watch_id,
+        item_id=job.item_id,
+        site_id=job.site_id,
+        run_after=run_after,
+        payload=payload,
+        reason=reason,
+    )
+
+
+async def sweep() -> int:
+    """Queue a hunt for every huntable pair that has none open — the safety
+    net under the hunt chain.
+
+    Most hunts are queued by something that happened: a watch created, a
+    hunt finishing, a slot freeing. This catches every pair that fell out of
+    that chain — a hunt that failed for good, a max_listings raised, a watch
+    switched back on, a wake lost to a crash — within the hour. A full watch
+    and a switched-off one get nothing.
+
+    Returns:
+      How many hunts it queued.
+    """
+    if not HUNT_ENABLED:
+        return 0
+    pairs = _huntable_pairs().subquery()
+    open_hunt = (
+        select(Jobs.id)
+        .where(Jobs.kind == "hunt")
+        .where(Jobs.watch_id == pairs.c.watch_id)
+        .where(Jobs.site_id == pairs.c.site_id)
+        .where(Jobs.status.in_(OPEN_STATUSES))
+    )
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            insert(Jobs)
+            .from_select(
+                ["kind", "watch_id", "item_id", "site_id", "reason"],
+                select(
+                    literal("hunt"),
+                    pairs.c.watch_id,
+                    pairs.c.item_id,
+                    pairs.c.site_id,
+                    literal("sweep"),
+                ).where(~open_hunt.exists()),
+            )
+            # a hunt queued between the NOT EXISTS and the insert is the same work
+            .on_conflict_do_nothing()
+        )
+        await session.commit()
+    if result.rowcount:
+        log.info(f"Sweep queued {result.rowcount} hunt(s)")
+    return result.rowcount
+
+
+async def add_hunt_wakes(session, watch_id: int) -> None:
+    """Start this watch's hunts over, in the caller's transaction — what a
+    freed slot means to the queue.
+
+    The slot this counts must already be free — made inactive earlier in
+    the caller's transaction, or committed before it. A waiting hunt is
+    brought forward with its backoff forgotten; a site with none gets one. A
+    person's own request is left as it is — it is already at the front.
+    """
+    if not HUNT_ENABLED:
+        return
+    pairs = (await session.execute(_huntable_pairs().where(Watches.id == watch_id))).all()
+    if not pairs:
+        return
+    await session.execute(
+        update(Jobs)
+        .where(Jobs.kind == "hunt")
+        .where(Jobs.watch_id == watch_id)
+        .where(Jobs.status == "pending")
+        .where(Jobs.user_id.is_(None))
+        .values(run_after=datetime.now(UTC), payload=None, reason="slot_freed")
+    )
+    for pair in pairs:
+        await _insert(
+            session,
+            kind="hunt",
+            watch_id=pair.watch_id,
+            item_id=pair.item_id,
+            site_id=pair.site_id,
+            reason="slot_freed",
+        )
+
+
+async def wake_hunts(watch_id: int) -> bool:
+    """add_hunt_wakes in a transaction of its own, for a caller that freed
+    the slot in one it has already committed.
+
+    Best-effort, unlike the rest of this module: the caller has already
+    written the observation that freed the slot, and failing its job over a
+    wake would count an error against a site that answered. A lost wake costs
+    at most the wait until the next sweep.
+
+    Returns:
+      False if the write failed.
+    """
+    async with AsyncSessionLocal() as session:
+        try:
+            await add_hunt_wakes(session, watch_id)
+            await session.commit()
+            return True
+        except Exception as e:
+            log.error(f"Error waking the hunts of watch {watch_id}: {e}")
+            return False
 
 
 async def _insert(session, **values) -> None:

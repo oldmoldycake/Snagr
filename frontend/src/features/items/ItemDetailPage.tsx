@@ -358,8 +358,9 @@ export function ItemDetailPage() {
       <EditItemDialog
         // EditItemDialog seeds its form state from props once, so remount it
         // whenever a tracked field changes server-side (a run, or an MCP edit).
-        key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${(detail.site_ids ?? []).join(',')}`}
-        item={detail}
+        key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${detail.hunt.enabled}-${(detail.site_ids ?? []).join(',')}`}
+        // the detail carries the watch's switch as hunt.enabled
+        item={{ ...detail, hunt: detail.hunt.enabled }}
         open={editOpen}
         onOpenChange={setEditOpen}
       />

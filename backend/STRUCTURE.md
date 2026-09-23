@@ -67,7 +67,7 @@ backend/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–015 (linear chain); the backend owns the canonical schema (D1)
+├── migrations/            # Alembic revisions 001–018 (linear chain); the backend owns the canonical schema (D1)
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -127,7 +127,7 @@ Find any `endpoints.ts` function here:
 
 1. **An API "item" is three tables.** `items` (shared name/category) + the caller's
    `watches` row (target_price, criteria, selection_mode, max_listings,
-   allow_reproductions, recheck_interval_minutes, notify) + `watch_sites` (the `site_ids` subset). Handled in
+   allow_reproductions, recheck_interval_minutes, hunt, notify) + `watch_sites` (the `site_ids` subset). Handled in
    `services/items.py`. `GET /api/items` lists *the user's watches*, not the catalog.
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
@@ -151,7 +151,7 @@ Find any `endpoints.ts` function here:
    run tables that came with them (`agent_runs`, `run_events`, `run_schedules`)
    were dropped by migration 015, which replaced them with `jobs` and
    `job_events`. Per-watch config (`criteria`, `selection_mode`, `max_listings`,
-   `allow_reproductions`, `recheck_interval_minutes`) lives on `watches`, not
+   `allow_reproductions`, `recheck_interval_minutes`, `hunt`) lives on `watches`, not
    `items`: `items` stays a pure shared catalog row.
 
 4. **Job visibility is per-user, enforced by ONE predicate** (`services/jobs.py`):
@@ -174,11 +174,28 @@ Find any `endpoints.ts` function here:
    **The queue's own rules live half here and half in the agent.** Migration 015's
    partial unique index allows one *open* job per target, so every insert on both
    sides is `ON CONFLICT DO NOTHING` and `POST /api/jobs` answers 202 with
-   whatever it queued or brought forward — never a 409. Creating a watch queues
-   its hunts and its grounding in the same transaction; untracking a listing
-   cancels its pending check and stamps `inactive_reason = 'untracked'`.
+   whatever it queued or brought forward — never a 409 for a duplicate. Creating
+   a watch queues its hunts and its grounding in the same transaction;
+   untracking a listing cancels its pending check and stamps
+   `inactive_reason = 'untracked'`.
    `ItemDetail.hunt` / `.recheck` are computed from the watch's jobs and exist
-   on the detail shape only, so list queries stay cheap.
+   on the detail shape only, so list queries stay cheap. `ItemSummary.hunt` is
+   the watch's own switch (a boolean); on the detail the facts object takes
+   its place and carries it as `hunt.enabled`.
+
+   **Hunting is the agent's to run and the backend's to start and stop.** The
+   agent chains each pair's hunts (at once after a save, a doubling backoff
+   after an empty one) and sweeps hourly; the backend only touches the chain
+   where a person does: a watch created with `hunt: false` queues no hunt,
+   switching `hunt` off cancels every waiting hunt but a pending "hunt now"
+   (by `reason`, since creation hunts carry the creator's id too), untracking
+   a listing, raising `max_listings` or switching `hunt` back on wakes the
+   watch's hunts with their backoff forgotten (`wake_hunts`, the twin of
+   `agent/jobs.py::add_hunt_wakes`), and a user's "hunt now" forgets it too. `HUNT_ENABLED` is the operator's kill switch,
+   set in both env files: under `false` the agent claims no hunts, so
+   `POST /api/jobs {kind: 'hunt'}` answers 409 `hunting_disabled` rather than
+   queueing work nothing will claim, and a new watch queues none (the agent's
+   sweep catches it up when the switch is back on).
 
    **The check interval is the agent's to keep and the backend's to report.**
    The agent schedules each successor at the watch's `recheck_interval_minutes`,

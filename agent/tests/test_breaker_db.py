@@ -193,6 +193,21 @@ class TestTheQueueGoesQuiet:
         assert run_after == paused_until
         assert reason == "paused"
 
+    def test_a_persons_own_request_waits_but_stays_theirs(self):
+        # the reason is what tells a "hunt now" apart when a watch's hunting
+        # is switched off; relabelled 'paused', it would be cancelled
+        async def scenario():
+            site_id = await seed_site()
+            job_id = await seed_job(site_id, run_after=NOW, reason="user", priority=100)
+            await fail(site_id, 5)
+            async with AsyncSessionLocal() as session:
+                job = await session.get(Jobs, job_id)
+                return job.run_after, job.reason, (await read_site(site_id))["paused_until"]
+
+        run_after, reason, paused_until = db(scenario())
+        assert run_after == paused_until
+        assert reason == "user"
+
     def test_another_sites_work_is_untouched(self):
         async def scenario():
             paused_id = await seed_site("GameBay")

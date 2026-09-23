@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     RECHECK_INTERVAL_MINUTES: int = 30
     RECHECK_INTERVAL_FLOOR_MINUTES: int = 5
 
+    # The hunter's kill switch. The agent is what stops hunting; the backend
+    # needs it to refuse "hunt now" (409 hunting_disabled) instead of queueing
+    # work nothing will claim, and to tell the UI (InstanceInfo.hunt_enabled).
+    # Set the SAME value in agent/.env.
+    HUNT_ENABLED: bool = True
+
     # Instance / notifications
     APP_VERSION: str = "0.2.1"  # x-release-please-version
     NTFY_SERVER_URL: str | None = None  # drives InstanceInfo.ntfy_server_url

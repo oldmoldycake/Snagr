@@ -469,16 +469,6 @@ class TestCompletion:
         due_in = self._successor_due_in(1)
         assert timedelta(minutes=4) < due_in <= timedelta(minutes=5)
 
-    def test_a_hunt_leaves_no_successor(self):
-        async def scenario():
-            ids = await seed_scope_graph()
-            (job_id,) = await seed(pending_job(ids, kind="hunt"))
-            await job_queue.claim("w1", ("hunt",))
-            await job_queue.complete(job_id, {"new_listings": 0})
-            return await read_jobs(status="pending")
-
-        assert db(scenario()) == []
-
     def test_a_cancelled_job_keeps_its_terminal_state(self):
         # the API wrote 'cancelled' while the worker was finishing; the worker
         # must not overwrite it — but the listing still needs its next check
@@ -498,6 +488,483 @@ class TestCompletion:
         assert row["status"] == "cancelled"
         assert row["stats"] is None
         assert len(pending) == 1
+
+
+async def read_hunts(**filters) -> list[dict]:
+    """Every hunt matching the filters, oldest id first, with the columns the
+    chain and the sweep decide."""
+    async with AsyncSessionLocal() as session:
+        stmt = select(Jobs).where(Jobs.kind == "hunt").order_by(Jobs.id)
+        for column, value in filters.items():
+            stmt = stmt.where(getattr(Jobs, column) == value)
+        return [
+            {
+                "id": j.id,
+                "watch_id": j.watch_id,
+                "site_id": j.site_id,
+                "status": j.status,
+                "run_after": j.run_after,
+                "payload": j.payload,
+                "reason": j.reason,
+                "user_id": j.user_id,
+                "priority": j.priority,
+            }
+            for j in (await session.execute(stmt)).scalars().all()
+        ]
+
+
+async def set_watch(watch_id: int, **values) -> None:
+    async with AsyncSessionLocal() as session:
+        watch = await session.get(Watches, watch_id)
+        for column, value in values.items():
+            setattr(watch, column, value)
+        await session.commit()
+
+
+async def finish_hunt(job_id: int, new_listings: int = 0) -> None:
+    """Claim a hunt and complete it with this many saves, the way the worker
+    does. The job is made due first: a backoff successor is not."""
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Jobs, job_id)
+        job.run_after = datetime.now(UTC)
+        await session.commit()
+    await job_queue.claim("w1", ("hunt",))
+    await job_queue.complete(job_id, {"new_listings": new_listings, "listings_checked": 4})
+
+
+def due_in(hunt: dict) -> timedelta:
+    return hunt["run_after"] - datetime.now(UTC)
+
+
+class TestHuntChain:
+    """A finished hunt queues the next one for its pair while the watch has
+    room: at once after a save, further out each time it came back empty.
+    Watch A holds one listing of its default three slots."""
+
+    def test_an_empty_hunt_waits_the_floor_first(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await finish_hunt(job_id)
+            return ids, await read_hunts(status="pending")
+
+        ids, (successor,) = db(scenario())
+        assert (successor["watch_id"], successor["site_id"]) == (ids["watch_a"], ids["site_a"])
+        assert successor["payload"] == {"backoff_minutes": 15}
+        assert successor["reason"] == "backoff"
+        # the hunter queued it, nobody asked
+        assert (successor["user_id"], successor["priority"]) == (None, 0)
+        assert timedelta(minutes=14) < due_in(successor) <= timedelta(minutes=15)
+
+    def test_the_backoff_doubles_to_the_cap(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            waits = []
+            for _ in range(7):
+                await finish_hunt(job_id)
+                (successor,) = await read_hunts(status="pending")
+                waits.append(successor["payload"]["backoff_minutes"])
+                job_id = successor["id"]
+            return waits
+
+        assert db(scenario()) == [15, 30, 60, 120, 240, 360, 360]
+
+    def test_a_save_starts_the_chain_over(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(ids, kind="hunt", payload={"backoff_minutes": 240}, reason="backoff")
+            )
+            await finish_hunt(job_id, new_listings=1)
+            return await read_hunts(status="pending")
+
+        (successor,) = db(scenario())
+        # the pair evidently has more to give: look again now, from the floor
+        assert successor["payload"] is None
+        assert due_in(successor) <= timedelta(0)
+
+    def test_a_hunt_that_fills_the_watch_leaves_nothing_behind(self):
+        # decision 9: a full watch costs nothing until a slot frees
+        async def scenario():
+            ids = await seed_scope_graph()
+            await set_watch(ids["watch_a"], max_listings=1)
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await finish_hunt(job_id, new_listings=1)
+            return await read_hunts(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_a_watch_switched_off_is_not_hunted_again(self):
+        # a "hunt now" on it runs once, and that is all
+        async def scenario():
+            ids = await seed_scope_graph()
+            await set_watch(ids["watch_a"], hunt=False)
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await finish_hunt(job_id)
+            return await read_hunts(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_a_hunt_on_a_site_the_watch_no_longer_searches_leaves_nothing(self):
+        # pinned to CardBay since the hunt was queued: the GameBay hunt must
+        # not chain empty hunts on a pair get_hunt_unit refuses forever
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(SiteCategories(site_id=ids["site_b"], category_id=ids["cat_a"]))
+            await seed(WatchSites(watch_id=ids["watch_a"], site_id=ids["site_b"]))
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await finish_hunt(job_id)
+            return await read_hunts(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_a_hunt_that_failed_for_good_leaves_nothing_behind(self):
+        # the sweep puts the pair back within the hour; a chain off a failing
+        # hunt would retry it on the backoff clock instead of the retry one
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt", attempts=2))
+            await job_queue.claim("w1", ("hunt",))
+            await job_queue.fail_or_retry(job_id, "the page timed out")
+            return await read_job(job_id), await read_hunts(status="pending")
+
+        failed, pending = db(scenario())
+        assert failed["status"] == "failed"
+        assert pending == []
+
+    def test_a_cancelled_hunt_leaves_nothing_behind(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await job_queue.claim("w1", ("hunt",))
+            async with AsyncSessionLocal() as session:
+                (await session.get(Jobs, job_id)).status = "cancelled"
+                await session.commit()
+            await job_queue.complete(job_id, None)
+            return await read_hunts(status="pending")
+
+        assert db(scenario()) == []
+
+    def test_with_hunting_off_nothing_follows(self, monkeypatch):
+        monkeypatch.setattr(job_queue, "HUNT_ENABLED", False)
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="hunt"))
+            await finish_hunt(job_id)
+            return await read_hunts(status="pending")
+
+        assert db(scenario()) == []
+
+
+class TestSweep:
+    """The hourly safety net: a hunt for every pair with open slots, the
+    switch on, and nothing open already. Both scope-graph watches have room."""
+
+    def test_every_pair_with_open_slots_gets_one_hunt(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            queued = await job_queue.sweep()
+            return ids, queued, await read_hunts()
+
+        ids, queued, hunts = db(scenario())
+        assert queued == 2
+        assert sorted((h["watch_id"], h["site_id"]) for h in hunts) == sorted(
+            [(ids["watch_a"], ids["site_a"]), (ids["watch_b"], ids["site_b"])]
+        )
+        assert all(h["reason"] == "sweep" and h["user_id"] is None for h in hunts)
+
+    def test_a_full_watch_gets_nothing(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await set_watch(ids["watch_a"], max_listings=1)
+            await job_queue.sweep()
+            return ids, await read_hunts()
+
+        ids, hunts = db(scenario())
+        assert [h["watch_id"] for h in hunts] == [ids["watch_b"]]
+
+    def test_a_watch_switched_off_gets_nothing(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await set_watch(ids["watch_a"], hunt=False)
+            await job_queue.sweep()
+            return ids, await read_hunts()
+
+        ids, hunts = db(scenario())
+        assert [h["watch_id"] for h in hunts] == [ids["watch_b"]]
+
+    def test_a_pair_already_queued_is_not_queued_again(self):
+        # a waiting backoff hunt keeps its wait: the sweep never shortens it
+        async def scenario():
+            ids = await seed_scope_graph()
+            later = datetime.now(UTC) + timedelta(hours=2)
+            (waiting,) = await seed(
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    run_after=later,
+                    payload={"backoff_minutes": 120},
+                    reason="backoff",
+                )
+            )
+            queued = await job_queue.sweep()
+            return ids, waiting, later, queued, await read_hunts(watch_id=ids["watch_a"])
+
+        ids, waiting, later, queued, hunts = db(scenario())
+        assert queued == 1  # watch B's only
+        assert [h["id"] for h in hunts] == [waiting]
+        assert hunts[0]["run_after"] == later
+        assert hunts[0]["payload"] == {"backoff_minutes": 120}
+
+    def test_a_pair_whose_hunts_have_finished_is_swept_again(self):
+        # the sweep exists for exactly this: a hunt that failed for good (or
+        # finished on a watch that has since found room) left no successor
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(
+                pending_job(ids, kind="hunt", status="failed"),
+                pending_job(ids, kind="hunt", status="done"),
+            )
+            await job_queue.sweep()
+            return await read_hunts(watch_id=ids["watch_a"], status="pending")
+
+        (hunt,) = db(scenario())
+        assert hunt["reason"] == "sweep"
+
+    def test_an_open_hunt_on_one_site_does_not_hide_the_others(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(SiteCategories(site_id=ids["site_b"], category_id=ids["cat_a"]))
+            await seed(pending_job(ids, kind="hunt"))
+            await job_queue.sweep()
+            return ids, await read_hunts(watch_id=ids["watch_a"])
+
+        ids, hunts = db(scenario())
+        assert sorted(h["site_id"] for h in hunts) == [ids["site_a"], ids["site_b"]]
+
+    def test_a_running_hunt_is_not_doubled(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(pending_job(ids, kind="hunt", status="running"))
+            await job_queue.sweep()
+            return await read_hunts(watch_id=ids["watch_a"])
+
+        assert [h["status"] for h in db(scenario())] == ["running"]
+
+    def test_only_the_sites_a_watch_searches(self):
+        # pinned to GameBay, the Games watch is not swept onto CardBay even
+        # though its category now carries both
+        async def scenario():
+            ids = await seed_scope_graph()
+            await seed(SiteCategories(site_id=ids["site_b"], category_id=ids["cat_a"]))
+            await seed(WatchSites(watch_id=ids["watch_a"], site_id=ids["site_a"]))
+            await job_queue.sweep()
+            return ids, await read_hunts(watch_id=ids["watch_a"])
+
+        ids, hunts = db(scenario())
+        assert [h["site_id"] for h in hunts] == [ids["site_a"]]
+
+    def test_a_deactivated_account_is_not_hunted(self):
+        # an admin switched the owner off; nothing may spend tokens for them
+        async def scenario():
+            await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                # both scope-graph watches belong to the one user
+                (await session.scalar(select(User))).is_active = False
+                await session.commit()
+            return await job_queue.sweep(), await read_hunts()
+
+        assert db(scenario()) == (0, [])
+
+    def test_with_hunting_off_the_sweep_queues_nothing(self, monkeypatch):
+        monkeypatch.setattr(job_queue, "HUNT_ENABLED", False)
+
+        async def scenario():
+            await seed_scope_graph()
+            return await job_queue.sweep(), await read_hunts()
+
+        assert db(scenario()) == (0, [])
+
+
+class TestFreedSlotWakesTheHunt:
+    """Watch A made full (one slot, one listing), so disabling its listing is
+    what opens room."""
+
+    async def _full(self) -> dict:
+        ids = await seed_scope_graph()
+        await set_watch(ids["watch_a"], max_listings=1)
+        return ids
+
+    def test_disabling_a_listing_queues_a_hunt_for_the_freed_slot(self):
+        async def scenario():
+            ids = await self._full()
+            result = await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return ids, result, await read_hunts()
+
+        ids, result, hunts = db(scenario())
+        assert "inactive" in result
+        assert [(h["watch_id"], h["site_id"], h["reason"]) for h in hunts] == [
+            (ids["watch_a"], ids["site_a"], "slot_freed")
+        ]
+        assert due_in(hunts[0]) <= timedelta(0)
+
+    def test_a_freed_slot_cuts_a_backoff_short(self):
+        async def scenario():
+            ids = await self._full()
+            await seed(
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    run_after=datetime.now(UTC) + timedelta(hours=6),
+                    payload={"backoff_minutes": 360},
+                    reason="backoff",
+                )
+            )
+            await tools.disable_listing(ids["listing_a"], "ended", runtime=unit_a(ids))
+            return await read_hunts()
+
+        (hunt,) = db(scenario())
+        assert hunt["payload"] is None
+        assert hunt["reason"] == "slot_freed"
+        assert due_in(hunt) <= timedelta(0)
+
+    def test_a_persons_own_request_is_left_as_it_is(self):
+        async def scenario():
+            ids = await self._full()
+            async with AsyncSessionLocal() as session:
+                user_id = await session.scalar(select(User.id))
+            await seed(pending_job(ids, kind="hunt", user_id=user_id, priority=100, reason="user"))
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return await read_hunts()
+
+        (hunt,) = db(scenario())
+        assert (hunt["reason"], hunt["priority"]) == ("user", 100)
+
+    def test_a_wake_touches_only_this_watchs_waiting_system_hunts(self):
+        # two of two slots taken, so disabling one frees a slot; the other
+        # listing's check, a running hunt and another watch's backoff must
+        # all be exactly where they were
+        async def scenario():
+            ids = await self._full()
+            await set_watch(ids["watch_a"], max_listings=2)
+            (other_listing,) = await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/l2",
+                )
+            )
+            later = datetime.now(UTC) + timedelta(hours=3)
+            jobs = await seed(
+                pending_job(ids, listing_id=other_listing, run_after=later),
+                pending_job(ids, kind="hunt", status="running", run_after=later),
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    watch_id=ids["watch_b"],
+                    item_id=ids["item_b"],
+                    site_id=ids["site_b"],
+                    run_after=later,
+                    payload={"backoff_minutes": 180},
+                    reason="backoff",
+                ),
+            )
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                rows = [await session.get(Jobs, job_id) for job_id in jobs]
+                return later, [(r.status, r.run_after, r.reason, r.payload) for r in rows]
+
+        later, (check, running, other) = db(scenario())
+        assert check == ("pending", later, None, None)
+        assert running == ("running", later, None, None)
+        assert other == ("pending", later, "backoff", {"backoff_minutes": 180})
+
+    def test_a_watch_still_full_after_a_disable_is_not_woken(self):
+        # over-full: max_listings lowered below what it holds, so one ending
+        # still leaves no room, and its waiting hunt keeps its backoff
+        async def scenario():
+            ids = await self._full()
+            await seed(
+                Listings(
+                    watch_id=ids["watch_a"],
+                    item_id=ids["item_a"],
+                    site_id=ids["site_a"],
+                    url="https://gamebay.test/l2",
+                )
+            )
+            later = datetime.now(UTC) + timedelta(hours=2)
+            await seed(
+                pending_job(
+                    ids,
+                    kind="hunt",
+                    run_after=later,
+                    payload={"backoff_minutes": 120},
+                    reason="backoff",
+                )
+            )
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return later, await read_hunts()
+
+        later, (hunt,) = db(scenario())
+        assert (hunt["run_after"], hunt["payload"]) == (later, {"backoff_minutes": 120})
+
+    def test_a_failed_wake_never_undoes_the_ending(self, monkeypatch):
+        async def broken(session, watch_id):
+            raise RuntimeError("connection reset")
+
+        monkeypatch.setattr(job_queue, "add_hunt_wakes", broken)
+
+        async def scenario():
+            ids = await self._full()
+            result = await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            async with AsyncSessionLocal() as session:
+                return result, (await session.get(Listings, ids["listing_a"])).active
+
+        result, active = db(scenario())
+        assert "inactive" in result
+        assert active is False
+
+    def test_a_watch_switched_off_is_not_woken(self):
+        async def scenario():
+            ids = await self._full()
+            await set_watch(ids["watch_a"], hunt=False)
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return await read_hunts()
+
+        assert db(scenario()) == []
+
+    def test_a_listing_a_recheck_saw_end_wakes_the_hunt_too(self):
+        # the deterministic path commits the deactivation on its own, then
+        # wakes the hunts in a second transaction
+        async def scenario():
+            ids = await self._full()
+            await deactivate_listing(ids["listing_a"], "sold")
+            await job_queue.wake_hunts(ids["watch_a"])
+            return ids, await read_hunts()
+
+        ids, hunts = db(scenario())
+        assert [(h["watch_id"], h["reason"]) for h in hunts] == [(ids["watch_a"], "slot_freed")]
+
+    def test_a_failed_wake_is_logged_not_raised(self, monkeypatch):
+        # its caller has already written the observation; the sweep catches up
+        async def broken(session, watch_id):
+            raise RuntimeError("connection reset")
+
+        monkeypatch.setattr(job_queue, "add_hunt_wakes", broken)
+        assert db(job_queue.wake_hunts(1)) is False
+
+    def test_with_hunting_off_a_freed_slot_wakes_nothing(self, monkeypatch):
+        monkeypatch.setattr(job_queue, "HUNT_ENABLED", False)
+
+        async def scenario():
+            ids = await self._full()
+            await tools.disable_listing(ids["listing_a"], "sold", runtime=unit_a(ids))
+            return await read_hunts()
+
+        assert db(scenario()) == []
 
 
 class TestFailure:

@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from app.config import settings
 from app.models import Jobs, Sites, User, Watches
 from sqlalchemy import select
 
@@ -176,6 +177,73 @@ class TestEnqueue:
         assert res.status_code == 422
         assert res.json()["error"]["code"] == "validation_error"
         assert field in res.json()["error"]["fields"]
+
+    async def test_asking_again_forgets_a_backoff(self, client, db_session):
+        """A hunt that keeps coming back empty waits longer each time; a
+        person asking is the strongest reason there is to look now."""
+        user_id = await _sign_in(client)
+        item = await _watched_item(client)
+        async with _seed_for(db_session, user_id) as sc:
+            job = await sc.db.scalar(select(Jobs))
+            job.run_after = datetime.now(UTC) + timedelta(hours=4)
+            job.payload = {"backoff_minutes": 240}
+            job.reason = "backoff"
+            job.user_id = None
+
+        body = {"kind": "hunt", "scope": "item", "scope_id": item["id"]}
+        (queued,) = (await client.post("/api/jobs", json=body, headers=CSRF)).json()["data"]
+
+        assert queued["reason"] == "user"
+        assert datetime.fromisoformat(queued["run_after"]) <= datetime.now(UTC)
+        detail = (await client.get(f"/api/items/{item['id']}")).json()
+        assert detail["hunt"]["backoff_minutes"] is None
+
+    async def test_a_watch_switched_off_is_still_hunted_on_request(self, client):
+        # off means "only when you press Hunt now" — this is the press
+        await _sign_in(client)
+        item = await _watched_item(client)
+        await client.patch(f"/api/items/{item['id']}", json={"hunt": False}, headers=CSRF)
+
+        res = await client.post(
+            "/api/jobs",
+            json={"kind": "hunt", "scope": "item", "scope_id": item["id"]},
+            headers=CSRF,
+        )
+        assert res.status_code == 202
+        assert [j["reason"] for j in res.json()["data"]] == ["user"]
+
+    async def test_a_hunt_while_the_operator_has_hunting_off_is_a_409(self, client, monkeypatch):
+        """HUNT_ENABLED=false: the agent claims no hunts, so queueing one
+        would be a silent fake. Rechecks are still what they were."""
+        await _sign_in(client)
+        item = await _watched_item(client)
+        monkeypatch.setattr(settings, "HUNT_ENABLED", False)
+
+        res = await client.post(
+            "/api/jobs",
+            json={"kind": "hunt", "scope": "item", "scope_id": item["id"]},
+            headers=CSRF,
+        )
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "hunting_disabled"
+
+        res = await client.post(
+            "/api/jobs",
+            json={"kind": "recheck", "scope": "item", "scope_id": item["id"]},
+            headers=CSRF,
+        )
+        assert res.status_code == 202
+
+    async def test_the_kill_switch_answers_before_the_scope_is_looked_up(self, client, monkeypatch):
+        # the mock's order too: nothing about the scope matters while no hunt
+        # could run in it
+        await _sign_in(client)
+        monkeypatch.setattr(settings, "HUNT_ENABLED", False)
+        res = await client.post(
+            "/api/jobs", json={"kind": "hunt", "scope": "item", "scope_id": 9999}, headers=CSRF
+        )
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "hunting_disabled"
 
     async def test_a_scope_holding_none_of_your_watches_is_a_404(self, client):
         await _sign_in(client)
