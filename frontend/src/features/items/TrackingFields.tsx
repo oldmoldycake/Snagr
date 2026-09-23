@@ -211,12 +211,15 @@ export function TrackingFields({
                     type="number"
                     min={1}
                     max={1440}
+                    step={1}
                     aria-label="Check interval in minutes"
                     placeholder={defaultInterval != null ? String(defaultInterval) : undefined}
                     className="w-20 font-mono tnum"
                     value={value.recheckIntervalMinutes ?? ''}
                     onChange={(e) => {
-                      const n = Math.round(Number(e.target.value))
+                      // kept as typed, not rounded: a fractional value fails the
+                      // input's step and the browser refuses to submit the form
+                      const n = Number(e.target.value)
                       onChange({
                         ...value,
                         recheckIntervalMinutes: e.target.value.trim() && Number.isFinite(n) ? n : null,
