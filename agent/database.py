@@ -10,6 +10,7 @@ import logging
 import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import Literal, get_args
 
 from dotenv import load_dotenv
 from sqlalchemy import (
@@ -157,6 +158,13 @@ class Listings(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("watch_id", "site_id", "url", name="uq_watch_site_url"),)
+
+
+# The reasons the hunter ends a listing with, stored as listings.inactive_reason.
+# 'replaced' and 'untracked' are the other two the column's CHECK allows,
+# written by swap hunts and by the user.
+DisableReason = Literal["sold", "ended", "auction"]
+DISABLE_REASONS: tuple[str, ...] = get_args(DisableReason)
 
 
 class PriceChecks(Base):
@@ -763,7 +771,7 @@ async def clear_static_ok(listing_id: int) -> bool:
             return False
 
 
-async def deactivate_listing(listing_id: int, reason: str) -> bool:
+async def deactivate_listing(listing_id: int, reason: DisableReason) -> bool:
     """
     Mark a listing inactive because a deterministic recheck saw it end.
 
@@ -777,7 +785,13 @@ async def deactivate_listing(listing_id: int, reason: str) -> bool:
         inactive_reason.
     Returns:
       True on success.
+    Raises:
+      ValueError: for any other reason. Only code calls this, so a wrong
+        reason is a bug — and past this point the CHECK's refusal would be
+        swallowed below, leaving the listing tracked with nobody told.
     """
+    if reason not in DISABLE_REASONS:
+        raise ValueError(f"reason must be one of {', '.join(DISABLE_REASONS)}, got {reason!r}")
     log.info(f"Listing {listing_id} marked inactive ({reason})")
     async with AsyncSessionLocal() as session:
         try:

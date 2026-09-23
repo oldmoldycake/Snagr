@@ -33,6 +33,7 @@ import jobs as job_queue
 import static
 from config import VISION_SIDECAR_URL, VISION_TIMEOUT_SECONDS
 from database import (
+    DISABLE_REASONS,
     AsyncSessionLocal,
     ListingChecks,
     Listings,
@@ -61,10 +62,6 @@ from validation import (
 log = logging.getLogger(__name__)
 
 PRICE_STATUSES = ("ok", "sold", "ended", "error")
-# The reasons the model may give for ending a listing, stored as
-# listings.inactive_reason. 'replaced' and 'untracked' are the other two the
-# column allows, written by swap hunts and by the user.
-DISABLE_REASONS = ("sold", "ended", "auction")
 AUTHENTICITY_READS = ("looks_authentic", "suspect", "unsure")
 
 

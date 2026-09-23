@@ -1058,6 +1058,19 @@ class TestUnitTally:
 
         assert db(scenario()) == (False, "sold")
 
+    def test_an_unknown_reason_is_a_bug_not_a_skipped_write(self):
+        # the helper swallows DB errors, so the CHECK alone would leave the
+        # listing tracked and only log it — the guard raises before that
+        async def scenario():
+            ids = await seed_scope_graph()
+            with pytest.raises(ValueError, match="sold, ended, auction"):
+                await deactivate_listing(ids["listing_a"], "gone")
+            async with AsyncSessionLocal() as session:
+                listing = await session.get(Listings, ids["listing_a"])
+                return listing.active, listing.inactive_reason
+
+        assert db(scenario()) == (True, None)
+
 
 class TestListingOwnership:
     """save_price_check and disable_listing take a listing_id the model typed
