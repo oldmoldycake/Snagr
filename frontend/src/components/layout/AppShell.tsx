@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Masthead } from './Masthead'
 import { ActivitySheet } from '@/features/activity/ActivitySheet'
 
+/** Signed-in page chrome: masthead, a scrolling centered content column, and the activity sheet. */
 export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen flex-col overflow-hidden">

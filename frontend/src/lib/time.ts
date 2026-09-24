@@ -1,7 +1,10 @@
+/** The windows every price chart and trend figure can be viewed over. */
 export type TimeRange = '7d' | '30d' | '90d' | '1y' | 'all'
 
+/** The ranges in the order the range picker shows them. */
 export const TIME_RANGES: TimeRange[] = ['7d', '30d', '90d', '1y', 'all']
 
+/** What the range picker prints for each range. */
 export const RANGE_LABELS: Record<TimeRange, string> = {
   '7d': '7d',
   '30d': '30d',
@@ -10,6 +13,7 @@ export const RANGE_LABELS: Record<TimeRange, string> = {
   all: 'All',
 }
 
+/** A range's span in milliseconds; `all` is unbounded. */
 export function rangeToMs(range: TimeRange): number {
   const day = 86_400_000
   switch (range) {
@@ -26,6 +30,7 @@ export function rangeToMs(range: TimeRange): number {
   }
 }
 
+/** `5m ago`, `3d ago` — how long since something happened, at a glance. */
 export function relativeTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const then = new Date(iso).getTime()
@@ -43,6 +48,7 @@ export function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
+/** `Sep 18, 3:04 PM` — an absolute timestamp in the viewer's locale. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -54,6 +60,7 @@ export function formatDateTime(iso: string | null | undefined): string {
   })
 }
 
+/** `2m 14s` from start to end, or to now while it is still going. */
 export function formatDuration(startIso: string | null, endIso?: string | null): string {
   if (!startIso) return '—'
   const start = new Date(startIso).getTime()

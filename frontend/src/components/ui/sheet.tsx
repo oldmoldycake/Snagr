@@ -3,12 +3,18 @@ import { X } from 'lucide-react'
 import type { ComponentPropsWithoutRef } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Side-panel root — Radix Dialog.Root. */
 export const Sheet = DialogPrimitive.Root
+/** Element that opens the sheet — Radix Dialog.Trigger. */
 export const SheetTrigger = DialogPrimitive.Trigger
+/** Element that closes the sheet — Radix Dialog.Close. */
 export const SheetClose = DialogPrimitive.Close
+/** Sheet heading — Radix Dialog.Title. */
 export const SheetTitle = DialogPrimitive.Title
+/** Sheet supporting text — Radix Dialog.Description. */
 export const SheetDescription = DialogPrimitive.Description
 
+/** Full-height panel sliding in from the left or right edge — Radix Dialog.Content in a portal. */
 export function SheetContent({
   side = 'right',
   className,

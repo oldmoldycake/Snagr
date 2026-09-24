@@ -294,6 +294,10 @@ function expiryCell(token: ApiToken) {
   return formatDateTime(token.expires_at)
 }
 
+/**
+ * Settings → MCP & API: mint and revoke API tokens. Tokens are listed only
+ * when the instance has MCP enabled.
+ */
 export function ApiSettingsPage() {
   const { data: instance } = useInstance()
   const queryClient = useQueryClient()

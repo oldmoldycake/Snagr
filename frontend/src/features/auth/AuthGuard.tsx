@@ -4,6 +4,11 @@ import { useSession } from './useSession'
 import { AppShell } from '@/components/layout/AppShell'
 import { JobsProvider } from '@/features/activity/JobsProvider'
 
+/**
+ * Route guard for signed-in pages: sends a visitor without a session to /login
+ * (remembering where they were headed) and wraps the rest in the job feed and
+ * app shell.
+ */
 export function AuthGuard() {
   const location = useLocation()
   const { data: user, isLoading, isError } = useSession()

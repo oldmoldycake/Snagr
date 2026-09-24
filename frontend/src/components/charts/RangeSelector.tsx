@@ -20,6 +20,7 @@ export function useRangeParam(): [TimeRange, (r: TimeRange) => void] {
   return [range, setRange]
 }
 
+/** Segmented picker over the chart time ranges (7d … all); pair it with useRangeParam. */
 export function RangeSelector({
   value,
   onChange,

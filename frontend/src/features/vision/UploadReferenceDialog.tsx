@@ -17,6 +17,10 @@ const LABEL_OPTIONS = [
   { value: 'fake', label: 'Fake' },
 ] as const
 
+/**
+ * Upload a photo to an item's reference library, labelled real or fake with an
+ * optional variant tag.
+ */
 export function UploadReferenceDialog({
   itemId,
   open,

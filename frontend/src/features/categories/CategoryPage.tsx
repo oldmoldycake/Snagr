@@ -38,6 +38,10 @@ const STATUS_FILTERS = [
   { value: 'no_listings', label: 'No listings' },
 ] as const satisfies readonly { value: ItemStatusFilter; label: string }[]
 
+/**
+ * One category's page: its change chart and the watches in it, filterable by
+ * status, site and search.
+ */
 export function CategoryPage() {
   const { slug = '' } = useParams()
   const [range, setRange] = useRangeParam()

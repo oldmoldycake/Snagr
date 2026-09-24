@@ -102,6 +102,7 @@ function buildTrace(series: PreparedSeries, plot: Plot, nowTs: number): Trace {
   }
 }
 
+/** Per-listing price traces for one item over the range, with the ember tip and sweep-beam scan. */
 export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse; range: TimeRange }) {
   const glowId = useId()
   const { ref, width } = useMeasuredWidth()

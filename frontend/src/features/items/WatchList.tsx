@@ -20,6 +20,7 @@ import { formatMoney, toCents } from '@/lib/money'
 import { relativeTime } from '@/lib/time'
 import { ItemListingsPanel } from './ItemListingsPanel'
 
+/** Rows plus the optional columns and row actions each page turns on. */
 export interface WatchListProps {
   items: ItemSummary[]
   drops?: Map<number, PriceDrop>
@@ -79,6 +80,7 @@ function DropChip({ drop }: { drop: PriceDrop }) {
   )
 }
 
+/** Table of the user's watches, optionally expandable to each one's listings. */
 export function WatchList({
   items,
   drops,

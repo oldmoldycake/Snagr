@@ -5,9 +5,10 @@ import { cn } from '@/lib/cn'
 import { relativeTime } from '@/lib/time'
 
 /**
- * The asymmetry-verbatim copy (D-V5): matching known fakes condemns (scam
- * listings reuse stolen photos of genuine items), matching known-real
- * references merely reassures — never "verified authentic".
+ * The copy states the evidence asymmetry verbatim: matching known fakes
+ * condemns, while matching known-real references merely reassures — never
+ * "verified authentic" — because scam listings reuse stolen photos of genuine
+ * items.
  */
 const VERDICT_COPY: Record<AuthenticityVerdict, string> = {
   leans_fake: 'photos consistent with known fakes',
@@ -45,6 +46,10 @@ function ConfidenceMeter({ value, hot }: { value: string; hot: boolean }) {
   )
 }
 
+/**
+ * Full authenticity read for an expanded listing row: verdict copy, fake
+ * confidence with a meter, photo count and when it was scanned.
+ */
 export function AuthenticityLine({ read }: { read: AuthenticityRead }) {
   const hot = read.verdict === 'leans_fake'
   return (

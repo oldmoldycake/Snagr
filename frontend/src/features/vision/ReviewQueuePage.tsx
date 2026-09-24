@@ -132,7 +132,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
 /**
  * The photo-review queue: listing photos the vision check flagged as likely
  * gold references, waiting for the owner's confirm/discard. Scoped to the
- * viewer's own captures (D-V11) — you review what your hunts found.
+ * viewer's own captures, admins included — you review what your hunts found.
  */
 export function ReviewQueuePage() {
   const { data: instance } = useInstance()

@@ -105,6 +105,7 @@ function SiteDialog({
   )
 }
 
+/** The site list: add, edit and delete the stores the hunter searches. */
 export function SitesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Site | null>(null)

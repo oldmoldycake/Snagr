@@ -1,5 +1,9 @@
 import type { ApiErrorBody } from './types'
 
+/**
+ * A non-2xx response, carrying the status and the error envelope's `code` and `fields`
+ * (`code` is "unknown" when the body was not the envelope).
+ */
 export class ApiError extends Error {
   status: number
   code: string
@@ -15,6 +19,10 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
+/**
+ * Per-call options for `api`: `params` become the query string (undefined values dropped),
+ * and a FormData `body` is sent as multipart rather than JSON.
+ */
 export interface RequestOptions {
   method?: Method
   body?: unknown
@@ -75,6 +83,10 @@ async function doFetch(path: string, opts: RequestOptions): Promise<Response> {
   })
 }
 
+/**
+ * Fetch a same-origin API path and parse the JSON (undefined for a 204); any error
+ * status throws ApiError. Adds the CSRF header to every mutation.
+ */
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   let res = await doFetch(path, opts)
 

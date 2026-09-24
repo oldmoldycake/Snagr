@@ -1,8 +1,10 @@
 import type { ListingSeries, PriceHistoryResponse } from '@/api/types'
 import { chart, seriesColor } from '@/components/charts/chartTheme'
 
+/** The most listings the chart draws as their own line; the rest fold into "others". */
 export const MAX_SERIES = 6
 
+/** One plotted listing: its slot color and its points, parsed and time-sorted. */
 export interface PreparedSeries {
   listing: ListingSeries
   color: string

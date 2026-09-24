@@ -109,6 +109,10 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
   )
 }
 
+/**
+ * Top bar of every signed-in page: navigation, item search, the live-job
+ * indicator that opens the activity sheet, and the account menu.
+ */
 export function Masthead() {
   const navigate = useNavigate()
   const { data: user } = useSession()

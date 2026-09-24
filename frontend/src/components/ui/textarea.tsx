@@ -1,6 +1,7 @@
 import { forwardRef, type TextareaHTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Styled multi-line input, three rows by default; forwards its ref to the native textarea. */
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
   ({ className, rows = 3, ...props }, ref) => (
     <textarea

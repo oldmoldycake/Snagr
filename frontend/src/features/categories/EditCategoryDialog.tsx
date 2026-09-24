@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
 
+/** Rename a category, choose which sites it searches, or delete it. */
 export function EditCategoryDialog({
   category,
   open,

@@ -2,9 +2,12 @@ import * as MenuPrimitive from '@radix-ui/react-dropdown-menu'
 import type { ComponentPropsWithoutRef } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Dropdown menu root — Radix DropdownMenu.Root. */
 export const DropdownMenu = MenuPrimitive.Root
+/** Element that opens the menu — Radix DropdownMenu.Trigger. */
 export const DropdownMenuTrigger = MenuPrimitive.Trigger
 
+/** The menu panel — Radix DropdownMenu.Content in a portal. */
 export function DropdownMenuContent({
   className,
   sideOffset = 4,
@@ -24,6 +27,7 @@ export function DropdownMenuContent({
   )
 }
 
+/** One menu entry — Radix DropdownMenu.Item. */
 export function DropdownMenuItem({
   className,
   ...props
@@ -40,6 +44,7 @@ export function DropdownMenuItem({
   )
 }
 
+/** Hairline between menu groups — Radix DropdownMenu.Separator. */
 export function DropdownMenuSeparator({
   className,
   ...props

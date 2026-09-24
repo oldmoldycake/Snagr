@@ -10,6 +10,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AuthLayout } from './AuthLayout'
 
+/**
+ * Accept-invite page at /invite/:token: validates the token, then creates the
+ * account and signs the new user in.
+ */
 export function InvitePage() {
   const { token = '' } = useParams()
   const navigate = useNavigate()

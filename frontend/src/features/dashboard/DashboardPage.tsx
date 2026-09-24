@@ -20,6 +20,7 @@ import { VerdictHero } from './VerdictHero'
 /** One page of everything: the self-hosted watch fits in a single fetch. */
 const WATCH_PAGE_SIZE = 200
 
+/** Home page: the verdict hero, the hunter ticker and every watch, sorted by distance to target. */
 export function DashboardPage() {
   const [range, setRange] = useRangeParam()
   const [params] = useSearchParams()

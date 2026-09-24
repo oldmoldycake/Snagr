@@ -21,10 +21,12 @@ import {
 } from './fixtures'
 import { toJob, toJobEvent } from './serializers'
 
+/** One open /api/events stream and the viewer it belongs to. */
 export type StreamClient = { user: MockUser; enqueue: (chunk: string) => void }
 
 const clients = new Set<StreamClient>()
 
+/** Register an open stream, send its snapshot and keep the check loop going. */
 export function addClient(client: StreamClient) {
   clients.add(client)
   // per-viewer snapshot on every (re)connect — the client rebuilds its live
@@ -41,6 +43,7 @@ export function addClient(client: StreamClient) {
   startCheckLoop()
 }
 
+/** Forget a closed stream; the check loop stops when the last one goes. */
 export function removeClient(client: StreamClient) {
   clients.delete(client)
   if (clients.size === 0) stopCheckLoop()
@@ -101,6 +104,7 @@ function emit(
 
 const timers = new Map<number, ReturnType<typeof setTimeout>[]>()
 
+/** Stop a demo hunt's pending steps and finish it as cancelled. */
 export function cancelDemoHunt(job: MockJob) {
   for (const t of timers.get(job.id) ?? []) clearTimeout(t)
   timers.delete(job.id)

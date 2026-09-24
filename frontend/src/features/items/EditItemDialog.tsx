@@ -10,6 +10,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
+/**
+ * Edit an item's name, target price and tracking options. Seeds its form from
+ * props once — remount it (via key) to pick up server-side changes.
+ */
 export function EditItemDialog({
   item,
   open,

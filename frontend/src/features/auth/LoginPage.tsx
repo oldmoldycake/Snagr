@@ -11,6 +11,10 @@ import { useInstance, useLogin, useSession } from './useSession'
 
 const MOCKS_ON = import.meta.env.VITE_USE_MOCKS === 'true'
 
+/**
+ * Sign-in page: email and password, plus the SSO button when the instance has
+ * an OIDC provider. Already signed-in visitors go straight to the dashboard.
+ */
 export function LoginPage() {
   const { data: user } = useSession()
   const { data: instance } = useInstance()

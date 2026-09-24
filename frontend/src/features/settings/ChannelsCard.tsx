@@ -226,6 +226,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   )
 }
 
+/** Settings card for notification channels: add, enable/disable, test and delete them. */
 export function ChannelsCard() {
   const [adding, setAdding] = useState(false)
   const [deleting, setDeleting] = useState<NotificationChannel | null>(null)

@@ -14,6 +14,7 @@ import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
 
+/** Form state for the tracking options; trackingPayload turns it into the API fields. */
 export interface TrackingValue {
   criteria: string
   selectionMode: SelectionMode
@@ -26,6 +27,7 @@ export interface TrackingValue {
   siteIds: number[] | null
 }
 
+/** Tracking options for a new item. */
 export const DEFAULT_TRACKING: TrackingValue = {
   criteria: '',
   selectionMode: 'cheapest',
@@ -41,6 +43,7 @@ const INTERVAL_OPTIONS = [
   { value: 'custom', label: 'Custom' },
 ]
 
+/** The tracking fields of a create/update item request; blank criteria is sent as null. */
 export function trackingPayload(value: TrackingValue) {
   return {
     criteria: value.criteria.trim() || null,

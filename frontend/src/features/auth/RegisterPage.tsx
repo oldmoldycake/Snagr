@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { AuthLayout } from './AuthLayout'
 import { useInstance, useRegister } from './useSession'
 
+/** Self-registration page; redirects to /login when the instance has registration closed. */
 export function RegisterPage() {
   const { data: instance, isLoading } = useInstance()
   const register = useRegister()
