@@ -165,7 +165,7 @@ def client(fake_embedder, fake_store):
 
 @pytest.fixture
 def degraded_client(fake_store, monkeypatch):
-    """A client whose startup found no weights — the D-V1 degraded mode."""
+    """A client whose startup found no weights — the degraded mode."""
     monkeypatch.setattr(embedder, "load", lambda: None)
     monkeypatch.setattr(embedder, "_dim", None)
     with TestClient(app) as c:

@@ -1,6 +1,6 @@
 """POST /rescore/{item_id}: confirms/revocations re-verdict stored vectors
-with no re-inference — and respect the D-V8 boundaries (never auto_reject,
-never promotion)."""
+with no re-inference — and never touch what capture time decided (auto_reject,
+promotion)."""
 
 from datetime import UTC, datetime
 
@@ -94,7 +94,7 @@ def test_confirmations_and_revocations_flip_verdicts_from_stored_vectors(
 
 
 def test_rescore_needs_no_model(client, graph, add_reference, fake_embedder, fetches, monkeypatch):
-    # scoring stored vectors is pure math (D-V8) — it must keep working after
+    # scoring stored vectors is pure math — it must keep working after
     # the weights go away, unlike /check-images
     add_reference(graph.item_id, "real", vec(0))
     _capture(client, graph, fake_embedder, fetches)

@@ -1,4 +1,4 @@
-"""Daily garbage collection (D-V12: nothing grows unbounded).
+"""Daily garbage collection, so neither the tables nor the bucket grow unbounded.
 
 Row side: unreviewed listing images past the retention window are pruned,
 then scans left with no images. Byte side: the bucket is reconciled against
@@ -58,6 +58,7 @@ def reconcile_bucket(session, store) -> int:
 
 
 def _sweep(store) -> None:
+    """One GC pass: prune stale rows first, then reclaim the bytes they freed."""
     with SessionLocal() as session:
         pruned = prune_stale_captures(session)
         deleted = reconcile_bucket(session, store)
@@ -67,8 +68,7 @@ def _sweep(store) -> None:
 def start_daily(store) -> None:
     """Run the sweep once a day on a daemon thread (sleep-first, so tests
     that build an app never race a sweep). A failed sweep logs and waits for
-    the next day — GC must never take the service down, the same isolation
-    contract as the grounding pre-pass."""
+    the next day — GC must never take the service down."""
 
     def _loop() -> None:
         while True:

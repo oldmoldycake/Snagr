@@ -1,4 +1,4 @@
-"""FastAPI app for the vision sidecar — the fourth Snagr component (D-V1).
+"""FastAPI app for the vision sidecar — the fourth Snagr component, and optional.
 
 Owns everything vision: weights, embedding, image fetching/storage, scoring,
 promotion, GC. The agent and backend are clients only. Handlers are sync
@@ -6,7 +6,7 @@ promotion, GC. The agent and backend are clients only. Handlers are sync
 boring right tool — the async-everywhere rule is a request-path rule for
 backend/, not here.
 
-LAN-internal and unauthenticated in v1 (D-V1) — never expose publicly.
+No authentication; it is meant for the LAN only — never expose it publicly.
 """
 
 import hashlib
@@ -38,6 +38,8 @@ from sqlalchemy import delete, func, select
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    """Load the weights, refuse a model whose width the schema can't store,
+    ensure the bucket, and start the daily GC."""
     dim = embedder.load()
     if dim is not None and dim != EMBEDDING_DIM:
         raise RuntimeError(
@@ -55,6 +57,8 @@ app = FastAPI(title="Snagr vision sidecar", lifespan=lifespan)
 
 
 class CheckImagesRequest(BaseModel):
+    """Body of POST /check-images, sent by the agent's check_images tool."""
+
     watch_id: int
     item_id: int
     listing_url: str
@@ -76,7 +80,8 @@ def _live_reference_embeddings(session, item_id: int) -> tuple[list, list]:
 
 def _vouched_gold_counts(session, item_id: int) -> dict[str, int]:
     """Live human/upload reference counts per label — the min-gold guardrail
-    input; provenance 'auto' rows deliberately don't count (D-V7)."""
+    input; provenance 'auto' rows deliberately don't count, so promotions
+    can't bootstrap further promotions."""
     rows = session.execute(
         select(VisionReferences.label, func.count())
         .where(VisionReferences.item_id == item_id)
@@ -91,7 +96,8 @@ def _vouched_gold_counts(session, item_id: int) -> dict[str, int]:
 
 def _stored_embedding(session, object_key: str):
     """A previously computed embedding for these exact bytes under the current
-    model, or None — embed once, score anywhere (D-V8)."""
+    model, or None. Each photo is embedded once; every later score reuses the
+    stored vector."""
     for column_owner in (VisionListingImages, VisionReferences):
         embedding = session.scalars(
             select(column_owner.embedding)
@@ -114,8 +120,7 @@ def _round(value: float | None) -> float | None:
 def check_images(req: CheckImagesRequest):
     """Fetch, embed, persist, and score a candidate listing's photos against
     the item's gold library. Persistence never depends on the listing being
-    saved — rejected listings are where fake reference candidates come from
-    (D-V2)."""
+    saved — rejected listings are where fake reference candidates come from."""
     if not embedder.loaded():
         raise HTTPException(status_code=503, detail=embedder.LICENSE_HELP)
 
@@ -243,9 +248,9 @@ def check_images(req: CheckImagesRequest):
 @app.post("/rescore/{item_id}")
 def rescore_item(item_id: int):
     """Recompute every stored scan for an item from stored vectors — no
-    model needed, so this works even degraded (D-V8: embed once, score
-    anywhere). Updates verdicts, confidences, and queue suggestions only:
-    never auto_reject, never promotion (D-V8 boundaries)."""
+    model needed, so this works even degraded. Updates verdicts, confidences,
+    and queue suggestions only: auto_reject and promotion are decided once,
+    at capture time, and a rescore never revisits them."""
     with SessionLocal() as session:
         real_refs, fake_refs = _live_reference_embeddings(session, item_id)
         scans = session.scalars(select(VisionScans).where(VisionScans.item_id == item_id)).all()
@@ -283,7 +288,7 @@ def upload_reference(
     variant_tag: Annotated[str | None, Form()] = None,
 ):
     """Embed and store a manually uploaded photo as a gold reference —
-    communal from the start, provenance 'upload' (D-V7)."""
+    shared by every watch on the item from the start, provenance 'upload'."""
     if not embedder.loaded():
         raise HTTPException(status_code=503, detail=embedder.LICENSE_HELP)
     if label not in ("real", "fake"):
@@ -329,7 +334,7 @@ def upload_reference(
 @app.get("/images/{object_key}")
 def get_image(object_key: str):
     """Stream stored bytes — the upstream of the backend's same-origin image
-    proxy (D-V3); the browser never sees the object store."""
+    proxy; the browser never sees the object store."""
     stored = storage.store.get(object_key)
     if stored is None:
         raise HTTPException(status_code=404, detail="no such image")
@@ -340,7 +345,7 @@ def get_image(object_key: str):
 @app.get("/health")
 def health():
     """Liveness plus the one fact every client branches on: whether the
-    weights loaded. Degraded is a supported steady state (D-V1) — stored
+    weights loaded. Degraded is a supported steady state, not an outage — stored
     images and /rescore still work without a model."""
     return {
         "status": "ok" if embedder.loaded() else "degraded",

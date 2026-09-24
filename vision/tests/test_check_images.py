@@ -50,7 +50,7 @@ def test_persists_scan_and_images_without_any_listing_save(
     assert body["verdict"] == "leans_real"
     assert body["skipped"] == []
 
-    # persisted regardless of whether the listing itself ever gets saved (D-V2)
+    # persisted regardless of whether the listing itself ever gets saved
     (scan,) = _rows(VisionScans)
     assert (scan.watch_id, scan.listing_url) == (graph.watch_id, LISTING)
     (image,) = _rows(VisionListingImages)
@@ -69,7 +69,7 @@ def test_content_hash_dedup_embeds_once(client, graph, fake_embedder, fetches, f
     assert fake_embedder.calls == 1  # same hash in one call embeds once
     assert len(fake_store.objects) == 1
 
-    # …and a later scan of the same pixels reuses the stored vector (D-V8)
+    # …and a later scan of the same pixels reuses the stored vector
     res = _post(client, graph, ["https://cdn.test/a.jpg"], listing="https://market.test/other")
     assert res.status_code == 200
     assert fake_embedder.calls == 1
@@ -174,7 +174,7 @@ def test_suggestion_thresholds(client, graph, add_reference, fake_embedder, fetc
 
 def test_weak_reassurance_never_suggests_real(client, graph, add_reference, fake_embedder, fetches):
     # leans_real on margin alone, but s_real < 0.80 — must NOT grow the real
-    # cluster (D-V5: weak reassurance)
+    # cluster: weak reassurance is not evidence
     add_reference(graph.item_id, "real", vec(0))
     fetches["https://cdn.test/w.jpg"] = (b"weak", "image/jpeg")
     fake_embedder.registry[b"weak"] = vec(40)  # s_real ≈ 0.766
@@ -239,7 +239,7 @@ def test_auto_references_never_count_toward_min_gold(
     client, graph, add_reference, fake_embedder, fetches
 ):
     # 2 vouched + 3 machine-promoted: still short — promotions must not
-    # bootstrap further promotions (risk 3)
+    # bootstrap further promotions
     _seed_fake_gold(add_reference, graph.item_id, 2)
     _seed_fake_gold(add_reference, graph.item_id, 3, provenance="auto")
     fetches["https://cdn.test/f.jpg"] = (b"very-fake", "image/jpeg")

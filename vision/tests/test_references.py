@@ -1,5 +1,5 @@
 """POST /references: manual uploads become communal gold immediately,
-provenance 'upload' (D-V7)."""
+provenance 'upload'."""
 
 import hashlib
 from io import BytesIO

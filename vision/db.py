@@ -1,5 +1,5 @@
 """Sync SQLAlchemy setup and the sidecar's column-compatible subset of the
-canonical schema (backend/app/models.py owns it, decision D1): the three
+canonical schema (backend/app/models.py owns it): the three
 vision_* tables in full, plus the minimal slices of users/watches/items the
 sidecar joins through — thresholds, watch → owner, and FK targets.
 
@@ -31,12 +31,12 @@ SessionLocal = sessionmaker(engine)
 
 
 class Base(DeclarativeBase):
-    pass
+    """Declarative base for the sidecar's subset models."""
 
 
 class Users(Base):
-    """Subset: the per-user vision thresholds (D-V9) the scoring and
-    promotion paths resolve through watch → owner."""
+    """Subset: the per-user vision thresholds (auto-reject, auto-promote)
+    the scoring and promotion paths resolve through watch → owner."""
 
     __tablename__ = "users"
 
@@ -62,7 +62,7 @@ class Items(Base):
 
 class Watches(Base):
     """Subset: the capturing watch, resolved to its owner for thresholds and
-    review-queue scoping (D-V11)."""
+    review-queue scoping (a user reviews only what their own watches captured)."""
 
     __tablename__ = "watches"
 
@@ -95,7 +95,7 @@ class VisionReferences(Base):
 class VisionScans(Base):
     """One scan per (watch, listing_url) — mirrors backend/app/models.py.
     auto_reject is stamped at scan time from the owner's threshold; a rescore
-    never flips it (D-V8 boundary)."""
+    never flips it."""
 
     __tablename__ = "vision_scans"
 
@@ -120,7 +120,7 @@ class VisionListingImages(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     scan_id: Mapped[int] = mapped_column(ForeignKey("vision_scans.id", ondelete="CASCADE"))
     image_url: Mapped[str] = mapped_column(Text)
-    object_key: Mapped[str] = mapped_column(Text)  # sha256 content hash (D-V12 dedup)
+    object_key: Mapped[str] = mapped_column(Text)  # sha256 content hash; duplicate photos share it
     embedding: Mapped[list[float]] = mapped_column(Vector(384))
     model_name: Mapped[str] = mapped_column(Text)
     real_similarity: Mapped[float | None] = mapped_column(Numeric(precision=5, scale=4))

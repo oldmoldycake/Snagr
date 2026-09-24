@@ -1,10 +1,10 @@
-"""Suggestion and auto-promotion guardrails (D-V7).
+"""Suggestion and auto-promotion guardrails.
 
 Suggestions put an image in the owner's review queue with a pre-picked
-label; auto-promotion turns one straight into a gold reference, and is the
-feature's self-training drift vector (risk 3) — hence every guardrail here
-must pass independently. Auto-promotion is evaluated at capture time only;
-a rescore re-runs suggestions but never promotion (D-V8 boundary).
+label; auto-promotion turns one straight into a gold reference. Promotion is
+how the library could train itself into a wrong answer, so every guardrail
+here must pass independently. Auto-promotion is evaluated at capture time
+only; a rescore re-runs suggestions but never promotion.
 """
 
 from scoring import ImageScore
@@ -13,7 +13,8 @@ from scoring import ImageScore
 # fake_confidence >= it for fake, <= its complement for real.
 SUGGEST_THRESHOLD = 0.80
 # Real suggestions additionally need a strong absolute match — weak
-# reassurance must not grow the real cluster (D-V5 asymmetry).
+# reassurance must not grow the real cluster, since stock photos of genuine
+# items are a common scam.
 REAL_SUGGEST_MIN_SIMILARITY = 0.80
 # Guardrail 1: the item needs this many human-vouched (human/upload) refs of
 # the label before anything self-promotes — the earliest, most error-prone
@@ -62,7 +63,7 @@ def auto_promotable(
         return False
     if score.fake_confidence is None:
         return False
-    # Guardrail 2: the owner's own promotion threshold (D-V9), which defaults
+    # Guardrail 2: the owner's own promotion threshold (a user setting), which defaults
     # stricter (0.90) than the suggestion threshold that got it here.
     if label == "fake":
         confidence, threshold = score.fake_confidence, auto_promote_fake
