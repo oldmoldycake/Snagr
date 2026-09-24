@@ -1,4 +1,4 @@
-"""Authentication & invites — /api/auth/*  (Phase 2).
+"""Authentication, SSO and invite signup — /api/auth/*. Public except /me.
 
 THE WHOLE LOGIN FLOW, in one file. Read it top-to-bottom once and it'll click:
 
@@ -165,6 +165,10 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
     dependencies=[Depends(csrf_guard)],
 )
 async def register(body: RegisterRequest, response: Response, db: AsyncSession = Depends(get_db)):
+    """Self-signup; the first user ever becomes admin. Starts a session.
+
+    403 registration_closed once someone exists and REGISTRATION_OPEN is off —
+    people then join by invite. 422 validation_error for an email already taken."""
     # the very first user can always register (and becomes admin). After that,
     # self-signup is only open while the REGISTRATION_OPEN toggle is on —
     # otherwise people join via an admin invite.
@@ -200,6 +204,10 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
 
 @router.post("/login", response_model=UserEnvelope, dependencies=[Depends(csrf_guard)])
 async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+    """Check email and password and start a session.
+
+    401 invalid_credentials for an unknown email and a wrong password alike;
+    403 forbidden for a deactivated account."""
     user = await db.scalar(select(User).where(User.email == body.email))
     # same generic error whether the email is unknown or the password is wrong —
     # never tell an attacker which half they got right.
@@ -221,6 +229,7 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)])
 async def logout(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Revoke the refresh token behind this cookie and clear both auth cookies."""
     raw = request.cookies.get(REFRESH_COOKIE)
     if raw:
         # revoke this refresh token so it can't be used again, even if the cookie leaks
@@ -235,6 +244,10 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
 @router.post("/refresh", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)])
 async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    """Swap a live refresh cookie for a new access+refresh pair, burning the old one.
+
+    401 unauthenticated when the refresh cookie is missing, revoked, expired, or
+    belongs to a deactivated user."""
     # the frontend calls this automatically when a request 401s on an expired access token
     raw = request.cookies.get(REFRESH_COOKIE)
     if not raw:
@@ -258,6 +271,7 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
 
 @router.get("/me", response_model=UserSchema, dependencies=[Depends(reject_bearer)])
 async def get_me(user: User = Depends(current_user)):
+    """The signed-in user. Cookie sessions only — an API token gets 403."""
     return user_out(user)
 
 
@@ -276,6 +290,9 @@ async def _live_invite(db: AsyncSession, token: str) -> Invites:
 
 @router.get("/invites/{token}", response_model=InviteValidation)
 async def validate_invite(token: str, db: AsyncSession = Depends(get_db)):
+    """Check an invite link before showing the signup form.
+
+    404 not_found for an unknown token; 410 invite_expired once used or expired."""
     invite = await _live_invite(db, token)
     return InviteValidation(email=invite.email, expires_at=invite.expires_at.isoformat())
 
@@ -289,6 +306,10 @@ async def validate_invite(token: str, db: AsyncSession = Depends(get_db)):
 async def accept_invite(
     token: str, body: InviteAcceptRequest, response: Response, db: AsyncSession = Depends(get_db)
 ):
+    """Create an account from an invite and start a session.
+
+    An invite pinned to an email overrides the submitted one. 404/410 as for
+    validating the invite; 422 validation_error for an email already taken."""
     invite = await _live_invite(db, token)
     # an invite pinned to an email wins over whatever the form submitted
     email = invite.email or body.email

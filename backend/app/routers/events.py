@@ -32,6 +32,7 @@ router = APIRouter(prefix="/api", tags=["events"])
 
 @router.get("/events")
 async def stream_events(user=Depends(current_user)) -> EventSourceResponse:
+    """Open the caller's SSE stream: a job.snapshot first, then live frames."""
     client = events_service.register_client(user)
     # captured before streaming starts — the ORM row detaches with the request
     user_id, is_admin = user.id, user.role == "admin"

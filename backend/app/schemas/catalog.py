@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 
 class Category(BaseModel):
+    """A category with its linked sites and item counts — the /api/categories routes."""
+
     id: int
     name: str
     slug: str
@@ -19,10 +21,14 @@ class Category(BaseModel):
 
 
 class CategoryCreateRequest(BaseModel):
+    """POST /api/categories body."""
+
     name: str
 
 
 class CategoryUpdateRequest(BaseModel):
+    """PATCH /api/categories/{id} body."""
+
     name: str | None = None
 
 
@@ -36,6 +42,8 @@ class SetCategorySitesRequest(BaseModel):
 
 
 class Site(BaseModel):
+    """A retail site the hunter searches — the /api/sites routes."""
+
     id: int
     name: str
     base_url: str
@@ -49,11 +57,15 @@ class Site(BaseModel):
 
 
 class SiteCreateRequest(BaseModel):
+    """POST /api/sites body."""
+
     name: str
     base_url: str
 
 
 class SiteUpdateRequest(BaseModel):
+    """PATCH /api/sites/{id} body; omitted fields are left unchanged."""
+
     name: str | None = None
     base_url: str | None = None
     # null is the ONLY accepted value: the hunter sets pauses, a person can

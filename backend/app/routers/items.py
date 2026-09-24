@@ -1,9 +1,8 @@
-"""Items, listings & watches — (GET Phase 1, writes Phase 3). Auth required.
+"""Items, watches and listings — /api/items/* and /api/listings/*. Auth required.
 
 An API "item" = items row + the caller's watch + watch_sites; the logic lives
 in services/items.py (shared with the MCP tools) and this router is the HTTP
-layer over it. prefix is /api because this router owns both /api/items/* and
-/api/listings/*.
+layer over it. prefix is /api because the router spans both trees.
 """
 
 from typing import Annotated
@@ -39,6 +38,7 @@ async def list_items(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """The caller's watches as items, filtered, searched and paged."""
     try:
         return await items_service.list_items(db, user.id, filters)
     except SQLAlchemyError as e:
@@ -54,6 +54,8 @@ async def list_items(
 async def create_item(
     body: ItemCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Watch an item: find-or-create the shared item, then create the caller's
+    watch and its site subset."""
     try:
         return await items_service.create_item(db, user.id, body)
     except SQLAlchemyError as e:
@@ -62,6 +64,7 @@ async def create_item(
 
 @router.get("/items/{item_id}", response_model=ItemDetail)
 async def get_item(item_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """One of the caller's items with every listing of their watch; 404 when unwatched."""
     return await items_service.get_item_detail(db, user.id, item_id)
 
 
@@ -72,6 +75,10 @@ async def update_item(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Edit item and watch fields; 404 when unwatched.
+
+    A JSON null leaves a field unchanged, except recheck_interval_minutes, where
+    null means the instance default."""
     try:
         return await items_service.update_item(db, user.id, item_id, body)
     except SQLAlchemyError as e:
@@ -82,6 +89,8 @@ async def update_item(
     "/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)]
 )
 async def delete_item(item_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Stop watching an item, removing the caller's listings and checks; the shared
+    item stays for other watchers. 404 when unwatched."""
     try:
         await items_service.delete_item(db, user.id, item_id)
     except SQLAlchemyError as e:
@@ -95,6 +104,7 @@ async def update_watch(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Set the watch's notify flag or target price; 404 when unwatched."""
     try:
         return await items_service.update_watch(db, user.id, item_id, body)
     except SQLAlchemyError as e:
@@ -108,6 +118,8 @@ async def update_listing(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Stop or resume tracking one of the caller's listings; another user's
+    listing 404s like a missing one."""
     try:
         return await items_service.update_listing(db, user.id, listing_id, body.active)
     except SQLAlchemyError as e:
@@ -118,6 +130,8 @@ async def update_listing(
 async def list_price_checks(
     item_id: int, limit: int = 50, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Recent raw price checks across the caller's listings of an item, newest
+    first — unconfirmed readings included. An unwatched item is an empty list."""
     try:
         return DataList(data=await items_service.list_price_checks(db, user.id, item_id, limit))
     except SQLAlchemyError as e:

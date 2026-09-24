@@ -1,4 +1,4 @@
-"""API tokens — mirror the token block of types.ts (Phase: MCP layer)."""
+"""API tokens — mirror the token block of types.ts."""
 
 from typing import Literal
 
@@ -11,6 +11,8 @@ KNOWN_SCOPES: tuple[str, ...] = ("read", "write", "jobs")
 
 
 class ApiToken(BaseModel):
+    """A personal access token as GET /api/me/tokens lists it; the raw token is never here."""
+
     id: int
     name: str
     scopes: list[ApiTokenScope]
@@ -30,6 +32,8 @@ class ApiTokenCreated(ApiToken):
 # router validates them itself instead of letting Pydantic answer with FastAPI's
 # default detail shape (same reasoning as the channel requests).
 class ApiTokenCreateRequest(BaseModel):
+    """POST /api/me/tokens body."""
+
     name: str | None = None
     scopes: list[str] | None = None
     expires_in_days: int | None = None  # None = never expires
@@ -40,6 +44,7 @@ class ApiTokenCreateRequest(BaseModel):
 
 
 def token_out(t) -> ApiToken:
+    """Serialize an API token row; its hash never leaves."""
     return ApiToken(
         id=t.id,
         name=t.name,
@@ -51,4 +56,5 @@ def token_out(t) -> ApiToken:
 
 
 def token_created_out(t, raw: str) -> ApiTokenCreated:
+    """Serialize a newly minted token with its one-time raw value."""
     return ApiTokenCreated(**token_out(t).model_dump(), token=raw)

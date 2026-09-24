@@ -1,11 +1,10 @@
-"""Vision surfaces — review queue, reference library, image proxy (Phase 5
-of the visual-authenticity plan). Auth required everywhere; flows live in
-services/vision.py.
+"""Vision surfaces: review queue, reference library, image proxy —
+/api/vision/* and /api/items/{id}/references*. Auth required everywhere; flows
+live in services/vision.py.
 
-prefix is /api because this router owns /api/vision/* and
-/api/items/{id}/references*.
+prefix is /api because the router spans both of those trees.
 
-Off-mode (D-V9): with the sidecar unconfigured the two GET list routes
+Off-mode: with the sidecar unconfigured the two GET list routes
 return empty data, and everything that needs the sidecar or its stores —
 every mutation plus the image proxy — answers 503 vision_unavailable.
 """
@@ -50,6 +49,8 @@ async def list_review_queue(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Captured photos awaiting the caller's review, newest first; only what the
+    caller's own watches captured, admins included."""
     return await vision_service.list_review_queue(db, user, item_id, page, per_page)
 
 
@@ -65,6 +66,9 @@ async def confirm_review_entry(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Confirm a queue entry as a real/fake reference, then rescore the item.
+
+    404 for another user's entry; 409 already_reviewed once handled."""
     vision_service.require_vision()
     reference = await vision_service.confirm_review_entry(db, user, entry_id, body)
     # after the commit, on purpose: the confirmation stands even if the
@@ -80,6 +84,7 @@ async def discard_review_entry(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Drop a queue entry without keeping it as a reference, then rescore the item."""
     vision_service.require_vision()
     item_id = await vision_service.discard_review_entry(db, user, entry_id)
     background.add_task(vision_service.fire_rescore, item_id)
@@ -89,6 +94,7 @@ async def discard_review_entry(
 async def list_references(
     item_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """An item's shared reference library, newest first; 404 when unwatched."""
     return DataList(data=await vision_service.list_references(db, user, item_id))
 
 
@@ -106,6 +112,10 @@ async def upload_reference(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Upload a photo as a real/fake reference for a watched item, then rescore it.
+
+    422 validation_error for a bad label, a non-image, or a file over 10 MB; 503
+    vision_unavailable when the sidecar can't be reached."""
     vision_service.require_vision()
     await vision_service.require_watched_item(db, user, item_id)
     if label not in ("real", "fake"):
@@ -159,6 +169,7 @@ async def revoke_reference(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Revoke a reference of an item the caller watches; revoking twice is a no-op."""
     vision_service.require_vision()
     item_id, changed = await vision_service.revoke_reference(db, user, ref_id)
     if changed:
@@ -172,6 +183,8 @@ async def revoke_auto_references(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Revoke every live auto-promoted reference of an item — the way out when
+    the library has drifted. Returns how many were revoked."""
     vision_service.require_vision()
     revoked = await vision_service.revoke_auto_references(db, user, item_id)
     if revoked:
@@ -184,7 +197,7 @@ async def get_image(
     object_key: str, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
     """Stream stored bytes from the sidecar — the browser never talks to the
-    object store (D-V3). Entitlement: the key backs a live reference of an
+    object store. Entitlement: the key backs a live reference of an
     item the viewer watches, or one of the viewer's own captures, or the
     viewer is admin; anything else 404s like an unknown key."""
     vision_service.require_vision()

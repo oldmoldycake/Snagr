@@ -8,5 +8,6 @@ from app.mcp.tools import catalog, charts, instance, items, jobs, vision
 
 
 def register(mcp: FastMCP) -> None:
+    """Register every section's tools on the server."""
     for module in (instance, catalog, items, charts, jobs, vision):
         module.register(mcp)

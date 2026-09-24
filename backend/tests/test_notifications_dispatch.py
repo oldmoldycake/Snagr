@@ -5,8 +5,7 @@
 2. TestExpand           — _expand_one: fanout, the events filter, disabled
                           channels, and the zero-channels 'skipped' outcome.
 3. TestDeliver          — _deliver_one with outbound HTTP behind a
-                          MockTransport: the exact ntfy bytes (the format the
-                          agent used to send itself), the signed webhook
+                          MockTransport: the exact ntfy bytes, the signed webhook
                           envelope (signature recomputed and verified here),
                           the Discord embed, and the retry/backoff ladder.
 4. TestEndToEnd         — the real listen_pg() task, nothing mocked but HTTP:

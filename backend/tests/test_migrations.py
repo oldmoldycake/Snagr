@@ -193,7 +193,7 @@ async def test_016_queues_a_first_check_for_listings_that_predate_the_queue(scra
 
 
 async def test_017_marks_listings_already_inactive_as_ended(scratch):
-    """The reason used to be logged and nowhere else, so an inactive row
+    """Before 017 the reason was only logged, so an inactive row
     upgraded from before 017 gets the one reason true of all of them; a
     tracked row has no reason at all."""
     _alembic("upgrade", "015")

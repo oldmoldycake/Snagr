@@ -116,9 +116,9 @@ class TestEnqueue:
         assert datetime.fromisoformat(again[0]["run_after"]) <= datetime.now(UTC)
 
     async def test_a_hunt_on_a_full_watch_is_a_swap_hunt(self, client, db_session):
-        """Decision 9 keeps a full watch from hunting on its own; decision 10
-        makes a person's "hunt now" on one the hunt that looks for something
-        better than its weakest listing. The flag rides on the job."""
+        """A full watch never hunts on its own, so a person's "hunt now" on one
+        is the hunt that looks for something better than its weakest listing.
+        The flag rides on the job."""
         user_id = await _sign_in(client)
         item = await _watched_item(client, sites=("eBay", "Mercari"))
         async with _seed_for(db_session, user_id) as sc:
@@ -533,8 +533,8 @@ class TestCancel:
         assert res.json()["error"]["code"] == "job_finished"
 
     async def test_the_hunters_own_work_is_admin_only(self, client, db_session):
-        """A `ground` job has no watch behind it, so nobody owns it — the same
-        rule system runs had. Permission is checked before state."""
+        """A `ground` job has no watch behind it, so nobody owns it: it is
+        admin-only. Permission is checked before state."""
         user_id = await _sign_in(client)
         async with _seed_for(db_session, user_id) as sc:
             item = await sc.item("Alpha")

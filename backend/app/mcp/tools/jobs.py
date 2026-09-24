@@ -30,6 +30,8 @@ async def _scope_id(db: AsyncSession, scope: str, target: Ref | None) -> int | N
 
 
 def register(mcp: FastMCP) -> None:
+    """Define the job tools on the shared server."""
+
     @mcp.tool(annotations=READ_ONLY)
     async def list_jobs(
         kind: str | None = None,

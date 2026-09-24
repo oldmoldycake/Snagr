@@ -23,6 +23,8 @@ from app.services.items import watch_or_404
 
 
 def register(mcp: FastMCP) -> None:
+    """Define the price-intelligence tools on the shared server."""
+
     @mcp.tool(annotations=READ_ONLY)
     async def get_price_history(
         item: int, range: TimeRange = "30d", points: int = 300

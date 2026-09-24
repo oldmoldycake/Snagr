@@ -68,6 +68,8 @@ class SnagrTokenVerifier(TokenVerifier):
     revoked in Settings stops working here in the same instant."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        """The token as FastMCP's AccessToken, or None when it is unknown or
+        expired, its owner is deactivated, or MCP is switched off."""
         if not settings.MCP_ENABLED:
             return None
         async with _sessionmaker()() as db:
@@ -85,7 +87,7 @@ class SnagrTokenVerifier(TokenVerifier):
 
 
 def _envelope(code: str, message: str, **extra) -> str:
-    """The REST error envelope as tool-error text — routers/core/errors.py's
+    """The REST error envelope as tool-error text — core/errors.py's
     JSON body, byte for byte."""
     return json.dumps({"error": {"code": code, "message": message, **extra}})
 
@@ -96,6 +98,7 @@ class VisionGate(Middleware):
     not at startup, so it follows the setting (and the tests' monkeypatch)."""
 
     async def on_list_tools(self, context: MiddlewareContext, call_next: CallNext) -> Sequence:
+        """The tool list, minus the `vision`-tagged tools while vision is off."""
         tools = await call_next(context)
         if settings.vision_enabled:
             return tools

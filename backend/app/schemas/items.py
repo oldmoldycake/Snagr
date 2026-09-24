@@ -19,12 +19,19 @@ ItemStatusFilter = Literal["all", "snagged", "above_target", "no_listings"]
 
 
 class Watch(BaseModel):
+    """The caller's own settings on an item — PATCH /api/items/{id}/watch and ItemSummary.watch."""
+
     id: int
     notify: bool
     target_price: str | None  # null = inherit the item's target_price
 
 
 class ItemSummary(BaseModel):
+    """An item as the caller watches it, with its price rollup.
+
+    GET /api/items rows and the POST /api/items response.
+    """
+
     id: int
     name: str
     category_id: int
@@ -56,6 +63,8 @@ class ItemSummary(BaseModel):
 
 
 class Listing(BaseModel):
+    """One tracked listing of an item — ItemDetail.listings and PATCH /api/listings/{id}."""
+
     id: int
     site_id: int
     site_name: str
@@ -92,6 +101,8 @@ class HuntFacts(BaseModel):
 
 
 class RecheckFacts(BaseModel):
+    """When this item's listings are next rechecked — computed from its jobs, never stored."""
+
     running: int  # how many of this item's checks are running right now
     next_at: str | None
     # minutes between checks for this item's listings: the watch's own
@@ -121,6 +132,8 @@ class ListingRow(Listing):
 
 
 class ItemCreateRequest(BaseModel):
+    """POST /api/items body: finds or creates the item and adds the caller's watch."""
+
     category_id: int
     name: str
     target_price: str | None
@@ -134,6 +147,8 @@ class ItemCreateRequest(BaseModel):
 
 
 class ItemUpdateRequest(BaseModel):
+    """PATCH /api/items/{id} body; omitted fields are left unchanged."""
+
     name: str | None = None
     target_price: str | None = None
     criteria: str | None = None
@@ -148,15 +163,21 @@ class ItemUpdateRequest(BaseModel):
 
 
 class WatchUpdateRequest(BaseModel):
+    """PATCH /api/items/{id}/watch body; omitted fields are left unchanged."""
+
     notify: bool | None = None
     target_price: str | None = None
 
 
 class ListingUpdateRequest(BaseModel):
+    """PATCH /api/listings/{id} body: stop or resume tracking a listing."""
+
     active: bool
 
 
 class ItemListParams(BaseModel):
+    """GET /api/items query filters, also taken by the MCP item-listing tool."""
+
     category_id: int | None = None
     site_id: int | None = None
     status: ItemStatusFilter | None = None
@@ -168,6 +189,8 @@ class ItemListParams(BaseModel):
 
 
 class PriceCheck(BaseModel):
+    """One price reading of a listing — GET /api/items/{id}/price-checks."""
+
     id: int
     listing_id: int
     site_name: str

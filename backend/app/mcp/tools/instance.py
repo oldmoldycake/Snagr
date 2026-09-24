@@ -10,6 +10,8 @@ from app.schemas.auth import InstanceInfo, user_out
 
 
 def register(mcp: FastMCP) -> None:
+    """Define the orientation tools on the shared server."""
+
     @mcp.tool(annotations=READ_ONLY)
     async def get_instance() -> InstanceInfo:
         """What this Snagr instance has switched on: its version, whether photo

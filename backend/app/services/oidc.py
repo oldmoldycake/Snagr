@@ -1,7 +1,5 @@
 """OIDC login (Authentik or any OIDC provider) — the whole IdP conversation.
 
-Spec: docs/superpowers/specs/2026-07-10-authentik-oidc-design.md
-
   /api/auth/oidc/login    -> new_flow() + build_authorize_url() -> 302 to IdP
   /api/auth/oidc/callback -> unpack_flow() -> exchange_code()
                              -> validate_id_token() -> resolve_oidc_user()
@@ -56,6 +54,7 @@ async def _discovery() -> dict:
 
 
 def new_flow() -> dict:
+    """Fresh state, nonce and PKCE verifier for one login attempt."""
     return {
         "state": secrets.token_urlsafe(24),  # CSRF binding for the redirect flow
         "nonce": secrets.token_urlsafe(24),  # binds the ID token to this attempt
@@ -69,6 +68,7 @@ def pack_flow(flow: dict) -> str:
 
 
 def unpack_flow(raw: str) -> dict:
+    """Decode the flow cookie; raises OidcError when it is not one of ours."""
     try:
         flow = json.loads(base64.urlsafe_b64decode(raw.encode()))
     except ValueError, UnicodeDecodeError:
@@ -79,6 +79,7 @@ def unpack_flow(raw: str) -> dict:
 
 
 async def build_authorize_url(redirect_uri: str, flow: dict) -> str:
+    """The provider's authorization URL for this attempt (code flow with PKCE)."""
     meta = await _discovery()
     if "authorization_endpoint" not in meta:
         raise OidcError("discovery document has no authorization_endpoint")

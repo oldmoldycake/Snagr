@@ -1,6 +1,6 @@
 """All ORM models for the Snagr schema.
 
-The backend OWNS this schema (Decision D1, CLAUDE.md): agent/database.py and
+The backend OWNS this schema: agent/database.py and
 vision/db.py each keep a column-compatible SUBSET of these definitions, so a
 change lands as an Alembic revision here — never as create_all() from there.
 
@@ -47,13 +47,13 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)  # + api (admin can deactivate)
     vision_auto_reject_fake: Mapped[float] = mapped_column(
         Numeric(precision=3, scale=2), server_default=text("0.85")
-    )  # + api (D-V9 threshold: fake confidence at/above this auto-rejects the listing)
+    )  # + api (fake confidence at/above this auto-rejects the listing)
     vision_auto_promote_real: Mapped[float] = mapped_column(
         Numeric(precision=3, scale=2), server_default=text("0.90")
-    )  # + api (D-V7 guardrail: min confidence for a real reference to self-promote)
+    )  # + api (auto-promotion guardrail: min confidence for a real reference to self-promote)
     vision_auto_promote_fake: Mapped[float] = mapped_column(
         Numeric(precision=3, scale=2), server_default=text("0.90")
-    )  # + api (D-V7 guardrail: min confidence for a fake reference to self-promote)
+    )  # + api (auto-promotion guardrail: min confidence for a fake reference to self-promote)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -187,7 +187,7 @@ class PriceChecks(Base):
     # jsonld|meta|microdata|locator (code replayed the listing's locator).
     # confirmed is false for a reading the plausibility bands rejected: kept
     # so the checks log shows what was seen, but never notified on and never
-    # counted in an aggregate until a later read agrees with it (§4.3).
+    # counted in an aggregate until a later read agrees with it.
     method: Mapped[str | None] = mapped_column(Text)  # + api
     confirmed: Mapped[bool] = mapped_column(  # + api
         Boolean, default=True, server_default=text("true")
@@ -253,7 +253,7 @@ class WatchSites(Base):
 
 class ListingChecks(Base):
     """Log of every listing the agent evaluated but did NOT save (poor fit,
-    authenticity concerns, duplicate, etc.) so re-runs skip re-judging them."""
+    authenticity concerns, duplicate, etc.) so later hunts skip re-judging them."""
 
     __tablename__ = "listing_checks"
 
@@ -485,21 +485,21 @@ class NotificationDeliveries(Base):
 class VisionReferences(Base):
     """+ api. Per-item gold library for the visual-authenticity check: the
     human-confirmed (or guardrail-auto-promoted) real/fake exemplars the
-    vision sidecar scores listing photos against. Communal per item (D-V11);
-    source_listing_url is shown only to its capturer and admins. Revocation
-    is soft — scoring reads WHERE revoked_at IS NULL — so a drifted library
-    can be audited, not just emptied."""
+    vision sidecar scores listing photos against. Communal per item — shared
+    by every user who watches it; source_listing_url is shown only to its
+    capturer and admins. Revocation is soft — scoring reads WHERE revoked_at
+    IS NULL — so a drifted library can be audited, not just emptied."""
 
     __tablename__ = "vision_references"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"))
     label: Mapped[str] = mapped_column(Text)  # real | fake
-    variant_tag: Mapped[str | None] = mapped_column(Text)  # e.g. "alternate art" (D-V5)
-    provenance: Mapped[str] = mapped_column(Text)  # human | upload | auto (D-V7)
+    variant_tag: Mapped[str | None] = mapped_column(Text)  # e.g. "alternate art", not a fake
+    provenance: Mapped[str] = mapped_column(Text)  # human | upload | auto
     embedding: Mapped[list[float]] = mapped_column(Vector(384))
     model_name: Mapped[str] = mapped_column(Text)
-    object_key: Mapped[str] = mapped_column(Text)  # sha256 of the bytes (D-V12 dedup)
+    object_key: Mapped[str] = mapped_column(Text)  # sha256 of the bytes, so a duplicate stores once
     source_listing_url: Mapped[str | None] = mapped_column(Text)  # NULL for uploads
     captured_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     # NULL when provenance='auto' — nobody vouched for it
@@ -521,13 +521,13 @@ class VisionScans(Base):
     verdict listing badges are computed from (join on watch_id + url, house
     pattern: computed, not stored on listings). auto_reject is the owner's
     threshold applied AT SCAN TIME: save_listing's backstop reads it, and a
-    rescore never flips it (D-V8 boundary)."""
+    rescore never flips it."""
 
     __tablename__ = "vision_scans"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"))
-    # the capturing watch — its owner is whose review queue the images enter (D-V11)
+    # the capturing watch — its owner is whose review queue the images enter
     watch_id: Mapped[int] = mapped_column(ForeignKey("watches.id", ondelete="CASCADE"))
     listing_url: Mapped[str] = mapped_column(Text)
     llm_authenticity_read: Mapped[str | None] = mapped_column(
@@ -546,9 +546,9 @@ class VisionListingImages(Base):
     """+ api. One captured listing photo: its embedding, per-image scores,
     and review-queue state. Rows persist independent of any listing save —
     rejected listings are precisely where fake reference candidates come
-    from (D-V2). object_key is the sha256 of the bytes, so a duplicate photo
+    from. object_key is the sha256 of the bytes, so a duplicate photo
     stores once and a hash reappearing across listings is a stolen-photo
-    signal recorded for free (D-V12)."""
+    signal recorded for free."""
 
     __tablename__ = "vision_listing_images"
 

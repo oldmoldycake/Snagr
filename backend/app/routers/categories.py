@@ -1,4 +1,4 @@
-"""Categories — /api/categories  (GET Phase 1, writes Phase 3). Auth required.
+"""Categories — /api/categories. Auth required.
 
 item_count / snagged_count / site_ids are computed at query time
 (services/catalog.py, shared with the MCP tools).
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/categories", tags=["categories"])
 
 @router.get("", response_model=DataList[Category])
 async def list_categories(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Every category, with counts read through the caller's watches."""
     try:
         return DataList(data=await catalog_service.list_categories(db, user.id))
     except SQLAlchemyError as e:
@@ -40,6 +41,8 @@ async def list_categories(user=Depends(current_user), db: AsyncSession = Depends
 async def create_category(
     body: CategoryCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Create a category; 422 validation_error for a blank name, 422 duplicate
+    for one that already exists (case-insensitive)."""
     try:
         return await catalog_service.create_category(db, body.name)
     except SQLAlchemyError as e:
@@ -53,6 +56,7 @@ async def update_category(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Rename a category (the slug stays); 404 for an unknown category."""
     try:
         return await catalog_service.update_category(db, category_id, body.name, user.id)
     except SQLAlchemyError as e:
@@ -65,6 +69,8 @@ async def update_category(
 async def delete_category(
     category_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Delete a category and everything under it — its items and every user's
+    watches, listings and price checks on them. 404 for an unknown category."""
     try:
         await catalog_service.delete_category(db, category_id)
         return None
@@ -79,4 +85,6 @@ async def set_category_sites(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Replace the sites a category is searched on; unknown site ids are dropped.
+    404 for an unknown category."""
     return await catalog_service.set_category_sites(db, category_id, body.site_ids, user.id)

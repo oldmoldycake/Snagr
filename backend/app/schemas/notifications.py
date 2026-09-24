@@ -1,4 +1,4 @@
-"""Notification channels — mirror the channel block of types.ts (Phase: notifications)."""
+"""Notification channels — mirror the channel block of types.ts."""
 
 from typing import Literal
 
@@ -11,6 +11,8 @@ KNOWN_EVENTS: tuple[str, ...] = ("target.hit", "listing.new")
 
 
 class NotificationChannel(BaseModel):
+    """A user's notification destination — the /api/me/channels routes."""
+
     id: int
     kind: ChannelKind
     name: str
@@ -32,6 +34,8 @@ class NotificationChannelCreated(NotificationChannel):
 # (fields.kind / fields.events) is the contract, so the router validates them
 # itself instead of letting Pydantic answer with FastAPI's default detail shape.
 class NotificationChannelCreateRequest(BaseModel):
+    """POST /api/me/channels body."""
+
     kind: str | None = None
     name: str | None = None
     url: str | None = None
@@ -55,6 +59,7 @@ class NotificationChannelUpdateRequest(BaseModel):
 
 
 def channel_out(c) -> NotificationChannel:
+    """Serialize a channel row; the secret itself never leaves, only whether one is stored."""
     return NotificationChannel(
         id=c.id,
         kind=c.kind,
@@ -69,4 +74,5 @@ def channel_out(c) -> NotificationChannel:
 
 
 def channel_created_out(c, secret: str | None) -> NotificationChannelCreated:
+    """Serialize a newly created channel with its one-time secret."""
     return NotificationChannelCreated(**channel_out(c).model_dump(), secret=secret)

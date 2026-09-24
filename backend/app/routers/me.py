@@ -1,5 +1,5 @@
-"""Current-user self-service — /api/me  (Phase 2; notification channels and
-API tokens later). All require a cookie session + CSRF: an API token can't
+"""Current-user self-service: profile, password, notification channels and API
+tokens — /api/me/*. All require a cookie session + CSRF: an API token can't
 manage the account that owns it (reject_bearer)."""
 
 import re
@@ -62,6 +62,10 @@ _THRESHOLD_FIELDS = (
 async def update_me(
     body: MeUpdateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Change the caller's email or vision thresholds; only sent fields change.
+
+    422 validation_error for a threshold outside 0.50–1.00 or an email already
+    taken."""
     # vision thresholds: contract bounds 0.50–1.00; stored resolved (never null)
     fields: dict[str, str] = {}
     thresholds: dict[str, Decimal] = {}
@@ -103,6 +107,10 @@ async def update_me(
 async def change_password(
     body: PasswordChangeRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Change the caller's password.
+
+    422 invalid_password for a wrong current password, or for an SSO account,
+    which has none."""
     if user.password_hash is None:  # SSO-provisioned account — no password to change
         raise err(
             422,
@@ -203,6 +211,7 @@ async def _own_channel(channel_id: int, user, db: AsyncSession) -> NotificationC
 
 @router.get("/channels", response_model=DataList[NotificationChannel])
 async def list_channels(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """The caller's notification channels."""
     try:
         result = await db.execute(
             select(NotificationChannels)
@@ -222,6 +231,10 @@ async def create_channel(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Add a notification channel; a webhook's signing secret is returned only here.
+
+    422 validation_error for invalid fields; 422 no_server for ntfy while the
+    instance has no ntfy server."""
     if body.kind not in ("ntfy", "webhook", "discord"):
         raise err(
             422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
@@ -251,6 +264,8 @@ async def update_channel(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Edit one of the caller's channels (its kind is fixed); 404 for another
+    user's channel, like a missing one."""
     channel = await _own_channel(channel_id, user, db)
     fields = _channel_fields(channel.kind, body, existing=channel)
     try:
@@ -268,6 +283,7 @@ async def update_channel(
 async def delete_channel(
     channel_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Delete one of the caller's channels and its pending deliveries."""
     channel = await _own_channel(channel_id, user, db)
     try:
         # pending deliveries go with it (FK ON DELETE CASCADE)
@@ -282,6 +298,10 @@ async def delete_channel(
 async def test_channel(
     channel_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Send a test notification through one of the caller's channels.
+
+    422 no_server for ntfy while the instance has no ntfy server; 502
+    channel_failed when the destination can't be reached."""
     channel = await _own_channel(channel_id, user, db)
     try:
         await notifications_service.send_test(channel)
@@ -324,6 +344,7 @@ def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime
 
 @router.get("/tokens", response_model=DataList[ApiToken])
 async def list_tokens(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """The caller's API tokens (never the raw values)."""
     try:
         result = await db.execute(
             select(ApiTokens).where(ApiTokens.user_id == user.id).order_by(ApiTokens.id)
@@ -337,6 +358,7 @@ async def list_tokens(user=Depends(current_user), db: AsyncSession = Depends(get
 async def create_token(
     body: ApiTokenCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Mint an API token; the raw value is returned only here."""
     name, scopes, expires_at = _token_fields(body)
     raw, token_hash = new_api_token()
     try:
@@ -357,6 +379,8 @@ async def create_token(
 async def revoke_token(
     token_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Delete one of the caller's API tokens; another user's token 404s like a
+    missing one."""
     try:
         token = await db.get(ApiTokens, token_id)
     except SQLAlchemyError as e:
