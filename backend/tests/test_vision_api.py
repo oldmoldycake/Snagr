@@ -147,7 +147,7 @@ async def test_queue_is_scoped_to_the_capturing_user(
     assert entry["llm_authenticity_read"] == "suspect"
     assert entry["image_url"].startswith("/api/vision/images/")
 
-    # admins included (D-V11): you review what YOUR hunts captured — not theirs
+    # admins included: you review what YOUR hunts captured — not theirs
     assert (await client.get("/api/vision/review-queue")).json()["meta"]["total"] == 0
 
     # item_id filter answers only that item

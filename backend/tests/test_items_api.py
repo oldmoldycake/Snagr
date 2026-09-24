@@ -587,7 +587,7 @@ async def _job_states(db_session, job_ids) -> list[tuple]:
 
 
 async def test_switching_hunting_back_on_a_full_watch_queues_nothing(client, db_session):
-    """Decision 9 holds here too: a full watch has nothing to hunt for."""
+    """A full watch has nothing to hunt for, so switching hunting on queues nothing."""
     owner_id = await _sign_in(client)
     ids = await _full_watch(db_session, owner_id)
     await client.patch(f"/api/items/{ids['item_id']}", json={"hunt": False}, headers=CSRF)
@@ -655,7 +655,7 @@ async def test_switching_off_touches_only_this_watchs_waiting_hunts(client, db_s
 
 
 async def test_untracking_a_listing_wakes_the_hunt_for_its_slot(client, db_session):
-    """A full watch has no hunt waiting (decision 9), so the slot the user
+    """A full watch has no hunt waiting, so the slot the user
     just freed is the only thing that will start one."""
     owner_id = await _sign_in(client)
     ids = await _full_watch(db_session, owner_id)

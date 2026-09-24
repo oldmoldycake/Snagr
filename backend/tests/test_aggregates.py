@@ -64,8 +64,8 @@ def test_range_start_offsets_by_the_named_window(range_name, expected_days):
 
 
 def test_points_below_one_is_clamped():
-    # Both series functions divide by `points`; 0 from the query string used to
-    # be a 500. Guarded rather than rejected, so the endpoint stays lenient.
+    # Both series functions divide by `points`, so 0 from the query string must
+    # not reach them. Clamped rather than rejected, so the endpoint stays lenient.
     assert _clamp_points(0) == 1
     assert _clamp_points(-5) == 1
 
@@ -123,7 +123,7 @@ async def test_price_history_excludes_other_users_listings(sc):
 
 
 async def test_price_history_skips_unpriced_checks(sc):
-    """Regression: an unpriced check used to serialize as the string "None".
+    """An unpriced check must never serialize as the string "None".
 
     The agent writes price=NULL when a listing is sold or unavailable
     (agent/tools.py save_price_check), so this is live data, not a corner case.

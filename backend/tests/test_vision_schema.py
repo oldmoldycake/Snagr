@@ -3,7 +3,7 @@
 conftest builds the test schema from Base.metadata.create_all and `alembic
 check` keeps the models and the migration in agreement, so these tests pin
 what both builds must share: threshold defaults land on every user row,
-one scan per (watch, listing_url), and the D-V12 row-side cascades — a
+one scan per (watch, listing_url), and the row-side cascades — a
 watch delete drops that watch's captures, an item delete drops its whole
 library. (Byte-side cleanup is the vision sidecar's GC sweep, not the DB.)
 """
@@ -84,8 +84,8 @@ async def test_watch_delete_drops_captures_and_item_delete_drops_library(sc):
     )
     await sc.commit()
 
-    # a watch delete takes that watch's captures with it — the communal
-    # reference library is per-item and must survive (D-V11/D-V12)
+    # a watch delete takes that watch's captures with it — the shared
+    # reference library is per-item and must survive
     await sc.db.delete(watch)
     await sc.commit()
     assert await _count(sc.db, VisionScans) == 0
