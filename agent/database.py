@@ -384,8 +384,8 @@ async def get_hunt_unit(watch_id: int, site_id: int) -> RowMapping | None:
     Returns:
       A row mapping with keys watch_id, user_id, criteria, expected_price,
       condition_hint, selection_mode, max_listings, allow_reproductions,
-      item_id, item_name, category_id, site_id, site_name, base_url — or None.
-      A failed query PROPAGATES: the job must fail and be retried, not be
+      item_id, item_name, category_id, category_slug, site_id, site_name,
+      base_url — or None. A failed query PROPAGATES: the job must fail and be retried, not be
       silently treated as an invalid pair.
     """
     async with AsyncSessionLocal() as session:
@@ -402,11 +402,13 @@ async def get_hunt_unit(watch_id: int, site_id: int) -> RowMapping | None:
                 Items.id.label("item_id"),
                 Items.name.label("item_name"),
                 Items.category_id.label("category_id"),
+                Categories.slug.label("category_slug"),
                 Sites.id.label("site_id"),
                 Sites.name.label("site_name"),
                 Sites.base_url.label("base_url"),
             )
             .join(Items, Items.id == Watches.item_id)
+            .join(Categories, Categories.id == Items.category_id)
             .join(SiteCategories, SiteCategories.category_id == Items.category_id)
             .join(Sites, Sites.id == SiteCategories.site_id)
             .where(Watches.id == watch_id)
@@ -436,9 +438,9 @@ async def get_recheck_unit(listing_id: int) -> RowMapping | None:
     Returns:
       A row mapping with keys listing_id, listing_url, watch_id, user_id,
       condition_hint, site_id, site_name, site_base_url, item_id, item_name,
-      price_locator, locator_kind, locator_failures and static_ok — everything
-      a deterministic recheck needs to read the page without a second query
-      (agent/recheck.py) — or None. A failed query PROPAGATES.
+      category_slug, price_locator, locator_kind, locator_failures and
+      static_ok — everything a deterministic recheck needs to read the page
+      without a second query (agent/recheck.py) — or None. A failed query PROPAGATES.
     """
     async with AsyncSessionLocal() as session:
         stmt = (
@@ -457,10 +459,12 @@ async def get_recheck_unit(listing_id: int) -> RowMapping | None:
                 Sites.base_url.label("site_base_url"),
                 Items.id.label("item_id"),
                 Items.name.label("item_name"),
+                Categories.slug.label("category_slug"),
             )
             .join(Sites, Sites.id == Listings.site_id)
             .join(Watches, Watches.id == Listings.watch_id)
             .join(Items, Items.id == Listings.item_id)
+            .join(Categories, Categories.id == Items.category_id)
             .where(Listings.id == listing_id)
             .where(Listings.active)
         )
@@ -480,15 +484,20 @@ async def get_ground_unit(item_id: int) -> RowMapping | None:
     Args:
       item_id: The item to refresh market stats for.
     Returns:
-      A row mapping with keys item_id, item_name, category_id, or None. A
-      failed query PROPAGATES.
+      A row mapping with keys item_id, item_name, category_id and
+      category_slug, or None. A failed query PROPAGATES.
     """
     async with AsyncSessionLocal() as session:
-        stmt = select(
-            Items.id.label("item_id"),
-            Items.name.label("item_name"),
-            Items.category_id.label("category_id"),
-        ).where(Items.id == item_id)
+        stmt = (
+            select(
+                Items.id.label("item_id"),
+                Items.name.label("item_name"),
+                Items.category_id.label("category_id"),
+                Categories.slug.label("category_slug"),
+            )
+            .join(Categories, Categories.id == Items.category_id)
+            .where(Items.id == item_id)
+        )
 
         return (await session.execute(stmt)).mappings().one_or_none()
 

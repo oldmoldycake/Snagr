@@ -134,3 +134,54 @@ class TestGroundItem:
         assert upserted["tiers"]["loose"]["high"] == "120.00"
         assert upserted["tiers"]["loose"]["n"] == 3
         assert [o["excluded"] for o in upserted["observations"]] == [None, None, None, "outlier"]
+
+
+class FakeLLM:
+    """Records the config each model call was made with, and answers with a
+    canned reply."""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.configs = []
+
+    async def ainvoke(self, prompt, config=None):
+        self.configs.append(config)
+        return type("Reply", (), {"content": self.reply})()
+
+
+class TestGroundingCallsAreTraced:
+    """Each call carries the tracing handler and a name of its own; the
+    session and tags come from the trace the ground job opens around them
+    (test_tracing.py)."""
+
+    def test_an_extraction_call_is_traced_by_name(self, monkeypatch):
+        llm = FakeLLM('{"observations": []}')
+        monkeypatch.setattr(pricing, "build_llm", lambda: llm)
+        monkeypatch.setattr(pricing, "callbacks", ["handler"])
+
+        asyncio.run(
+            pricing.extract_observations("Pokemon Emerald", {"https://a.test": "$100"}, ["loose"])
+        )
+
+        assert llm.configs == [{"callbacks": ["handler"], "run_name": "extract-observations"}]
+
+    def test_tier_generation_is_traced_by_name(self, monkeypatch):
+        llm = FakeLLM('["loose", "cib"]')
+        monkeypatch.setattr(pricing, "build_llm", lambda: llm)
+        monkeypatch.setattr(pricing, "callbacks", ["handler"])
+
+        async def fake_category(category_id):
+            return {"name": "Video games", "condition_tiers": None}
+
+        async def fake_item_names(category_id):
+            return ["Pokemon Emerald"]
+
+        async def fake_set_tiers(category_id, tiers):
+            return None
+
+        monkeypatch.setattr(pricing, "get_category_tiers", fake_category)
+        monkeypatch.setattr(pricing, "get_category_item_names", fake_item_names)
+        monkeypatch.setattr(pricing, "set_condition_tiers", fake_set_tiers)
+
+        assert asyncio.run(pricing.resolve_condition_tiers(1)) == ["loose", "cib"]
+        assert llm.configs == [{"callbacks": ["handler"], "run_name": "condition-tiers"}]

@@ -2,7 +2,8 @@
 and write the stats to market_prices.
 
 The entry point is ground_item(), one item per `ground` job; the scheduler
-picks which items are due with select_grounding_work(). Grounding is
+picks which items are due with select_grounding_work(). Its model calls are
+recorded inside the trace the ground job opens (llm.job_trace). Grounding is
 best-effort by design: a failed search, fetch or extraction costs
 observations, never the job.
 
@@ -41,7 +42,7 @@ from database import (
     set_price_sources,
     upsert_market_price,
 )
-from llm import build_llm
+from llm import build_llm, callbacks
 from prompt import generate_condition_tiers_prompt, generate_price_extraction_prompt
 from validation import public_url
 
@@ -274,7 +275,9 @@ async def extract_observations(
     prompt = await generate_price_extraction_prompt(item, search_results, tiers, EXPECTED_CURRENCY)
 
     try:
-        response = await build_llm().ainvoke(prompt)
+        response = await build_llm().ainvoke(
+            prompt, config={"callbacks": callbacks, "run_name": "extract-observations"}
+        )
     except Exception as e:
         log.error(f"Observation extraction call failed for {item}: {e}")
         return []
@@ -747,7 +750,9 @@ async def resolve_condition_tiers(category_id: int) -> list[str]:
     prompt = await generate_condition_tiers_prompt(category["name"], list(item_names))
 
     try:
-        response = await build_llm().ainvoke(prompt)
+        response = await build_llm().ainvoke(
+            prompt, config={"callbacks": callbacks, "run_name": "condition-tiers"}
+        )
     except Exception as e:
         log.error(f"Tier generation failed for category {category_id}: {e}")
         return DEFAULT_CONDITION_TIERS

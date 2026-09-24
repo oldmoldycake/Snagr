@@ -47,6 +47,7 @@ from database import (
     deactivate_listing,
     engine,
     get_active_listing_count,
+    get_ground_unit,
     get_hunt_unit,
     get_known_listing_urls,
     get_recheck_unit,
@@ -1283,7 +1284,7 @@ class TestQueueHelpers:
 
 class TestUnitLookups:
     """What a pool loads once it has claimed a job. A job outlives the
-    decision that queued it, so both lookups answer None rather than raising
+    decision that queued it, so the lookups answer None rather than raising
     when the world moved on — the worker treats that as "nothing to do"."""
 
     def test_a_recheck_unit_carries_everything_the_ladder_needs(self):
@@ -1297,6 +1298,7 @@ class TestUnitLookups:
         assert unit["watch_id"] == ids["watch_a"]
         assert unit["site_base_url"] == "https://gamebay.test"
         assert unit["item_name"] == "Emerald"
+        assert unit["category_slug"] == "games"
         assert (unit["price_locator"], unit["locator_kind"]) == (None, None)
         assert unit["static_ok"] is False
 
@@ -1325,6 +1327,19 @@ class TestUnitLookups:
         assert unit["base_url"] == "https://gamebay.test"
         assert unit["selection_mode"] == "cheapest"
         assert unit["max_listings"] == 3
+        assert unit["category_slug"] == "games"
+
+    def test_a_ground_unit_carries_the_items_category(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            return ids, await get_ground_unit(ids["item_b"])
+
+        ids, unit = db(scenario())
+        assert (unit["item_id"], unit["item_name"]) == (ids["item_b"], "Charizard")
+        assert (unit["category_id"], unit["category_slug"]) == (ids["cat_b"], "cards")
+
+    def test_a_missing_item_has_nothing_to_ground(self):
+        assert db(get_ground_unit(9999)) is None
 
     def test_a_site_the_watchs_category_does_not_carry_is_not_a_pair(self):
         # CardBay sells cards; the Emerald watch has no business there, even
