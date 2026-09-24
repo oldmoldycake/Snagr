@@ -52,14 +52,14 @@ A self-hosted price tracker for secondhand-marketplace hunting. You describe wha
 flowchart LR
     browser([Browser]) --> frontend["frontend<br/>nginx + SPA"]
     frontend -- "/api" --> backend["backend<br/>FastAPI"]
-    backend <--> db[("Postgres + pgvector<br/>jobs · listings · price_checks · outbox")]
-    agent["agent<br/>the hunter"] <-- "claim jobs · LISTEN snagr_jobs" --> db
-    agent --> mcp["Playwright MCP<br/>(--isolated)"] --> sites(["marketplaces"])
+    backend <--> db[("Postgres + pgvector<br/>jobs · listings · outbox")]
+    db <-->|jobs| agent["agent<br/>the hunter"]
+    backend --> push(["ntfy · Discord · webhook"])
+    agent --> mcp["Playwright MCP"] --> sites(["marketplaces"])
     agent --> searx["SearXNG"]
     agent --> llm["LLM provider"]
-    backend --> push(["ntfy · Discord · webhook"])
-    agent -. optional .-> vision["vision sidecar<br/>+ MinIO"]
-    backend -. optional .-> vision
+    agent -.-> vision["vision sidecar + MinIO<br/>(optional)"]
+    backend -.-> vision
 ```
 
 The backend and the agent never talk to each other directly; the database is the whole interface. The backend writes a row to the `jobs` table ("hunt this watch", "check this listing now"), and the agent — woken by `NOTIFY` — claims it, works it, and writes what it found back. Hunt progress and price checks reach the browser the same way: database triggers wake the backend, which pushes them over a server-sent event stream. Notifications work alike — the agent queues an outbox row, and the backend delivers it.
