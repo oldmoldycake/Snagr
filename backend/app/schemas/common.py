@@ -14,12 +14,16 @@ TimeRange = Literal["7d", "30d", "90d", "1y", "all"]
 
 
 class PageMeta(BaseModel):
+    """Pagination facts for a Paginated response: the page served and the total row count."""
+
     page: int
     per_page: int
     total: int
 
 
 class Paginated[T](BaseModel):
+    """Paginated list envelope: {"data": [...], "meta": PageMeta}."""
+
     data: list[T]
     meta: PageMeta
 

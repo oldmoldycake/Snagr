@@ -1,7 +1,7 @@
 """Vision / authenticity schemas — mirror the "Vision / authenticity" block
 of types.ts.
 
-The verdict language is asymmetric on purpose (D-V5): leans_fake means
+The verdict language is asymmetric on purpose: leans_fake means
 "photos consistent with known fakes" — a strong signal; leans_real means
 "photos match known-real references" — weak reassurance only, never
 "verified authentic". Scam listings reuse stolen photos of genuine items.
@@ -19,6 +19,8 @@ LlmAuthenticityRead = Literal["looks_authentic", "suspect", "unsure"]
 
 
 class AuthenticityRead(BaseModel):
+    """The image-based authenticity verdict on one listing (Listing.authenticity)."""
+
     verdict: AuthenticityVerdict
     fake_confidence: str | None  # 0–1 decimal string; null = library couldn't score it
     image_count: int
@@ -26,6 +28,8 @@ class AuthenticityRead(BaseModel):
 
 
 class ReviewQueueEntry(BaseModel):
+    """A captured listing photo awaiting its owner's confirm or discard (the review queue)."""
+
     id: int
     item_id: int
     item_name: str
@@ -38,6 +42,8 @@ class ReviewQueueEntry(BaseModel):
 
 
 class ReviewConfirmRequest(BaseModel):
+    """POST /api/vision/review-queue/{id}/confirm body; the label may flip the suggestion."""
+
     # label is a plain str so the oracle's 422 validation_error envelope (with
     # a fields map) applies — a Literal here would produce FastAPI's own shape
     label: str
@@ -45,6 +51,8 @@ class ReviewConfirmRequest(BaseModel):
 
 
 class ReferenceImage(BaseModel):
+    """One reference photo in an item's shared library — the /references routes."""
+
     id: int
     item_id: int
     label: ReferenceLabel
@@ -57,6 +65,8 @@ class ReferenceImage(BaseModel):
 
 
 class RevokeAutoResponse(BaseModel):
+    """POST /api/items/{id}/references/revoke-auto — how many references it revoked."""
+
     revoked: int
 
 
@@ -69,6 +79,7 @@ def confidence_str(value) -> str | None:
 
 
 def reference_out(r, viewer) -> ReferenceImage:
+    """Serialize a reference row, hiding its source listing from all but its capturer and admins."""
     return ReferenceImage(
         id=r.id,
         item_id=r.item_id,
@@ -76,7 +87,7 @@ def reference_out(r, viewer) -> ReferenceImage:
         variant_tag=r.variant_tag,
         provenance=r.provenance,
         image_url=f"/api/vision/images/{r.object_key}",
-        # a reference's source listing is visible only to its capturer and admins (D-V11)
+        # a reference's source listing is visible only to its capturer and admins
         source_listing_url=(
             r.source_listing_url if viewer.role == "admin" or r.captured_by == viewer.id else None
         ),
@@ -86,6 +97,7 @@ def reference_out(r, viewer) -> ReferenceImage:
 
 
 def queue_entry_out(image, scan, item_name: str) -> ReviewQueueEntry:
+    """Serialize a pending captured image and its scan as a review-queue entry."""
     # the queue shows the confidence BACKING the suggestion: the fake side for
     # fake suggestions, the real side (1 − fake) for real ones
     confidence = (

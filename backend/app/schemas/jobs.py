@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 JobKind = Literal["hunt", "recheck", "ground"]
 JobStatus = Literal["pending", "running", "done", "failed", "cancelled"]
-# the scope vocabulary a user asks in — the four the UI has always offered
+# the scope vocabulary a user asks in: everything, or one category, site or item
 JobScope = Literal["global", "category", "site", "item"]
 JobEventLevel = Literal["info", "success", "warn", "error"]
 JobEventType = Literal[
@@ -48,6 +48,8 @@ class JobStats(BaseModel):
 
 
 class Job(BaseModel):
+    """One unit of the hunter's queued work — the /api/jobs routes and the SSE lifecycle frames."""
+
     id: int
     kind: JobKind
     status: JobStatus
@@ -73,6 +75,8 @@ class Job(BaseModel):
 
 
 class PausedSite(BaseModel):
+    """A site the hunter's circuit breaker has paused, as JobsSummary lists it."""
+
     site_id: int
     site_name: str
     paused_until: str
@@ -99,12 +103,16 @@ class JobsSummary(BaseModel):
 # the service validates them itself instead of letting Pydantic reply with
 # FastAPI's default detail shape (the ApiTokenCreateRequest precedent).
 class JobCreateRequest(BaseModel):
+    """POST /api/jobs body: queue hunts or rechecks for a scope."""
+
     kind: str | None = None
     scope: str | None = None
     scope_id: int | None = None  # required unless scope is global
 
 
 class JobListParams(BaseModel):
+    """GET /api/jobs query filters."""
+
     page: int | None = None
     per_page: int | None = None
     kind: str | None = None  # one kind or a comma-separated list
@@ -113,6 +121,8 @@ class JobListParams(BaseModel):
 
 
 class JobEvent(BaseModel):
+    """One progress line of a hunt or ground job — GET /api/jobs/{id}/events and the SSE stream."""
+
     job_id: int
     seq: int
     ts: str
