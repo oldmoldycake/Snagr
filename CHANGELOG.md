@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/oldmoldycake/Snagr/compare/v0.3.0...v0.4.0) (2026-09-24)
+
+
+### Features
+
+* **agent:** group Langfuse traces by watch and tag them by kind, site and category ([7ca88ff](https://github.com/oldmoldycake/Snagr/commit/7ca88ffcd8ab6f2e93f2b03e03e18aa73fcba541))
+* **agent:** group Langfuse traces by watch and tag them by kind, site and category ([025a329](https://github.com/oldmoldycake/Snagr/commit/025a329ff15bd8d260f8fb79df9d1d40f96756ab))
+
 ## [0.3.0](https://github.com/oldmoldycake/Snagr/compare/v0.2.1...v0.3.0) (2026-09-24)
 
 
