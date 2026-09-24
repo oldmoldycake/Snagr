@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Every env var the backend reads; unset ones fall back to the dev defaults below."""
+
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Async driver required: postgresql+asyncpg://... (NOT plain postgresql://)

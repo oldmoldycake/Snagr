@@ -10,6 +10,8 @@ from app.services.catalog import build_category
 
 
 def register(mcp: FastMCP) -> None:
+    """Define the catalog tools on the shared server."""
+
     @mcp.tool(annotations=READ_ONLY)
     async def list_categories() -> list[Category]:
         """Every category (video games, trading cards, …) with its slug, the

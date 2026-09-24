@@ -21,6 +21,7 @@ def _as_id(ref: Ref) -> int | None:
 
 
 async def resolve_category(db: AsyncSession, ref: Ref) -> Categories:
+    """The category an id, slug or name refers to; 404 `not_found` when none does."""
     if (category_id := _as_id(ref)) is not None:
         category = await db.get(Categories, category_id)
     else:
@@ -36,6 +37,10 @@ async def resolve_category(db: AsyncSession, ref: Ref) -> Categories:
 
 
 async def resolve_site(db: AsyncSession, ref: Ref) -> Sites:
+    """The site an id or name refers to.
+
+    Raises 404 `not_found` when none does, and 422 `validation_error` listing
+    the candidates when several sites share the name."""
     if (site_id := _as_id(ref)) is not None:
         site = await db.get(Sites, site_id)
     else:

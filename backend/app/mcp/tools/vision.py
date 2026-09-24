@@ -16,6 +16,8 @@ from app.services import vision as vision_service
 
 
 def register(mcp: FastMCP) -> None:
+    """Define the vision tools on the shared server."""
+
     @mcp.tool(annotations=READ_ONLY, tags={"vision"})
     async def list_review_queue(
         item: int | None = None, page: int = 1, per_page: int = 25

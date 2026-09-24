@@ -24,6 +24,8 @@ from app.services import items as items_service
 
 
 def register(mcp: FastMCP) -> None:
+    """Define the item tools on the shared server."""
+
     @mcp.tool(annotations=READ_ONLY)
     async def list_items(
         category: Ref | None = None,

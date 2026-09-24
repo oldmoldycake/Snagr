@@ -88,6 +88,7 @@ def register_client(user: User) -> _Client:
 
 
 def unregister_client(client: _Client) -> None:
+    """Forget a viewer whose stream closed; a no-op if it is already gone."""
     _clients.discard(client)
 
 

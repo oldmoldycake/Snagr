@@ -248,6 +248,7 @@ def _csv(value: str | None) -> list[str]:
 
 
 async def get_job(db: AsyncSession, job_id: int, viewer: User) -> Job:
+    """One job the viewer may see; 404 `not_found` for one they may not."""
     return await _named_or_404(db, job_id, viewer)
 
 
@@ -256,8 +257,8 @@ async def visible_events(
 ) -> list[JobEvent]:
     """Up to `limit` of a visible job's events, in seq order.
 
-    No per-event filter, unlike the runs this replaced: a job belongs to one
-    watch, so seeing the job is seeing its events. A recheck answers with an
+    No per-event filter: a job belongs to one watch, so seeing the job is
+    seeing its events. A recheck answers with an
     empty list, because it writes none.
     """
     rows = (
@@ -459,7 +460,7 @@ async def watch_sites(db: AsyncSession, watch: Watches) -> list[int]:
 
 async def open_slots(db: AsyncSession, watch: Watches) -> int:
     """How much room the watch has left. max_listings is one budget across
-    every site, never per site (PR #31)."""
+    every site, never per site."""
     tracked = (
         await db.execute(
             select(func.count())
@@ -476,10 +477,10 @@ async def _hunts(
 ) -> list[Jobs]:
     queued = []
     for watch in watches:
-        # A full watch is never hunted on its own (decision 9), but a person
-        # asking is the one hunt it gets: a swap hunt, looking for something
-        # better than its weakest listing (decision 10). The flag rides on
-        # the job so the hunter knows which hunt it is.
+        # A full watch is never hunted on its own, but a person asking is the
+        # one hunt it gets: a swap hunt, looking for something better than its
+        # weakest listing. The flag rides on the job so the hunter knows which
+        # hunt it is.
         payload = {"swap": True} if await open_slots(db, watch) <= 0 else None
         for site_id in await watch_sites(db, watch):
             if scope == "site" and site_id != scope_id:

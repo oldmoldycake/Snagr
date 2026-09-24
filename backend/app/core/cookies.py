@@ -30,13 +30,16 @@ def _set(response: Response, name: str, value: str, max_age: int) -> None:
 
 
 def set_access_cookie(response: Response, token: str) -> None:
+    """Set the access JWT cookie, expiring with the token itself."""
     _set(response, ACCESS_COOKIE, token, settings.ACCESS_TTL_MIN * 60)
 
 
 def set_refresh_cookie(response: Response, raw: str) -> None:
+    """Set the raw refresh-token cookie; only its hash is stored server-side."""
     _set(response, REFRESH_COOKIE, raw, settings.REFRESH_TTL_DAYS * 86400)
 
 
 def clear_auth_cookies(response: Response) -> None:
+    """Delete both auth cookies — logout, or a refresh that failed."""
     response.delete_cookie(ACCESS_COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/")

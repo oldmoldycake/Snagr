@@ -47,7 +47,7 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 def require_vision() -> None:
     """503 vision_unavailable for anything that needs the sidecar while it is
-    unconfigured (D-V9) — every mutation, from the router or an MCP tool."""
+    unconfigured — every mutation, from the router or an MCP tool."""
     if not settings.vision_enabled:
         raise err(503, "vision_unavailable", "The vision sidecar is not configured")
 
@@ -66,7 +66,8 @@ def schedule_rescore(item_id: int) -> None:
 
 
 async def fire_rescore(item_id: int) -> None:
-    """Ask the sidecar to re-verdict the item's stored scans (D-V8)."""
+    """Ask the sidecar to re-verdict the item's stored scans from their stored
+    embeddings — no re-inference, and never a change to a past rejection."""
     try:
         async with httpx.AsyncClient(timeout=SIDECAR_TIMEOUT_SECONDS) as client:
             resp = await client.post(f"{settings.VISION_SIDECAR_URL}/rescore/{item_id}")
@@ -107,7 +108,7 @@ async def authenticity_for_listings(
 
 async def _own_queue_entry(db: AsyncSession, user: User, entry_id: int):
     """The (image, scan) pair for one of the viewer's own queue entries, or a
-    404 — a foreign entry is indistinguishable from an unknown id (D-V11)."""
+    404 — a foreign entry is indistinguishable from an unknown id."""
     row = (
         await db.execute(
             select(VisionListingImages, VisionScans)
@@ -199,8 +200,8 @@ async def revoke_reference(db: AsyncSession, user: User, ref_id: int) -> tuple[i
 
 
 async def revoke_auto_references(db: AsyncSession, user: User, item_id: int) -> int:
-    """Revoke every live auto-promoted reference of an item (D-V7's escape
-    hatch for a drifted library); the revoked count."""
+    """Revoke every live auto-promoted reference of an item (the escape hatch
+    for a drifted library); the revoked count."""
     await require_watched_item(db, user, item_id)
     result = await db.execute(
         update(VisionReferences)
@@ -224,7 +225,7 @@ async def forward_upload(
 ) -> dict:
     """Hand an uploaded photo to the sidecar to embed + store as gold
     (provenance 'upload'); the sidecar's reference row as a dict. The sidecar
-    owns the write — the backend never touches S3 or the model (D-V1/D-V3)."""
+    owns the write — the backend never touches S3 or the model."""
     form: dict[str, str] = {"item_id": str(item_id), "label": label, "user_id": str(user_id)}
     if variant_tag:
         form["variant_tag"] = variant_tag
@@ -247,13 +248,13 @@ async def forward_upload(
 async def list_review_queue(
     db: AsyncSession, user: User, item_id: int | None, page: int, per_page: int
 ) -> Paginated[ReviewQueueEntry]:
-    """Captured photos awaiting the viewer's review, newest first. Off-mode
-    (D-V9) is an empty page, not an error."""
+    """Captured photos awaiting the viewer's review, newest first. With vision
+    off this is an empty page, not an error."""
     if not settings.vision_enabled:
         return Paginated(data=[], meta=PageMeta(page=page, per_page=per_page, total=0))
 
-    # scoped to the capturing watch's owner — admins included (D-V11): you
-    # review what YOUR hunts captured
+    # scoped to the capturing watch's owner — admins included: you review
+    # what YOUR hunts captured
     stmt = (
         select(VisionListingImages, VisionScans, Items.name)
         .join(VisionScans, VisionScans.id == VisionListingImages.scan_id)
