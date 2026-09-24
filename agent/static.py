@@ -7,8 +7,8 @@ JSON-LD or `product:price:amount` the browser saw is already in the raw HTML
 Two moments use this. At learn time, probe() checks whether the locator just
 verified in the browser reads the same price out of the raw HTML; when it
 does, listings.static_ok is set and that listing's rechecks stop opening a
-browser (decision 11). At recheck time, read() is the ladder's first rung
-(§4.3) — and a deliberately incurious one: a 404, a redirect, a challenge
+browser. At recheck time, read() is the ladder's first rung — and a
+deliberately incurious one: a 404, a redirect, a challenge
 page or a price that does not match all fall straight through to the browser,
 which confirms availability itself. Nothing here ever concludes that a
 listing is gone.
@@ -119,11 +119,10 @@ def extract(html: str) -> dict:
 async def fetch(url: str, site_base_url: str | None) -> str | None:
     """GET one listing page as plain HTML, or None.
 
-    Guarded exactly as a navigation is (S2): the URL must belong to the
+    Guarded exactly as a navigation is: the URL must belong to the
     site's own domain and must not be a private address, checked before a
     connection is opened. Redirects are never followed — a listing that has
-    moved is a change in availability, and the browser is what decides that
-    (decision 14).
+    moved is a change in availability, and the browser is what decides that.
 
     Args:
       url: The listing URL.

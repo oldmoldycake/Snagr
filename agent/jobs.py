@@ -349,8 +349,8 @@ async def _queue_next_hunt(session, job: Jobs) -> None:
     """Queue the next hunt of this job's pair, in the caller's transaction.
 
     Only while the pair is still huntable — a hunt that filled the watch's
-    last slot, or ran on a watch switched off, leaves nothing behind (decision
-    9: a full watch costs nothing until a slot frees). A hunt that saved
+    last slot, or ran on a watch switched off, leaves nothing behind: a full
+    watch costs nothing until a slot frees. A hunt that saved
     something is followed at once, because the pair evidently has more to
     give; one that saved nothing waits twice as long as it did.
     """

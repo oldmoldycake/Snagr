@@ -4,8 +4,8 @@ runs the daemon, or one drain of the queue.
     --serve   run until stopped, claiming work as it appears (compose)
     --once    queue what is due, drain the queue until empty, exit (cron)
 
-There is no bare mode. A typo used to start a full sweep of everything,
-silently and expensively; argparse now prints the usage and exits 2.
+There is no bare mode: with neither flag, argparse prints the usage and exits
+2, so a typo can never start an expensive sweep silently.
 
 Both modes run under _supervised, which turns SIGTERM and SIGINT into
 cancellation: a `docker stop` (or a Ctrl-C) unwinds the pools and hands every

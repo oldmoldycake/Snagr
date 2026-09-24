@@ -1,6 +1,6 @@
 """Re-reading a tracked listing's price with no model in the loop.
 
-This is the ladder of §4.3, cheapest rung first: a plain HTTP GET when the
+This is the recheck ladder, cheapest rung first: a plain HTTP GET when the
 listing's locator was proved to work against raw HTML, then one browser page
 load and one extractor evaluation, then the listing's own locator, then the
 site's consensus locator, then the structured places every schema.org page
@@ -48,8 +48,8 @@ from validation import Verdict, parse_price, validate_observation
 
 log = logging.getLogger(__name__)
 
-# Tried after the listing's own locator and its site's consensus, in the
-# priority of decision 5. A page that states its price in one of these can be
+# Tried after the listing's own locator and its site's consensus, structured
+# data first. A page that states its price in one of these can be
 # read even by a listing that has never been learned.
 FALLBACK_LOCATORS = (
     Locator("jsonld", "offers.price"),
@@ -106,7 +106,7 @@ async def recheck_deterministic(browser: PageReader, row) -> Outcome:
         if outcome is not None:
             return outcome
         # the browser may still succeed with this very locator, in which case
-        # the raw and rendered pages differ for this listing (decision 14)
+        # the raw and rendered pages differ for this listing
         log.info(f"Static rung missed for listing {listing_id}; opening the browser")
         context["static_missed"] = True
 
@@ -194,8 +194,8 @@ async def _read_ladder(
             continue
         if verdict.anomalous:
             # an implausible LOCATOR read is thrown away rather than recorded:
-            # the LLM re-reads this same page now, and that read is the
-            # observation (§4.3, the confirm rule)
+            # the LLM re-reads this same page next, and that read is the
+            # observation
             log.warning(f"Listing {listing_id}: {locator.kind} read {found!r} — {verdict.reason}")
             return NOT_HANDLED
 

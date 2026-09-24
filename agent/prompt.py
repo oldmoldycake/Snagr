@@ -28,7 +28,7 @@ async def generate_prompt(
     Build the instruction prompt for the LLM agent for ONE (watch, site) pair.
 
     args:
-        watch_id:             Internal ID of the watch (user+item) this run is for.
+        watch_id:             Internal ID of the watch (user+item) this hunt is for.
         site_id:              Internal ID of the site being searched.
         site_name:            Human-readable name of the site being searched.
         item_id:              Internal ID of the item being searched for.
@@ -37,7 +37,7 @@ async def generate_prompt(
         criteria:             This watch's matching criteria (best_match only).
         selection_mode:       "best_match" or "cheapest" for this watch.
         max_listings:         This watch's slot cap (1-10): how many listings it
-                              tracks in total, across every site and every run.
+                              tracks in total, across every site and every hunt.
         allow_reproductions:  Whether this watch's user has explicitly said
                               reproductions/replicas are acceptable for this item.
         tracked_listings:     How many active listings this watch already holds
@@ -47,7 +47,7 @@ async def generate_prompt(
                               check_images tool is registered); adds the photo
                               authenticity block. Skipped when reproductions
                               are allowed — repro-tolerant captures would
-                              poison the reference library (D-V9).
+                              poison the reference library.
         known_urls:           URLs already saved for this (watch, site) pair,
                               tracked now or previously — the agent must skip
                               these rather than re-evaluate them.
@@ -76,8 +76,8 @@ async def generate_prompt(
     # target_price is a notify threshold only; it does NOT need to be met to save a listing.
 
     # --- Slot budget: max_listings is one cap per watch, not per site. --------
-    # Each scan only sees its own site, so without this a watch with three
-    # sites filled 3x its cap, and every run added another round on top.
+    # Each hunt only sees its own site, so without this a watch with three
+    # sites would fill 3x its cap, and every hunt would add another round.
     open_slots = max(max_listings - tracked_listings, 0)
     slots_block = (
         f"TRACKING SLOTS: {open_slots} open\n"
@@ -118,7 +118,7 @@ async def generate_prompt(
             f"Ignore the criteria for ranking; price is the only ranking signal."
         )
 
-    # --- Swap hunt: a full watch, hunted because a person asked (decision 10).
+    # --- Swap hunt: a full watch, hunted because a person asked.
     # There are no open slots, so the only save is a trade for the weakest.
     if swap_listings is not None:
         slots_block, selection_block = swap_blocks(
@@ -429,7 +429,7 @@ def swap_blocks(
 def market_price_block(
     market: dict | None, expected_price: str | None, condition_hint: str | None
 ) -> str:
-    """Build the MARKET PRICE CONTEXT section of the scan prompt from an
+    """Build the MARKET PRICE CONTEXT section of the hunt prompt from an
     item's stored market_prices row. Resolution order per the grounding spec:
     the watch's own expected_price beats stats, and stats beat nothing - the
     no-data case says so explicitly instead of letting the agent guess.

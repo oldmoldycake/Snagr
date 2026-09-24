@@ -5,18 +5,18 @@ when code could not read a listing's price.
 Nothing here decides what to work on. agent/worker.py claims a job and calls
 in; this module only knows how to do one unit and how to say what happened.
 
-Two module-level side effects used to live here — an `assert PLAYWRIGHT_MCP_URL`
-and a built chat model — and both are now factories. The check pool opens
-browser sessions all day and asks for a model only when the deterministic
-ladder gives up, so importing this module must not cost either.
+Importing this module builds neither a browser session nor a chat model; both
+come from factories. The check pool opens browser sessions all day and asks for
+a model only when the deterministic ladder gives up, so neither may be a
+module-level side effect.
 
 Every job opens its own MCP session, which with `--isolated` is its own
 browser context: a hung page in one hunt cannot block a check in another, and
 "check prices now" never waits behind a hunt. That is why the server has to
-run isolated — with the old persistent profile the second session is refused
+run with `--isolated`: with a persistent profile the second session is refused
 outright.
 
-The tool list handed to the model is filtered (S7). Code execution, file
+The tool list handed to the model is filtered. Code execution, file
 upload and tab control are not things a price scraper needs, and a page that
 talks the model into using them is a different class of problem from one that
 lies about a price. browser_navigate is wrapped so the URL guard runs before
@@ -73,7 +73,7 @@ callbacks = [CallbackHandler()] if LANGFUSE_ENABLED else []
 
 # Nothing a price scraper does needs these, and each is a way for a page to
 # turn a bad read into something worse: arbitrary JS in the browser context,
-# a file picker, and windows the orchestrator is not watching (S7).
+# a file picker, and windows the orchestrator is not watching.
 BLOCKED_BROWSER_TOOLS = frozenset(
     {"browser_run_code_unsafe", "browser_run_code", "browser_file_upload", "browser_tabs"}
 )
@@ -151,8 +151,8 @@ async def open_browser_session():
         if dropped:
             log.info(f"Withholding browser tools from the model: {', '.join(dropped)}")
         safe = [tool for tool in loaded if tool.name not in BLOCKED_BROWSER_TOOLS]
-        # the model keeps a tool called browser_navigate; it is just no longer
-        # the one that will go anywhere it is pointed
+        # the model still gets a tool named browser_navigate, but it is the
+        # guarded wrapper, not the MCP tool that goes anywhere it is pointed
         safe = [tool for tool in safe if tool.name != "browser_navigate"]
         safe.append(guarded_navigate(by_name["browser_navigate"]))
         yield safe, browser
@@ -161,8 +161,8 @@ async def open_browser_session():
 def guarded_navigate(navigate):
     """Wrap the MCP browser_navigate so the URL guard runs before it does.
 
-    Storing a URL was already guarded (S2); navigating was not, and under a
-    daemon the browser is pointed at whatever a marketplace page suggested far
+    Storing a URL is guarded by save_listing; navigating needs the same guard,
+    because the browser is pointed at whatever a marketplace page suggested far
     more often than a URL is stored. The refusal is spelled out because the
     model can act on it — "not part of ebay.com" usually means it followed an
     advert off-site and should go back.
@@ -204,8 +204,9 @@ def build_hunt_agent(llm, browser_tools: list):
     to call it after a sold/ended save_price_check.
     """
     tools = [*browser_tools, save_price_check, save_listing, log_listing_check, disable_listing]
-    # Discovery only (D-V9), and only when the sidecar is configured — with the
-    # URL unset the tool is not registered and vision is fully off.
+    # Hunts only (rechecks never scan images), and only when the sidecar is
+    # configured: with the URL unset the tool is not registered and vision is
+    # fully off.
     if VISION_SIDECAR_URL:
         tools.append(check_images)
     return create_agent(llm, tools)
@@ -356,7 +357,7 @@ async def run_hunt_job(agent, job_id: int, row, browser, *, swap: bool = False) 
 
     # Re-read right before searching: a slot can fill between the moment the
     # job was queued and the moment it runs, and a full watch should cost no
-    # browser time and no tokens (decision 9) — unless a person asked for
+    # browser time and no tokens — unless a person asked for
     # something better than what it holds.
     tracked = await get_active_listing_count(watch_id)
     open_slots = max_listings - tracked
