@@ -73,13 +73,9 @@ BLOCKED_BROWSER_TOOLS = frozenset(
     {"browser_run_code_unsafe", "browser_run_code", "browser_file_upload", "browser_tabs"}
 )
 
-# How many of a hunt's latest tool results the model still sees in full. A
-# page snapshot runs to tens of thousands of tokens and every model turn
-# re-sends the whole history, so keeping them all would pay for the first
-# page again on every later turn — a hunt's cost would grow with the square
-# of the pages it reads. Three is the page in hand plus the tool calls made
-# on it; the prompt tells the model to note its candidates down rather than
-# rely on a results page it has moved away from.
+# Tool results the model still sees in full; older ones are cleared. Every
+# turn re-sends the history, so each kept page snapshot is paid for again on
+# every later turn. Three covers the page in hand and the calls made on it.
 PAGES_KEPT = 3
 
 # The DB tools' replies are a line or two each and are the model's record of
