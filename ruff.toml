@@ -29,5 +29,4 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query"
 "**/tests/**" = ["D1"]
 "backend/migrations/**" = ["D1"]
 # Not yet held to docstring coverage.
-"agent/**" = ["D1"]
 "backend/**" = ["D1"]
