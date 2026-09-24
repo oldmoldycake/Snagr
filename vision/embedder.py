@@ -2,7 +2,7 @@
 embed(images) → float32 vectors. Nothing else imports torch.
 
 The weights are gated on Hugging Face under Meta's DINOv3 license and cannot
-ship with this FOSS repo (D-V1): the operator accepts the license on the
+ship with this FOSS repo: the operator accepts the license on the
 model page, sets HF_TOKEN, and the first start downloads into the HF cache
 (a volume in compose, so restarts don't re-download). Absent weights are a
 DEGRADED state, not a crash — /health reports it and every scoring call
@@ -48,7 +48,8 @@ def load() -> int | None:
         _processor = AutoImageProcessor.from_pretrained(VISION_MODEL, token=HF_TOKEN)
         _model = AutoModel.from_pretrained(VISION_MODEL, token=HF_TOKEN)
         _model.eval()
-        if torch.cuda.is_available():  # GPU is a bonus, never a requirement (D-V1)
+        # A GPU is used when present but never required; CPU inference is supported.
+        if torch.cuda.is_available():
             _model = _model.to("cuda")
         _dim = _model.config.hidden_size
     except Exception as exc:
@@ -60,13 +61,14 @@ def load() -> int | None:
 
 
 def loaded() -> bool:
+    """Whether the weights are loaded; False means the service is degraded."""
     return _dim is not None
 
 
 def embed(images: list[bytes]) -> np.ndarray:
     """Embed already-fetched image bytes; an (n, dim) float32 array of CLS
-    embeddings. Only genuinely new pixels ever reach this (D-V8) — callers
-    reuse stored embeddings by content hash first."""
+    embeddings. Only genuinely new pixels should reach this — callers reuse
+    stored embeddings by content hash first, so each photo is embedded once."""
     import torch
 
     assert _model is not None and _processor is not None, "embed() before successful load()"

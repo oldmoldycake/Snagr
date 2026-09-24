@@ -1,4 +1,4 @@
-"""The daily GC (D-V12): retention prune on rows, reconciliation on bytes —
+"""The daily GC: retention prune on rows, reconciliation on bytes —
 driven directly against the session and the storage stub."""
 
 from datetime import UTC, datetime, timedelta

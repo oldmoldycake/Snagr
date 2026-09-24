@@ -1,9 +1,7 @@
-"""Image download from marketplace CDNs — hostile territory (risk 2):
-hotlink protection and fingerprinting are normal there, so requests carry
-realistic browser headers and the listing page as Referer. A failed fetch
-skips that image (logged), never fails the check — if failure rates prove
-high, the named fallback is the agent posting bytes it captured via
-Playwright (future work)."""
+"""Image download from marketplace CDNs, where hotlink protection and
+fingerprinting are normal — so requests carry realistic browser headers and
+the listing page as Referer. A failed fetch skips that image (logged), never
+fails the check."""
 
 import logging
 from io import BytesIO

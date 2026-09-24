@@ -1,4 +1,4 @@
-"""The D-V1 weights gate: absent gated weights degrade the service loudly —
+"""The weights gate: absent gated weights degrade the service loudly —
 health says so, scoring endpoints answer with the license/token
 instructions, and everything that needs no model keeps working."""
 

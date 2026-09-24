@@ -1,4 +1,4 @@
-"""Table-tests for the D-V10 formula — pure math, no DB, no app.
+"""Table-tests for the scoring formula — pure math, no DB, no app.
 
 Geometry convention (see conftest.vec): gold-real refs at 0°, gold-fake refs
 at 90°, candidates in between; cosine(vec(a), vec(b)) == cos(a−b).
@@ -23,7 +23,7 @@ def test_no_references_is_inconclusive():
 
 def test_far_from_everything_fails_safe():
     # an unseen variant / novel angle matches nothing — below the absolute
-    # floor no margin may be read as evidence (risk 1)
+    # floor no margin may be read as evidence
     score = score_image(off_plane(), REAL, FAKE)
     assert score.verdict == "inconclusive"
     assert score.fake_confidence is None
@@ -49,7 +49,7 @@ def test_margin_maps_to_confidence():
 
 def test_fake_only_library_condemns():
     # the floor substitutes for the missing real side, so even a modest fake
-    # match condemns — the evidence-asymmetry lever (D-V5)
+    # match condemns — the evidence-asymmetry lever
     strong = score_image(vec(80), [], FAKE)
     assert strong.verdict == "leans_fake"
     assert strong.fake_confidence == pytest.approx(1.0, abs=1e-3)

@@ -1,6 +1,6 @@
-"""The only S3 client in the project (D-V3): image bytes in and out of the
-object store, keyed by their sha256 content hash (D-V12 — duplicate photos
-store once). Everything else (backend, frontend) reaches bytes through this
+"""The only S3 client in the project: image bytes in and out of the object
+store, keyed by their sha256 content hash so duplicate photos are stored
+once. Everything else (backend, frontend) reaches bytes through this
 service's /images endpoint, never the store itself."""
 
 import boto3
@@ -12,6 +12,7 @@ class Storage:
     """Thin wrapper over one bucket; keys are sha256 hex digests."""
 
     def __init__(self) -> None:
+        """Build the boto3 client from config; no connection is opened yet."""
         self._s3 = boto3.client(
             "s3",
             endpoint_url=S3_ENDPOINT,
@@ -20,12 +21,14 @@ class Storage:
         )
 
     def ensure_bucket(self) -> None:
+        """Create the bucket if it does not exist yet; called once at startup."""
         try:
             self._s3.head_bucket(Bucket=S3_BUCKET)
         except ClientError:
             self._s3.create_bucket(Bucket=S3_BUCKET)
 
     def put(self, key: str, data: bytes, content_type: str) -> None:
+        """Store bytes under `key`, overwriting any object already there."""
         self._s3.put_object(Bucket=S3_BUCKET, Key=key, Body=data, ContentType=content_type)
 
     def get(self, key: str) -> tuple[bytes, str] | None:
@@ -37,6 +40,7 @@ class Storage:
         return obj["Body"].read(), obj.get("ContentType", "application/octet-stream")
 
     def exists(self, key: str) -> bool:
+        """Whether an object is stored under `key`."""
         try:
             self._s3.head_object(Bucket=S3_BUCKET, Key=key)
         except ClientError:
@@ -52,6 +56,7 @@ class Storage:
         return keys
 
     def delete(self, key: str) -> None:
+        """Remove the object under `key`; a missing key is not an error."""
         self._s3.delete_object(Bucket=S3_BUCKET, Key=key)
 
 

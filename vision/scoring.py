@@ -1,12 +1,13 @@
-"""ALL verdict math for the visual-authenticity check (D-V10) — pure
+"""ALL verdict math for the visual-authenticity check — pure
 functions over vectors and labels, nothing else in the project computes a
 score. Deliberately independent of how neighbors are fetched, so swapping
 the sequential scan for an ANN index later never touches the formula.
 
-The formula fails toward `inconclusive` on purpose (risk 1: photo conditions
-dominate global embeddings), and encodes the D-V5 evidence asymmetry:
-matching known fakes condemns strongly, matching known reals only weakly
-reassures — scammers post stock photos of genuine items.
+The formula fails toward `inconclusive` on purpose, because lighting, angle,
+and background can outweigh the item itself in a global embedding. It also
+encodes an evidence asymmetry: matching known fakes condemns strongly,
+matching known reals only weakly reassures — scammers post stock photos of
+genuine items.
 """
 
 from dataclasses import dataclass
@@ -46,6 +47,7 @@ def cosine(a, b) -> float:
 
 
 def _nearest(embedding, references: list) -> float | None:
+    """Best cosine similarity to any reference, or None when there are none."""
     if not references:
         return None
     return max(cosine(embedding, ref) for ref in references)
@@ -55,7 +57,7 @@ def score_image(embedding, real_refs: list, fake_refs: list) -> ImageScore:
     """Score one embedding against the live gold references of each label.
 
     Variant-tagged reals are passed in with the rest of real_refs — variants
-    are sub-clusters under real (D-V5), not a separate label.
+    are sub-clusters under real, not a separate label.
     """
     s_real = _nearest(embedding, real_refs)
     s_fake = _nearest(embedding, fake_refs)
