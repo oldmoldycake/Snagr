@@ -25,7 +25,20 @@ VISION_TIMEOUT_SECONDS = int(os.getenv("VISION_TIMEOUT_SECONDS", "90"))
 # Market grounding. Prices in other currencies are recorded but never mixed
 # into stats - a $226/€208 blend is a number with no meaning.
 EXPECTED_CURRENCY = os.getenv("EXPECTED_CURRENCY", "USD")
+# Where grounding searches: a self-hosted SearXNG, the Brave Search API (a key
+# instead of a service to run, but billed per query and the item names leave
+# the network), or none - then grounding refreshes only the guide pages it has
+# already found. Unset, it follows SEAR_XNG_URL, so an install that predates
+# the choice keeps searching where it did. A choice missing what it needs
+# stops the agent here rather than failing every grounding quietly.
 SEARXNG_URL = os.getenv("SEAR_XNG_URL")
+BRAVE_API_KEY = os.getenv("BRAVE_API_KEY")
+SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "").lower() or ("searxng" if SEARXNG_URL else "none")
+assert SEARCH_PROVIDER in ("searxng", "brave", "none"), (
+    f"SEARCH_PROVIDER must be searxng, brave or none, not {SEARCH_PROVIDER!r}"
+)
+assert SEARCH_PROVIDER != "searxng" or SEARXNG_URL, "SEARCH_PROVIDER=searxng needs SEAR_XNG_URL"
+assert SEARCH_PROVIDER != "brave" or BRAVE_API_KEY, "SEARCH_PROVIDER=brave needs BRAVE_API_KEY"
 # One knob governs both staleness and retry backoff: stats older than the TTL
 # refresh, and an item attempted within it is not attempted again.
 MARKET_PRICE_TTL_HOURS = int(os.getenv("MARKET_PRICE_TTL_HOURS", "24"))

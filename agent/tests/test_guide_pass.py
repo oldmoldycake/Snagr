@@ -145,12 +145,12 @@ class TestCollectObservations:
         async def fake_gather(item_id, item_name, category_id, tiers):
             return [guide_obs("226", "https://guide.com/x")]
 
-        async def fake_search(item, base_url=None):
+        async def fake_search(item):
             searched.append(item)
             return {}
 
         monkeypatch.setattr(pricing, "gather_guide_observations", fake_gather)
-        monkeypatch.setattr(pricing, "search_searxng_queries", fake_search)
+        monkeypatch.setattr(pricing, "search_queries", fake_search)
         observations = asyncio.run(pricing.collect_observations(1, "Pokemon Emerald", 1, ["loose"]))
         assert searched == []
         assert len(observations) == 1
@@ -175,12 +175,12 @@ class TestCollectObservations:
         async def fake_gather(item_id, item_name, category_id, tiers):
             return [marketplace("100"), marketplace("110"), marketplace("9000")]
 
-        async def fake_search(item, base_url=None):
+        async def fake_search(item):
             searched.append(item)
             return {}
 
         monkeypatch.setattr(pricing, "gather_guide_observations", fake_gather)
-        monkeypatch.setattr(pricing, "search_searxng_queries", fake_search)
+        monkeypatch.setattr(pricing, "search_queries", fake_search)
         asyncio.run(pricing.collect_observations(1, "Pokemon Emerald", 1, ["loose"]))
         assert searched == ["Pokemon Emerald"]
 
@@ -190,7 +190,7 @@ class TestCollectObservations:
         async def fake_gather(item_id, item_name, category_id, tiers):
             return []
 
-        async def fake_search(item, base_url=None):
+        async def fake_search(item):
             searched.append(item)
             return {"https://x.com/1": "sold for $100 loose"}
 
@@ -199,7 +199,7 @@ class TestCollectObservations:
             return [guide_obs("100", "https://x.com/1")]
 
         monkeypatch.setattr(pricing, "gather_guide_observations", fake_gather)
-        monkeypatch.setattr(pricing, "search_searxng_queries", fake_search)
+        monkeypatch.setattr(pricing, "search_queries", fake_search)
         monkeypatch.setattr(pricing, "extract_observations", fake_extract)
         observations = asyncio.run(pricing.collect_observations(1, "Pokemon Emerald", 1, ["loose"]))
         assert searched == ["Pokemon Emerald"]
