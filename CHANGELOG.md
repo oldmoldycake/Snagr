@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.3.0](https://github.com/oldmoldycake/Snagr/compare/v0.2.1...v0.3.0) (2026-09-24)
+
+
+### Features
+
+* **agent:** derive and replay per-listing price locators ([c585ccb](https://github.com/oldmoldycake/Snagr/commit/c585ccb37e624d9271cb1eed81a3e1fcf5ecaeb6))
+* **agent:** disable_listing records why a listing ended ([dad7c9c](https://github.com/oldmoldycake/Snagr/commit/dad7c9c7e06332b8fd9d2d39dbf63695e0498d6d))
+* **agent:** learned price locators and deterministic rechecks ([952d45a](https://github.com/oldmoldycake/Snagr/commit/952d45abc2438ea4d66b343c8ddfaea8be8422ea))
+* **agent:** per-site circuit breaker ([4ca58d1](https://github.com/oldmoldycake/Snagr/commit/4ca58d1293a437cc65ddf0c982b70cb4be8be25a))
+* **agent:** perpetual hunting — backoff chain, hourly sweep, freed-slot wakes, kill switch ([bbe0ed8](https://github.com/oldmoldycake/Snagr/commit/bbe0ed89b09739a507dce4d16456b8d560ebf308))
+* **agent:** perpetual hunting with backoff ([9f13b2a](https://github.com/oldmoldycake/Snagr/commit/9f13b2a0e6bb055abc8779ea672674e4c6c0358c))
+* **agent:** read a price from raw HTML without a browser ([0a68639](https://github.com/oldmoldycake/Snagr/commit/0a6863951c139de4e1871159eda6e797c411a34d))
+* **agent:** recheck tracked listings without the model ([35f7007](https://github.com/oldmoldycake/Snagr/commit/35f700710320647d3356af766403e6bd8724ef0a))
+* **agent:** schedule each recheck on the watch's own interval ([9aaf9d9](https://github.com/oldmoldycake/Snagr/commit/9aaf9d99826eaa831604e9d70eb0aa74fa0e5e2f))
+* **agent:** swap hunts on a full watch ([8c9b0ae](https://github.com/oldmoldycake/Snagr/commit/8c9b0aedde162527d09a97cfe3e8e2fe90d95c4d))
+* **agent:** swap hunts on a full watch ([5ecbf1c](https://github.com/oldmoldycake/Snagr/commit/5ecbf1cc84ca7a90be08d230166b46709354ae11))
+* **agent:** the hunter daemon — serve, the two pools, the scheduler ([1112183](https://github.com/oldmoldycake/Snagr/commit/1112183efe0dbdd1de2cd257005a889351934b05))
+* **agent:** the jobs queue ([bdc24e0](https://github.com/oldmoldycake/Snagr/commit/bdc24e0b11adc662dc9425b1156cc76ffd015a43))
+* **agent:** validate prices, URLs and model-typed text ([ab4c74a](https://github.com/oldmoldycake/Snagr/commit/ab4c74a4dbd5a4f33075dcb7eb9ce62a890a3a1e))
+* **agent:** validate tool arguments and refuse cross-listing writes ([ebd9762](https://github.com/oldmoldycake/Snagr/commit/ebd97624be240d91b631195eb7d9626bd045a61f))
+* **agent:** validate tool arguments and refuse cross-listing writes ([4563221](https://github.com/oldmoldycake/Snagr/commit/4563221406f42c9e0392f6ac4b71ac3cfadd08e1))
+* **api:** expose how each price was read, and ignore unbelieved readings ([9f9b70f](https://github.com/oldmoldycake/Snagr/commit/9f9b70fadbd9fbacfea6289bccd1d05c881a4d1f))
+* **api:** the jobs API replaces runs ([029f39c](https://github.com/oldmoldycake/Snagr/commit/029f39cf2b3db74fc747987fdae50bbc36a1bb73))
+* **backend:** a user hunt on a full watch queues a swap hunt ([093b7b3](https://github.com/oldmoldycake/Snagr/commit/093b7b3358bbd10a24b80657c207423a99e2d3fc))
+* **backend:** hunt switch, backoff facts and the hunting kill switch ([fcef19d](https://github.com/oldmoldycake/Snagr/commit/fcef19d7cb1ed67f6434b991f454d041340d9c60))
+* **backend:** migration 017 — watch check interval and listing inactive_reason ([478c4c1](https://github.com/oldmoldycake/Snagr/commit/478c4c1395f80a67e81c117fd491c3eea01d1700))
+* **backend:** migration 018 — the hunting switch and job payload ([e17cf35](https://github.com/oldmoldycake/Snagr/commit/e17cf3537a8fb6ff43c23a1b0dc3ff7f52c41167))
+* **backend:** per-watch check interval on items, MCP and InstanceInfo ([2c13f2d](https://github.com/oldmoldycake/Snagr/commit/2c13f2d85d10d87b45c182088079cd35e9429efb))
+* **backend:** untracking a listing records inactive_reason 'untracked' ([25b75d4](https://github.com/oldmoldycake/Snagr/commit/25b75d4d89341d514489296289a41fef233d8b4f))
+* **db:** migration 015 — the job queue replaces the run tables ([671e7cb](https://github.com/oldmoldycake/Snagr/commit/671e7cb0bb48592a5624967a466f4c89886a9213))
+* **db:** price locators on listings, method and confirmed on checks ([c403d6f](https://github.com/oldmoldycake/Snagr/commit/c403d6faf0566fcca2160de2e030d59e17db1d19))
+* **frontend:** Check every control and interval in the facts line ([c81e920](https://github.com/oldmoldycake/Snagr/commit/c81e9209abd93214dace3ce1c0e94c37888e9d1d))
+* **frontend:** contract for perpetual hunting ([f3791b4](https://github.com/oldmoldycake/Snagr/commit/f3791b44621ad2124f3d75ffd1ee6c0838fb28c4))
+* **frontend:** contract for the per-watch check interval ([1e982f5](https://github.com/oldmoldycake/Snagr/commit/1e982f5384fc0da9c4096e1722a7ec88a8d5b468))
+* **frontend:** extract the listings rail math to a log scale, with tests ([33e3658](https://github.com/oldmoldycake/Snagr/commit/33e3658fdccda9f66d361c1c1f18ecfb9d872c8d))
+* **frontend:** Hunt for better on a full watch ([17a0b85](https://github.com/oldmoldycake/Snagr/commit/17a0b8518a4b6e46d931c9a9c25f33a8b78a0940))
+* **frontend:** Hunting switch, facts-line states and the HUNTING OFF ticker ([83a6f61](https://github.com/oldmoldycake/Snagr/commit/83a6f615c94177126426decb8e5b4c70565c532a))
+* **frontend:** log-scale listings rail with per-row target notch ([4360df2](https://github.com/oldmoldycake/Snagr/commit/4360df23e283b3f4deee5f5f83250ca9ee4a64ad))
+* **frontend:** per-row target notch, labeled ruler and label flip on the listings board ([31cbdbe](https://github.com/oldmoldycake/Snagr/commit/31cbdbe6f1eb465b9c7836b3efece1ea8a77af0d))
+* **frontend:** show how each price was read ([6aa75a2](https://github.com/oldmoldycake/Snagr/commit/6aa75a2435eb67dc9303b0cd3f8f2261fc2d3aa7))
+* **frontend:** the Activity page replaces Runs ([df3bcf5](https://github.com/oldmoldycake/Snagr/commit/df3bcf5fe73f3d25fa55ad84a3e115bb090ab8b0))
+* **frontend:** the jobs contract — types, endpoints, queries and the mock ([b5fa06e](https://github.com/oldmoldycake/Snagr/commit/b5fa06e37d352f2544f7c540974bd47b3ccd6d79))
+* per-watch check interval ([a90520d](https://github.com/oldmoldycake/Snagr/commit/a90520d6f94cd474024841bcaa47fc61e4fda14f))
+
+
+### Bug Fixes
+
+* **agent:** a breaker trip keeps a person's hunt labelled theirs ([d958826](https://github.com/oldmoldycake/Snagr/commit/d958826444ad239d6bea04ba72a1cdc8c321ee1c))
+* **agent:** a check queued during a pause waits for the pause to lift ([4acbac2](https://github.com/oldmoldycake/Snagr/commit/4acbac20343a2b5409f85607af1a6aac14e82622))
+* **agent:** deactivate_listing refuses a reason the CHECK would reject ([f40c165](https://github.com/oldmoldycake/Snagr/commit/f40c165cdde5211f5a2c7d34ab17dc3e6a1710a0))
+* **agent:** disable_listing commits the ending before waking hunts ([721aa0a](https://github.com/oldmoldycake/Snagr/commit/721aa0ae12513e2fc306a487d4fea908f2be4465))
+* **agent:** record an ending before waking hunts, and skip deactivated accounts ([5391917](https://github.com/oldmoldycake/Snagr/commit/5391917ad7deecf2102fda8596078aa1e2a123e7))
+* **agent:** skip known inactive listings instead of resurrecting them ([602df94](https://github.com/oldmoldycake/Snagr/commit/602df946fc4746aa14bd2331c2812de81892900b))
+* **agent:** skip known inactive listings instead of resurrecting them ([7cbdd7a](https://github.com/oldmoldycake/Snagr/commit/7cbdd7a72ffa1ef2d6721789df0f04fe7d82d536))
+* **agent:** the breaker hears a site that answers nothing ([5127328](https://github.com/oldmoldycake/Snagr/commit/5127328f59dd15d3205a90c13d730646b298d3ae))
+* **backend:** a shorter interval only brings tracked listings' checks forward ([58fa263](https://github.com/oldmoldycake/Snagr/commit/58fa263a1306f33021c59490137cca2a1beb7e34))
+* **backend:** queue a first check for listings that predate the jobs table ([585dd32](https://github.com/oldmoldycake/Snagr/commit/585dd326378c3c7ad372151a1844776a439ad536))
+* **backend:** queue a first check for listings that predate the jobs table ([01aa4af](https://github.com/oldmoldycake/Snagr/commit/01aa4afb89bddce7e5d06c6d63af07d319ba819e))
+* **backend:** switching hunting off drops creation hunts; more room hunts now ([798ddfc](https://github.com/oldmoldycake/Snagr/commit/798ddfca93832a641179f75354a7470e9c7968b9))
+* **frontend:** a fractional custom check interval is refused, not rounded ([41bfa6c](https://github.com/oldmoldycake/Snagr/commit/41bfa6c63ef870440f1f1118e5e5d1fa62a0f69a))
+* **frontend:** only running hunts are live ([da278bd](https://github.com/oldmoldycake/Snagr/commit/da278bdf893b4dee9e63d97504bbdac8267b8134))
+
 ## [0.2.1](https://github.com/oldmoldycake/Snagr/compare/v0.2.0...v0.2.1) (2026-09-14)
 
 
