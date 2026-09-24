@@ -13,6 +13,10 @@ import { useInstance, useSession } from '@/features/auth/useSession'
 import { ChannelsCard } from '@/features/settings/ChannelsCard'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
 
+/**
+ * Account settings: profile, password, notification channels and, when vision
+ * is on, the authenticity thresholds.
+ */
 export function SettingsPage() {
   const { data: user } = useSession()
   const { data: instance } = useInstance()

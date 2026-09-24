@@ -1,6 +1,7 @@
 import type { HTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Bordered surface panel. */
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
@@ -10,10 +11,12 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   )
 }
 
+/** Card top row — title on the left, actions on the right. */
 export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('flex items-center justify-between px-4 pt-3.5 pb-2', className)} {...props} />
 }
 
+/** Card heading in the uppercase display face. */
 export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
@@ -26,6 +29,7 @@ export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingEle
   )
 }
 
+/** Padded card content area. */
 export function CardBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('px-4 pb-4', className)} {...props} />
 }

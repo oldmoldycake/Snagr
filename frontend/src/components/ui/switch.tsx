@@ -2,6 +2,7 @@ import * as SwitchPrimitive from '@radix-ui/react-switch'
 import type { ComponentPropsWithoutRef } from 'react'
 import { cn } from '@/lib/cn'
 
+/** On/off toggle — Radix Switch. */
 export function Switch({
   className,
   ...props

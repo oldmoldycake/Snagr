@@ -41,6 +41,10 @@ const STATUS_STYLES: Record<JobStatus, { node: ReactNode; label: string }> = {
   },
 }
 
+/**
+ * Status marker for a job, optionally with its label; the label is always the
+ * title for hover and screen readers.
+ */
 export function JobStatusDot({ status, withLabel }: { status: JobStatus; withLabel?: boolean }) {
   const { node, label } = STATUS_STYLES[status]
   return (

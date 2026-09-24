@@ -126,6 +126,10 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
   )
 }
 
+/**
+ * Admin-only user management: activate, deactivate or delete users, and create
+ * or revoke invites.
+ */
 export function AdminUsersPage() {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)

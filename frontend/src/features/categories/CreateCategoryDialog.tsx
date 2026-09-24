@@ -16,6 +16,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
+/** New-category dialog behind the given trigger; opens the new category's page on success. */
 export function CreateCategoryDialog({
   trigger,
   variant = 'primary',

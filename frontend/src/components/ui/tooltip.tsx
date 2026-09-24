@@ -2,8 +2,10 @@ import * as TooltipPrimitive from '@radix-ui/react-tooltip'
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Shared tooltip context — Radix Tooltip.Provider; mount once near the root. */
 export const TooltipProvider = TooltipPrimitive.Provider
 
+/** Hover/focus tooltip around a single child — Radix Tooltip with a 300 ms delay. */
 export function SimpleTooltip({
   content,
   children,

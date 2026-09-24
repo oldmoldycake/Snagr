@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 
+/**
+ * Dashed placeholder for an empty list: the crosshair glyph, a title, and an
+ * optional hint and action.
+ */
 export function EmptyState({
   title,
   description,

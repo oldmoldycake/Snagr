@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/time'
 
+/** Floating card that frames a chart tooltip, with an optional timestamp header. */
 export function TooltipFrame({ label, children }: { label?: string; children: ReactNode }) {
   return (
     <div className="max-w-[280px] rounded-sm border border-hairline bg-overlay px-2.5 py-2 shadow-xl">
@@ -11,6 +12,7 @@ export function TooltipFrame({ label, children }: { label?: string; children: Re
   )
 }
 
+/** One series line in a chart tooltip: color swatch, value, name and an optional note. */
 export function TooltipRow({
   color,
   name,
@@ -35,6 +37,7 @@ export function TooltipRow({
   )
 }
 
+/** Tooltip header text for a chart x value — epoch ms or an ISO string; empty when absent. */
 export function tooltipTimeLabel(ts: number | string | undefined): string {
   if (ts == null) return ''
   return formatDateTime(typeof ts === 'number' ? new Date(ts).toISOString() : ts)

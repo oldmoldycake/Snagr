@@ -8,6 +8,7 @@ import { cn } from '@/lib/cn'
  */
 export type LogGlyphLevel = 'info' | 'success' | 'warn' | 'error' | 'skip' | 'new'
 
+/** Glyph and color for each log level. */
 export const LOG_GLYPHS: Record<LogGlyphLevel, { glyph: string; className: string }> = {
   info: { glyph: '›', className: 'text-ink-3' },
   success: { glyph: '✓', className: 'text-drop' },
@@ -17,6 +18,7 @@ export const LOG_GLYPHS: Record<LogGlyphLevel, { glyph: string; className: strin
   new: { glyph: '✚', className: 'text-lume' },
 }
 
+/** One log entry: a stable key, a preformatted time, its level and the message. */
 export interface LogLine {
   key: string | number
   time: string
@@ -24,6 +26,7 @@ export interface LogLine {
   message: ReactNode
 }
 
+/** One log line: time, level glyph, message. */
 export function TerminalLogLine({ line }: { line: LogLine }) {
   const { glyph, className } = LOG_GLYPHS[line.level]
   return (
@@ -37,6 +40,7 @@ export function TerminalLogLine({ line }: { line: LogLine }) {
   )
 }
 
+/** A block of log lines in the terminal voice. */
 export function TerminalLog({ lines, className }: { lines: LogLine[]; className?: string }) {
   return (
     <div className={cn('font-mono text-[11px] leading-[2.05]', className)}>

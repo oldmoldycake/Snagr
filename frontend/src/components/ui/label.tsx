@@ -1,6 +1,7 @@
 import type { LabelHTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Form field label in the small uppercase mono style. */
 export function Label({ className, ...props }: LabelHTMLAttributes<HTMLLabelElement>) {
   return (
     <label

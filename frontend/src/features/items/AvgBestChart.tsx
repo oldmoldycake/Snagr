@@ -39,6 +39,7 @@ function valueAt(pts: LinePoint[], ts: number): number | null {
   return result
 }
 
+/** Best-price and average-price lines for one item over the range, with the sweep-beam scan. */
 export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; range: TimeRange }) {
   const glowId = useId()
   const { ref, width } = useMeasuredWidth()

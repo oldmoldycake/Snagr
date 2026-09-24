@@ -54,7 +54,7 @@ function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['jobs'] }),
   })
 
-  // the hunter's own work (no watch behind it) is admin-only, as system runs were
+  // the hunter's own work (no watch behind it) is admin-only to cancel
   const canCancel = me != null && (me.role === 'admin' || job.watch_id != null)
 
   return (

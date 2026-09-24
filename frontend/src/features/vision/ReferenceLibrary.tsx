@@ -74,7 +74,7 @@ function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onR
 /**
  * The item's gold-reference library — the photos its authenticity checks
  * score against. Communal per item (every watcher shares one library); only
- * the capturer and admins see a reference's source listing (D-V11).
+ * the capturer and admins see a reference's source listing.
  */
 export function ReferenceLibrary({ itemId }: { itemId: number }) {
   const queryClient = useQueryClient()

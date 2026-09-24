@@ -38,6 +38,7 @@ export function mixToWhite(hex: string, t: number): string {
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
 }
 
+/** SVG text style for axis tick labels — muted mono, so labels never compete with the traces. */
 export const axisTickStyle = {
   fill: chart.inkMuted,
   fontSize: 11,

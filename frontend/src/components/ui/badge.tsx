@@ -19,10 +19,12 @@ const badgeVariants = cva(
   },
 )
 
+/** Span attributes plus the badge color variant. */
 export interface BadgeProps
   extends HTMLAttributes<HTMLSpanElement>,
     VariantProps<typeof badgeVariants> {}
 
+/** Small inline status pill in one of the palette variants. */
 export function Badge({ className, variant, ...props }: BadgeProps) {
   return <span className={cn(badgeVariants({ variant }), className)} {...props} />
 }

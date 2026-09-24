@@ -3,10 +3,17 @@ import { X } from 'lucide-react'
 import type { ComponentPropsWithoutRef, HTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Modal dialog root — Radix Dialog.Root. */
 export const Dialog = DialogPrimitive.Root
+/** Element that opens the dialog — Radix Dialog.Trigger. */
 export const DialogTrigger = DialogPrimitive.Trigger
+/** Element that closes the dialog — Radix Dialog.Close. */
 export const DialogClose = DialogPrimitive.Close
 
+/**
+ * Centered modal panel over a dimmed overlay, with a close button — Radix
+ * Dialog.Content in a portal.
+ */
 export function DialogContent({
   className,
   children,
@@ -35,6 +42,7 @@ export function DialogContent({
   )
 }
 
+/** Dialog heading — Radix Dialog.Title, which also labels the dialog for screen readers. */
 export function DialogTitle({
   className,
   ...props
@@ -50,6 +58,7 @@ export function DialogTitle({
   )
 }
 
+/** Supporting text under the title — Radix Dialog.Description. */
 export function DialogDescription({
   className,
   ...props
@@ -62,6 +71,7 @@ export function DialogDescription({
   )
 }
 
+/** Right-aligned row for the dialog's action buttons. */
 export function DialogFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('mt-5 flex justify-end gap-2', className)} {...props} />
 }

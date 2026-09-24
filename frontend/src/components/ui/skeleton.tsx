@@ -1,6 +1,7 @@
 import type { HTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 
+/** Pulsing placeholder block shown while data loads. */
 export function Skeleton({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn('animate-pulse rounded-sm bg-raised', className)} {...props} />
 }

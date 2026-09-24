@@ -2,6 +2,7 @@ import { forwardRef, type ButtonHTMLAttributes } from 'react'
 import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/cn'
 
+/** Button class recipe, exported so links and triggers can look like buttons. */
 export const buttonVariants = cva(
   'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm font-mono font-medium tracking-[0.06em] uppercase transition-colors disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0',
   {
@@ -27,10 +28,12 @@ export const buttonVariants = cva(
   },
 )
 
+/** Native button attributes plus the variant and size. */
 export interface ButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {}
 
+/** The app button. Defaults to type="button" so it never submits a form by accident. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, type = 'button', ...props }, ref) => (
     <button

@@ -15,6 +15,7 @@ export interface Pt {
   y: number
 }
 
+/** The plot box in SVG pixels plus the scales between it and (timestamp, price) space. */
 export interface Plot {
   box: { l: number; r: number; t: number; b: number }
   x: (ts: number) => number
@@ -51,6 +52,11 @@ export function priceDomain(values: number[], target: number | null): [number, n
   return [Math.floor((min * 0.97) / 10) * 10, Math.ceil((max * 1.02) / 10) * 10]
 }
 
+/**
+ * Build the plot box and linear scales for a chart of the given size and
+ * domain. Zero-width spans are widened (a minute, a dollar) so a single point
+ * still plots.
+ */
 export function makePlot(
   width: number,
   height: number,
@@ -106,11 +112,16 @@ export function easedStepD(pts: Pt[], endX?: number): string {
   return `${d} H ${f(endX ?? pts[pts.length - 1].x)}`
 }
 
+/**
+ * Straight-segment path through the points, extended flat to endX when that
+ * lies past the last point.
+ */
 export function polylineD(pts: Pt[], endX?: number): string {
   const d = pts.map((p, i) => `${i === 0 ? 'M' : 'L'} ${f(p.x)} ${f(p.y)}`).join(' ')
   return endX != null && endX > pts[pts.length - 1].x ? `${d} H ${f(endX)}` : d
 }
 
+/** Evenly spaced x-axis labels, roughly one per 150px, formatted for the range. */
 export function timeTicks(
   plot: Plot,
   xMin: number,
@@ -217,6 +228,7 @@ export function GlowDefs({ id }: { id: string }) {
   )
 }
 
+/** One stretch of a trace; dashed while the listing was out of stock. */
 export interface TraceSeg {
   d: string
     dash: boolean
@@ -283,6 +295,7 @@ export function EmberTrace({
   )
 }
 
+/** Where the sweep beam sits: plot-space x/y and the timestamp under it. */
 export interface SweepPos {
   x: number
   y: number
