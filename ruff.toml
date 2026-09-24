@@ -11,7 +11,10 @@ select = [
     "UP",  # pyupgrade: outdated syntax for the target Python version
     "B",   # flake8-bugbear: likely-bug patterns
     "SIM", # flake8-simplify: needlessly complex constructs
+    "D1",  # pydocstyle: public modules, classes, and functions need a docstring
 ]
+# Magic methods (__repr__, __eq__, …) are self-describing.
+ignore = ["D105"]
 
 [lint.flake8-bugbear]
 # FastAPI's DI idiom is a function call in a default argument; don't flag it (B008).
@@ -22,3 +25,9 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query"
 "backend/tests/conftest.py" = ["E402"]
 "backend/migrations/env.py" = ["E402"]
 "vision/tests/conftest.py" = ["E402"]
+# Tests are named for what they check, and migrations for what they change.
+"**/tests/**" = ["D1"]
+"backend/migrations/**" = ["D1"]
+# Not yet held to docstring coverage.
+"agent/**" = ["D1"]
+"backend/**" = ["D1"]

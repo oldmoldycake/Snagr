@@ -37,7 +37,7 @@ Write for a reader who has never seen the code and wasn't there when it was writ
 - **Describe the code as it is, not how it got here.** No "used to", "now", "no longer", "PR 2a", "Phase 3", "step 2". History belongs in the commit message and the PR.
 - **No bare decision codes.** Don't cite `D-V5` or `decision 9`. State the rule in a sentence.
 - **Docstrings are prose.** Start with a one-line summary. Add a paragraph only for the contract: what it raises, side effects, and who owns the transaction. Don't add `Args:`/`Returns:` sections that repeat the type hints.
-- **Coverage:** every public Python module, class, and function outside `tests/` and `migrations/` has a docstring, and every exported frontend symbol has a JSDoc block. Tests are exempt, because their names say what they check.
+- **Coverage:** every public Python module, class, and function outside `tests/` and `migrations/` has a docstring, and every exported frontend symbol has a JSDoc block. Tests are exempt, because their names say what they check. ruff's `D1` rules enforce the Python side (exemptions live in `ruff.toml`); oxlint has no equivalent, so frontend coverage is checked in review.
 - **Placement:** put comments on their own line above the code they explain. Trailing comments are for short notes like `models.py` column annotations; keep the `# + api` markers there.
 - **Keep them short.** A comment that runs past about six lines is documentation. Move it to `backend/STRUCTURE.md` or `docs/`.
 - **`agent/tools.py` docstrings are prompts.** The model reads them as tool descriptions, so editing one changes the hunter's behavior. Review it like code.
