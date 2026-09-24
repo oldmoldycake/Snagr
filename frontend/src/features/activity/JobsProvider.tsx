@@ -65,12 +65,14 @@ interface JobsContextValue {
 
 const JobsContext = createContext<JobsContextValue | null>(null)
 
+/** The shared jobs stream; throws outside JobsProvider so a missing provider fails loudly. */
 export function useJobs(): JobsContextValue {
   const ctx = useContext(JobsContext)
   if (!ctx) throw new Error('useJobs must be used inside JobsProvider')
   return ctx
 }
 
+/** Owns the app's one EventSource and the jobs state built from it. */
 export function JobsProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient()
   const [live, setLive] = useState<Job[]>([])

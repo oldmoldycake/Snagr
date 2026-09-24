@@ -1,7 +1,7 @@
 /**
  * In-memory fixture store for MSW. Deterministic: a seeded RNG generates a
  * year of daily price walks per listing, so charts look the same on every
- * reload. Mutations (add item, run agent, toggle watch…) update this store,
+ * reload. Mutations (add item, hunt now, toggle watch…) update this store,
  * so the app feels live; state resets on page reload (session survives via
  * localStorage).
  */
@@ -23,6 +23,7 @@ const rng = mulberry32(0x5eed)
 
 // --- internal shapes (prices in cents) ----------------------------------------
 
+/** A user account; the password is kept in plain text because it is demo data. */
 export interface MockUser {
   id: number
   email: string
@@ -43,6 +44,7 @@ export const VISION_DEFAULTS = {
   vision_auto_promote_fake: '0.90',
 }
 
+/** A category and the sites its items are hunted on. */
 export interface MockCategory {
   id: number
   name: string
@@ -50,6 +52,7 @@ export interface MockCategory {
   site_ids: number[]
 }
 
+/** A site the hunter shops. */
 export interface MockSite {
   id: number
   name: string
@@ -60,6 +63,7 @@ export interface MockSite {
   created_at: number
 }
 
+/** A catalog item with its watch settings folded in — the mock is single-user for items. */
 export interface MockItem {
   id: number
   category_id: number
@@ -78,6 +82,7 @@ export interface MockItem {
   created_at: number
 }
 
+/** The latest vision read on a listing's photos. */
 export interface MockAuthenticity {
   verdict: 'leans_real' | 'leans_fake' | 'inconclusive'
   fake_confidence: string | null
@@ -85,6 +90,7 @@ export interface MockAuthenticity {
   checked_at: number
 }
 
+/** One product page the hunter tracks for an item. */
 export interface MockListing {
   id: number
   item_id: number
@@ -101,6 +107,7 @@ export interface MockListing {
   discovered_by_job_id: number | null
 }
 
+/** A labeled photo in an item's vision reference library. */
 export interface MockReference {
   id: number
   item_id: number
@@ -114,10 +121,11 @@ export interface MockReference {
   created_at: number
 }
 
+/** A captured photo waiting for a person to confirm or discard its suggested label. */
 export interface MockQueueEntry {
   id: number
   item_id: number
-  /** owner of the capturing watch — the ONLY user whose queue shows it (D-V11) */
+  /** owner of the capturing watch — the ONLY user whose queue shows it, admins included */
   user_id: number
   object_key: string
   listing_url: string
@@ -130,6 +138,7 @@ export interface MockQueueEntry {
   created_at: number
 }
 
+/** One price reading of a listing; `method` is which path read it. */
 export interface MockCheck {
   id: number
   listing_id: number
@@ -141,6 +150,7 @@ export interface MockCheck {
   confirmed: boolean
 }
 
+/** A user's watch on an item: whether to notify and their own target. */
 export interface MockWatch {
   id: number
   item_id: number
@@ -149,6 +159,7 @@ export interface MockWatch {
   target_cents: number | null
 }
 
+/** What a finished job did, as its stats column records it. */
 export interface MockJobStats {
   listings_checked: number
   prices_found: number
@@ -161,6 +172,7 @@ export interface MockJobStats {
   transport: 'static' | 'browser' | null
 }
 
+/** One unit of hunter work in the queue: a hunt, a recheck or a market-price refresh. */
 export interface MockJob {
   id: number
   kind: 'hunt' | 'recheck' | 'ground'
@@ -186,6 +198,7 @@ export interface MockJob {
   created_at: number
 }
 
+/** One line of a job's log, ordered by `seq` within its job. */
 export interface MockJobEvent {
   job_id: number
   seq: number
@@ -196,6 +209,7 @@ export interface MockJobEvent {
   payload: Record<string, unknown> | null
 }
 
+/** An admin-issued invite link, optionally tied to an email. */
 export interface MockInvite {
   id: number
   token: string
@@ -205,6 +219,7 @@ export interface MockInvite {
   created_at: number
 }
 
+/** Where a user's alerts are pushed; `events` null means every event. */
 export interface MockNotificationChannel {
   id: number
   user_id: number
@@ -233,12 +248,15 @@ export interface MockApiToken {
 
 // --- store ---------------------------------------------------------------------
 
+/** The instant the fixtures were seeded; every seeded timestamp is relative to it. */
 export const NOW = Date.now()
 const DAY = 86_400_000
 
 let nextId = 1000
+/** A fresh id above every seeded one. */
 export const newId = () => ++nextId
 
+/** Every mock table, mutated in place by the handlers. */
 export const store = {
   users: [] as MockUser[],
   categories: [] as MockCategory[],
@@ -296,7 +314,7 @@ const CATEGORIES: { name: string; slug: string; sites: number[]; items: SeedItem
       { name: 'Steam Deck OLED 512GB', base: 54900, target: 47500, listings: 3 },
       { name: 'ROG Ally X', base: 79999, target: 65000, listings: 3 },
       { name: 'Legion Go S', base: 59999, target: 50000, listings: 2 },
-      // no listings yet → exercises the "run the agent" empty state
+      // no listings yet → exercises the item page's "No listings yet" empty state
       { name: 'Retroid Pocket 5', base: 21900, target: 18000, listings: 0 },
     ],
   },
@@ -405,7 +423,8 @@ function seed() {
     ...VISION_DEFAULTS,
     created_at: NOW - 200 * DAY,
   })
-  // second, non-admin account for the runs-privacy surfaces (see seedGuestWatches)
+  // second, non-admin account for the per-user job and review-queue scoping
+  // (see seedGuestWatches, seedVisionLibrary)
   store.users.push({
     id: 2,
     email: 'guest@snagr.dev',
@@ -529,7 +548,8 @@ function seed() {
  * (mixed provenance, one variant tag, one revoked), pending review-queue
  * entries for the demo user, and authenticity reads on a couple of its
  * listings. The guest gets one queue entry of their own — invisible to the
- * demo user, proving the D-V11 scoping. Everything else stays unscanned.
+ * demo user, proving a capture reaches only its watch owner's queue.
+ * Everything else stays unscanned.
  */
 function seedVisionLibrary() {
   const emerald = store.items.find((i) => i.name === 'Pokemon Emerald (GBA)')!
@@ -613,8 +633,8 @@ function seedVisionLibrary() {
 }
 
 /**
- * The guest's watches, for the runs-privacy demo: one item of their own plus a
- * shared watch on an item the demo user also tracks. Only the runs/SSE
+ * The guest's watches, for the job-visibility demo: one item of their own
+ * plus a shared watch on an item the demo user also tracks. Only the jobs/SSE
  * surfaces are per-user in this mock — items/watches endpoints stay
  * single-user, so the guest's items pages still show everything.
  */
@@ -1168,8 +1188,8 @@ seed()
  * watch, and — as admin — everything. A hidden job must behave exactly like a
  * nonexistent one (404, absent from lists) so its existence never leaks.
  *
- * Unlike a run, a job belongs to one watch, so there is no event-level rule:
- * seeing the job is seeing its events.
+ * A job belongs to one watch, so there is no event-level rule: seeing the
+ * job is seeing its events.
  */
 export function jobVisible(job: MockJob, user: MockUser): boolean {
   if (user.role === 'admin') return true
@@ -1184,6 +1204,7 @@ export function jobVisible(job: MockJob, user: MockUser): boolean {
 
 // --- shared query helpers (used by handlers) --------------------------------------
 
+/** Cents as the API's decimal string; null stays null. */
 export const cents = (c: number | null): string | null => (c == null ? null : (c / 100).toFixed(2))
 
 /**
@@ -1198,6 +1219,7 @@ export function checksFor(listingId: number): MockCheck[] {
     .sort((a, b) => a.ts - b.ts)
 }
 
+/** The newest believed, priced check for a listing — what counts as its current price. */
 export function latestCheck(listingId: number): MockCheck | null {
   let best: MockCheck | null = null
   for (const c of store.checks) {
@@ -1212,14 +1234,17 @@ export function latestCheck(listingId: number): MockCheck | null {
   return best
 }
 
+/** Every listing of an item, active or not. */
 export function itemListings(itemId: number): MockListing[] {
   return store.listings.filter((l) => l.item_id === itemId)
 }
 
+/** The listings still tracked for an item — the ones that fill its slots. */
 export function activeListings(itemId: number): MockListing[] {
   return itemListings(itemId).filter((l) => l.active)
 }
 
+/** The cheapest current price among an item's active listings, and which listing has it. */
 export function bestPriceCents(itemId: number): { cents: number; listing: MockListing } | null {
   let best: { cents: number; listing: MockListing } | null = null
   for (const l of activeListings(itemId)) {
@@ -1231,6 +1256,7 @@ export function bestPriceCents(itemId: number): { cents: number; listing: MockLi
   return best
 }
 
+/** The mean current price across an item's active listings. */
 export function avgPriceCents(itemId: number): number | null {
   const prices = activeListings(itemId)
     .map((l) => latestCheck(l.id)?.price_cents)
@@ -1239,12 +1265,14 @@ export function avgPriceCents(itemId: number): number | null {
   return Math.round(prices.reduce((a, b) => a + b, 0) / prices.length)
 }
 
+/** The watch's own target, else the item's. */
 export function effectiveTargetCents(itemId: number): number | null {
   const watch = store.watches.find((w) => w.item_id === itemId)
   if (watch?.target_cents != null) return watch.target_cents
   return store.items.find((i) => i.id === itemId)?.target_cents ?? null
 }
 
+/** Whether the best current price is at or under the target. */
 export function targetMet(itemId: number): boolean {
   const target = effectiveTargetCents(itemId)
   const best = bestPriceCents(itemId)

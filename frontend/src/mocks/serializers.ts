@@ -44,6 +44,7 @@ import {
 
 const iso = (ts: number | null): string | null => (ts == null ? null : new Date(ts).toISOString())
 
+/** A fixture user as the signed-in user sees themself. */
 export function toUser(u: MockUser): User {
   return {
     id: u.id,
@@ -56,6 +57,7 @@ export function toUser(u: MockUser): User {
   }
 }
 
+/** A fixture user as a row on the admin users page. */
 export function toAdminUser(u: MockUser): AdminUser {
   return {
     id: u.id,
@@ -67,6 +69,7 @@ export function toAdminUser(u: MockUser): AdminUser {
   }
 }
 
+/** A category with its item and snagged counts computed from the store. */
 export function toCategory(c: (typeof store.categories)[number]): Category {
   const items = store.items.filter((i) => i.category_id === c.id)
   return {
@@ -79,6 +82,7 @@ export function toCategory(c: (typeof store.categories)[number]): Category {
   }
 }
 
+/** A site with its listing count and last check computed from the store. */
 export function toSite(s: (typeof store.sites)[number]): Site {
   const listings = store.listings.filter((l) => l.site_id === s.id)
   let lastChecked: number | null = null
@@ -99,6 +103,7 @@ export function toSite(s: (typeof store.sites)[number]): Site {
   }
 }
 
+/** A watched item as the dashboard and category lists show it, trend figures over `range`. */
 export function toItemSummary(item: MockItem, range: TimeRange = '30d'): ItemSummary {
   const rangeMs = rangeToMs(range)
   const category = store.categories.find((c) => c.id === item.category_id)!
@@ -149,6 +154,7 @@ export function toItemSummary(item: MockItem, range: TimeRange = '30d'): ItemSum
   }
 }
 
+/** A listing with its latest price and status read off its checks. */
 export function toListing(l: MockListing): Listing {
   const check = latestCheck(l.id)
   // latest check of ANY kind (including terminal sold/ended checks with no price)
@@ -182,6 +188,7 @@ export function toListing(l: MockListing): Listing {
   }
 }
 
+/** A reference image as `viewer` may see it. */
 export function toReference(r: MockReference, viewer: MockUser): ReferenceImage {
   return {
     id: r.id,
@@ -190,7 +197,7 @@ export function toReference(r: MockReference, viewer: MockUser): ReferenceImage 
     variant_tag: r.variant_tag,
     provenance: r.provenance,
     image_url: `/api/vision/images/${r.object_key}`,
-    // a reference's source listing is visible only to its capturer and admins (D-V11)
+    // a reference's source listing is visible only to its capturer and admins
     source_listing_url:
       viewer.role === 'admin' || r.captured_by === viewer.id ? r.source_listing_url : null,
     revoked: r.revoked,
@@ -198,6 +205,7 @@ export function toReference(r: MockReference, viewer: MockUser): ReferenceImage 
   }
 }
 
+/** A captured image awaiting review, with the item it was captured for. */
 export function toQueueEntry(e: MockQueueEntry): ReviewQueueEntry {
   return {
     id: e.id,
@@ -212,6 +220,7 @@ export function toQueueEntry(e: MockQueueEntry): ReviewQueueEntry {
   }
 }
 
+/** The item page's payload: the summary plus its listings and what the hunter does next. */
 export function toItemDetail(item: MockItem, range: TimeRange = '30d'): ItemDetail {
   return {
     ...toItemSummary(item, range),
@@ -221,9 +230,11 @@ export function toItemDetail(item: MockItem, range: TimeRange = '30d'): ItemDeta
   }
 }
 
-/** The instance's RECHECK_INTERVAL_MINUTES and RECHECK_INTERVAL_FLOOR_MINUTES. */
+/** The instance's RECHECK_INTERVAL_MINUTES, the default gap between rechecks. */
 export const RECHECK_INTERVAL_MINUTES = 30
+/** The instance's RECHECK_INTERVAL_FLOOR_MINUTES: no watch is rechecked more often. */
 export const RECHECK_INTERVAL_FLOOR_MINUTES = 5
+/** The longest per-watch interval accepted — one day. */
 export const MAX_RECHECK_INTERVAL_MINUTES = 1440
 /** The instance's HUNT_ENABLED — flip it to see the kill switch's 409 and "hunting off" states. */
 export const HUNT_ENABLED: boolean = true
@@ -282,6 +293,7 @@ export function jobLabel(job: MockJob): string {
   return `${itemName} · check`
 }
 
+/** A fixture job with its item, site and label filled in. */
 export function toJob(j: MockJob): Job {
   return {
     id: j.id,
@@ -308,6 +320,7 @@ export function toJob(j: MockJob): Job {
   }
 }
 
+/** One job log line in its API shape. */
 export function toJobEvent(e: MockJobEvent): JobEvent {
   return {
     job_id: e.job_id,
@@ -320,6 +333,7 @@ export function toJobEvent(e: MockJobEvent): JobEvent {
   }
 }
 
+/** An invite in its API shape. */
 export function toInvite(i: (typeof store.invites)[number]): Invite {
   return {
     id: i.id,
@@ -330,6 +344,7 @@ export function toInvite(i: (typeof store.invites)[number]): Invite {
   }
 }
 
+/** A notification channel; the secret itself never leaves, only whether one is set. */
 export function toNotificationChannel(c: MockNotificationChannel): NotificationChannel {
   return {
     id: c.id,
@@ -344,6 +359,7 @@ export function toNotificationChannel(c: MockNotificationChannel): NotificationC
   }
 }
 
+/** An API token's metadata — the token string is shown once at creation, never here. */
 export function toApiToken(t: MockApiToken): ApiToken {
   return {
     id: t.id,
@@ -355,6 +371,7 @@ export function toApiToken(t: MockApiToken): ApiToken {
   }
 }
 
+/** The target an item is judged against — the watch's own, else the item's — as a decimal string. */
 export function effectiveTarget(itemId: number): string | null {
   return cents(effectiveTargetCents(itemId))
 }

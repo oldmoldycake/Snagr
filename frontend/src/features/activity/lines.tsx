@@ -18,10 +18,12 @@ const EVENT_GLYPHS: Partial<Record<JobEventType, LogGlyphLevel>> = {
   price_found: 'success',
 }
 
+/** The glyph a job event's log line carries. */
 export function glyphFor(event: JobEvent): LogGlyphLevel {
   return EVENT_GLYPHS[event.event_type] ?? event.level
 }
 
+/** One job event as a terminal-log line. */
 export function eventLine(event: JobEvent): LogLine {
   return {
     key: `${event.job_id}:${event.seq}`,
@@ -92,4 +94,5 @@ export function checkLine(check: ListingChecked, index: number): LogLine {
   }
 }
 
+/** Each log level's glyph and color, re-exported so Activity surfaces take words and glyphs from one place. */
 export const GLYPHS = LOG_GLYPHS

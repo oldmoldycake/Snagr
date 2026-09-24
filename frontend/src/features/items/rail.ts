@@ -23,6 +23,7 @@ const CHAR_PX = 6
 /** Matches the ±9px dot→label offset in Track. */
 const LABEL_GAP_PX = 9
 
+/** Build the rail for the board's unfolded rows; null when none of them has a price. */
 export function makeRail(
   mainRows: Listing[],
   startCents: Map<number, number>,

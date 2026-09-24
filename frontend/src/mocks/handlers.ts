@@ -155,7 +155,8 @@ function enqueueHunt(
   over: Partial<MockJob> = {},
 ): MockJob | null {
   const item = store.items.find((i) => i.id === itemId)!
-  // a full watch is hunted only as a person's swap hunt (decision 10)
+  // a full watch is hunted only when a person asks, and that hunt is a swap
+  // hunt that may trade the weakest tracked listing for something better
   if (activeListings(itemId).length >= item.max_listings && !over.payload?.swap) return null
   const open = store.jobs.find(
     (j) =>
@@ -361,6 +362,7 @@ function validateChannel(
   return { name, url, topic, events }
 }
 
+/** Every mock route — the behavioral oracle for the backend's status codes and `error.code`s. */
 export const handlers = [
   http.get('/api/instance', async () => {
     await wait()
@@ -649,7 +651,8 @@ export const handlers = [
     const listingIds = new Set(store.listings.filter((l) => itemIds.has(l.item_id)).map((l) => l.id))
     store.listings = store.listings.filter((l) => !listingIds.has(l.id))
     store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
-    // deleting an item deletes its entire vision library (D-V12)
+    // deleting an item deletes its entire vision library, so none of it
+    // outlives the item
     store.references = store.references.filter((r) => !itemIds.has(r.item_id))
     store.visionQueue = store.visionQueue.filter((q) => !itemIds.has(q.item_id))
     return new HttpResponse(null, { status: 204 })
@@ -869,7 +872,8 @@ export const handlers = [
     const listingIds = new Set(store.listings.filter((l) => l.item_id === id).map((l) => l.id))
     store.listings = store.listings.filter((l) => l.item_id !== id)
     store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
-    // deleting an item deletes its entire vision library (D-V12)
+    // deleting an item deletes its entire vision library, so none of it
+    // outlives the item
     store.references = store.references.filter((r) => r.item_id !== id)
     store.visionQueue = store.visionQueue.filter((q) => q.item_id !== id)
     return new HttpResponse(null, { status: 204 })
@@ -959,8 +963,8 @@ export const handlers = [
     const itemId = new URL(request.url).searchParams.get('item_id')
     const page = intParam(request, 'page', 1)
     const perPage = intParam(request, 'per_page', 25)
-    // scoped to the capturing watch's owner — admins included (D-V11): you
-    // review what YOUR hunts captured
+    // scoped to the capturing watch's owner — admins included: you review
+    // what YOUR hunts captured
     let entries = store.visionQueue
       .filter((e) => e.user_id === user.id && e.review_state === 'suggested')
       .sort((a, b) => b.created_at - a.created_at)

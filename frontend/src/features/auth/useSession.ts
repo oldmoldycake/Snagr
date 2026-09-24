@@ -4,6 +4,7 @@ import { getInstance, getMe, login, logout, register } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
 
+/** The signed-in user; a 401 is the answer "signed out", so it is never retried. */
 export function useSession() {
   return useQuery({
     queryKey: qk.session,
@@ -14,10 +15,12 @@ export function useSession() {
   })
 }
 
+/** Instance-wide facts the UI adapts to: open registration, SSO, which features are on. */
 export function useInstance() {
   return useQuery({ queryKey: qk.instance, queryFn: getInstance, staleTime: 5 * 60_000 })
 }
 
+/** Sign in, seed the session cache from the response and go to the dashboard. */
 export function useLogin() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -30,6 +33,7 @@ export function useLogin() {
   })
 }
 
+/** Create an account, seed the session cache from the response and go to the dashboard. */
 export function useRegister() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -42,6 +46,7 @@ export function useRegister() {
   })
 }
 
+/** Sign out and drop every cached query, so the next user sees none of this one's data. */
 export function useLogout() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()

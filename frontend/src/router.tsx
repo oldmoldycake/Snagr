@@ -15,6 +15,7 @@ import { ApiSettingsPage } from '@/features/settings/ApiSettingsPage'
 import { AdminUsersPage } from '@/features/settings/AdminUsersPage'
 import { EmptyState } from '@/components/ui/empty-state'
 
+/** Every page in the app; the public auth pages sit outside the guard, admin pages behind a second one. */
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
   { path: '/register', element: <RegisterPage /> },
@@ -28,8 +29,8 @@ export const router = createBrowserRouter([
       { path: '/sites', element: <SitesPage /> },
       { path: '/activity', element: <ActivityPage /> },
       { path: '/activity/:id', element: <JobPage /> },
-      // old bookmarks land somewhere: a run no longer exists, but the page
-      // that replaced it does
+      // /runs links in old bookmarks still land somewhere: jobs live on the
+      // Activity page
       { path: '/runs', element: <Navigate to="/activity" replace /> },
       { path: '/runs/:id', element: <Navigate to="/activity" replace /> },
       { path: '/review', element: <ReviewQueuePage /> },
