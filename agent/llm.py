@@ -1,10 +1,8 @@
 """The chat model, built when something actually needs one.
 
-It used to be a module-level `init_chat_model(...)`, which meant importing the
-orchestrator built a client whether or not a model would ever be called. Under
-the daemon that is the wrong shape: the check pool re-reads most listings with
-no model in the loop at all, and it should not pay for one — or fail to start
-because the provider is misconfigured — just to open a browser.
+Not a module-level `init_chat_model(...)`: the check pool re-reads most
+listings with no model in the loop at all, and it should not pay for one — or
+fail to start because the provider is misconfigured — just to open a browser.
 
 A factory, not a cached singleton: the client is cheap to build, the pools are
 few, and a provider whose key rotated is then fixed by the next job rather

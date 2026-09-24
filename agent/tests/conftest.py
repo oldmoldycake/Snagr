@@ -1,12 +1,12 @@
 """Environment shims so the agent modules import — and connect — safely.
 
 config.py and database.py read the environment at import time (database
-asserts DATABASE_URL exists, pricing constructs a chat model). Most tests
-monkeypatch every seam and never open a connection or call a model, but
-test_run_queue_db.py really connects — so DATABASE_URL is force-rewritten to
-the throwaway `snagr_test` database (same server, different DB name) before
-any module import, exactly like backend/tests/conftest.py, and an exported
-live URL can never leak in. The AI_* and MCP values only need to exist, not
+asserts DATABASE_URL exists). Most tests monkeypatch every seam and never
+open a connection or call a model, but the DB-backed suites (test_jobs_db.py
+and friends) really connect — so DATABASE_URL is force-rewritten to the
+throwaway `snagr_test` database (same server, different DB name) before any
+module import, exactly like backend/tests/conftest.py, and an exported live
+URL can never leak in. The AI_* and MCP values only need to exist, not
 work.
 """
 
@@ -51,7 +51,7 @@ os.environ.setdefault("PLAYWRIGHT_MCP_URL", "http://localhost:9999/mcp")
 # --- schema the models don't describe ----------------------------------------
 # create_all builds tables and their own constraints. The queue's central rule
 # is a partial unique index over coalesce() expressions, and its wake-up is a
-# set of triggers; the backend owns both (D1), so the DB-backed tests install
+# set of triggers; the backend owns both, so the DB-backed tests install
 # them by hand — the same thing backend/tests/conftest.py does with the
 # trigger DDL. Keep in sync with
 # backend/migrations/versions/015_jobs_daemon.py.
@@ -123,7 +123,7 @@ JOB_NOTIFY_DDL = [
 
 
 # The site every seeded scenario is on. Tool URLs are checked against the
-# site's own registrable domain (S2), so a test URL has to live on it.
+# site's own registrable domain, so a test URL has to live on it.
 SITE_BASE_URL = "https://example.test"
 
 

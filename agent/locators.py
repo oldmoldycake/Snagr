@@ -30,11 +30,11 @@ from validation import CURRENCY_CODES, parse_price
 
 log = logging.getLogger(__name__)
 
-# The four locator kinds, in the order the ladder tries them (decision 5:
-# structured data first, the visible element last). A kind is stored on
+# The four locator kinds, in the order the ladder tries them: structured data
+# first, because it survives restyles, and the visible element last. A kind is stored on
 # listings.locator_kind and recorded on every price check as its method,
 # except 'css', whose checks record 'locator' — the contract's word for "a
-# replayed element path" (§4.3).
+# replayed element path".
 LOCATOR_KINDS = ("jsonld", "meta", "microdata", "css")
 
 # What a jsonld locator is a path into. A block may be a bare object, a list
@@ -464,7 +464,7 @@ def _jsonld_blocks(extract: dict) -> list:
 def read_with(kind: str, locator: str, extract: dict) -> str | None:
     """Replay one locator against an extractor payload.
 
-    This is the read half of the recheck ladder (§4.3) and the mirror of what
+    This is the read half of the recheck ladder and the mirror of what
     RUN_LOCATOR_JS does in the browser: same locator, same answer, no second
     page evaluation. A locator that no longer resolves returns None, which is
     what bumps listings.locator_failures.
@@ -630,8 +630,8 @@ def _jsonld_price_paths(block: object, prefix: str = "") -> list[tuple[str, obje
 
 
 def select_locator(extract: dict, confirmed_price: Decimal) -> Locator | None:
-    """Pick where on this page the confirmed price lives — code's job, not the
-    model's (decision 5).
+    """Pick where on this page the confirmed price lives — code's job, never
+    the model's, so a selector can't be hallucinated or steered by the page.
 
     Every place the page states a price is parsed with the same parse_price
     the validator uses, and only those equal to the price the model confirmed
@@ -643,7 +643,7 @@ def select_locator(extract: dict, confirmed_price: Decimal) -> Locator | None:
 
     An auction page yields nothing at all. eBay states the CURRENT BID in
     Offer.price on an auction-only listing, so a locator learned there would
-    faithfully record a number that is not a price anyone can pay (§4.3).
+    faithfully record a number that is not a price anyone can pay.
 
     Args:
       extract: A PAGE_EXTRACTOR_JS payload from the page the price was read on.
@@ -698,7 +698,7 @@ def method_for(kind: str) -> str:
 
     'css' is the only kind whose name is not the method: the contract calls a
     replayed element path 'locator', while the three structured-data kinds
-    say which structure they came out of (§4.3).
+    say which structure they came out of.
     """
     return "locator" if kind == "css" else kind
 
@@ -738,11 +738,11 @@ async def site_consensus(session, site_id: int) -> Locator | None:
 class PageReader:
     """The orchestrator's handle on the open browser session.
 
-    Built once per run from the MCP tool map and carried on UnitContext, so a
+    Built once per job from the MCP tool map and carried on UnitContext, so a
     tool can read the page the model is looking at without the model ever
     naming a URL, a selector or a script. Every method answers None rather
     than raising for a page problem — a blocked page is an outcome the
-    recheck ladder handles, not an error the run should die on.
+    recheck ladder handles, not an error the job should die on.
     """
 
     def __init__(self, navigate, evaluate) -> None:

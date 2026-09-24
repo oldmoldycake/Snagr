@@ -1,5 +1,5 @@
 """The check_images tool: errors come back as strings (never raised, never
-blocking — the D-V2 isolation contract), the REJECT directive is explicit,
+blocking: a sidecar outage must never stop a hunt), the REJECT directive is explicit,
 and the payload matches the sidecar's /check-images contract. The sidecar
 itself is faked at the HTTP layer via httpx.MockTransport."""
 
@@ -188,7 +188,7 @@ def test_malformed_arguments_are_refused_before_the_sidecar_is_called(monkeypatc
 
 
 def test_an_off_site_listing_url_is_refused(monkeypatch):
-    # S2: the listing page must be on the site this scan is for
+    # the listing page must be on the site this hunt is for
     calls = _counting_sidecar(monkeypatch)
     result = _check(listing_url="https://elsewhere.test/listing/1")
 

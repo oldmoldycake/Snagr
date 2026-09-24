@@ -6,7 +6,7 @@ an eBay listing that sold overnight" means the page eBay actually served. The
 browser is a fake that hands back one of those payloads per navigation, and
 the database seams are recorded rather than written — what is under test is
 which rung answered and what it concluded, not SQL (that is
-test_run_queue_db.py) and not the notification rules (test_observations.py).
+test_jobs_db.py) and not the notification rules (test_observations.py).
 
 The rule worth keeping in view while reading: every dead end must answer "not
 handled" so the LLM gets the page, and the only mistakes that are expensive
@@ -289,7 +289,7 @@ class TestFallingBackToTheModel:
 
     def test_an_implausible_reading_is_thrown_away_and_the_model_re_reads(self, seams):
         # an anomalous LOCATOR read is never recorded: the LLM reads the same
-        # page now and THAT read is the observation (§4.3)
+        # page next and THAT read is the observation
         seams["context"] = {
             "last_price": Decimal("50.00"),
             "unconfirmed_price": None,
@@ -371,7 +371,7 @@ class TestStaticRung:
 
     def test_a_browser_read_after_a_static_miss_stops_the_pointless_get(self, seams):
         # the raw page and the rendered page differ for this listing, so the
-        # GET is wasted work from here on (decision 14)
+        # GET is wasted work from here on
         seams["static_html"] = (FIXTURES / "static_neither.html").read_text()
 
         run(recheck.recheck_deterministic(FakeBrowser(page("ebay_bin")), self._static_row()))

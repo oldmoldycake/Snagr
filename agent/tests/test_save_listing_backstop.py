@@ -2,10 +2,10 @@
 vision_scans row with auto_reject set refuses the save even if the model
 ignored check_images' REJECT directive; without one, saves work as before.
 
-Same harness rules as test_run_queue_db.py: conftest rewrites DATABASE_URL
+Same harness rules as test_jobs_db.py: conftest rewrites DATABASE_URL
 to the throwaway snagr_test, one module-wide event loop (asyncpg
-connections are loop-bound), schema built here as a test affordance (D1
-still holds). Don't run concurrently with backend/tests.
+connections are loop-bound), schema built here as a test affordance (the
+backend still owns the real schema). Don't run concurrently with backend/tests.
 """
 
 import asyncio

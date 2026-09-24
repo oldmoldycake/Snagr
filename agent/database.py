@@ -2,7 +2,7 @@
 tracker schema, and the query helpers the hunter uses to plan its work.
 
 The models are a column-compatible subset of backend/app/models.py, which owns
-the canonical schema and every migration (D1): new columns go through an
+the canonical schema and every migration: new columns go through an
 Alembic revision there, and Base.metadata.create_all() must never be run from
 here against the live DB."""
 
@@ -172,7 +172,7 @@ DISABLE_REASONS: tuple[str, ...] = get_args(DisableReason)
 # How long a listing a swap hunt traded away stays out of that pair's
 # discoveries. A churn guard, not a tunable: shorter lets two near-identical
 # listings flip-flop on every "hunt for better", longer hides a real bargain
-# for days. §8 item 13 of docs/design/perpetual-hunter.md.
+# for days.
 REPLACED_HIDDEN_FOR = timedelta(hours=24)
 
 
@@ -193,7 +193,7 @@ class PriceChecks(Base):
     # jsonld|meta|microdata|locator (code replayed the listing's locator).
     # confirmed is false for a reading the plausibility bands rejected: kept
     # so the checks log shows what was seen, but never notified on and never
-    # counted in an aggregate until a later read agrees with it (§4.3).
+    # counted in an aggregate until a later read agrees with it.
     method: Mapped[str | None] = mapped_column(Text)
     confirmed: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -246,7 +246,7 @@ class Watches(Base):
 
 class WatchSites(Base):
     """Per-watch site subset — the API's `site_ids`, mirrored from
-    backend/app/models.py (the backend owns the schema, D1). No rows for a
+    backend/app/models.py (the backend owns the schema). No rows for a
     watch means "search all of the category's sites"."""
 
     __tablename__ = "watch_sites"
@@ -257,7 +257,7 @@ class WatchSites(Base):
 
 class ListingChecks(Base):
     """Log of every listing the agent evaluated but did NOT save (poor fit,
-    authenticity concerns, duplicate, etc.) so re-runs don't have to
+    authenticity concerns, duplicate, etc.) so later hunts don't have to
     re-discover the same rejection from scratch and so rejections are
     auditable."""
 
@@ -274,7 +274,7 @@ class ListingChecks(Base):
 
 class VisionScans(Base):
     """Column-compatible SUBSET of backend/app/models.py's VisionScans (the
-    backend owns the schema, D1): just the columns save_listing's auto-reject
+    backend owns the schema): just the columns save_listing's auto-reject
     backstop reads. The embedding-bearing vision tables are deliberately not
     mirrored — the agent never touches embeddings, which keeps this mirror
     free of the pgvector dependency."""
@@ -291,7 +291,7 @@ class VisionScans(Base):
 
 class Jobs(Base):
     """One unit of work — mirrors backend/app/models.py (the backend owns the
-    schema, D1). The daemon claims these one at a time (agent/jobs.py):
+    schema). The daemon claims these one at a time (agent/jobs.py):
     `hunt` searches a (watch, site) pair with the model, `recheck` re-reads one
     listing's price without one, `ground` refreshes an item's market stats.
 
@@ -350,8 +350,8 @@ class JobEvents(Base):
 
 class NotificationOutbox(Base):
     """Durable notification queue — column-compatible SUBSET of
-    backend/app/models.py's NotificationOutbox (the backend owns the schema,
-    D1): just the columns the agent writes. status and created_at are server
+    backend/app/models.py's NotificationOutbox (the backend owns the schema):
+    just the columns the agent writes. status and created_at are server
     defaults; the backend's dispatcher owns the rest of the lifecycle."""
 
     __tablename__ = "notification_outbox"
@@ -496,7 +496,7 @@ async def get_ground_unit(item_id: int) -> RowMapping | None:
 async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
     """
     Return every listing_checks row already logged for this (watch, site)
-    pair — listings previously evaluated and rejected, so a re-run can skip
+    pair — listings previously evaluated and rejected, so a later hunt can skip
     re-judging them.
 
     Args:
@@ -505,7 +505,7 @@ async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
     Returns:
       A sequence of row mappings with keys url, reason, notes. Returns an
       empty sequence if the query fails, so a DB hiccup skips the skip-list
-      instead of crashing the run.
+      instead of crashing the job.
     """
 
     log.info(f"Fetching checked urls for watch {watch_id} on site {site_id}")
@@ -531,7 +531,7 @@ async def get_checked_urls(watch_id: int, site_id: int) -> Sequence[RowMapping]:
 async def get_known_listing_urls(watch_id: int, site_id: int) -> Sequence[str]:
     """
     Return every listing URL already saved for this (watch, site) pair,
-    active or not — the set a scan must not save again. Inactive rows count:
+    active or not — the set a hunt must not save again. Inactive rows count:
     a listing that sold, ended, or the user untracked is not a discovery,
     and re-saving it would silently reattach price checks to a row the UI
     no longer shows.
@@ -547,7 +547,7 @@ async def get_known_listing_urls(watch_id: int, site_id: int) -> Sequence[str]:
       site_id: The internal id of the site to look up listings for.
     Returns:
       A sequence of URLs. Returns an empty sequence if the query fails, so a
-      DB hiccup skips the skip-list instead of crashing the run.
+      DB hiccup skips the skip-list instead of crashing the job.
     """
 
     log.info(f"Fetching known listing urls for watch {watch_id} on site {site_id}")
@@ -586,10 +586,10 @@ async def get_active_listing_count(watch_id: int) -> int:
     slots already in use against its max_listings cap.
 
     Unlike its neighbours this raises on a failed query instead of returning
-    a default, because there is no safe one: 0 would let the scan over-fill
+    a default, because there is no safe one: 0 would let the hunt over-fill
     the watch (the bug the cap exists to prevent) and "full" would silently
     stop discovery. The orchestrator reads it outside its per-unit guard, so
-    a failure fails the run loudly.
+    a failure fails the job loudly.
 
     Args:
       watch_id: The internal id of the watch to count listings for.
@@ -825,7 +825,7 @@ async def clear_static_ok(listing_id: int) -> bool:
     Written when the static rung missed but the browser then read the same
     locator fine: for this listing the raw page and the rendered page differ,
     so the GET is wasted work. The next LLM learn re-probes and may set it
-    again (decision 14).
+    again.
 
     Args:
       listing_id: The listing to send back to the browser.
@@ -923,7 +923,7 @@ async def enqueue_new_listing(
     """
     Queue a "new listing" notification for a listing save_listing just
     created — unless the watch is muted. notify gates alerting only, never
-    discovery (get_watched_item_list scans muted watches too), so this is
+    discovery (a muted watch is still hunted), so this is
     where a muted watch's find stays quiet. No price in the payload — the
     first price check happens after the listing is saved.
 
@@ -989,7 +989,7 @@ async def get_category_tiers(category_id: int) -> RowMapping | None:
       A row mapping with keys name, condition_tiers — condition_tiers is None
       until the vocabulary has been generated for this category. Returns None
       if the category does not exist or the query fails, so grounding falls
-      back to ungrouped prices instead of crashing the run.
+      back to ungrouped prices instead of crashing the job.
     """
 
     log.info(f"Fetching condition tiers for category {category_id}")
@@ -1024,8 +1024,8 @@ async def set_condition_tiers(category_id: int, tiers: list[str]) -> bool:
       category_id: The internal id of the category to write tiers for.
       tiers: The tier names, e.g. ["sealed", "graded", "cib", "loose"].
     Returns:
-      True on success, False if the write failed — this run still uses the
-      tiers it generated, and the next run regenerates them.
+      True on success, False if the write failed — this job still uses the
+      tiers it generated, and the next grounding regenerates them.
     """
 
     log.info(f"Saving condition tiers for category {category_id}: {tiers}")
@@ -1079,7 +1079,7 @@ async def get_price_sources(category_id: int) -> RowMapping | None:
       None unless a user hand-pinned domains — it is user-owned, so the system
       reads it here and never writes it. Returns None if the category does not
       exist or the query fails, so grounding falls back to the broad snippet
-      search instead of crashing the run.
+      search instead of crashing the job.
     """
 
     log.info(f"Fetching price sources for category {category_id}")
@@ -1116,8 +1116,8 @@ async def set_price_sources(category_id: int, sources: list[dict]) -> bool:
         [{"domain": ..., "kind": ..., "status": ..., "hits": ...,
           "consecutive_misses": ..., "notes": ...}].
     Returns:
-      True on success, False if the write failed — this run still uses the
-      registry it built, and the next run re-learns the lost updates.
+      True on success, False if the write failed — this job still uses the
+      registry it built, and the next grounding re-learns the lost updates.
     """
 
     log.info(f"Saving price sources for category {category_id}: {len(sources)} entries")
@@ -1145,7 +1145,7 @@ async def get_item_grounding(item_id: int) -> RowMapping | None:
       search_aliases is None until alias generation has run for this item;
       guide_pages is None until a site-scoped search has resolved a page.
       Returns None if the item does not exist or the query fails, so grounding
-      proceeds from the item name alone instead of crashing the run.
+      proceeds from the item name alone instead of crashing the job.
     """
 
     log.info(f"Fetching grounding state for item {item_id}")
@@ -1174,15 +1174,15 @@ async def set_guide_pages(item_id: int, pages: dict) -> bool:
 
     Cached after a successful site-scoped search so later groundings go
     straight to the page; the caller drops entries whose page went dead, so
-    the next run searches again instead of refetching a corpse.
+    the next grounding searches again instead of refetching a corpse.
 
     Args:
       item_id: The internal id of the item the pages belong to.
       pages: Resolved page URL per source domain, e.g.
         {"pricecharting.com": "https://www.pricecharting.com/game/..."}.
     Returns:
-      True on success, False if the write failed — this run already used the
-      URLs it resolved, and the next run resolves them again.
+      True on success, False if the write failed — this job already used the
+      URLs it resolved, and the next grounding resolves them again.
     """
 
     log.info(f"Saving guide pages for item {item_id}: {sorted(pages)}")
@@ -1201,7 +1201,7 @@ async def set_guide_pages(item_id: int, pages: dict) -> bool:
 async def get_grounding_candidates() -> Sequence[RowMapping]:
     """
     Return every watched item joined to its market-price staleness state, one
-    row per item — the pool ground_stale selects this run's grounding work
+    row per item — the pool the scheduler selects each pass's grounding work
     from. Any watch counts, notify on or off: notify only gates alerting, and
     market stats also serve the UI and non-notify listings. Unwatched catalog
     items are the only exclusion — nobody is asking about them.
@@ -1210,7 +1210,7 @@ async def get_grounding_candidates() -> Sequence[RowMapping]:
       A sequence of row mappings with keys item_id, item_name, category_id,
       as_of, last_attempt_at — the market_prices columns are None for items
       never grounded. Returns an empty sequence if the query fails, so a DB
-      hiccup skips grounding this run instead of crashing it.
+      hiccup skips grounding this pass instead of crashing it.
     """
 
     log.info("Fetching grounding candidates")
@@ -1248,7 +1248,7 @@ async def get_market_price(item_id: int) -> RowMapping | None:
       stays in the DB: it is for explaining stats after the fact, not for
       shipping into a prompt. Returns None if the item has never been
       grounded or the query fails, so the prompt says "no market data"
-      instead of crashing the run.
+      instead of crashing the job.
     """
 
     log.info(f"Fetching market price for item {item_id}")
@@ -1289,7 +1289,7 @@ async def upsert_market_price(
     An "insufficient" result never evicts stored "ok" stats: the existing row
     only gets last_attempt_at touched, so the good data keeps being served
     while the failed attempt still drives backoff. as_of moves only on an "ok"
-    grounding — it is the staleness mark later runs gate their TTL on.
+    grounding — it is the staleness mark later passes gate their TTL on.
 
     Args:
       item_id: The internal id of the item these stats are for.

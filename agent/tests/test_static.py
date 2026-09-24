@@ -119,7 +119,7 @@ class TestFetch:
 
     def test_redirects_are_never_followed(self, served):
         # a listing that moved is a change in availability, and only the
-        # browser gets to decide that (decision 14)
+        # browser gets to decide that
         run(fetch(URL, SITE))
 
         assert served["kwargs"]["follow_redirects"] is False
@@ -146,7 +146,7 @@ class TestFetch:
         ["http://vision:8100/rescore", "http://127.0.0.1:8000/", "https://evil.test/p/1"],
     )
     def test_a_guarded_url_is_refused_before_any_request_is_made(self, served, url):
-        # S2 applies to this GET exactly as it does to a navigation
+        # the URL guard applies to this GET exactly as it does to a navigation
         assert run(fetch(url, SITE)) is None
         assert served["requests"] == []
 

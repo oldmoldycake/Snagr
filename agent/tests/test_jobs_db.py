@@ -2,13 +2,13 @@
 LOCKED, the partial unique index that keeps one job open per target, the
 successor a finished check leaves behind, the reaper, retention, the locked
 last_seq bump behind uq_job_seq, the per-unit lookups the pools work from,
-and the tools' writes — SQL that the seam tests in test_run_consumer.py
+and the tools' writes — SQL that the seam tests in test_worker.py
 can't exercise.
 
 Needs the same reachable Postgres the backend suite uses. conftest.py
 force-rewrites DATABASE_URL to the throwaway `snagr_test` database, so live
 data is never touched — building the schema here is a test-harness
-affordance, not the agent migrating anything (D1 still holds). Don't run
+affordance, not the agent migrating anything (the backend still owns the schema). Don't run
 this suite concurrently with backend/tests: both truncate snagr_test.
 
 No pytest-asyncio here (it isn't a dependency): tests are sync and drive
@@ -112,7 +112,7 @@ def _clean_tables():
 def unit_a(ids, **overrides):
     """The runtime a tool call gets inside one of watch A's units on GameBay.
 
-    site_base_url is GameBay's, because the URL guard (S2) checks every URL a
+    site_base_url is GameBay's, because the URL guard checks every URL a
     tool is handed against the site the unit is for."""
     return unit_runtime(
         watch_id=ids["watch_a"],
@@ -585,7 +585,7 @@ class TestHuntChain:
         assert due_in(successor) <= timedelta(0)
 
     def test_a_hunt_that_fills_the_watch_leaves_nothing_behind(self):
-        # decision 9: a full watch costs nothing until a slot frees
+        # a full watch costs nothing until a slot frees
         async def scenario():
             ids = await seed_scope_graph()
             await set_watch(ids["watch_a"], max_listings=1)
@@ -648,7 +648,7 @@ class TestHuntChain:
 
     def test_a_swap_hunt_that_leaves_the_watch_full_leaves_nothing_behind(self):
         # the swap traded one listing for another; the watch is as full as
-        # it was, so decision 9 holds and nothing is queued after it
+        # it was, so a full watch stays free and nothing is queued after it
         async def scenario():
             ids = await seed_scope_graph()
             await set_watch(ids["watch_a"], max_listings=1)
@@ -690,7 +690,7 @@ class TestSweep:
             [(ids["watch_a"], ids["site_a"]), (ids["watch_b"], ids["site_b"])]
         )
         assert all(h["reason"] == "sweep" and h["user_id"] is None for h in hunts)
-        # a swap is only ever a person's request (decision 10)
+        # a swap is only ever a person's request
         assert all(h["payload"] is None for h in hunts)
 
     def test_a_full_watch_gets_nothing(self):

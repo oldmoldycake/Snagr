@@ -17,9 +17,9 @@ AI_API_KEY = os.getenv("AI_API_KEY", None)
 PLAYWRIGHT_MCP_URL = os.getenv("PLAYWRIGHT_MCP_URL")
 
 # Visual authenticity (vision sidecar). None = feature off: the check_images
-# tool is not registered and the scan prompt carries no photo-check block.
+# tool is not registered and the hunt prompt carries no photo-check block.
 VISION_SIDECAR_URL = os.getenv("VISION_SIDECAR_URL")
-# Hard cap on one sidecar call — a wedged sidecar must never stall a run.
+# Hard cap on one sidecar call — a wedged sidecar must never stall a hunt.
 VISION_TIMEOUT_SECONDS = int(os.getenv("VISION_TIMEOUT_SECONDS", "90"))
 
 # Market grounding. Prices in other currencies are recorded but never mixed
@@ -70,8 +70,8 @@ HUNT_ENABLED = os.getenv("HUNT_ENABLED", "true").lower() != "false"
 HUNT_BACKOFF_MIN_MINUTES = int(os.getenv("HUNT_BACKOFF_MIN_MINUTES", "15"))
 HUNT_BACKOFF_CAP_MINUTES = int(os.getenv("HUNT_BACKOFF_CAP_MINUTES", "360"))
 # Per-unit budgets. One unit is one LLM stream (a listing recheck or a site
-# scan); a model looping on a blocked page is otherwise bounded only by
-# prompt text. Tripping either cap fails that unit and the run moves on.
+# hunt); a model looping on a blocked page is otherwise bounded only by
+# prompt text. Tripping either cap fails that unit's job, and the worker moves on.
 # Steps are graph steps — roughly two per tool call.
 AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "200"))
 AGENT_UNIT_TIMEOUT_SECONDS = int(os.getenv("AGENT_UNIT_TIMEOUT_SECONDS", "900"))
@@ -110,7 +110,7 @@ SITE_BREAKER_MINUTES = int(os.getenv("SITE_BREAKER_MINUTES", "60"))
 SITE_BREAKER_CAP_MINUTES = int(os.getenv("SITE_BREAKER_CAP_MINUTES", "1440"))
 
 # Price plausibility bands. A read outside one is anomalous — recorded, but
-# never notified and never charted until a second read agrees with it (§4.3):
+# never notified and never charted until a second read agrees with it:
 # the page that says "$4.49" for a $449 item must not wake a buying bot.
 # LOW/HIGH bound the ratio against this listing's own last price; FLOOR bounds
 # it against the item's market median. Any of them set to 0 disables that band.

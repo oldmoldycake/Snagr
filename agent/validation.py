@@ -3,21 +3,21 @@
 Marketplace pages are untrusted input, and everything in this file exists
 because something on one can otherwise reach somewhere it should not:
 
-- parse_price / validate_observation (S1): the number stored is the number
+- parse_price / validate_observation: the number stored is the number
   notified on. A page — or a mis-read of one — that says "$4.49" for a $449
   item would otherwise wake a buying bot. Implausible prices are still
   recorded, because hiding an observation is its own failure; they are just
   not believed until a second read agrees.
-- url_allowed (S2): a saved listing URL is navigated to on every later
+- url_allowed: a saved listing URL is navigated to on every later
   recheck, so it is a request the agent will keep making. It must point at
   the site it claims to be on, and never at the private network the agent
   runs inside.
-- clip_text (S4/S5): model-typed text is replayed into later prompts and
+- clip_text: model-typed text is replayed into later prompts and
   into notification bodies. Caps and a single line keep a page from writing
   a paragraph into either.
 
 Pure functions, all of them: no DB, no network, no DNS. The network-level
-backstop for S2 is the MCP's own --blocked-origins (PR 2a).
+backstop for url_allowed is the Playwright MCP's own --blocked-origins.
 """
 
 import ipaddress
@@ -34,9 +34,9 @@ from config import (
     PRICE_MARKET_FLOOR,
 )
 
-# Caps on model-typed text (S4/S5). Generous enough that no honest value is
+# Caps on model-typed text. Generous enough that no honest value is
 # ever truncated — a marketplace title is ~80 characters — and small enough
-# that a page cannot write an essay into the next scan prompt or an ntfy body.
+# that a page cannot write an essay into the next hunt prompt or an ntfy body.
 MAX_TITLE = 300
 MAX_SUMMARY = 300
 MAX_REASON = 60
@@ -169,7 +169,7 @@ class Verdict:
     ok=False is a refusal: the reading is not a price at all and nothing is
     recorded. anomalous is the softer judgement — a real-looking number that
     does not fit what this listing and this market have shown — and it is
-    what splits the two paths of the confirm rule (§4.3): an anomalous
+    what splits the two paths of the confirm rule: an anomalous
     LOCATOR read is thrown away and the LLM re-reads the page, while an
     anomalous LLM read is recorded with confirmed=False, kept out of the
     aggregates, and believed only once a later read agrees within 1%.
@@ -313,7 +313,7 @@ def public_url(url: str) -> str | None:
 
     No DNS is resolved — this is a pure function. A public name that resolves
     inward is out of scope here and is what the MCP's own --blocked-origins
-    covers at the network level (PR 2a).
+    covers at the network level.
 
     Args:
       url: The URL to judge.
@@ -341,16 +341,16 @@ def public_url(url: str) -> str | None:
 
 
 def url_allowed(url: str, site_base_url: str | None) -> str | None:
-    """Why this URL may not be saved or navigated to, or None when it may (S2).
+    """Why this URL may not be saved or navigated to, or None when it may.
 
     A listing URL is not a one-off read: it is stored and navigated to on
     every recheck from now on, so accepting one the page chose is accepting a
     standing request. On top of public_url's network rule, the host must sit
     inside the site's own registrable domain — which is the rule that makes
     `http://vision:8100/rescore` unreachable no matter what it resolves to,
-    and which, per decision 9, also rejects a genuine redirect to a sister
-    domain (ebay.com -> ebay.co.uk). That loss is accepted; it is the same
-    rule that closes the SSRF.
+    which also rejects a genuine redirect to a sister domain (ebay.com ->
+    ebay.co.uk). That loss is accepted; it is the same rule that closes the
+    SSRF.
 
     Args:
       url: The URL to judge.
@@ -393,9 +393,9 @@ def _registrable(host: str) -> str:
 
 
 def clip_text(value: str | None, limit: int) -> str | None:
-    """One line of display text, capped (S4/S5).
+    """One line of display text, capped.
 
-    Model-typed strings are replayed into later scan prompts and into ntfy /
+    Model-typed strings are replayed into later hunt prompts and into ntfy /
     Discord / webhook bodies. Newlines are what would let a rejection note
     forge a new section in a prompt, and control characters are what would
     let it forge terminal output, so both are flattened here rather than at

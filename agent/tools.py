@@ -9,14 +9,14 @@ Which watch, item and site a call is about — and on a recheck, which
 listing — is never a tool argument. The orchestrator binds it per unit as a
 UnitContext on the run config, and langchain hands every tool its runtime
 through the keyword-only `runtime` parameter, which never appears in the
-schema the model sees. A wrong id typed by the model used to attach a price
-to some other listing; now there is no id to type.
+schema the model sees. The model has no id to type, so it cannot attach a
+price to the wrong listing.
 
 The page the model is reading is untrusted, so what it types is too. Every
-URL is checked against the site's own domain before it is stored or fetched
-(S2), every free-text field is capped and flattened to one line before it
-reaches a later prompt or a notification body (S4/S5), and every price is
-judged for plausibility before it can become a target-hit push (S1).
+URL is checked against the site's own domain before it is stored or fetched,
+every free-text field is capped and flattened to one line before it reaches a
+later prompt or a notification body, and every price is judged for
+plausibility before it can become a target-hit push (agent/validation.py).
 
 save_price_check does one more thing the model never sees: at the moment it
 confirms a price, code reads the page it is on and learns where that price
@@ -76,7 +76,7 @@ def unit_of(runtime: ToolRuntime) -> UnitContext:
 
 
 def _refuse_url(url: str, unit: UnitContext, field: str = "url") -> str | None:
-    """The model-facing refusal for a URL that may not be used, or None (S2).
+    """The model-facing refusal for a URL that may not be used, or None.
 
     The reason is spelled out rather than generic because the model can act
     on it: "not part of ebay.com" tells it to go back to the listing page it
@@ -152,7 +152,7 @@ async def save_listing(
     currency = currency.upper()
     if not re.fullmatch(r"[A-Z]{3}", currency):
         return f"Error: currency must be a three-letter code like USD, got {currency!r}"
-    # both reach a notification body and the next scan's prompt (S5)
+    # both reach a notification body and the next hunt's prompt
     title = clip_text(title, MAX_TITLE)
     match_summary = clip_text(match_summary, MAX_SUMMARY)
     parsed = parse_price(price) if price is not None else None
@@ -161,7 +161,7 @@ async def save_listing(
 
     async with AsyncSessionLocal() as session:
         try:
-            # Deterministic backstop for the vision gate (D-V2): the REJECT
+            # Deterministic backstop for the vision gate: the REJECT
             # directive from check_images is prompt-mediated, so a scan that
             # crossed the owner's threshold also refuses the save here.
             auto_reject = (
@@ -382,7 +382,7 @@ async def _replacement(
 ) -> tuple[Listings | None, str | None]:
     """The listing a save on a full watch trades away, or why it may not.
 
-    The model proposes the trade; this is where code checks it (decision 10).
+    The model proposes the trade; this is where code checks it.
     Only a swap hunt may trade, once, for the listing it picked with
     disable_listing(reason="replaced"), and only with a price it can stand
     behind. In cheapest mode that price must be strictly lower than the
@@ -508,7 +508,7 @@ async def save_price_check(
             return f"Error: {verdict.reason} — re-read the page and report what it shows"
         # An implausible reading is RECORDED, not refused: hiding an
         # observation is its own failure. It just does not notify and does not
-        # enter the charts until a second reading agrees with it (§4.3).
+        # enter the charts until a second reading agrees with it.
         confirmed, notifiable = verdict.confirmed, verdict.notifiable
         if verdict.anomalous:
             log.warning(f"Listing {listing_id}: unconfirmed reading {parsed} — {verdict.reason}")
@@ -753,8 +753,8 @@ async def log_listing_check(
         return refused
     if not reason.strip():
         return 'Error: reason must name the rejection category, e.g. "poor_fit"'
-    # both are replayed into every later scan prompt for this pair, which is
-    # where a page could otherwise write itself an instruction (S4)
+    # both are replayed into every later hunt prompt for this pair, which is
+    # where a page could otherwise write itself an instruction
     reason = clip_text(reason, MAX_REASON)
     notes = clip_text(notes, MAX_NOTES)
 
@@ -845,8 +845,8 @@ async def check_images(
         )
     # Photos live on a CDN that is often a different domain from the site
     # (i.ebayimg.com, static.mercdn.net), so image URLs get the network half
-    # of the guard only: no private addresses, no container names. Hardening
-    # the sidecar's own fetcher is S3 and belongs to the vision side.
+    # of the guard only: no private addresses, no container names. The
+    # sidecar's own fetcher (vision/fetcher.py) does the actual download.
     bad = [image_url for image_url in image_urls if public_url(image_url)]
     if bad:
         return f"Error: image_urls must be direct public http(s) image URLs, got {bad[0]!r}"
@@ -872,8 +872,7 @@ async def check_images(
             response.raise_for_status()
             result = response.json()
     except Exception as e:
-        # Same isolation contract as the grounding pre-pass: a sidecar outage
-        # degrades to "no verdict", it never blocks the scrape (D-V2).
+        # A sidecar outage degrades to "no verdict"; it never blocks the hunt.
         log.error(f"Vision sidecar unavailable for {listing_url}: {e}")
         return f"No verdict: authenticity image check unavailable ({e})"
 

@@ -14,7 +14,7 @@ not.
 Same harness rules as test_save_listing_backstop.py: conftest rewrites
 DATABASE_URL to the throwaway snagr_test, one module-wide event loop
 (asyncpg connections are loop-bound), schema built here as a test affordance
-(D1 still holds). Don't run concurrently with backend/tests.
+(the backend still owns the real schema). Don't run concurrently with backend/tests.
 """
 
 import asyncio
@@ -366,7 +366,7 @@ def test_a_failing_outbox_insert_still_records_the_price_check(monkeypatch):
 class TestTheConfirmRule:
     """A reading the plausibility bands reject is recorded and disbelieved:
     kept so the checks log shows what was seen, never announced, and never
-    counted until a second reading agrees with it (S1)."""
+    counted until a second reading agrees with it."""
 
     def test_an_implausible_price_is_recorded_but_never_announced(self):
         # the "$4.49 for a $449 item" case that would otherwise wake a bot

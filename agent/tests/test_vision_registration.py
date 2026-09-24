@@ -1,6 +1,6 @@
 """Vision is opt-in wiring: with VISION_SIDECAR_URL unset the toolsets and
-prompts are byte-identical to the pre-vision agent; set, the scan agent
-(discovery pass only, D-V9) gains check_images and the scan prompt gains the
+prompts carry no photo check; set, the hunt agent (never the
+recheck agent) gains check_images and the hunt prompt gains the
 photo block — except for repro-tolerant watches, which skip the pipeline
 entirely."""
 
@@ -40,9 +40,9 @@ def test_prompt_gains_the_photo_block_when_vision_is_on():
     prompt = _prompt(vision_enabled=True)
     assert "PHOTO AUTHENTICITY CHECK" in prompt
     assert "check_images" in prompt
-    # the ids are bound on the run config now, never typed by the model
+    # the ids are bound on the run config, never typed by the model
     assert "watch_id=" not in prompt
-    # the D-V5 asymmetry wording rides along
+    # the evidence-asymmetry wording (fakes condemn, reals barely reassure) rides along
     assert "reassurance ONLY" in prompt
 
 
@@ -131,7 +131,7 @@ def test_tool_absent_everywhere_when_url_unset(monkeypatch):
 def test_tool_registered_on_the_hunt_agent_only(monkeypatch):
     recheck_tools, hunt_tools = _built_toolsets(monkeypatch, "http://vision.test")
     assert check_images in hunt_tools
-    assert check_images not in recheck_tools  # discovery only (D-V9)
+    assert check_images not in recheck_tools  # hunts only
     assert disable_listing in recheck_tools
 
 
@@ -153,7 +153,7 @@ def test_the_page_reader_is_built_from_the_sessions_browser_tools(monkeypatch):
 
 def test_the_model_never_gets_the_dangerous_browser_tools(monkeypatch):
     # nothing a price scraper does needs arbitrary JS, a file picker, or
-    # windows the orchestrator is not watching (S7)
+    # windows the orchestrator is not watching
     browser_tools, _ = _open_session(monkeypatch)
 
     offered = {_name(tool) for tool in browser_tools}
@@ -162,8 +162,8 @@ def test_the_model_never_gets_the_dangerous_browser_tools(monkeypatch):
 
 
 def test_navigation_goes_through_the_url_guard(monkeypatch):
-    # the model keeps a tool called browser_navigate; it is just no longer the
-    # one that will go anywhere it is pointed
+    # the model still gets a tool named browser_navigate, but it is the
+    # guarded wrapper, not the MCP tool that goes anywhere it is pointed
     browser_tools, _ = _open_session(monkeypatch)
 
     navigate = next(tool for tool in browser_tools if _name(tool) == "browser_navigate")

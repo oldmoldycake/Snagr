@@ -48,7 +48,7 @@ class Swap:
 
     A swap hunt runs on a full watch at a person's request, and its only way
     to save anything is to trade the weakest tracked listing for something
-    better (decision 10). disable_listing(reason="replaced") only picks the
+    better. disable_listing(reason="replaced") only picks the
     listing to give up; the next save_listing makes the trade, both halves in
     one transaction, so a refused save leaves the watch exactly as it was.
     done is set by that save: one trade per hunt, and a hunt is one site.
@@ -69,7 +69,7 @@ class UnitContext:
     (save_listing is what creates them). browser is the handle on the open
     session, so a tool can read the page the model is looking at; like the
     ids, it is never a model-supplied argument. site_base_url is what every
-    URL the model types is checked against (S2).
+    URL the model types is checked against.
 
     job_id is the job this unit runs under: where its progress events go. The
     tally rides here rather than in a module global because workers run
@@ -105,7 +105,7 @@ class UnitMismatch(Exception):
 
     Carries the model-facing wording, because the tool hands it straight back
     to the LLM: on a recheck the unit is about exactly one listing, and on a
-    scan the id must at least belong to this watch. Either way a typo would
+    hunt the id must at least belong to this watch. Either way a typo would
     attach the observation to someone else's listing, which is data
     corruption rather than a bad answer.
     """
@@ -161,7 +161,7 @@ async def record_price_check(
       status: One of ok | sold | ended | error.
       method: How it was read — llm | jsonld | meta | microdata | locator.
       confirmed: False for a reading the plausibility bands rejected. Such a
-        row is kept but never announced and never aggregated (§4.3).
+        row is kept but never announced and never aggregated.
       notifiable: False when the price is quoted in another currency —
         recorded, never mixed, never announced.
     Returns:
@@ -196,7 +196,7 @@ async def record_price_check(
     # site, and the tally is where the worker learns it: the model reports
     # this by recording status="error" rather than by raising, so nothing
     # upstream would otherwise notice a marketplace that has stopped
-    # answering (§4.4, the circuit breaker).
+    # answering (see agent/breaker.py).
     if status == "error":
         unit.stats["errors"] += 1
 

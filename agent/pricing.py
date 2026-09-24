@@ -6,13 +6,11 @@ picks which items are due with select_grounding_work(). Grounding is
 best-effort by design: a failed search, fetch or extraction costs
 observations, never the job.
 
-Every fetch here is async and guarded. It used to use synchronous `requests`
-inside coroutines, which was harmless in a one-shot batch and fatal next to
-browser workers in a daemon — one blocking GET stalls every other job on the
-loop. The guard is the network half of the S2 rule (no private addresses): a
-guide URL comes from a search engine, so it is no more trustworthy than a
-marketplace page. The site-domain half does not apply, because a price guide
-is deliberately somewhere else entirely.
+Every fetch here is async — one blocking GET would stall every other job on
+the daemon's event loop — and guarded against private addresses, the same
+check a listing URL gets: a guide URL comes from a search engine, so it is no
+more trustworthy than a marketplace page. The site-domain half does not apply,
+because a price guide is deliberately somewhere else entirely.
 """
 
 import asyncio
@@ -99,7 +97,7 @@ BROWSER_USER_AGENT = (
 PROMOTE_MIN_TIERED_OBS = 2
 CANDIDATE_DEAD_MISSES = 3
 DEAD_CONSECUTIVE_MISSES = 5
-# Below this many productive domains, ONE candidate gets probed this run -
+# Below this many productive domains, ONE candidate gets probed per grounding -
 # candidates earn promotion without burning the whole search budget.
 MIN_PRODUCTIVE_DOMAINS = 2
 SOURCE_FETCH_TIMEOUT_S = 15
@@ -270,7 +268,7 @@ async def extract_observations(
     What comes back is validated rather than trusted: it is JSON from outside
     this system, so a price that will not parse is dropped, and a tier the
     category does not have becomes "unknown" instead of silently becoming a tier
-    of its own. Returns [] on any failure - grounding never takes a run down."""
+    of its own. Returns [] on any failure - grounding never takes a job down."""
     log.info(f"Extracting observations for {item} from {len(search_results)} snippets")
 
     prompt = await generate_price_extraction_prompt(item, search_results, tiers, EXPECTED_CURRENCY)
@@ -357,7 +355,7 @@ async def fetch_source_page(url: str) -> str | None:
 
     The address guard runs before the connection is opened: this URL came out
     of a search engine, so nothing about it is more trustworthy than a
-    marketplace page (S8)."""
+    marketplace page."""
     refused = public_url(url)
     if refused:
         log.warning(f"Refusing to fetch source page {url}: {refused}")
@@ -446,11 +444,9 @@ def record_source_result(
 
 async def discover_price_sources(category_id: int) -> list[dict] | None:
     """Pluggable seam for source discovery: one LLM call per category proposing
-    candidate guide domains. The prompt is validation-gated on the manual test
-    results in docs/superpowers/guide-discovery-test-prompts.md and not built
-    yet, so this returns None - the registry stays unwritten, discovery
-    re-runs once the call lands, and pinned sources plus the snippet fallback
-    carry grounding until then. Proposals will enter as candidates and earn
+    candidate guide domains. The prompt is not built yet, so this returns
+    None - the registry stays unwritten, and pinned sources plus the snippet
+    fallback carry grounding. Proposals will enter as candidates and earn
     promotion in record_source_result; the LLM's word alone never trusts a
     domain."""
     log.info(f"Source discovery not built yet for category {category_id}; pinned sources only")
@@ -489,7 +485,7 @@ async def gather_guide_observations(
     All registry bookkeeping happens here: every fetch is recorded as a hit or
     miss, resolved page URLs are cached on the item, dead cached pages are
     dropped, and changed state is written back. A single domain failing is a
-    recorded miss, never a crash - grounding must not take a run down."""
+    recorded miss, never a crash - grounding must not take a job down."""
     sources = await get_price_sources(category_id)
     stored_registry = sources["price_sources"] if sources else None
     pinned = (sources["pinned_sources"] if sources else None) or []
@@ -734,8 +730,8 @@ def build_market_price(stats: dict[str, dict], observations: list[Observation]) 
 
 async def resolve_condition_tiers(category_id: int) -> list[str]:
     """Return a category's condition-tier vocabulary, generating and storing it
-    on first use. Generated once, not per run: regenerating rewords the same
-    tier ("cib" one run, "complete in box" the next) and splits its
+    on first use. Generated once, not per grounding: regenerating rewords the same
+    tier ("cib" one time, "complete in box" the next) and splits its
     observations across both spellings."""
     category = await get_category_tiers(category_id)
 
@@ -803,13 +799,13 @@ async def ground_item(item_id: int, item_name: str, category_id: int) -> dict:
 
 
 def select_grounding_work(candidates: list[dict], now: datetime) -> list[dict]:
-    """Pick which items this run grounds, from the watched items joined to
+    """Pick which items this scheduler pass grounds, from the watched items joined to
     their market-price state. Never-grounded items come first and are exempt
-    from the per-run cap, so a new item grounds on the very next invocation;
+    from the per-pass cap, so a new item grounds on the very next invocation;
     stale items refresh oldest-first under the cap, so a big backlog catches
-    up over several runs instead of stalling one. Any item attempted within
+    up over several passes instead of stalling one. Any item attempted within
     the TTL is deferred outright - last_attempt_at moves on failure too, so a
-    hard-to-ground item is not retried at full cost every run."""
+    hard-to-ground item is not retried at full cost every pass."""
     cutoff = now - timedelta(hours=MARKET_PRICE_TTL_HOURS)
     due = [
         row
