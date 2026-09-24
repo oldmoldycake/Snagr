@@ -3,9 +3,9 @@ a genuinely new row queues exactly one notification_outbox event, a
 duplicate save (the uq_watch_site_url conflict path) queues nothing, and a
 failed enqueue never changes what the tool returns to the model.
 
-Same harness rules as test_target_notification.py: throwaway snagr_test DB,
-one module-wide event loop, schema built here as a test affordance (D1
-still holds). Don't run concurrently with backend/tests.
+Same harness rules as test_observations.py: throwaway snagr_test DB,
+one module-wide event loop, schema built here as a test affordance (the
+backend still owns the real schema). Don't run concurrently with backend/tests.
 """
 
 import asyncio

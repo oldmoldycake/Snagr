@@ -7,7 +7,7 @@ JSON-LD that states a bid as the price, split price elements, hashed class
 names, sixty candidates of which none is ours.
 
 The extractor JS itself runs in a browser and is not exercised here
-(decision 15); these tests cover the Python that chooses from its output.
+(there is no browser in CI); these tests cover the Python that chooses from its output.
 """
 
 import json

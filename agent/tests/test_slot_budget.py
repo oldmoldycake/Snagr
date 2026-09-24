@@ -1,11 +1,11 @@
-"""max_listings is one slot budget per watch across every site and run, not
+"""max_listings is one slot budget per watch across every site and hunt, not
 a per-site quota. The discovery prompt spells that out and addresses the
 model in open slots (the cap minus what the watch already holds), so a watch
-with three sites no longer fills 3x its cap and every run no longer adds
-another round on top.
+with three sites cannot fill 3x its cap, and a later hunt cannot add another
+round on top.
 
-A full watch is hunted only when a person asks, and then only to trade up
-(decision 10): the prompt shows its tracked listings weakest first, and
+A full watch is hunted only when a person asks, and then only to trade up:
+the prompt shows its tracked listings weakest first, and
 save_listing is the backstop — it refuses any save that would over-fill the
 watch, and any trade that is not a trade up. Those tests need the real
 Postgres (the same harness as test_jobs_db.py); the prompt tests do not.
@@ -94,7 +94,7 @@ def test_an_over_full_watch_clamps_to_zero_open():
 
 def test_leftover_candidates_are_not_logged_as_rejections():
     # logging them would land them in PREVIOUSLY REJECTED and hide them from
-    # the run that finally has a free slot
+    # the hunt that finally has a free slot
     prompt = _prompt(tracked_listings=3)
     assert "Leftover good candidates are NOT rejections" in prompt
     assert "do not log them with `log_listing_check`" in prompt
