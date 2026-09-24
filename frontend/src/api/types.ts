@@ -14,17 +14,23 @@ import type { TimeRange } from '@/lib/time'
 // ---------------------------------------------------------------------------
 // Shared
 
+/** Pagination facts on a Paginated response; `total` counts every matching row. */
 export interface PageMeta {
   page: number
   per_page: number
   total: number
 }
 
+/** Envelope for paged lists; unpaged lists are a plain `{ data: [...] }`. */
 export interface Paginated<T> {
   data: T[]
   meta: PageMeta
 }
 
+/**
+ * The error envelope every non-2xx response carries; `fields` maps a field
+ * name to its message on 422 validation errors.
+ */
 export interface ApiErrorBody {
   error: {
     code: string
@@ -36,12 +42,14 @@ export interface ApiErrorBody {
 // ---------------------------------------------------------------------------
 // Instance / auth
 
+/** GET /api/instance — what the operator configured; public, read before anyone logs in. */
 export interface InstanceInfo {
   version: string
   /** the ntfy server notifications are pushed through, shown in the ntfy
    *  channel form; null when the admin hasn't configured NTFY_SERVER_URL */
   ntfy_server_url: string | null
-  /** true only while the instance has zero users (first-admin bootstrap) */
+  /** true while the instance has zero users (first-admin bootstrap) or the
+   *  operator left REGISTRATION_OPEN on */
   registration_open: boolean
   /** SSO login-button label (e.g. "Authentik"); null when OIDC is not configured */
   oidc_provider_name: string | null
@@ -58,8 +66,10 @@ export interface InstanceInfo {
   hunt_enabled: boolean
 }
 
+/** admin can also manage users and invites, and sees every user's jobs. */
 export type UserRole = 'admin' | 'user'
 
+/** The signed-in user — GET /api/auth/me, PATCH /api/me, and `{ user }` from login/register/accept. */
 export interface User {
   id: number
   email: string
@@ -75,11 +85,13 @@ export interface User {
   created_at: string
 }
 
+/** POST /api/auth/login body. */
 export interface LoginRequest {
   email: string
   password: string
 }
 
+/** POST /api/auth/register body. */
 export interface RegisterRequest {
   email: string
   password: string
@@ -91,6 +103,7 @@ export interface InviteValidation {
   expires_at: string
 }
 
+/** POST /api/auth/invites/{token}/accept body; an invite pinned to an email ignores this one. */
 export interface InviteAcceptRequest {
   email: string
   password: string
@@ -99,6 +112,10 @@ export interface InviteAcceptRequest {
 // ---------------------------------------------------------------------------
 // Categories
 
+/**
+ * A category with its linked sites; `item_count` and `snagged_count` are computed
+ * through the caller's watches, not stored.
+ */
 export interface Category {
   id: number
   name: string
@@ -108,10 +125,12 @@ export interface Category {
   snagged_count: number
 }
 
+/** POST /api/categories body. */
 export interface CategoryCreateRequest {
   name: string
 }
 
+/** PATCH /api/categories/{id} body; renaming leaves the slug alone. */
 export interface CategoryUpdateRequest {
   name?: string
 }
@@ -119,6 +138,7 @@ export interface CategoryUpdateRequest {
 // ---------------------------------------------------------------------------
 // Sites
 
+/** A retail site the hunter searches; `listing_count` and `last_checked_at` are computed. */
 export interface Site {
   id: number
   name: string
@@ -132,11 +152,13 @@ export interface Site {
   created_at: string
 }
 
+/** POST /api/sites body. */
 export interface SiteCreateRequest {
   name: string
   base_url: string
 }
 
+/** PATCH /api/sites/{id} body; omitted fields are left unchanged. */
 export interface SiteUpdateRequest {
   name?: string
   base_url?: string
@@ -156,6 +178,7 @@ export interface SiteUpdateRequest {
  */
 export type SelectionMode = 'cheapest' | 'best_match'
 
+/** The caller's own settings on an item — ItemSummary.watch and PATCH /api/items/{id}/watch. */
 export interface Watch {
   id: number
   notify: boolean
@@ -201,6 +224,10 @@ export interface ItemSummary {
   spark: (string | null)[]
 }
 
+/**
+ * One tracked listing of an item (ItemDetail.listings); its latest_* fields come from
+ * the newest price check.
+ */
 export interface Listing {
   id: number
   site_id: number
@@ -246,6 +273,7 @@ export interface HuntFacts {
   backoff_minutes: number | null
 }
 
+/** When this item's listings are next rechecked — computed from its jobs, never stored. */
 export interface RecheckFacts {
   /** how many of this item's rechecks are running right now */
   running: number
@@ -263,6 +291,7 @@ export interface ItemDetail extends Omit<ItemSummary, 'hunt'> {
   recheck: RecheckFacts
 }
 
+/** POST /api/items body: finds or creates the item and adds the caller's watch. */
 export interface ItemCreateRequest {
   category_id: number
   name: string
@@ -284,6 +313,7 @@ export interface ItemCreateRequest {
   site_ids?: number[] | null
 }
 
+/** PATCH /api/items/{id} body; omitted fields are left unchanged. */
 export interface ItemUpdateRequest {
   name?: string
   target_price?: string | null
@@ -299,17 +329,24 @@ export interface ItemUpdateRequest {
   site_ids?: number[] | null
 }
 
+/** PATCH /api/items/{id}/watch body; omitted fields are left unchanged. */
 export interface WatchUpdateRequest {
   notify?: boolean
   target_price?: string | null
 }
 
+/** PATCH /api/listings/{id} body: stop or resume tracking a listing. */
 export interface ListingUpdateRequest {
   active: boolean
 }
 
+/**
+ * snagged = best price at/below target · above_target = has listings, none at target ·
+ * no_listings = nothing tracked yet.
+ */
 export type ItemStatusFilter = 'all' | 'snagged' | 'above_target' | 'no_listings'
 
+/** GET /api/items query filters. */
 export interface ItemListParams {
   category_id?: number
   /** only items with a tracked listing on this site */
@@ -322,6 +359,7 @@ export interface ItemListParams {
   per_page?: number
 }
 
+/** One raw price reading of a listing — GET /api/items/{id}/price-checks. */
 export interface PriceCheck {
   id: number
   listing_id: number
@@ -353,8 +391,10 @@ export interface PriceCheck {
 // fakes condemns); leans_real = photos match known-real references (WEAK
 // reassurance only — never present it as "verified authentic").
 
+/** leans_fake is a strong signal, leans_real only weak reassurance (see the note above). */
 export type AuthenticityVerdict = 'leans_real' | 'leans_fake' | 'inconclusive'
 
+/** The image-based authenticity verdict on one listing (Listing.authenticity). */
 export interface AuthenticityRead {
   /** leans_fake = photos consistent with known fakes (strong signal);
    *  leans_real = photos match known-real references (weak reassurance ONLY) */
@@ -365,12 +405,18 @@ export interface AuthenticityRead {
   checked_at: string
 }
 
+/** Which side of the library a reference photo counts for. */
 export type ReferenceLabel = 'real' | 'fake'
+/**
+ * human = confirmed from the review queue · upload = a person uploaded it ·
+ * auto = promoted on its own past the owner's threshold, vouched for by nobody.
+ */
 export type ReferenceProvenance = 'human' | 'upload' | 'auto'
+/** The hunt model's own authenticity call on the listing, shown next to the photo. */
 export type LlmAuthenticityRead = 'looks_authentic' | 'suspect' | 'unsure'
 
-/** A captured listing photo awaiting the owner's confirm/discard. The queue
- *  is scoped to the capturing watch's owner — admins included (D-V11). */
+/** A captured listing photo awaiting the owner's confirm/discard. It appears only
+ *  in the queue of the capturing watch's owner — admins review only their own too. */
 export interface ReviewQueueEntry {
   id: number
   item_id: number
@@ -385,6 +431,7 @@ export interface ReviewQueueEntry {
   created_at: string
 }
 
+/** POST /api/vision/review-queue/{id}/confirm body. */
 export interface ReviewConfirmRequest {
   /** may flip the suggestion */
   label: ReferenceLabel
@@ -399,7 +446,7 @@ export interface ReferenceImage {
   variant_tag: string | null
   provenance: ReferenceProvenance
   image_url: string
-  /** null unless the viewer captured it or is admin (D-V11) */
+  /** null unless the viewer captured it or is admin */
   source_listing_url: string | null
   revoked: boolean
   created_at: string
@@ -408,6 +455,7 @@ export interface ReferenceImage {
 // ---------------------------------------------------------------------------
 // Chart / aggregate endpoints
 
+/** One confirmed price reading on a listing's history line. */
 export interface PricePoint {
   /** ISO timestamp */
   ts: string
@@ -415,6 +463,7 @@ export interface PricePoint {
   in_stock: boolean
 }
 
+/** One listing's price line in PriceHistoryResponse. */
 export interface ListingSeries {
   listing_id: number
   site_name: string
@@ -432,6 +481,7 @@ export interface PriceHistoryResponse {
   series: ListingSeries[]
 }
 
+/** One time bucket of PriceSummaryResponse; null prices mean no readings fell in it. */
 export interface SummaryPoint {
   ts: string
   avg: string | null
@@ -447,6 +497,7 @@ export interface PriceSummaryResponse {
   points: SummaryPoint[]
 }
 
+/** One item's best-price movement in CategoryPriceChangeResponse. */
 export interface CategoryItemChange {
   item_id: number
   name: string
@@ -463,10 +514,14 @@ export interface CategoryPriceChangeResponse {
   items: CategoryItemChange[]
 }
 
+/** One dashboard counter: its value, the change, and a sparkline. */
 export interface StatTile {
   value: number
-  /** vs the previous equal-length period */
+  /** what it compares against differs per tile: tracked_items and active_listings
+   *  count what was added since the range began, price_drops is this range vs the
+   *  previous equal-length one, snagged is a placeholder (0 or 1) */
   delta: number
+  /** 12 points ramping from the compared value to the current one — a shape, not history */
   spark: number[]
 }
 
@@ -478,6 +533,7 @@ export interface DashboardStats {
   snagged: StatTile
 }
 
+/** One row of GET /api/dashboard/price-drops: a listing whose price fell between two checks. */
 export interface PriceDrop {
   item_id: number
   item_name: string
@@ -502,11 +558,14 @@ export interface PriceDrop {
 // they watch, and — as admin — everything. A job the caller may not see is a
 // 404, never a 403 (hidden = nonexistent).
 
+/** hunt, recheck or ground — see the section note above. */
 export type JobKind = 'hunt' | 'recheck' | 'ground'
+/** pending → running → done | failed | cancelled; the last three are terminal. */
 export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
-/** what a user may ask for; the four scopes the UI has always offered */
+/** what a user may queue work for: everything, or one category, site or item */
 export type JobScope = 'global' | 'category' | 'site' | 'item'
 
+/** A job's tally, written when it finishes; Job.stats is null until then. */
 export interface JobStats {
   /** hunt: candidates the model looked at · recheck: 1 · ground: sources read */
   listings_checked: number
@@ -522,6 +581,7 @@ export interface JobStats {
   transport: 'static' | 'browser' | null
 }
 
+/** One unit of the hunter's queued work — the /api/jobs routes and the SSE lifecycle frames. */
 export interface Job {
   id: number
   kind: JobKind
@@ -553,6 +613,7 @@ export interface Job {
   created_at: string
 }
 
+/** POST /api/jobs body: queue hunts or rechecks for a scope. */
 export interface JobCreateRequest {
   kind: 'hunt' | 'recheck'
   scope: JobScope
@@ -560,6 +621,7 @@ export interface JobCreateRequest {
   scope_id?: number
 }
 
+/** GET /api/jobs query filters. */
 export interface JobListParams {
   page?: number
   per_page?: number
@@ -584,6 +646,7 @@ export interface JobsSummary {
   paused_sites: PausedSite[]
 }
 
+/** A site the hunter's circuit breaker has paused, as JobsSummary lists it. */
 export interface PausedSite {
   site_id: number
   site_name: string
@@ -591,8 +654,10 @@ export interface PausedSite {
   paused_reason: string
 }
 
+/** How the Activity log colours an event line. */
 export type JobEventLevel = 'info' | 'success' | 'warn' | 'error'
 
+/** What a JobEvent reports; the payload's shape depends on it. */
 export type JobEventType =
   | 'job_started'
   | 'listing_check'
@@ -607,6 +672,10 @@ export type JobEventType =
   | 'error'
   | 'job_finished'
 
+/**
+ * One progress line of a hunt or ground job — GET /api/jobs/{id}/events and the
+ * SSE job.event frame. `seq` orders a job's events.
+ */
 export interface JobEvent {
   job_id: number
   seq: number
@@ -653,6 +722,7 @@ export interface ListingChecked {
 // GLOBAL write cursor; a filtered viewer legitimately holds a sparse subset
 // of seqs, so never infer missed events from seq arithmetic.
 
+/** The job.snapshot SSE frame, sent on every connect and reconnect. */
 export interface JobSnapshotData {
   /** every non-terminal hunt and ground job the viewer may see */
   jobs: Job[]
@@ -661,6 +731,7 @@ export interface JobSnapshotData {
 // ---------------------------------------------------------------------------
 // Settings / admin
 
+/** PATCH /api/me body; omitted fields are left unchanged. */
 export interface MeUpdateRequest {
   email?: string
   /** vision thresholds; 422 validation_error outside 0.50–1.00 */
@@ -669,11 +740,13 @@ export interface MeUpdateRequest {
   vision_auto_promote_fake?: string
 }
 
+/** POST /api/me/password body. */
 export interface PasswordChangeRequest {
   current_password: string
   new_password: string
 }
 
+/** Where a notification channel delivers. */
 export type ChannelKind = 'ntfy' | 'webhook' | 'discord'
 
 /**
@@ -682,6 +755,7 @@ export type ChannelKind = 'ntfy' | 'webhook' | 'discord'
  */
 export type NotificationEvent = 'target.hit' | 'listing.new'
 
+/** A user's notification destination — the /api/me/channels routes. */
 export interface NotificationChannel {
   id: number
   kind: ChannelKind
@@ -757,6 +831,7 @@ export interface ApiTokenCreated extends ApiToken {
   token: string
 }
 
+/** POST /api/me/tokens body. */
 export interface ApiTokenCreateRequest {
   /** 1–64 chars; 422 validation_error with fields.name otherwise */
   name: string
@@ -766,6 +841,7 @@ export interface ApiTokenCreateRequest {
   expires_in_days?: number | null
 }
 
+/** One row of GET /api/admin/users; `item_count` is the user's watch count. */
 export interface AdminUser {
   id: number
   email: string
@@ -775,11 +851,13 @@ export interface AdminUser {
   item_count: number
 }
 
+/** PATCH /api/admin/users/{id} body; omitted fields are left unchanged. */
 export interface AdminUserUpdateRequest {
   is_active?: boolean
   role?: UserRole
 }
 
+/** A pending invite — GET/POST /api/admin/invites. A null `email` lets anyone accept it. */
 export interface Invite {
   id: number
   token: string
@@ -788,6 +866,7 @@ export interface Invite {
   created_at: string
 }
 
+/** POST /api/admin/invites body; no email makes an invite anyone can accept. */
 export interface InviteCreateRequest {
   email?: string
 }
