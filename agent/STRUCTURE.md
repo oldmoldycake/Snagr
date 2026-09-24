@@ -40,7 +40,7 @@ agent/
 ├── validation.py      # what the agent may believe (pure): parse_price, validate_observation, url_allowed, clip_text
 ├── pricing.py         # market-price grounding: SearXNG + guide pages over plain HTTP, model extraction, tier stats → market_prices
 ├── notify.py          # the target-hit *decision* only (pure): is this reading a crossing, and what is the owner told
-├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it
+├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces
 ├── config.py          # settings from env/.env — every one except DATABASE_URL (see Conventions)
 ├── database.py        # engine + session factory, the ORM subset of backend/app/models.py, the read/write helpers the units use
 ├── Dockerfile         # 2-stage: build venv → slim runtime; CMD is --once, compose overrides it with --serve
@@ -49,7 +49,7 @@ agent/
 └── tests/
     ├── conftest.py     # DATABASE_URL → snagr_test rewrite, AI_*/MCP stubs, migration 015's index + triggers by hand, unit_runtime()
     ├── fixtures/       # captured page-extractor output (see README.md), raw HTML for the static rung, raw MCP replies
-    └── test_*.py       # one module per concern (22 files) — copy the nearest sibling's pattern
+    └── test_*.py       # one module per concern (23 files) — copy the nearest sibling's pattern
 ```
 
 ---
@@ -291,6 +291,25 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | Notifications | `NOTIFY_COOLDOWN_HOURS` | 24 | spam floor under the edge trigger |
 | Tracing | `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` | unset | both set = Langfuse callback on (`LANGFUSE_BASE_URL` read by its SDK) |
 | | `LANGSMITH_TRACING` / `_API_KEY` / `_PROJECT` | unset | read by LangChain itself, not by `config.py` |
+
+### What lands in the tracer
+
+Only model calls are traced, so a recheck the ladder handled leaves no trace:
+the count of `recheck` traces is how often the model fallback ran, not how
+many checks there were. The hunter never stops, so a session is the thing
+being watched rather than a run, and everything else is a tag:
+
+| Trace name | Session | User | Tags | Metadata |
+|---|---|---|---|---|
+| `hunt` | `watch-<watch_id>` | watch owner | `kind:hunt`, `site:<name>`, `category:<slug>`, `swap` on a swap hunt | `job_id`, `watch_id`, `item_id`, `site_id` |
+| `recheck` | `watch-<watch_id>` | watch owner | `kind:recheck`, `site:<name>`, `category:<slug>` | the same, plus `listing_id` |
+| `ground` | `item-<item_id>` | none — shared by every watcher | `kind:ground`, `category:<slug>` | `job_id`, `item_id`, `category_id` |
+
+Hunts and rechecks carry these on their agent config (`agent.agent_config`).
+Grounding makes bare model calls, which the Langfuse handler does not lift
+into trace attributes, so the ground job opens the trace itself
+(`llm.job_trace`) and its `condition-tiers` and `extract-observations` calls
+nest inside it. `tests/test_tracing.py` pins that handler behavior.
 
 ---
 

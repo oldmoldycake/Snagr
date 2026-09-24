@@ -31,7 +31,6 @@ from contextlib import asynccontextmanager
 from config import (
     AGENT_MAX_STEPS,
     AGENT_UNIT_TIMEOUT_SECONDS,
-    LANGFUSE_ENABLED,
     PLAYWRIGHT_MCP_URL,
     VISION_SIDECAR_URL,
 )
@@ -49,8 +48,7 @@ from langchain.agents import create_agent
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
-from langfuse import get_client
-from langfuse.langchain import CallbackHandler
+from llm import callbacks
 from locators import PageReader, reply_text
 from observations import Swap, UnitContext
 from prompt import generate_prompt, generate_recheck_prompt
@@ -66,10 +64,6 @@ from tools import (
 from validation import url_allowed
 
 log = logging.getLogger(__name__)
-
-# LangSmith traces globally on its own when LANGSMITH_TRACING/LANGSMITH_API_KEY are
-# set; Langfuse hooks in per-call, so only build its handler when keys are configured.
-callbacks = [CallbackHandler()] if LANGFUSE_ENABLED else []
 
 # Nothing a price scraper does needs these, and each is a way for a page to
 # turn a bad read into something worse: arbitrary JS in the browser context,
@@ -88,13 +82,20 @@ class Cancelled(Exception):
     """The job was cancelled while its unit was running."""
 
 
-def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
+def agent_config(
+    kind: str, unit: UnitContext, *, user_id: int, site_name: str, category: str
+) -> dict:
     """
     Build the per-call runnable config for one unit's agent invocation.
 
-    Every trace from a single job shares session_id and carries the owning
-    user's id, so a job's calls group together in the tracing UI and
-    cost/latency can be broken down per user.
+    Every hunt and model recheck on one watch shares the session
+    watch-<watch_id> and carries the owner's user id, so a watch's traces read
+    as one timeline in the tracing UI and cost can be broken down per user.
+    The job kind is the trace name; it, the site and the category are tags
+    (agent/llm.py says why); the ids the unit is bound to ride along as
+    metadata. The plain session_id key is what LangSmith groups threads by;
+    the langfuse_* keys are read by the Langfuse handler, which applies them
+    to the trace because an agent run's outermost runnable is a chain.
 
     recursion_limit caps one unit's graph steps: create_agent's own default is
     effectively unlimited, and a per-call value overrides it. A unit that hits
@@ -107,20 +108,35 @@ def agent_config(session_id: str, user_id: int, unit: UnitContext) -> dict:
     metadata, so the dataclass stays out of the traces.
 
     Args:
-      session_id: Identifier for the whole job, shared by every call.
-      user_id: Owner of the watch this call is working on.
+      kind: The job kind, "hunt" or "recheck" — also the trace name.
       unit: What this call is about — the ids every tool call is bound to.
+      user_id: Owner of the watch this call is working on.
+      site_name: The site the unit is on, for the site tag.
+      category: The item's category slug, for the category tag.
     """
+    tags = [f"kind:{kind}", f"site:{site_name}", f"category:{category}"]
+    if unit.swap is not None:
+        tags.append("swap")
+    session_id = f"watch-{unit.watch_id}"
+    metadata = {
+        "job_id": unit.job_id,
+        "watch_id": unit.watch_id,
+        "item_id": unit.item_id,
+        "site_id": unit.site_id,
+        "session_id": session_id,
+        "user_id": str(user_id),
+        "langfuse_session_id": session_id,
+        "langfuse_user_id": str(user_id),
+        "langfuse_tags": tags,
+    }
+    if unit.listing_id is not None:
+        metadata["listing_id"] = unit.listing_id
     return {
         "callbacks": callbacks,
+        "run_name": kind,
         "recursion_limit": AGENT_MAX_STEPS,
         "configurable": {"unit": unit},
-        "metadata": {
-            "session_id": session_id,
-            "user_id": str(user_id),
-            "langfuse_session_id": session_id,
-            "langfuse_user_id": str(user_id),
-        },
+        "metadata": metadata,
     }
 
 
@@ -261,7 +277,7 @@ async def _stream(agent, prompt: str, config: dict, job_id: int | None) -> list:
     return final.get("messages", [])
 
 
-async def recheck_listing(agent, session_id: str, row, browser, job_id=None) -> dict:
+async def recheck_listing(agent, row, browser, job_id=None) -> dict:
     """One listing, re-read by the model because code could not read it.
 
     Reached only when the deterministic ladder could not read the page
@@ -304,7 +320,14 @@ async def recheck_listing(agent, session_id: str, row, browser, job_id=None) -> 
         job_id=job_id,
     )
 
-    messages = await _stream(agent, prompt, agent_config(session_id, user_id, unit), None)
+    config = agent_config(
+        "recheck",
+        unit,
+        user_id=user_id,
+        site_name=row["site_name"],
+        category=row["category_slug"],
+    )
+    messages = await _stream(agent, prompt, config, None)
     _require_browser_success(messages)
     await _learn_after_unit(unit, listing_id, listing_url)
     spent_in, spent_out = tokens_spent(messages)
@@ -434,7 +457,10 @@ async def run_hunt_job(agent, job_id: int, row, browser, *, swap: bool = False) 
         swap=Swap() if swap_listings is not None else None,
     )
 
-    messages = await _stream(agent, prompt, agent_config(f"job-{job_id}", user_id, unit), job_id)
+    config = agent_config(
+        "hunt", unit, user_id=user_id, site_name=site_name, category=row["category_slug"]
+    )
+    messages = await _stream(agent, prompt, config, job_id)
     _require_browser_success(messages)
     spent_in, spent_out = tokens_spent(messages)
     return {**unit.stats, "tokens_in": spent_in, "tokens_out": spent_out}
@@ -452,10 +478,3 @@ async def bounded(unit):
             return await unit
     except TimeoutError:
         raise RuntimeError(f"unit exceeded the {AGENT_UNIT_TIMEOUT_SECONDS}s budget") from None
-
-
-def flush_traces() -> None:
-    """Langfuse queues events on a background thread; flush them where a job
-    ends, or the tail of its traces is silently dropped."""
-    if LANGFUSE_ENABLED:
-        get_client().flush()

@@ -46,7 +46,7 @@ from database import (
     get_hunt_unit,
     get_recheck_unit,
 )
-from llm import build_llm
+from llm import build_llm, flush_traces, job_trace
 from pricing import ground_item, select_grounding_work
 from recheck import recheck_deterministic
 from sqlalchemy.exc import SQLAlchemyError
@@ -56,7 +56,6 @@ from agent import (
     bounded,
     build_hunt_agent,
     build_recheck_agent,
-    flush_traces,
     open_browser_session,
     recheck_listing,
     run_hunt_job,
@@ -200,9 +199,7 @@ async def _run_recheck(job: dict) -> dict | None:
             log.info(f"Listing {row['listing_id']} needs the model")
 
         agent = build_recheck_agent(build_llm(), browser_tools)
-        stats = await bounded(
-            recheck_listing(agent, f"job-{job['id']}", row, browser, job_id=job["id"])
-        )
+        stats = await bounded(recheck_listing(agent, row, browser, job_id=job["id"]))
     # a model that could not read the page says so by recording an error, not
     # by raising — which is the usual shape of "this site has stopped talking"
     await breaker.record_outcome(
@@ -238,7 +235,17 @@ async def _run_ground(job: dict) -> dict | None:
         log.info(f"Item {job['item_id']} is gone; nothing to ground")
         return _empty()
 
-    payload = await ground_item(row["item_id"], row["item_name"], row["category_id"])
+    # grounding is shared by everyone watching the item, so its trace groups
+    # by item and carries no user
+    with job_trace(
+        "ground",
+        f"item-{row['item_id']}",
+        ["kind:ground", f"category:{row['category_slug']}"],
+        job_id=job["id"],
+        item_id=row["item_id"],
+        category_id=row["category_id"],
+    ):
+        payload = await ground_item(row["item_id"], row["item_name"], row["category_id"])
     observations = payload.get("observations") or []
     await job_queue.append_event(
         job["id"],

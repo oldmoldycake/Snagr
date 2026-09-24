@@ -9,12 +9,12 @@ coroutine with asyncio.run, like the rest of this suite.
 """
 
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 
 import pytest
 import worker
 from langchain_core.messages import AIMessage, ToolMessage
-from observations import UnitContext
+from observations import Swap, UnitContext
 
 import agent
 
@@ -176,12 +176,17 @@ def wire(monkeypatch, **overrides):
         return overrides.get("hunt_row", hunt_row())
 
     async def ground_unit(item_id):
-        return {"item_id": item_id, "item_name": "Item 1", "category_id": 1}
+        return {
+            "item_id": item_id,
+            "item_name": "Item 1",
+            "category_id": 1,
+            "category_slug": "video-games",
+        }
 
     async def deterministic(browser, row):
         return overrides.get("ladder", FakeOutcome(True))
 
-    async def llm_recheck(agent_, session_id, row, browser, job_id=None):
+    async def llm_recheck(agent_, row, browser, job_id=None):
         seen.setdefault("llm_rechecks", []).append(row["listing_id"])
         if "recheck_raises" in overrides:
             raise overrides["recheck_raises"]
@@ -343,6 +348,27 @@ class TestGroundPath:
         stats = asyncio.run(worker.run_job(job("ground", listing_id=None)))
         assert stats["prices_found"] == 3
         assert any(event_type == "job_finished" for _, _, event_type, _ in seen["events"])
+
+    def test_grounding_runs_inside_one_trace_per_item_for_no_one_user(self, monkeypatch):
+        wire(monkeypatch)
+        opened = []
+
+        @contextmanager
+        def job_trace(name, session_id, tags, **ids):
+            opened.append((name, session_id, tags, ids))
+            yield
+
+        monkeypatch.setattr(worker, "job_trace", job_trace)
+        asyncio.run(worker.run_job(job("ground", listing_id=None)))
+        # job_trace takes no user: grounding is shared by every watcher
+        assert opened == [
+            (
+                "ground",
+                "item-1",
+                ["kind:ground", "category:video-games"],
+                {"job_id": 1, "item_id": 1, "category_id": 1},
+            )
+        ]
 
 
 class TestTerminalWrites:
@@ -670,5 +696,59 @@ class TestUnitBudgets:
         assert asyncio.run(agent.bounded(quick())) == "value"
 
     def test_the_step_cap_rides_on_every_units_config(self):
-        config = agent.agent_config("s", 1, UnitContext(watch_id=1, item_id=1, site_id=1))
+        config = agent.agent_config(
+            "hunt",
+            UnitContext(watch_id=1, item_id=1, site_id=1),
+            user_id=1,
+            site_name="eBay",
+            category="video-games",
+        )
         assert config["recursion_limit"] == agent.AGENT_MAX_STEPS
+
+
+def unit_config(kind, **unit):
+    """agent_config for a unit on watch 12 (user 3, item 5, site 2 = eBay)."""
+    context = UnitContext(watch_id=12, item_id=5, site_id=2, job_id=40, **unit)
+    return agent.agent_config(kind, context, user_id=3, site_name="eBay", category="video-games")
+
+
+class TestTraceGrouping:
+    def test_a_watchs_hunts_and_rechecks_share_one_session(self):
+        hunt = unit_config("hunt")["metadata"]
+        recheck = unit_config("recheck", listing_id=9)["metadata"]
+        assert hunt["langfuse_session_id"] == recheck["langfuse_session_id"] == "watch-12"
+        assert hunt["session_id"] == "watch-12"
+
+    def test_every_trace_carries_the_watch_owner(self):
+        metadata = unit_config("hunt")["metadata"]
+        assert metadata["langfuse_user_id"] == metadata["user_id"] == "3"
+
+    def test_a_trace_is_named_and_tagged_by_kind_site_and_category(self):
+        config = unit_config("recheck", listing_id=9)
+        assert config["run_name"] == "recheck"
+        assert config["metadata"]["langfuse_tags"] == [
+            "kind:recheck",
+            "site:eBay",
+            "category:video-games",
+        ]
+
+    def test_a_swap_hunt_is_tagged_as_one(self):
+        assert "swap" in unit_config("hunt", swap=Swap())["metadata"]["langfuse_tags"]
+        assert "swap" not in unit_config("hunt")["metadata"]["langfuse_tags"]
+
+    def test_the_ids_a_unit_is_bound_to_lead_back_to_its_job(self):
+        hunt = unit_config("hunt")["metadata"]
+        recheck = unit_config("recheck", listing_id=9)["metadata"]
+        assert (hunt["job_id"], hunt["watch_id"], hunt["item_id"], hunt["site_id"]) == (
+            40,
+            12,
+            5,
+            2,
+        )
+        assert "listing_id" not in hunt
+        assert recheck["listing_id"] == 9
+
+    def test_the_unit_stays_out_of_the_trace_metadata(self):
+        config = unit_config("hunt")
+        assert "unit" not in config["metadata"]
+        assert config["configurable"]["unit"].watch_id == 12
