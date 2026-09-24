@@ -113,7 +113,7 @@ def _built_toolsets(monkeypatch, url) -> tuple[list, list]:
     """The tool lists handed to create_agent, recheck first, hunt second."""
     toolsets = []
     monkeypatch.setattr(
-        agent, "create_agent", lambda llm, tools: toolsets.append(tools) or object()
+        agent, "create_agent", lambda llm, tools, **_: toolsets.append(tools) or object()
     )
     browser_tools, _ = _open_session(monkeypatch, url)
     agent.build_recheck_agent("llm", browser_tools)

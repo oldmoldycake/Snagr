@@ -4,9 +4,9 @@ model in open slots (the cap minus what the watch already holds), so a watch
 with three sites cannot fill 3x its cap, and a later hunt cannot add another
 round on top.
 
-A full watch is hunted only when a person asks, and then only to trade up:
-the prompt shows its tracked listings weakest first, and
-save_listing is the backstop — it refuses any save that would over-fill the
+A hunt that finds its watch full can only trade up: the prompt shows the
+tracked listings weakest first, and save_listing makes each trade — for the
+weakest, which code picks — and refuses any save that would over-fill the
 watch, and any trade that is not a trade up. Those tests need the real
 Postgres (the same harness as test_jobs_db.py); the prompt tests do not.
 """
@@ -34,7 +34,6 @@ from database import (
     engine,
     get_known_listing_urls,
 )
-from observations import Swap
 from prompt import generate_prompt
 from sqlalchemy import select, text, update
 
@@ -131,10 +130,10 @@ def test_a_swap_hunt_shows_tracked_listings_instead_of_slots():
     assert "TRACKED LISTINGS: all 4 slot(s) are filled" in prompt
     assert "TRACKING SLOTS" not in prompt
     assert "keep the 0 cheapest" not in prompt
-    assert 'reason "replaced"' in prompt
-    assert "At most ONE swap this hunt" in prompt
-    assert "Leftover good candidates are\n  NOT rejections" in prompt
-    assert "Stop once you have made your one swap" in prompt
+    assert "code trades it for\n  the weakest tracked listing" in prompt
+    assert "The reply names the new weakest listing" in prompt
+    assert "good candidates are NOT rejections" in prompt
+    assert "Stop once nothing left on the site beats the weakest tracked listing" in prompt
 
 
 def test_cheapest_mode_lists_the_highest_price_first_and_unpriced_before_all():
@@ -151,7 +150,6 @@ def test_cheapest_mode_names_the_price_to_beat():
     prompt = _prompt(tracked_listings=3, max_listings=3, swap_listings=priced)
     assert _order(prompt) == ["2", "4", "1"]
     assert "strictly lower than $55.00" in prompt
-    assert "disable_listing` with listing_id=2" in prompt
 
 
 def test_best_match_mode_lists_the_lowest_score_first_price_breaking_ties():
@@ -166,7 +164,6 @@ def test_best_match_mode_lists_the_lowest_score_first_price_breaking_ties():
     # 5 and 4 share the lowest score; the dearer of the two is the weaker
     assert _order(prompt) == ["5", "4", "2", "3", "1"]
     assert "a higher match_score than 40" in prompt
-    assert "disable_listing` with listing_id=5" in prompt
 
 
 # --- swap hunts: what code allows ------------------------------------------
@@ -298,16 +295,16 @@ def _runtime(ids, swap: bool = True):
         item_id=ids["item_id"],
         site_id=ids["site_id"],
         job_id=ids["job_id"],
-        swap=Swap() if swap else None,
+        swap=swap,
     )
 
 
-def _save(runtime, url=f"{SITE_BASE_URL}/candidate", price=None):
+def _save(runtime, url=f"{SITE_BASE_URL}/candidate", price=None, match_score=85):
     return db(
         tools.save_listing(
             url=url,
             title="Widget — better",
-            match_score=85,
+            match_score=match_score,
             match_summary="fits, no repro flags",
             price=price,
             runtime=runtime,
@@ -315,8 +312,10 @@ def _save(runtime, url=f"{SITE_BASE_URL}/candidate", price=None):
     )
 
 
-def _replace(runtime, listing_id):
-    return db(tools.disable_listing(listing_id, "replaced", runtime=runtime))
+def _traded_id(result) -> int:
+    """The listing a TRADED: reply saved."""
+    assert result.startswith("TRADED:"), result
+    return int(re.search(r"saved as listing (\d+)", result).group(1))
 
 
 async def _listings(watch_id) -> dict[int, Listings]:
@@ -371,41 +370,31 @@ class TestSwaps:
         assert result.startswith("SLOTS FULL:")
         assert _active(ids) == set(ids["listings"])
 
-    def test_a_swap_hunt_still_needs_a_replacement_picked_first(self):
+    def test_a_swap_save_needs_its_price(self):
         ids = db(_seed_full_watch())
-        result = _save(_runtime(ids), price=10)
-        assert result.startswith("SLOTS FULL:")
-        assert 'reason "replaced"' in result
-        assert len(_active(ids)) == 2
-
-    def test_picking_a_replacement_untracks_nothing_by_itself(self):
-        ids = db(_seed_full_watch())
-        weakest = ids["listings"][1]
-        assert _replace(_runtime(ids), weakest).startswith(f"Listing {weakest} will be replaced")
+        result = _save(_runtime(ids))
+        assert result.startswith("Error: every slot of this watch is filled")
         assert _active(ids) == set(ids["listings"])
-        assert db(_pending_recheck(weakest))
 
     def test_cheapest_mode_refuses_a_replacement_that_is_not_cheaper(self):
         ids = db(_seed_full_watch())
         runtime = _runtime(ids)
         weakest = ids["listings"][1]  # $80
-        _replace(runtime, weakest)
         for price in (95, 80):
             result = _save(runtime, price=price)
             assert result.startswith("SLOTS FULL:"), result
             assert "strictly cheaper" in result
+            assert f"listing {weakest}, the weakest tracked" in result
         assert _active(ids) == set(ids["listings"])
         assert db(_pending_recheck(weakest))
         assert len(db(_listings(ids["watch_id"]))) == 2
 
-    def test_a_cheaper_replacement_trades_places_and_keeps_n_tracked(self):
+    def test_a_cheaper_replacement_trades_for_the_weakest_and_keeps_n_tracked(self):
         ids = db(_seed_full_watch())
         runtime = _runtime(ids)
-        kept, weakest = ids["listings"]
-        _replace(runtime, weakest)
-        new_id = _save(runtime, price=60)
+        kept, weakest = ids["listings"]  # $50, $80
+        new_id = _traded_id(_save(runtime, price=60))
 
-        assert isinstance(new_id, int)
         assert _active(ids) == {kept, new_id}
         replaced = db(_listings(ids["watch_id"]))[weakest]
         assert replaced.inactive_reason == "replaced"
@@ -421,10 +410,8 @@ class TestSwaps:
 
     def test_a_swap_is_told_as_an_ending_then_a_discovery(self):
         ids = db(_seed_full_watch())
-        runtime = _runtime(ids)
         weakest = ids["listings"][1]
-        _replace(runtime, weakest)
-        new_id = _save(runtime, price=60)
+        new_id = _traded_id(_save(_runtime(ids), price=60))
 
         events = db(_events(ids["job_id"]))
         assert [e.event_type for e in events] == [
@@ -438,34 +425,46 @@ class TestSwaps:
         assert ended.payload["listing_id"] == weakest
         assert ended.payload["replaced_by"] == new_id
 
-    def test_best_match_mode_trades_on_fit_whatever_the_price(self):
-        ids = db(_seed_full_watch("best_match"))
-        runtime = _runtime(ids)
-        weakest = ids["listings"][0]  # the $50 one: price is not what is judged
-        _replace(runtime, weakest)
-        new_id = _save(runtime, price=500)
-        assert isinstance(new_id, int)
-        assert _active(ids) == {ids["listings"][1], new_id}
-
-    def test_a_replacement_save_needs_its_price(self):
-        ids = db(_seed_full_watch("best_match"))
-        runtime = _runtime(ids)
-        _replace(runtime, ids["listings"][0])
-        result = _save(runtime)
-        assert result.startswith("Error: a save that replaces listing")
-        assert _active(ids) == set(ids["listings"])
-
-    def test_one_swap_per_hunt(self):
+    def test_a_hunt_trades_as_often_as_it_finds_better(self):
+        # the site searched after another filled the watch gets its say on
+        # every slot, not just one: each trade raises the bar for the next
         ids = db(_seed_full_watch())
         runtime = _runtime(ids)
-        _replace(runtime, ids["listings"][1])
-        new_id = _save(runtime, price=60)
-        assert isinstance(new_id, int)
+        cheapest = ids["listings"][0]  # $50
+
+        first = _save(runtime, price=60)
+        first_id = _traded_id(first)
+        # the listing just saved is now the weakest, and the reply says so
+        assert f"The weakest tracked listing is now listing {first_id} ($60.00" in first
 
         second = _save(runtime, url=f"{SITE_BASE_URL}/another", price=5)
-        assert second.startswith("SLOTS FULL: this hunt has already made its one swap")
-        assert _replace(runtime, ids["listings"][0]).startswith("Error: this hunt has already")
-        assert len(_active(ids)) == 2
+        second_id = _traded_id(second)
+        assert f"in place of listing {first_id}" in second
+        assert f"is now listing {cheapest} ($50.00" in second
+        assert _active(ids) == {cheapest, second_id}
+
+        third = _save(runtime, url=f"{SITE_BASE_URL}/third", price=55)
+        assert third.startswith("SLOTS FULL:")
+        assert _active(ids) == {cheapest, second_id}
+
+    def test_best_match_mode_trades_on_fit_whatever_the_price(self):
+        ids = db(_seed_full_watch("best_match"))
+        # both fit 70; the dearer one is the weaker
+        new_id = _traded_id(_save(_runtime(ids), price=500))
+        assert _active(ids) == {ids["listings"][0], new_id}
+
+    def test_best_match_mode_refuses_a_worse_fit_and_an_equal_one_that_costs_more(self):
+        ids = db(_seed_full_watch("best_match"))
+        runtime = _runtime(ids)
+        worse = _save(runtime, price=10, match_score=60)
+        assert worse.startswith("SLOTS FULL: a match_score of 60 does not beat")
+        equal = _save(runtime, url=f"{SITE_BASE_URL}/equal", price=90, match_score=70)
+        assert equal.startswith("SLOTS FULL: a match_score of 70 does not beat")
+        assert _active(ids) == set(ids["listings"])
+
+        # as good a fit for less is a trade up
+        cheaper = _save(runtime, url=f"{SITE_BASE_URL}/cheaper", price=75, match_score=70)
+        assert _active(ids) == {ids["listings"][0], _traded_id(cheaper)}
 
     def test_a_listing_on_another_site_of_the_watch_can_be_traded(self):
         ids = db(_seed_full_watch())
@@ -480,16 +479,14 @@ class TestSwaps:
                 await session.commit()
 
         db(move_to_another_site())
-        runtime = _runtime(ids)
-        _replace(runtime, ids["listings"][1])
-        assert isinstance(_save(runtime, price=60), int)
+        new_id = _traded_id(_save(_runtime(ids), price=60))
+        assert _active(ids) == {ids["listings"][0], new_id}
 
     def test_a_replaced_listing_comes_back_as_the_same_row_with_its_history(self):
         ids = db(_seed_full_watch())
         runtime = _runtime(ids)
         kept, weakest = ids["listings"]
-        _replace(runtime, weakest)
-        new_id = _save(runtime, price=60)
+        new_id = _traded_id(_save(runtime, price=60))
 
         # the new one sells; the old URL is found again on a later hunt
         db(tools.disable_listing(new_id, "sold", runtime=_runtime(ids, swap=False)))
@@ -513,9 +510,7 @@ class TestSwaps:
 
     def test_a_replaced_url_is_hidden_for_a_day_then_findable(self):
         ids = db(_seed_full_watch())
-        runtime = _runtime(ids)
-        _replace(runtime, ids["listings"][1])
-        _save(runtime, price=60)
+        _traded_id(_save(_runtime(ids), price=60))
 
         known = db(get_known_listing_urls(ids["watch_id"], ids["site_id"]))
         assert f"{SITE_BASE_URL}/tracked-1" in known

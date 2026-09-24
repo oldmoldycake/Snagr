@@ -43,6 +43,8 @@ from database import (
     enqueue_new_listing,
     get_price_context,
     save_locator,
+    tracked_weakest_first,
+    weakest_first,
 )
 from langchain.tools import ToolRuntime
 from locators import select_locator
@@ -117,21 +119,24 @@ async def save_listing(
         (examples: 67, 4, 42). Be calibrated - do not default to high.
       match_summary: One short line justifying the score, e.g. "dry battery ok, cart only,
         authentic per photos". Keep it to one line; long text is truncated.
-      price: REQUIRED when this save replaces a tracked listing (right after
-        disable_listing with reason "replaced"): the numeric price shown on the page, no
-        currency symbol, for a listing you can buy now. Whenever you pass it, it is
+      price: The numeric price shown on the page, no currency symbol, for a listing you
+        can buy now. REQUIRED when every slot is filled (your instructions show a TRACKED
+        LISTINGS block), because the save then trades on it. Whenever you pass it, it is
         recorded as this listing's price, so do NOT also call save_price_check for it.
         On any other save you may leave it out and call save_price_check afterwards.
       currency: The three-letter code of that price's currency, e.g. "USD"
     Returns:
-      One of these five:
+      One of these six:
         listing_id: The internal ID for the listing. If it is already tracked, returns the
           existing listing_id instead.
+        TRADED: A string starting with "TRADED:" — every slot was filled, so this listing
+          was saved in place of the weakest tracked one, with its price recorded. The
+          reply names the weakest tracked listing now: the next candidate must beat it.
         SKIPPED: A string starting with "SKIPPED:" — this listing is already known and no
           longer tracked (it sold, ended, or the user untracked it). Record nothing for it
           and do not log it as a rejection either; move on.
         SLOTS FULL: A string starting with "SLOTS FULL:" — every slot of this watch is
-          taken, or the replacement you asked for is not allowed; the reason is spelled
+          taken and this listing may not replace the weakest; the reason is spelled
           out. Nothing was saved and nothing changed. Do not log the candidate as a
           rejection; move on.
         REFUSED: A string starting with "REFUSED:" — this listing's photos crossed the
@@ -227,18 +232,20 @@ async def save_listing(
                 .where(Listings.watch_id == watch_id)
                 .where(Listings.active)
             )
-            replaced = None
+            replaced = replaced_id = None
             if tracked >= watch.max_listings:
+                ranked = await tracked_weakest_first(session, watch_id, watch.selection_mode)
                 replaced, refusal = await _replacement(
-                    session, unit, watch.selection_mode, parsed, verdict
+                    session, unit, watch.selection_mode, ranked, parsed, match_score, verdict
                 )
                 if refusal:
                     log.info(f"Refusing listing save for watch {watch_id}: {refusal}")
                     return refusal
+                replaced_id = int(replaced.id)
                 replaced.active = False
                 replaced.inactive_reason = "replaced"
                 # the chain of checks ends with the tracking, in the same breath
-                await job_queue.cancel_recheck(session, replaced.id)
+                await job_queue.cancel_recheck(session, replaced_id)
 
             if listing is None:
                 listing_id = await session.scalar(
@@ -311,9 +318,6 @@ async def save_listing(
                     ),
                     {"listing_id": listing_id, "item_id": item_id},
                 )
-            if replaced is not None:
-                unit.swap.done = True
-
             if parsed is None:
                 await session.commit()
             else:
@@ -354,6 +358,16 @@ async def save_listing(
         )
     if parsed is not None and verdict.confirmed:
         await learn_locator(unit, listing_id, parsed)
+    if replaced_id is not None:
+        return _traded(
+            ranked,
+            watch.selection_mode,
+            replaced_id=replaced_id,
+            listing_id=listing_id,
+            price=parsed if verdict.notifiable else None,
+            match_score=match_score,
+            title=title,
+        )
     return listing_id
 
 
@@ -378,66 +392,104 @@ async def _price_context(session, listing: Listings | None, item_id: int) -> dic
 
 
 async def _replacement(
-    session, unit: UnitContext, selection_mode: str, price: Decimal | None, verdict
+    session,
+    unit: UnitContext,
+    selection_mode: str,
+    ranked: list[dict],
+    price: Decimal | None,
+    match_score: int,
+    verdict,
 ) -> tuple[Listings | None, str | None]:
     """The listing a save on a full watch trades away, or why it may not.
 
-    The model proposes the trade; this is where code checks it.
-    Only a swap hunt may trade, once, for the listing it picked with
-    disable_listing(reason="replaced"), and only with a price it can stand
-    behind. In cheapest mode that price must be strictly lower than the
-    traded listing's last confirmed one — a swap never trades sideways. In
-    best-match mode fit is the model's call; the price is still recorded.
+    Only a swap hunt may trade, and always for the weakest tracked listing,
+    ranked under the lock on the watch row: code picks it, so the model can
+    neither trade away the wrong one nor pick one another hunt has already
+    traded. The price must be one code can stand behind. In cheapest mode it
+    must be strictly lower than the weakest's last confirmed one; in
+    best-match mode the fit must be better, or as good for less. Either way a
+    swap never trades sideways, so a hunt can trade as often as the site
+    has something better without churning the watch.
 
+    Args:
+      ranked: The watch's tracked listings, weakest first (tracked_weakest_first).
     Returns:
       (the listing to retire, None), or (None, the model-facing refusal).
     """
     full = "SLOTS FULL: every slot of this watch is filled"
     leftover = "Leftover good candidates are not rejections — do not log them; move on."
-    if unit.swap is None:
+    if not unit.swap:
         return None, f"{full}, so nothing more can be saved on this hunt. {leftover}"
-    if unit.swap.done:
-        return None, f"SLOTS FULL: this hunt has already made its one swap. {leftover}"
-    if unit.swap.replaced_listing_id is None:
-        return None, (
-            f"{full}. To trade this candidate in, first call disable_listing with the "
-            f'weakest tracked listing\'s id and reason "replaced", then call save_listing '
-            f"again with price."
-        )
-
-    replaced_id = unit.swap.replaced_listing_id
-    replaced = await session.get(Listings, replaced_id)
-    if replaced is None or not replaced.active or replaced.watch_id != unit.watch_id:
-        unit.swap.replaced_listing_id = None
-        return None, (
-            f"{full}, and listing {replaced_id} is no longer tracked. Pick again from "
-            f"TRACKED LISTINGS."
-        )
     if price is None:
         return None, (
-            f"Error: a save that replaces listing {replaced_id} needs price — the price shown "
-            f"on this listing's page."
+            "Error: every slot of this watch is filled, so this save would replace the "
+            "weakest tracked listing, and a replacement needs price — the price shown on "
+            "this listing's page."
         )
+
+    weakest = ranked[0]
+    weakest_id, weakest_price = weakest["listing_id"], weakest["price"]
     if not verdict.confirmed:
         return None, (
             f"SLOTS FULL: {price} is out of line with this item's market ({verdict.reason}), "
-            f"and a trade needs a price that can be believed, so listing {replaced_id} stays "
+            f"and a trade needs a price that can be believed, so listing {weakest_id} stays "
             f"tracked. Re-read the page; if that is really the price, move on."
         )
+    cheaper = verdict.notifiable and (weakest_price is None or price < weakest_price)
     if selection_mode == "cheapest":
         if not verdict.notifiable:
             return None, (
                 f"SLOTS FULL: a price in another currency cannot be compared with listing "
-                f"{replaced_id}'s, so it stays tracked. {leftover}"
+                f"{weakest_id}'s, so it stays tracked. {leftover}"
             )
-        replaced_price = (await get_price_context(replaced_id))["last_price"]
-        if replaced_price is not None and price >= replaced_price:
+        if not cheaper:
             return None, (
-                f"SLOTS FULL: {price} is not lower than listing {replaced_id}'s {replaced_price}"
-                f" — in cheapest mode a replacement must be strictly cheaper, so listing "
-                f"{replaced_id} stays tracked. {leftover}"
+                f"SLOTS FULL: {price} is not lower than {weakest_price}, the price of listing "
+                f"{weakest_id}, the weakest tracked — in cheapest mode a replacement must be "
+                f"strictly cheaper, so listing {weakest_id} stays tracked. {leftover}"
             )
-    return replaced, None
+    else:
+        weakest_score = weakest["match_score"] or 0
+        if match_score < weakest_score or (match_score == weakest_score and not cheaper):
+            return None, (
+                f"SLOTS FULL: a match_score of {match_score} does not beat listing "
+                f"{weakest_id}, the weakest tracked (match {weakest_score}) — in best-match "
+                f"mode a replacement must fit better, or fit as well for less, so listing "
+                f"{weakest_id} stays tracked. {leftover}"
+            )
+    return await session.get(Listings, weakest_id), None
+
+
+def _traded(
+    ranked: list[dict],
+    selection_mode: str,
+    *,
+    replaced_id: int,
+    listing_id: int,
+    price: Decimal | None,
+    match_score: int,
+    title: str,
+) -> str:
+    """save_listing's reply to a trade: what it did, and the bar the next
+    candidate has to clear — which may be the listing just saved."""
+    remaining = [row for row in ranked if row["listing_id"] != replaced_id]
+    remaining.append(
+        {
+            "listing_id": listing_id,
+            "site_name": None,
+            "title": title,
+            "price": price,
+            "match_score": match_score,
+        }
+    )
+    weakest = weakest_first(remaining, selection_mode)[0]
+    bar = f"${weakest['price']:.2f}" if weakest["price"] is not None else "no confirmed price"
+    return (
+        f"TRADED: saved as listing {listing_id} in place of listing {replaced_id}, with its "
+        f"price recorded — do not call save_price_check for it. The weakest tracked listing "
+        f"is now listing {weakest['listing_id']} ({bar}, match {weakest['match_score']}); "
+        f"the next candidate has to beat that one."
+    )
 
 
 async def save_price_check(
@@ -457,6 +509,10 @@ async def save_price_check(
     is tracked. If status is "sold" or "ended", also call `disable_listing`
     afterward, with that same status as its reason, to stop tracking it.
 
+    On a search, a listing is read once: if its price is already recorded — by
+    passing price to save_listing, or by an earlier call — this call is refused
+    and nothing is written.
+
     Args:
       listing_id: The exact listing id returned by save_listing, or the listing_id you
         were given to re-check. Any other id is refused.
@@ -474,10 +530,16 @@ async def save_price_check(
              to you, re-read the page and report what it actually says.
       currency: The three-letter code of the currency shown, e.g. "USD"
     Returns:
-      A confirmation string on success, or a string starting with "Error:" saying what
-      was wrong with the call or what failed.
+      A confirmation string on success; a string starting with "ALREADY RECORDED:" when
+      this search has already recorded this listing (move on to the next candidate); or
+      a string starting with "Error:" saying what was wrong with the call or what failed.
     """
     unit = unit_of(runtime)
+    if unit.is_hunt and listing_id in unit.observed:
+        return (
+            f"ALREADY RECORDED: listing {listing_id}'s price is already recorded on this "
+            f"search, so nothing was written. Move on to the next candidate."
+        )
     if status not in PRICE_STATUSES:
         return f"Error: status must be one of {', '.join(PRICE_STATUSES)}, got {status!r}"
     if status == "ok" and (price is None or price <= 0):
@@ -627,27 +689,16 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
     price is now an auction bid. Call this once per listing; disabling an
     already-inactive listing is harmless.
 
-    On a hunt for something better (your instructions show a TRACKED LISTINGS
-    block), reason "replaced" picks the tracked listing your next save_listing
-    will replace. It does not untrack anything by itself: the listing stays
-    tracked until that save goes through, and if code refuses the save, nothing
-    changes.
-
     Args:
       listing_id: The exact listing id to disable - the listing_id you were given to
-        re-check, one save_listing returned, or (with "replaced") one from TRACKED
-        LISTINGS. Any other id is refused.
+        re-check, or one save_listing returned. Any other id is refused.
       reason: Exactly one of "sold", "ended", "auction" - "sold"/"ended" matching the
-        status you just saved, "auction" when the page offers only bids. "replaced"
-        only on a hunt for something better, for the weakest tracked listing, right
-        before the save_listing that replaces it.
+        status you just saved, "auction" when the page offers only bids.
     Returns:
       A confirmation string on success, or a string starting with "Error:" saying what
       was wrong with the call or what failed.
     """
     unit = unit_of(runtime)
-    if reason == "replaced":
-        return await _pick_replacement(listing_id, unit)
     if reason not in DISABLE_REASONS:
         return f"Error: reason must be one of {', '.join(DISABLE_REASONS)}, got {reason!r}"
 
@@ -676,50 +727,6 @@ async def disable_listing(listing_id: int, reason: str, *, runtime: ToolRuntime)
     # commit, so a failed wake never undoes the ending (the sweep catches up)
     await job_queue.wake_hunts(unit.watch_id)
     return f"Listing {listing_id} marked inactive"
-
-
-async def _pick_replacement(listing_id: int, unit: UnitContext) -> str:
-    """disable_listing(reason="replaced"): remember which listing the next
-    save gives up, and write nothing.
-
-    Nothing is untracked here because the trade is not decided here. Only
-    save_listing knows the candidate's price, so only it can tell whether the
-    trade is allowed; retiring the old listing now would leave the watch a
-    listing short whenever that save is refused. No hunt is woken either: the
-    slot this frees is refilled in the same transaction that frees it.
-    """
-    if unit.swap is None:
-        return (
-            'Error: reason "replaced" is only for a hunt looking for something better than '
-            'a full watch\'s weakest listing, and this hunt is not one. Use "sold", "ended" '
-            'or "auction".'
-        )
-    if unit.swap.done:
-        return "Error: this hunt has already made its one swap — replace nothing more."
-
-    async with AsyncSessionLocal() as session:
-        try:
-            await assert_writable(session, listing_id, unit)
-            active = await session.scalar(select(Listings.active).where(Listings.id == listing_id))
-        except UnitMismatch as e:
-            log.info(f"Refusing replacement pick: {e}")
-            return str(e)
-        except Exception as e:
-            log.error(f"Error reading listing {listing_id}: {e}")
-            return f"Error reading listing {listing_id}: {e}"
-    if not active:
-        return (
-            f"Error: listing {listing_id} is not tracked any more — pick the weakest listing "
-            f"from TRACKED LISTINGS."
-        )
-
-    unit.swap.replaced_listing_id = listing_id
-    log.info(f"Listing {listing_id} picked for replacement (watch {unit.watch_id})")
-    return (
-        f"Listing {listing_id} will be replaced by your next save_listing call — pass that "
-        f"call the new listing's price. Listing {listing_id} stays tracked until then, and "
-        f"if the save is refused, nothing changes."
-    )
 
 
 async def log_listing_check(

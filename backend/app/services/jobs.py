@@ -477,10 +477,10 @@ async def _hunts(
 ) -> list[Jobs]:
     queued = []
     for watch in watches:
-        # A full watch is never hunted on its own, but a person asking is the
-        # one hunt it gets: a swap hunt, looking for something better than its
-        # weakest listing. The flag rides on the job so the hunter knows which
-        # hunt it is.
+        # A full watch is never queued a hunt on its own, but a person asking
+        # gets one: a swap hunt, looking for something better than its weakest
+        # listings. The flag records that on the job; the hunter itself decides
+        # by counting the watch's slots when the hunt runs.
         payload = {"swap": True} if await open_slots(db, watch) <= 0 else None
         for site_id in await watch_sites(db, watch):
             if scope == "site" and site_id != scope_id:

@@ -99,7 +99,10 @@ across all of it deciding what is believed and which sites are read at all.
    own browser context, which is what lets "check prices now" overtake a hunt.
    Hunt and recheck units run under `bounded` (`AGENT_UNIT_TIMEOUT_SECONDS`),
    model units under `recursion_limit = AGENT_MAX_STEPS`; a `ground` job has
-   neither cap. A hunt polls its job's status every 5 s between model steps and
+   neither cap. A hunt's model is sent only its latest `agent.PAGES_KEPT`
+   tool results in full — older page snapshots become a placeholder, the DB
+   tools' one-line replies are kept — so its cost grows with the pages it
+   reads, not with their square. A hunt polls its job's status every 5 s between model steps and
    stops on `cancelled`. `_with_heartbeat` stamps `jobs.heartbeat_at` every
    `JOB_HEARTBEAT_INTERVAL_SECONDS` meanwhile.
 5. **Finish.** `jobs.complete` (done, stats) or `jobs.fail_or_retry` (back to
@@ -137,8 +140,8 @@ across all of it deciding what is believed and which sites are read at all.
    interval settings to the same values in `backend/.env`: the UI reads the
    default from the backend and the API refuses an interval below the floor.
 
-2. **A watch with open slots is hunted on its own; a full one is not hunted at
-   all**, so a full watch costs nothing until a slot frees. A completed hunt
+2. **A watch with open slots is hunted on its own; a full one gets no new
+   hunts**, so a full watch costs nothing until a slot frees. A completed hunt
    queues its pair's next one while the watch has room and `watches.hunt` is
    on: at once after a save, otherwise `payload.backoff_minutes` out, doubling per empty hunt from
    `HUNT_BACKOFF_MIN_MINUTES` to `HUNT_BACKOFF_CAP_MINUTES` (15 → 360,
@@ -152,19 +155,25 @@ across all of it deciding what is believed and which sites are read at all.
    backend (same value in `backend/.env`) answers `POST /api/jobs` for a hunt
    with 409 `hunting_disabled`.
 
-3. **A person's "hunt now" on a full watch is a swap hunt**, the one hunt a
-   full watch gets. The backend flags it `payload.swap = true` (`services/jobs.py::_hunts`); the
-   sweep, successors and wakes never do. `run_hunt_job` then replaces the
-   `TRACKING SLOTS` prompt block with `TRACKED LISTINGS`, weakest first
-   (cheapest: highest price; best match: lowest score, higher price breaking a
-   tie). `disable_listing(id, reason="replaced")` only records the pick on
-   `UnitContext.swap`; the next `save_listing`, with the candidate's `price`,
-   makes the trade — retires the old listing and saves the new one in one
-   transaction under a lock on the watch row. Code is the backstop:
-   `save_listing` on a full watch answers `SLOTS FULL:` without a pick, after
-   the hunt's one swap, for a price the bands disbelieve, or in cheapest mode
-   unless the price is strictly lower than the replaced listing's last
-   confirmed one; a refused save changes nothing. A `replaced` URL stays in
+3. **A hunt that finds its watch full is a swap hunt.** Hunts run one site at
+   a time, so whichever site goes first can fill every slot; the other sites'
+   hunts, already queued, then run as swap hunts rather than skipping, so
+   every site gets its say. Nothing queues a new hunt for a full watch, so
+   this is one pass per queued site each time the watch fills. A person's
+   "hunt now" on a full watch is one too (the backend flags it
+   `payload.swap = true`, `services/jobs.py::_hunts`; the agent needs no
+   flag). `run_hunt_job` replaces the `TRACKING SLOTS` prompt block with
+   `TRACKED LISTINGS`, weakest first (`database.weakest_first` — cheapest:
+   highest price; best match: lowest score, higher price breaking a tie).
+   Every `save_listing` on a full watch is a trade, and code picks what it
+   trades away: the weakest tracked listing, ranked under a lock on the watch
+   row, retired in the transaction that saves the new one. The reply
+   (`TRADED:`) names the new weakest, and a hunt trades as often as the site
+   has something better. `save_listing` answers `SLOTS FULL:` outside a swap
+   hunt, for a price the bands disbelieve, in cheapest mode unless the price
+   is strictly lower than the weakest's last confirmed one, and in best-match
+   mode unless the match score is higher, or equal at a lower price; a
+   refused save changes nothing. A `replaced` URL stays in
    `get_known_listing_urls` for `REPLACED_HIDDEN_FOR` (24 h, timed from the
    swap's `listing_ended` event), and re-saving it later brings back the same
    row with its history — unlike sold/ended/auction/untracked, which answer
@@ -232,7 +241,8 @@ across all of it deciding what is believed and which sites are read at all.
    to the model is described to it by its docstring, so keep them accurate and
    imperative and update them whenever behavior changes; errors go back as
    strings the model can act on (`Error:`, `SKIPPED:`, `SLOTS FULL:`,
-   `REFUSED:`). The watch, item and site a call is about are never arguments:
+   `REFUSED:`, `TRADED:`, `ALREADY RECORDED:` — a hunt reads each listing
+   once, `UnitContext.observed`). The watch, item and site a call is about are never arguments:
    the orchestrator binds an `observations.UnitContext` onto the run config,
    and each tool reads it through the injected `ToolRuntime` (`tools.unit_of`),
    which never appears in the tool schema. A `listing_id` the model does pass
