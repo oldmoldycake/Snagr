@@ -67,7 +67,7 @@ backend/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–018 (linear chain); the backend owns the canonical schema (D1)
+├── migrations/            # Alembic revisions 001–018 (linear chain); the backend owns the canonical schema
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -164,7 +164,7 @@ Find any `endpoints.ts` function here:
    summary, cancel (404 → 403 → 422 → 409, permission before state) and every
    pushed frame (`services/events.py`), so push and backfill can never disagree.
 
-   Unlike the runs this replaced, there is **no event-level rule**: a job belongs
+   There is **no event-level rule**: a job belongs
    to one watch, so seeing the job is seeing its events. `listing.checked` frames
    are gated by listing ownership instead, which is the same person. Reconnects
    never infer gaps from seq arithmetic; the client refetches each visible
@@ -195,7 +195,7 @@ Find any `endpoints.ts` function here:
    `agent/jobs.py::add_hunt_wakes`), and a user's "hunt now" forgets it too.
    On a full watch "hunt now" is still queued, flagged `payload.swap = true`:
    the swap hunt, the one hunt a full watch gets, which may trade its
-   weakest listing for a better one (decision 10; the agent does the trade).
+   weakest listing for a better one (the agent does the trade).
    `HUNT_ENABLED` is the operator's kill switch,
    set in both env files: under `false` the agent claims no hunts, so
    `POST /api/jobs {kind: 'hunt'}` answers 409 `hunting_disabled` rather than
@@ -214,7 +214,7 @@ Find any `endpoints.ts` function here:
    tells it from an absent key), and a shorter interval pulls the watch's
    pending checks forward in the same transaction.
 
-5. **Vision visibility splits three ways (D-V11), enforced in three places.**
+5. **Vision visibility splits three ways, enforced in three places.**
    An item's reference *library* is communal — every watcher of the item reads
    the same gold references — but the *review queue* is scoped to the capturing
    watch's owner, **admins included**: you review what your own hunts captured,
