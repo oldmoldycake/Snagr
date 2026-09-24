@@ -1,6 +1,6 @@
 # Two-stage build (mirrors backend/Dockerfile): a build stage for wheels, then
 # a slim runtime with only the venv. DINOv3 weights are NOT baked into the
-# image — they are gated under Meta's license (D-V1). The container downloads
+# image — they are gated under Meta's license. The container downloads
 # them on first start into /home/vision/.cache/huggingface; compose mounts a
 # named volume there so restarts don't re-download.
 

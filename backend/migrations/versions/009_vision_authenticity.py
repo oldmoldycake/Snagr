@@ -1,6 +1,6 @@
 """vision authenticity: reference library, scans, listing images, thresholds
 
-The visual-authenticity feature (design decisions D-V1…D-V12):
+The visual-authenticity feature:
 vision_references is the per-item gold library the vision sidecar scores
 against; vision_scans stores one verdict per (watch, listing_url) — listing
 badges join on it rather than storing a copy; vision_listing_images holds

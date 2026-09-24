@@ -59,8 +59,8 @@ services:
       - backend
 
   # --- vision profile (opt-in): docker compose --profile vision up --build ------
-  # The visual-authenticity sidecar and its object store. Optional by design
-  # (D-V1): with VISION_SIDECAR_URL unset in backend/agent the feature is off
+  # The visual-authenticity sidecar and its object store. Optional by design:
+  # with VISION_SIDECAR_URL unset in backend/agent the feature is off
   # and plain `docker compose up` is unchanged. LAN-INTERNAL, UNAUTHENTICATED —
   # publish these ports to trusted interfaces only.
   minio:

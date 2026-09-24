@@ -38,8 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7 # needed for push-event diffs
       # `agent` and `vision` include the backend schema sources: agent/database.py
-      # and vision/db.py are hand-kept mirrors of the backend models (Decision
-      # D1), so schema changes re-run both suites. The reverse edges are
+      # and vision/db.py are hand-kept mirrors of the backend models (the backend
+      # owns the schema), so schema changes re-run both suites. The reverse edges are
       # deliberately absent — the backend imports nothing from agent/ or vision/.
       - uses: dorny/paths-filter@v4
         id: filter
@@ -190,7 +190,7 @@ jobs:
           --health-retries 10
     env:
       # Must NOT already end in /snagr_test_vision — conftest asserts its
-      # rewrite changed the URL. Sync driver: the sidecar is psycopg (D-V3).
+      # rewrite changed the URL. Sync driver: the sidecar is psycopg.
       DATABASE_URL: postgresql+psycopg://snagr:snagr@localhost:5432/snagr
     steps:
       - uses: actions/checkout@v7

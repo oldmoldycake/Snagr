@@ -9,7 +9,7 @@ Snagr — a self-hosted price tracker. Four independently-deployed components in
 - **`agent/`** — the hunter. A daemon that claims jobs from a `jobs` table in Postgres and works them: hunting one (watch, site) pair with a LangChain agent over a headless browser (Playwright MCP), re-reading one listing's price (usually with no model at all), or refreshing an item's market stats (plain HTTP + SearXNG, with a model to parse what it fetched). `main.py --serve`, or `--once` under cron.
 - **`backend/`** — FastAPI (async SQLAlchemy 2.0 / asyncpg) JSON API under `/api`. Serves the frontend, queues work for the hunter, delivers notifications, and exposes the same operations to agents as MCP tools at `POST /api/mcp` (`app/mcp/`).
 - **`frontend/`** — React 19 + Vite + TS + Tailwind v4 SPA. Talks to the backend over same-origin `/api`.
-- **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, S3-compatible object store — MinIO under compose). Off unless `VISION_SIDECAR_URL` is set in `backend/.env` and the agent's env (D-V1).
+- **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, S3-compatible object store — MinIO under compose). Off unless `VISION_SIDECAR_URL` is set in `backend/.env` and the agent's env.
 
 External services the stack needs but doesn't ship: Postgres, a Playwright MCP server, a SearXNG instance (market-price grounding), an LLM provider.
 
@@ -96,7 +96,7 @@ Invariants that hold everywhere (details in STRUCTURE.md → Conventions):
 - **Auth** is httpOnly-cookie sessions (short-lived `snagr_access` JWT + DB-backed rotating `snagr_refresh`); JS never sees a token. **API tokens** (`Authorization: Bearer snagr_pat_…`, sha256 at rest) are the second credential: scoped `read` / `write` / `jobs`, never reach `/api/auth/me`, `/api/me/*` or `/api/admin/*` (403 `forbidden`). `MCP_ENABLED=false` switches bearer auth and `/api/mcp` off.
 - **Vision routes are gated on `settings.vision_enabled`**: unset, every mutation and the image proxy answer 503 `vision_unavailable`, the two GET lists return empty data, and `InstanceInfo.vision_enabled: false` hides every vision surface.
 
-## Schema ownership (Decision D1)
+## Schema ownership
 
 The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`, a linear chain currently ending at 018). The agent (`agent/database.py`) and the vision sidecar (`vision/db.py`) each keep a **column-compatible subset** of the same ORM models — don't restructure them, and never run `Base.metadata.create_all()` from either against the live DB. Schema changes go through a new Alembic revision (and, if it adds triggers, the two conftests — see Testing model). `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema. Migration 009 needs the **pgvector** extension and prechecks `pg_extension`, failing with instructions rather than running `CREATE EXTENSION` itself (superuser-only).
 
