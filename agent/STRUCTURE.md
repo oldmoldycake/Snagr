@@ -11,7 +11,7 @@ one item's market-price stats. `main.py --serve` runs until stopped (compose);
 
 **The schema is not the agent's.** `database.py` holds a column-compatible
 subset of `backend/app/models.py`, which owns the canonical schema and every
-Alembic migration (D1). Schema changes go through a backend revision; never run
+Alembic migration. Schema changes go through a backend revision; never run
 `Base.metadata.create_all()` from here against the live DB.
 **`agent/.env.example` is the source of record for configuration** — every knob
 is optional there and explained; the table at the end summarizes it.
@@ -42,7 +42,7 @@ agent/
 ├── notify.py          # the target-hit *decision* only (pure): is this reading a crossing, and what is the owner told
 ├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it
 ├── config.py          # settings from env/.env — every one except DATABASE_URL (see Conventions)
-├── database.py        # engine + session factory, the ORM subset of backend/app/models.py (D1), the read/write helpers the units use
+├── database.py        # engine + session factory, the ORM subset of backend/app/models.py, the read/write helpers the units use
 ├── Dockerfile         # 2-stage: build venv → slim runtime; CMD is --once, compose overrides it with --serve
 ├── requirements.txt   # pinned deps incl. the LangChain provider packages; ruff unpinned (CI pins it)
 ├── pytest.ini         # testpaths + pythonpath=. (flat modules, not a package)
@@ -138,9 +138,9 @@ across all of it deciding what is believed and which sites are read at all.
    default from the backend and the API refuses an interval below the floor.
 
 2. **A watch with open slots is hunted on its own; a full one is not hunted at
-   all** (decision 9). A completed hunt queues its pair's next one while the
-   watch has room and `watches.hunt` is on: at once after a save, otherwise
-   `payload.backoff_minutes` out, doubling per empty hunt from
+   all**, so a full watch costs nothing until a slot frees. A completed hunt
+   queues its pair's next one while the watch has room and `watches.hunt` is
+   on: at once after a save, otherwise `payload.backoff_minutes` out, doubling per empty hunt from
    `HUNT_BACKOFF_MIN_MINUTES` to `HUNT_BACKOFF_CAP_MINUTES` (15 → 360,
    `reason='backoff'`). A freed slot — `disable_listing`, a recheck that sees the
    listing sold/ended/auction-only, the user's untrack — wakes the watch's hunts
@@ -152,8 +152,8 @@ across all of it deciding what is believed and which sites are read at all.
    backend (same value in `backend/.env`) answers `POST /api/jobs` for a hunt
    with 409 `hunting_disabled`.
 
-3. **A person's "hunt now" on a full watch is a swap hunt** (decision 10). The
-   backend flags it `payload.swap = true` (`services/jobs.py::_hunts`); the
+3. **A person's "hunt now" on a full watch is a swap hunt**, the one hunt a
+   full watch gets. The backend flags it `payload.swap = true` (`services/jobs.py::_hunts`); the
    sweep, successors and wakes never do. `run_hunt_job` then replaces the
    `TRACKING SLOTS` prompt block with `TRACKED LISTINGS`, weakest first
    (cheapest: highest price; best match: lowest score, higher price breaking a
@@ -187,7 +187,7 @@ across all of it deciding what is believed and which sites are read at all.
    `microdata` | `locator`, the last meaning a replayed css path); §7 query 1 of
    `docs/design/perpetual-hunter.md` measures the share.
 
-5. **A site that stops answering is left alone** (`breaker.py`, decision 12).
+5. **A site that stops answering is left alone** (`breaker.py`).
    `SITE_BREAKER_ERRORS` (5) consecutive failed reads pause the site for
    `SITE_BREAKER_MINUTES` (60), doubling per trip up to `SITE_BREAKER_CAP_MINUTES`
    (1440); any successful read resets the count, and a disbelieved price still
