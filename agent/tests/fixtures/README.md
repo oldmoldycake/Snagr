@@ -31,11 +31,23 @@ the browser produced.
 | `craigslist.json` | Craigslist for-sale post | minimal page that still carries `offers.price`; the post title also contains the price |
 | `adafruit.json` | Adafruit product page | the only captured page carrying all three structured forms — JSON-LD, `product:price:amount` and `[itemprop=price]` — so it drives the priority test |
 | `gog.json` | GOG store page | JSON-LD whose `offers` is a **list**: `offers[0].price` |
-| `allbirds.json` | Allbirds product page | no price anywhere the extractor can reach → no locator; also exercises Tailwind's escaped class names |
+| `allbirds.json` | Allbirds collection page (`/collections/mens`) | no price anywhere the extractor can reach → no locator; also exercises Tailwind's escaped class names |
 | `pricecharting.json` | Price Charting guide page | hits the 60-candidate cap, and every candidate is someone else's price |
 | `gone_404.json` | a 404 page | nothing at all: no JSON-LD, no meta, no candidates |
 | `hashed_classes.json` | a constructed page, captured the same way | emotion/styled-components/JSS class names must never enter a selector; `data-testid` wins instead |
 | `mcp_reply_*.txt` | raw `browser_evaluate` replies | the `### Result` framing `parse_result` has to survive, for an object, a string, `undefined` and `null` |
+
+The `static_*.html` files are raw HTML for the browserless rung (`test_static.py`), not
+extractor output: small pages, some trimmed from real ones (seller wording redacted as above),
+each standing for one thing a plain GET can receive:
+
+| Fixture | What it is here for |
+|---|---|
+| `static_jsonld.html` | JSON-LD and a `product:price:amount` meta tag both in the raw HTML — either locator reads the price without a browser |
+| `static_meta_only.html` | only the meta tag carries the price — only meta candidates are found |
+| `static_malformed.html` | one unparseable JSON-LD block before a good one — the bad block must be skipped, not fatal |
+| `static_neither.html` | the price exists only in the rendered DOM — the static rung must give way to the browser |
+| `static_challenge.html` | a bot-challenge page ("Just a moment...") — states no price, so the check falls through to the browser |
 
 Two shapes are not from the sites the design doc named. Mercari, Reverb and
 Back Market all served a challenge page to the headless browser (0 anchors,
