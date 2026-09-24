@@ -28,5 +28,3 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query"
 # Tests are named for what they check, and migrations for what they change.
 "**/tests/**" = ["D1"]
 "backend/migrations/**" = ["D1"]
-# Not yet held to docstring coverage.
-"backend/**" = ["D1"]
