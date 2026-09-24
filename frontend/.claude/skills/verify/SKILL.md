@@ -27,10 +27,14 @@ cd frontend && npm run dev -- --port 5174 --strictPort   # 5173 is often taken b
 ## Drive
 
 The Playwright MCP wants branded Chrome (`/opt/google/chrome/chrome`), which isn't installed.
-Use playwright-core from the npx cache with the cached chromium instead:
+Use playwright-core from the npx cache with the cached chromium instead. Both paths move
+when npx or Playwright updates, so look them up rather than trusting a hash:
 
-- playwright-core: `~/.npm/_npx/9833c18b2d85bc59/node_modules/playwright-core/index.mjs`
-- chromium: `~/.cache/ms-playwright/chromium-1223/chrome-linux64/chrome` (pass as `executablePath`)
+- playwright-core: `ls -d ~/.npm/_npx/*/node_modules/playwright-core` → import its `index.mjs`
+  (as of 2026-09-23: `~/.npm/_npx/361ceb562f3b3235/…`, v1.61.1)
+- chromium: the revision that playwright-core's `browsers.json` names for `chromium`, under
+  `~/.cache/ms-playwright/chromium-<rev>/chrome-linux64/chrome` (pass as `executablePath`;
+  1.61.1 wants `chromium-1228`)
 
 Script pattern: launch headless, `page.on('console')` + `page.on('response')` for `/api/` URLs,
 `navigator.serviceWorker.getRegistrations()` to detect MSW, screenshot, dump `document.body.innerText`.

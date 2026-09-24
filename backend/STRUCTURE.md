@@ -64,7 +64,7 @@ backend/
 │       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
 │       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
-│   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema, per-test truncate, the CSRF header
+│   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
 ├── migrations/            # Alembic revisions 001–018 (linear chain); the backend owns the canonical schema (D1)
@@ -171,7 +171,8 @@ Find any `endpoints.ts` function here:
    backfill on every snapshot and the filtered response is authoritative. This is
    **peer privacy only**: the instance operator can always read the DB.
 
-   **The queue's own rules live half here and half in the agent.** Migration 015's
+   **The queue's own rules live half here and half in the agent** (the agent's
+   half: [`agent/STRUCTURE.md`](../agent/STRUCTURE.md)). Migration 015's
    partial unique index allows one *open* job per target, so every insert on both
    sides is `ON CONFLICT DO NOTHING` and `POST /api/jobs` answers 202 with
    whatever it queued or brought forward — never a 409 for a duplicate. Creating

@@ -1,8 +1,9 @@
 # Snagr frontend
 
-React 19 + Vite + TypeScript + Tailwind v4 + Recharts + TanStack Query SPA for Snagr, a
-self-hosted price-tracking app. Dark "night-hunt" UI: set a target price, run the LLM agent,
-watch it work live, snag the deal.
+React 19 + Vite + TypeScript + Tailwind v4 + TanStack Query SPA for Snagr, a
+self-hosted price-tracking app. Dark "night-hunt" UI: set a target price, let the hunter
+work, watch it live, snag the deal. The price charts are hand-rolled SVG; Recharts draws
+only the category change chart.
 
 ## Run it
 
@@ -31,6 +32,7 @@ is what fills the checks tail. Mock data resets on page reload; the session surv
 - `npm run dev` — dev server (proxies `/api` to `localhost:8000`)
 - `npm run build` — type-check + production build to `dist/`
 - `npm run lint` — oxlint (react / typescript / oxc plugins, see `.oxlintrc.json`)
+- `npm test` — vitest over `src/**/*.test.ts` (pure logic, e.g. `features/items/rail.test.ts`)
 - `npm run preview` — serve the production build locally
 - `npx tsc -b` — type-check only
 
@@ -47,10 +49,12 @@ Multi-stage build → nginx serving the SPA with `/api` proxied to a `backend:80
 
 ```
 src/
+├── main.tsx      boot: starts MSW only when VITE_USE_MOCKS is exactly 'true'
+├── router.tsx    every route (old /runs links redirect to /activity)
 ├── api/          contract: types.ts (API mirror), client.ts (cookie auth + refresh), endpoints.ts, queries.ts (query keys)
 ├── mocks/        MSW handlers + seeded fixture store + the scripted SSE demo hunt and check loop
 ├── features/     auth, dashboard, categories, items, sites, activity (SSE provider + the Activity page, ticker and sheet), settings, vision (review queue + reference library)
-├── components/   ui/ primitives, charts/ (theme, sparkline, range selector), layout/ (shell, masthead)
+├── components/   ui/ primitives, charts/ (theme, the shared SVG price plot, sparkline, tooltip, range selector), layout/ (shell, masthead)
 ├── lib/          money (decimal strings), time (ranges), cn, useMediaQuery
 └── styles/       globals.css — all design tokens
 ```
@@ -62,8 +66,8 @@ is the behavioral oracle (status codes and `error.code`) the backend is built ag
 ## Design system — "Night Hunt"
 
 `src/styles/globals.css` is the single token source (`src/components/charts/chartTheme.ts`
-mirrors the chart hexes as JS literals because Recharts can't read CSS vars — change both
-together). Dark-only, by design.
+mirrors the chart hexes as JS literals because SVG attributes and Recharts props need literal
+values, not CSS vars — change both together). Dark-only, by design.
 
 - **Surfaces** are a green-cast night ramp: `page → well → surface → raised → overlay`
   (`well` is for inset grounds: search, terminal logs, list footers). Borders are always
@@ -79,6 +83,7 @@ together). Dark-only, by design.
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
   sentence plus one line of tonight's totals — aggregates only, since per-item facts appear
   exactly once, in the watch table; `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
-  target (lume within 5%); `ListingsBoard` extends the ladder into a per-listing price rail
-  (right = closing on ⌖, drift marks from the chart's range); `TerminalLog` is the one voice
+  target (lume within 5%); `ListingsBoard` extends the ladder into one log-scale price rail
+  per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
+  ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.
