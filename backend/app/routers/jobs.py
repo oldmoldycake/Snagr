@@ -36,6 +36,12 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 async def enqueue_jobs(
     body: JobCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
+    """Queue hunts or rechecks for a scope; 202 with the jobs now open for it.
+
+    Asking again brings an already-queued job forward instead of adding a second
+    one. 404 when the scope holds none of the caller's watches; 409
+    hunting_disabled for a hunt while HUNT_ENABLED is off. API tokens need the
+    `jobs` scope."""
     try:
         queued = await jobs_service.enqueue(db, user, body.kind, body.scope, body.scope_id)
         return DataList(data=queued)
@@ -49,6 +55,7 @@ async def list_jobs(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """The jobs the caller may see, filtered and paged."""
     try:
         return await jobs_service.list_jobs(db, user, filters)
     except SQLAlchemyError as e:
@@ -58,6 +65,8 @@ async def list_jobs(
 # before /{id}: "summary" would otherwise be parsed as a job id
 @router.get("/summary", response_model=JobsSummary)
 async def jobs_summary(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """The queue at a glance: running and pending counts, next check and hunt,
+    paused sites."""
     try:
         return await jobs_service.summary(db, user)
     except SQLAlchemyError as e:
@@ -66,6 +75,7 @@ async def jobs_summary(user=Depends(current_user), db: AsyncSession = Depends(ge
 
 @router.get("/{job_id}", response_model=Job)
 async def get_job(job_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """One job; a job the caller may not see 404s like a missing one."""
     try:
         return await jobs_service.get_job(db, job_id, user)
     except SQLAlchemyError as e:
@@ -80,6 +90,8 @@ async def get_job_events(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """A job's events after `after_seq` — the backfill for an SSE reconnect.
+    422 validation_error when `limit` exceeds MAX_EVENTS."""
     if limit > jobs_service.MAX_EVENTS:
         raise err(
             422,
@@ -100,6 +112,11 @@ async def get_job_events(
     dependencies=[Depends(csrf_guard), Depends(require_scope("jobs"))],
 )
 async def cancel_job(job_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+    """Cancel a pending or running hunt.
+
+    404 for a job the caller may not see, 403 forbidden for one they don't own
+    unless admin, 422 for a recheck, 409 job_finished once terminal. A running hunt
+    stops at its next model step. API tokens need the `jobs` scope."""
     try:
         return await jobs_service.cancel_job(db, job_id, user)
     except SQLAlchemyError as e:

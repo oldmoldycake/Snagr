@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api", tags=["instance"])
 
 @router.get("/instance", response_model=InstanceInfo)
 async def get_instance(db: AsyncSession = Depends(get_db)) -> InstanceInfo:
+    """Instance metadata and feature flags. Public — no auth."""
     user_count = await db.scalar(select(func.count()).select_from(User))
     return InstanceInfo(
         version=settings.APP_VERSION,

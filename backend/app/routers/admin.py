@@ -1,5 +1,5 @@
-"""Admin — /api/admin/*  (Phase 4). Every route requires admin (require_admin
-depends on current_user, so it covers auth too)."""
+"""User and invite administration — /api/admin/*. Every route requires an admin
+cookie session (require_admin depends on current_user, so it covers auth too)."""
 
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -47,6 +47,7 @@ async def _item_counts(db: AsyncSession) -> dict[int, int]:
 
 @router.get("/users", response_model=DataList[AdminUser])
 async def list_users(db: AsyncSession = Depends(get_db)):
+    """Every user on the instance, each with their watch count as item_count."""
     users = (await db.scalars(select(User).order_by(User.id))).all()
     counts = await _item_counts(db)
     return DataList(data=[admin_user_out(u, counts.get(u.id, 0)) for u in users])
@@ -56,6 +57,7 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 async def update_user(
     user_id: int, body: AdminUserUpdateRequest, db: AsyncSession = Depends(get_db)
 ):
+    """Activate/deactivate a user or change their role; 404 for an unknown user."""
     user = await _get_user(db, user_id)
     if body.is_active is not None:
         user.is_active = body.is_active
@@ -72,6 +74,11 @@ async def update_user(
 async def delete_user(
     user_id: int, admin=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
+    """Delete a user along with their sessions and the invites they issued.
+
+    422 cannot_delete_self for the caller's own account; 409 user_has_items while
+    they still have watches, since those anchor listings and price history —
+    deactivating is the way to lock such a user out."""
     if user_id == admin.id:
         raise err(422, "cannot_delete_self", "You cannot delete your own account")
     user = await _get_user(db, user_id)
@@ -97,6 +104,7 @@ async def delete_user(
 
 @router.get("/invites", response_model=DataList[Invite])
 async def list_invites(db: AsyncSession = Depends(get_db)):
+    """Pending invites — unused and not yet expired."""
     # pending only: unused and unexpired, like the mock
     now = datetime.now(UTC)
     invites = (
@@ -118,6 +126,7 @@ async def list_invites(db: AsyncSession = Depends(get_db)):
 async def create_invite(
     body: InviteCreateRequest, admin=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
+    """Issue a single-use invite for the user role, valid for INVITE_TTL_DAYS."""
     invite = Invites(
         token=secrets.token_urlsafe(24),
         email=body.email or None,
@@ -138,6 +147,7 @@ async def create_invite(
     dependencies=[Depends(csrf_guard)],
 )
 async def revoke_invite(invite_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete an invite so its link stops working; 404 for an unknown invite."""
     invite = await db.get(Invites, invite_id)
     if invite is None:
         raise err(404, "not_found", f"Invite {invite_id} does not exist")
