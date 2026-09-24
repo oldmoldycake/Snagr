@@ -45,12 +45,13 @@ from database import (
 )
 from jobs import append_event, status
 from langchain.agents import create_agent
+from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddleware
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from llm import callbacks
 from locators import PageReader, reply_text
-from observations import Swap, UnitContext
+from observations import UnitContext
 from prompt import generate_prompt, generate_recheck_prompt
 from tools import (
     check_images,
@@ -70,6 +71,21 @@ log = logging.getLogger(__name__)
 # a file picker, and windows the orchestrator is not watching.
 BLOCKED_BROWSER_TOOLS = frozenset(
     {"browser_run_code_unsafe", "browser_run_code", "browser_file_upload", "browser_tabs"}
+)
+
+# Tool results the model still sees in full; older ones are cleared. Every
+# turn re-sends the history, so each kept page snapshot is paid for again on
+# every later turn. Three covers the page in hand and the calls made on it.
+PAGES_KEPT = 3
+
+# The DB tools' replies are a line or two each and are the model's record of
+# what it has saved and rejected, so they are never cleared.
+HUNT_RECORD_TOOLS = (
+    "save_listing",
+    "save_price_check",
+    "log_listing_check",
+    "disable_listing",
+    "check_images",
 )
 
 # How often a running hunt asks whether it has been cancelled. Between model
@@ -115,7 +131,7 @@ def agent_config(
       category: The item's category slug, for the category tag.
     """
     tags = [f"kind:{kind}", f"site:{site_name}", f"category:{category}"]
-    if unit.swap is not None:
+    if unit.swap:
         tags.append("swap")
     session_id = f"watch-{unit.watch_id}"
     metadata = {
@@ -218,6 +234,10 @@ def build_hunt_agent(llm, browser_tools: list):
 
     disable_listing is in this toolset because the hunt prompt tells the model
     to call it after a sold/ended save_price_check.
+
+    A hunt walks page after page, so all but its latest few page reads are
+    cleared from what the model is sent (PAGES_KEPT). A recheck reads one
+    page and needs no trimming.
     """
     tools = [*browser_tools, save_price_check, save_listing, log_listing_check, disable_listing]
     # Hunts only (rechecks never scan images), and only when the sidecar is
@@ -225,7 +245,19 @@ def build_hunt_agent(llm, browser_tools: list):
     # fully off.
     if VISION_SIDECAR_URL:
         tools.append(check_images)
-    return create_agent(llm, tools)
+    # Only what is sent to the model is trimmed; the run's own messages keep
+    # every result, which is what _require_browser_success reads.
+    trim_pages = ContextEditingMiddleware(
+        edits=[
+            ClearToolUsesEdit(
+                trigger=0,
+                keep=PAGES_KEPT,
+                exclude_tools=HUNT_RECORD_TOOLS,
+                placeholder="[page cleared from view — open it again if you still need it]",
+            )
+        ]
+    )
+    return create_agent(llm, tools, middleware=[trim_pages])
 
 
 def tokens_spent(messages: list) -> tuple[int, int]:
@@ -354,17 +386,20 @@ async def _learn_after_unit(unit: UnitContext, listing_id: int, listing_url: str
         log.warning(f"Post-unit locator learn failed for listing {listing_id}: {e}")
 
 
-async def run_hunt_job(agent, job_id: int, row, browser, *, swap: bool = False) -> dict:
+async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
     """One hunt: search a site for listings that fit one watch.
 
     The model is told how many of the watch's slots are already in use and
     which URLs this pair already knows, so it neither re-judges a rejection
     nor over-fills the watch. Raises on failure — the worker counts it.
 
-    A swap hunt (swap=True, a person's "hunt now" on a full watch) is the one
-    hunt that runs with no open slot: the model is shown the tracked listings
-    weakest first and may trade the weakest for something better, once.
-    Should a slot have freed since it was queued, it is an ordinary hunt.
+    A hunt that finds its watch full is a swap hunt: the model is shown the
+    tracked listings weakest first, and every save trades the weakest for
+    something better. That is how a site searched after another filled the
+    watch still gets its say. The queue never adds a hunt for a full watch,
+    so this costs one pass over each site that was already queued, not a
+    standing hunt. Should a slot have freed since it was queued, it is an
+    ordinary hunt.
 
     Returns:
       The unit's tally plus the tokens it spent, which becomes the job's stats.
@@ -379,26 +414,16 @@ async def run_hunt_job(agent, job_id: int, row, browser, *, swap: bool = False) 
     mode = "best match" if row["selection_mode"] == "best_match" else "cheapest"
 
     # Re-read right before searching: a slot can fill between the moment the
-    # job was queued and the moment it runs, and a full watch should cost no
-    # browser time and no tokens — unless a person asked for
-    # something better than what it holds.
+    # job was queued and the moment it runs, and a hunt on a full watch can
+    # only trade, so it needs to know what it would be trading away.
     tracked = await get_active_listing_count(watch_id)
     open_slots = max_listings - tracked
     swap_listings = None
-    if open_slots <= 0 and not swap:
-        log.info(f"Skipping {site_name} for {item_name}: all {max_listings} slots in use")
-        await append_event(
-            job_id,
-            "info",
-            "job_started",
-            f"All {max_listings} slots for {item_name} are filled — nothing to hunt for",
-        )
-        return {"listings_checked": 0, "prices_found": 0, "new_listings": 0, "errors": 0}
     if open_slots <= 0:
-        swap_listings = await get_tracked_listings(watch_id)
+        swap_listings = await get_tracked_listings(watch_id, row["selection_mode"])
         started = (
             f'Hunting {site_name} for something better than "{item_name}"\'s weakest '
-            f"tracked listing — all {max_listings} slots filled, {mode} mode"
+            f"tracked listings — all {max_listings} slots filled, {mode} mode"
         )
     else:
         started = (
@@ -454,7 +479,7 @@ async def run_hunt_job(agent, job_id: int, row, browser, *, swap: bool = False) 
         site_base_url=row["base_url"],
         browser=browser,
         job_id=job_id,
-        swap=Swap() if swap_listings is not None else None,
+        swap=swap_listings is not None,
     )
 
     config = agent_config(

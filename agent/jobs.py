@@ -19,13 +19,15 @@ listing that dropped out of the queue would silently stop being watched, which
 is the one failure nobody would notice. Untracking the listing is what ends
 the chain.
 
-**A watch with open slots is hunted on its own; a full one is not hunted at
-all.** A finished hunt queues the next one for its pair while there is room:
+**A watch with open slots is hunted on its own; a full one gets no new
+hunts.** A finished hunt queues the next one for its pair while there is room:
 at once when it saved something, further out each time it came back empty
 (15 → 30 → 60 … → 360 minutes, carried in `payload.backoff_minutes`). A slot
 freeing starts the waiting hunts over, and the hourly sweep puts back any
 pair that fell out of the chain — a failed hunt, a raised max_listings, a
-watch switched back on.
+watch switched back on. A hunt already queued when another site fills the
+watch still runs, as a swap hunt that trades up (agent.run_hunt_job), so
+every site gets searched; it just leaves no successor behind.
 
 Failures here PROPAGATE. Unlike the read helpers in database.py, which answer
 with an empty default so a hiccup skips optional work, a swallowed failure in

@@ -194,8 +194,9 @@ Find any `endpoints.ts` function here:
    watch's hunts with their backoff forgotten (`wake_hunts`, the twin of
    `agent/jobs.py::add_hunt_wakes`), and a user's "hunt now" forgets it too.
    On a full watch "hunt now" is still queued, flagged `payload.swap = true`:
-   the swap hunt, the one hunt a full watch gets, which may trade its
-   weakest listing for a better one (the agent does the trade).
+   a swap hunt, which may trade the watch's weakest listings for better ones
+   (the agent does the trades, and runs any hunt that finds its watch full
+   as one).
    `HUNT_ENABLED` is the operator's kill switch,
    set in both env files: under `false` the agent claims no hunts, so
    `POST /api/jobs {kind: 'hunt'}` answers 409 `hunting_disabled` rather than

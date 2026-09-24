@@ -217,10 +217,7 @@ async def _run_hunt(job: dict) -> dict | None:
 
     async with open_browser_session() as (browser_tools, browser):
         agent = build_hunt_agent(build_llm(), browser_tools)
-        # a person's "hunt now" on a full watch, flagged by the backend: the
-        # one hunt that runs with no open slot, to trade up
-        swap = bool((job.get("payload") or {}).get("swap"))
-        stats = await bounded(run_hunt_job(agent, job["id"], row, browser, swap=swap))
+        stats = await bounded(run_hunt_job(agent, job["id"], row, browser))
     await breaker.record_outcome(
         row["site_id"], answered(stats), job_id=job["id"], detail="unreadable page"
     )

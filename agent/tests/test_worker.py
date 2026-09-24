@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager, contextmanager
 import pytest
 import worker
 from langchain_core.messages import AIMessage, ToolMessage
-from observations import Swap, UnitContext
+from observations import UnitContext
 
 import agent
 
@@ -202,9 +202,8 @@ def wire(monkeypatch, **overrides):
             },
         )
 
-    async def hunt(agent_, job_id, row, browser, *, swap):
+    async def hunt(agent_, job_id, row, browser):
         seen.setdefault("hunts", []).append(job_id)
-        seen.setdefault("swaps", []).append(swap)
         if "hunt_raises" in overrides:
             raise overrides["hunt_raises"]
         return overrides.get(
@@ -333,13 +332,6 @@ class TestHuntPath:
         stats = asyncio.run(worker.run_job(job("hunt")))
         assert stats["new_listings"] == 2
         assert stats["duration_ms"] >= 0
-
-    def test_only_a_job_flagged_swap_runs_as_a_swap_hunt(self, monkeypatch):
-        seen = wire(monkeypatch)
-        asyncio.run(worker.run_job(job("hunt", payload={"swap": True})))
-        asyncio.run(worker.run_job(job("hunt", payload={"backoff_minutes": 30})))
-        asyncio.run(worker.run_job(job("hunt")))
-        assert seen["swaps"] == [True, False, False]
 
 
 class TestGroundPath:
@@ -733,7 +725,7 @@ class TestTraceGrouping:
         ]
 
     def test_a_swap_hunt_is_tagged_as_one(self):
-        assert "swap" in unit_config("hunt", swap=Swap())["metadata"]["langfuse_tags"]
+        assert "swap" in unit_config("hunt", swap=True)["metadata"]["langfuse_tags"]
         assert "swap" not in unit_config("hunt")["metadata"]["langfuse_tags"]
 
     def test_the_ids_a_unit_is_bound_to_lead_back_to_its_job(self):
@@ -752,3 +744,104 @@ class TestTraceGrouping:
         config = unit_config("hunt")
         assert "unit" not in config["metadata"]
         assert config["configurable"]["unit"].watch_id == 12
+
+
+class TestHuntOnAFullWatch:
+    """A hunt still queued when another site filled the watch runs as a swap
+    hunt, so every site that was queued gets searched; the queue adding no
+    hunt for a full watch is what keeps that to one pass (test_jobs_db.py)."""
+
+    def _run(self, monkeypatch, tracked: int) -> dict:
+        seen = {}
+
+        async def stream(agent_, prompt, config, job_id):
+            seen["prompt"] = prompt
+            seen["unit"] = config["configurable"]["unit"]
+            return []
+
+        async def nothing(*args, **kwargs):
+            return []
+
+        async def count(watch_id):
+            return tracked
+
+        async def listings(watch_id, selection_mode):
+            return [
+                {
+                    "listing_id": n,
+                    "site_name": "OtherBay",
+                    "title": f"Widget #{n}",
+                    "price": None,
+                    "match_score": 70,
+                }
+                for n in range(1, tracked + 1)
+            ]
+
+        async def no_market(item_id):
+            return None
+
+        async def event(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(agent, "_stream", stream)
+        monkeypatch.setattr(agent, "get_active_listing_count", count)
+        monkeypatch.setattr(agent, "get_tracked_listings", listings)
+        monkeypatch.setattr(agent, "get_known_listing_urls", nothing)
+        monkeypatch.setattr(agent, "get_checked_urls", nothing)
+        monkeypatch.setattr(agent, "get_market_price", no_market)
+        monkeypatch.setattr(agent, "append_event", event)
+        row = {**hunt_row(max_listings=3), "category_slug": "widgets"}
+        asyncio.run(agent.run_hunt_job("hunt-agent", 7, row, browser=None))
+        return seen
+
+    def test_a_full_watch_is_searched_to_trade_up_not_skipped(self, monkeypatch):
+        seen = self._run(monkeypatch, tracked=3)
+        assert seen["unit"].swap
+        assert "TRACKED LISTINGS: all 3 slot(s) are filled" in seen["prompt"]
+
+    def test_a_watch_with_room_is_an_ordinary_hunt(self, monkeypatch):
+        seen = self._run(monkeypatch, tracked=1)
+        assert not seen["unit"].swap
+        assert "TRACKING SLOTS: 2 open" in seen["prompt"]
+
+
+class TestHuntContextTrimming:
+    """Every model turn re-sends the whole history, so a hunt that kept every
+    page snapshot would pay for its first page again on every later turn."""
+
+    def _middleware(self, monkeypatch):
+        built = {}
+
+        def create(llm, tools, **kwargs):
+            built.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(agent, "create_agent", create)
+        agent.build_hunt_agent("llm", [])
+        (middleware,) = built["middleware"]
+        return middleware
+
+    def _transcript(self) -> list:
+        messages = []
+        calls = [("browser_navigate", f"page {n}") for n in range(5)]
+        calls.insert(2, ("save_listing", "12"))
+        for n, (name, content) in enumerate(calls):
+            messages.append(
+                AIMessage(content="", tool_calls=[{"name": name, "args": {}, "id": f"c{n}"}])
+            )
+            messages.append(ToolMessage(content=content, name=name, tool_call_id=f"c{n}"))
+        return messages
+
+    def test_only_the_latest_pages_reach_the_model(self, monkeypatch):
+        middleware = self._middleware(monkeypatch)
+        messages = self._transcript()
+        (edit,) = middleware.edits
+        edit.apply(messages, count_tokens=lambda _: 1)
+
+        results = [m.content for m in messages if isinstance(m, ToolMessage)]
+        kept = results[-agent.PAGES_KEPT :]
+        assert kept == ["page 2", "page 3", "page 4"]
+        # what the model saved is its record, never cleared
+        assert "12" in results
+        cleared = [r for r in results[: -agent.PAGES_KEPT] if r != "12"]
+        assert cleared and all(r.startswith("[page cleared") for r in cleared)

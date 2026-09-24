@@ -14,7 +14,6 @@ import asyncio
 import pytest
 import tools
 from conftest import SITE_BASE_URL, unit_runtime
-from observations import Swap
 from validation import MAX_NOTES, MAX_SUMMARY, MAX_TITLE, clip_text
 
 LISTING_URL = f"{SITE_BASE_URL}/l1"
@@ -25,6 +24,13 @@ def run(coro):
 
 
 class TestSavePriceCheck:
+    def test_a_hunt_reads_each_listing_once(self):
+        # the price save_listing recorded is the reading; a second one seconds
+        # later is a wasted turn, and would corroborate a disbelieved price
+        runtime = unit_runtime(observed={7})
+        result = run(tools.save_price_check(7, True, "ok", 10, runtime=runtime))
+        assert result.startswith("ALREADY RECORDED: listing 7's price")
+
     def test_an_unknown_status_is_refused(self):
         result = run(tools.save_price_check(1, True, "unavailable", 10, runtime=unit_runtime()))
         assert result.startswith("Error: status must be one of ok, sold, ended, error")
@@ -110,16 +116,11 @@ class TestDisableListing:
         result = run(tools.disable_listing(1, reason, runtime=unit_runtime()))
         assert result.startswith("Error: reason must be one of sold, ended, auction")
 
-    def test_replaced_is_refused_outside_a_swap_hunt(self):
-        # only a person's "hunt now" on a full watch may trade a listing away;
-        # anywhere else "replaced" would just be an untrack with extra steps
-        result = run(tools.disable_listing(1, "replaced", runtime=unit_runtime()))
-        assert result.startswith('Error: reason "replaced" is only for a hunt')
-
-    def test_replaced_is_refused_after_the_one_swap(self):
-        runtime = unit_runtime(swap=Swap(done=True))
-        result = run(tools.disable_listing(1, "replaced", runtime=runtime))
-        assert result.startswith("Error: this hunt has already made its one swap")
+    def test_replaced_is_not_the_models_to_give(self):
+        # a swap hunt's trade is save_listing's to make, for the listing code
+        # ranks weakest; disable_listing can only end a listing
+        result = run(tools.disable_listing(1, "replaced", runtime=unit_runtime(swap=True)))
+        assert result.startswith("Error: reason must be one of sold, ended, auction")
 
 
 class TestTextCaps:

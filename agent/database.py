@@ -617,22 +617,31 @@ async def get_active_listing_count(watch_id: int) -> int:
         return (await session.execute(stmt)).scalar_one()
 
 
-async def get_tracked_listings(watch_id: int) -> list[dict]:
+async def get_tracked_listings(watch_id: int, selection_mode: str) -> list[dict]:
     """
-    The watch's active listings as a swap hunt weighs them: each with its
-    site, last confirmed price and match score — the facts the TRACKED
-    LISTINGS block ranks them by.
+    The watch's active listings as a swap hunt weighs them, weakest first:
+    each with its site, last confirmed price and match score — the facts the
+    TRACKED LISTINGS block shows.
 
     Raises on a failed query, like get_active_listing_count: a swap hunt
     that cannot see what it would be trading away has no business trading.
 
     Args:
       watch_id: The internal id of the watch.
+      selection_mode: The watch's mode, which decides what "weakest" means.
     Returns:
       One dict per active listing with keys listing_id, site_name, title,
       price (a Decimal, or None when no price was ever believed) and
-      match_score. Unordered — the prompt ranks them by selection mode.
+      match_score, ranked by weakest_first.
     """
+    async with AsyncSessionLocal() as session:
+        return await tracked_weakest_first(session, watch_id, selection_mode)
+
+
+async def tracked_weakest_first(session, watch_id: int, selection_mode: str) -> list[dict]:
+    """get_tracked_listings in the caller's transaction — what save_listing
+    reads under its lock on the watch row, so the listing it trades away is
+    the weakest at the moment the trade lands."""
     last_price = (
         select(PriceChecks.price)
         .where(PriceChecks.listing_id == Listings.id)
@@ -642,20 +651,40 @@ async def get_tracked_listings(watch_id: int) -> list[dict]:
         .limit(1)
         .scalar_subquery()
     )
-    async with AsyncSessionLocal() as session:
-        rows = await session.execute(
-            select(
-                Listings.id.label("listing_id"),
-                Sites.name.label("site_name"),
-                Listings.title,
-                last_price.label("price"),
-                Listings.match_score,
-            )
-            .join(Sites, Sites.id == Listings.site_id)
-            .where(Listings.watch_id == watch_id)
-            .where(Listings.active)
+    rows = await session.execute(
+        select(
+            Listings.id.label("listing_id"),
+            Sites.name.label("site_name"),
+            Listings.title,
+            last_price.label("price"),
+            Listings.match_score,
         )
-        return [dict(row) for row in rows.mappings()]
+        .join(Sites, Sites.id == Listings.site_id)
+        .where(Listings.watch_id == watch_id)
+        .where(Listings.active)
+    )
+    return weakest_first([dict(row) for row in rows.mappings()], selection_mode)
+
+
+def weakest_first(tracked: list[dict], selection_mode: str) -> list[dict]:
+    """
+    Rank a watch's tracked listings weakest first under its own mode, the
+    order a swap hunt trades them away in: in cheapest mode the highest
+    price (no believed price at all is weakest of all), in best-match mode
+    the lowest match score with the higher price breaking a tie. The id
+    settles whatever is left, so the order never depends on the query plan.
+    """
+
+    def price_key(row: dict):
+        # higher is weaker; unpriced sorts before every priced listing
+        return (row["price"] is not None, -(row["price"] or 0))
+
+    if selection_mode == "best_match":
+        return sorted(
+            tracked,
+            key=lambda row: (row["match_score"] or 0, *price_key(row), row["listing_id"]),
+        )
+    return sorted(tracked, key=lambda row: (*price_key(row), row["listing_id"]))
 
 
 async def get_price_context(listing_id: int) -> dict:
