@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/oldmoldycake/Snagr/compare/v0.4.0...v0.4.1) (2026-09-24)
+
+
+### Bug Fixes
+
+* **agent:** let every queued site trade into a full watch, trim hunt context, read each listing once ([6ab512f](https://github.com/oldmoldycake/Snagr/commit/6ab512f5dd29f9947f34c6e422edf43b7b9df8b2))
+* **agent:** let every queued site trade into a full watch, trim hunt context, read each listing once ([ed1270b](https://github.com/oldmoldycake/Snagr/commit/ed1270bc82b68c1b8ae2926edc195bcd32310c36))
+
 ## [0.4.0](https://github.com/oldmoldycake/Snagr/compare/v0.3.0...v0.4.0) (2026-09-24)
 
 
