@@ -244,7 +244,7 @@ def upgrade() -> None:
         "fk_listings_job", "listings", "jobs", ["discovered_by_job_id"], ["id"], ondelete="SET NULL"
     )
 
-    # the circuit breaker's state (design §4.4)
+    # the circuit breaker's state (docs/design/perpetual-hunter.md §4.4)
     op.add_column(
         "sites",
         sa.Column("consecutive_errors", sa.Integer, nullable=False, server_default=sa.text("0")),

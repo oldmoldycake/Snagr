@@ -1,7 +1,6 @@
 """Market-price grounding: source registry, aliases, market_prices, signals
 
-Guide-first grounding schema (docs/superpowers/specs/2026-08-09-guide-first-
-grounding-design.md). Categories learn WHERE prices live: price_sources is
+Guide-first grounding schema. Categories learn WHERE prices live: price_sources is
 the system-managed registry (LLM-seeded, promoted to trusted only by a
 successful parse), pinned_sources is user-owned and never system-written.
 Items learn HOW to be searched (search_aliases, generated once) and WHERE
