@@ -123,7 +123,8 @@ def register(mcp: FastMCP) -> None:
     ) -> ItemSummary:
         """Start watching an item. If the shared catalog already has an item of
         that name in the category this joins it; otherwise the item is created.
-        The agent picks it up on the next run.
+        Hunts of its sites are queued right away, unless hunt is false or the
+        operator has switched hunting off.
 
         Args:
           category: id or slug
