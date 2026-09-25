@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/oldmoldycake/Snagr/compare/v0.5.0...v0.6.0) (2026-09-25)
+
+
+### Features
+
+* **frontend:** Activity as one timeline with a needs-you rail ([5358eb6](https://github.com/oldmoldycake/Snagr/commit/5358eb6e3e7e8ffd2b0489886f9df94dca161eba))
+* **frontend:** Activity as one timeline with a needs-you rail ([f4b89cc](https://github.com/oldmoldycake/Snagr/commit/f4b89cc4ea2701d7007b8638df5c7beb7d5882cb))
+
 ## [0.5.0](https://github.com/oldmoldycake/Snagr/compare/v0.4.1...v0.5.0) (2026-09-25)
 
 
