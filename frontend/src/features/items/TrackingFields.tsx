@@ -300,9 +300,11 @@ export function TrackingFields({
                         aria-pressed={selected}
                         onClick={() => toggleSite(site.id)}
                         className={cn(
-                          'rounded-sm border px-2 py-1 text-xs transition-colors',
+                          'relative rounded-sm border px-2 py-1 text-xs transition-colors focus-visible:-outline-offset-2',
+                          // Segmented's plate, one per picked site: its lume bar grows from the middle
+                          'after:absolute after:inset-x-1.5 after:bottom-0.5 after:h-0.5 after:scale-x-0 after:rounded-[1px] after:bg-lume after:transition-transform after:duration-150 after:ease-shelf aria-pressed:after:scale-x-100',
                           selected
-                            ? 'border-lume/50 bg-lume-glow text-lume'
+                            ? 'border-hairline-strong bg-raised text-ink'
                             : 'border-hairline text-ink-3 hover:text-ink-2',
                         )}
                       >

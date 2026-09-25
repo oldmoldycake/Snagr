@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, KeyRound, LogOut, Menu, Plus, Search, SlidersHorizontal, User as UserIcon, Users } from 'lucide-react'
@@ -6,6 +6,7 @@ import { getJobsSummary, listCategories } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
 import { countdown } from '@/lib/time'
+import { useTrack } from '@/lib/useTrack'
 import { useInstance, useLogout, useSession } from '@/features/auth/useSession'
 import { useJobs } from '@/features/activity/JobsProvider'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
@@ -34,58 +35,6 @@ const NAV_ITEMS: readonly { to: string; label: string; end?: boolean; visionOnly
 function useNavItems() {
   const { data: instance } = useInstance()
   return NAV_ITEMS.filter((item) => !item.visionOnly || instance?.vision_enabled)
-}
-
-/**
- * Seats the lume bar under the desktop nav's active tab. A navigation animates
- * it (`animate`); the first placement and a re-seat after the tabs change width
- * (fonts loading, the Review tab arriving with the instance) jump instead.
- */
-function seatLume(nav: HTMLElement, lume: HTMLElement, animate: boolean) {
-  const width = nav.clientWidth
-  // below md the tabs are hidden; the resize observer re-seats the bar when they show
-  if (width === 0) return
-  const placed = lume.style.getPropertyValue('--l') !== ''
-  const tab = nav.querySelector<HTMLElement>('a[aria-current="page"]')
-  const place = (left: number, right: number) => {
-    lume.style.setProperty('--l', `${left}px`)
-    lume.style.setProperty('--r', `${right}px`)
-  }
-  const instantly = (move: () => void) => {
-    lume.dataset.instant = ''
-    move()
-    void lume.offsetWidth // commit the jump, so restoring transitions doesn't replay it
-    delete lume.dataset.instant
-  }
-
-  // item and category pages have no tab: the bar folds into its own center and fades
-  if (!tab) {
-    if (animate && placed && lume.dataset.state !== 'idle') {
-      const center = lume.offsetLeft + lume.offsetWidth / 2
-      delete lume.dataset.dir
-      place(center, width - center)
-    }
-    lume.dataset.state = 'idle'
-    return
-  }
-
-  const left = tab.offsetLeft
-  const right = width - left - tab.offsetWidth
-  const wasIdle = lume.dataset.state === 'idle'
-  delete lume.dataset.state
-  if (!animate || !placed) {
-    instantly(() => place(left, right))
-  } else if (wasIdle) {
-    // grow out of the new tab rather than slide in from wherever the bar was hidden
-    const center = left + tab.offsetWidth / 2
-    delete lume.dataset.dir
-    instantly(() => place(center, width - center))
-    place(left, right)
-  } else {
-    // the edge nearest the new tab leads and the other catches up
-    lume.dataset.dir = left > lume.offsetLeft ? 'right' : 'left'
-    place(left, right)
-  }
 }
 
 function Wordmark() {
@@ -265,24 +214,10 @@ export function Masthead() {
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
-  const navRef = useRef<HTMLElement>(null)
-  const lumeRef = useRef<HTMLSpanElement>(null)
   const navItems = useNavItems()
   const { pathname } = useLocation()
-
-  // runs after NavLink has committed the new aria-current
-  useLayoutEffect(() => {
-    if (navRef.current && lumeRef.current) seatLume(navRef.current, lumeRef.current, true)
-  }, [pathname])
-
-  useEffect(() => {
-    const nav = navRef.current
-    const lume = lumeRef.current
-    if (!nav || !lume) return
-    const ro = new ResizeObserver(() => seatLume(nav, lume, false))
-    ro.observe(nav)
-    return () => ro.disconnect()
-  }, [])
+  // item and category pages have no tab: the bar folds away
+  const { hostRef: navRef, markerRef: lumeRef } = useTrack<HTMLElement>('a[aria-current="page"]', pathname)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
