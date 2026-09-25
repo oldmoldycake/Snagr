@@ -17,6 +17,11 @@ export class ApiError extends Error {
   }
 }
 
+/** True only for a 404: any other failure is an error to show, never "not found". */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404
+}
+
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
 /**

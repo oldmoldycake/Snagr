@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { isNotFound } from '@/api/client'
 import { deleteItem, getItem, listPriceChecks, listSites, updateWatch } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, PriceCheck } from '@/api/types'
@@ -10,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
@@ -124,6 +126,17 @@ export function ItemDetailPage() {
         <Skeleton className="h-64" />
         <Skeleton className="h-40" />
       </div>
+    )
+  }
+
+  if (item.isError && !isNotFound(item.error)) {
+    return (
+      <ErrorState
+        title="Couldn't load this item"
+        error={item.error}
+        onRetry={() => void item.refetch()}
+        retrying={item.isFetching}
+      />
     )
   }
 
@@ -277,6 +290,14 @@ export function ItemDetailPage() {
                   <Skeleton className="h-5" />
                   <Skeleton className="h-5" />
                 </div>
+              ) : checks.isError ? (
+                <ErrorState
+                  className="border-0 py-4"
+                  title="Couldn't load the checks"
+                  error={checks.error}
+                  onRetry={() => void checks.refetch()}
+                  retrying={checks.isFetching}
+                />
               ) : checkRows.length === 0 ? (
                 <p className="py-2 font-mono text-[11px] text-ink-3">
                   No checks yet — the log fills in as the agent sweeps.

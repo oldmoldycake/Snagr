@@ -26,6 +26,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -161,6 +162,14 @@ export function SitesPage() {
               <Skeleton className="h-6" />
               <Skeleton className="h-6" />
             </div>
+          ) : sites.isError ? (
+            <ErrorState
+              className="m-4 border-0"
+              title="Couldn't load the sites"
+              error={sites.error}
+              onRetry={() => void sites.refetch()}
+              retrying={sites.isFetching}
+            />
           ) : rows.length === 0 ? (
             <EmptyState
               className="m-4 border-0"

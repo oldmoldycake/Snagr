@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
 import { Segmented } from '@/components/ui/segmented'
@@ -170,6 +171,13 @@ export function ReviewQueuePage() {
           <Skeleton className="h-72" />
           <Skeleton className="h-72" />
         </div>
+      ) : queue.isError ? (
+        <ErrorState
+          title="Couldn't load the review queue"
+          error={queue.error}
+          onRetry={() => void queue.refetch()}
+          retrying={queue.isFetching}
+        />
       ) : entries.length === 0 ? (
         <EmptyState
           title="Queue clear"
