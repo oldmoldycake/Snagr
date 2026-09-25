@@ -454,79 +454,105 @@
 }
 
 /*
- * Masthead nav (motion "Reticle Track"). One lume bar tracks the active tab:
- * Masthead's seatLume sets its edges (--l, --r) and which way it is moving
- * (data-dir). Every transition is opt-in, so reduced motion moves it at once.
+ * Masthead nav and segmented controls (motion "Reticle Track"). One marker
+ * tracks the active option — the nav's lume bar, a Segmented's plate: useTrack
+ * sets its edges (--l, --r) and which way it is moving (data-dir). Every
+ * transition is opt-in, so reduced motion moves it at once.
  */
 @layer components {
-  .nav-lume {
+  :is(.nav-lume, .seg-plate) {
     position: absolute;
-    bottom: -1px;
     left: var(--l, 0);
     right: var(--r, 100%);
-    height: 2px;
-    background: var(--color-lume);
     pointer-events: none;
   }
-  .nav-lume[data-state='idle'] {
+  :is(.nav-lume, .seg-plate)[data-state='idle'] {
     opacity: 0;
   }
-
-  /* hovering an inactive tab lights a faint candidate line on the hairline */
-  .nav-tab::after {
+  .nav-lume {
+    bottom: -1px;
+    height: 2px;
+    background: var(--color-lume);
+  }
+  /* the menu plate's ground, with its lume tick turned to sit under the label as the nav's bar does */
+  .seg-plate {
+    top: 2px;
+    bottom: 2px;
+    border-radius: 3px;
+    background: var(--color-raised);
+    box-shadow: inset 0 1px 0 rgb(193 255 208 / 0.05);
+  }
+  .seg-plate::after {
     content: '';
     position: absolute;
-    inset-inline: 0;
-    bottom: -1px;
+    inset-inline: 6px;
+    bottom: 0;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--color-lume);
+  }
+
+  /* hovering an inactive option lights a faint candidate line where the marker would land */
+  :is(.nav-tab, .seg-option)::after {
+    content: '';
+    position: absolute;
     height: 1px;
     background: var(--color-hairline-strong);
     scale: 0 1;
   }
-  .nav-tab:not([aria-current='page']):hover::after {
+  .nav-tab::after {
+    inset-inline: 0;
+    bottom: -1px;
+  }
+  .seg-option::after {
+    inset-inline: 6px;
+    bottom: 0;
+  }
+  :is(.nav-tab, .seg-option):not([aria-current='page'], [aria-checked='true']):hover::after {
     scale: 1 1;
   }
-  .nav-tab:not([aria-current='page']):active::after {
+  :is(.nav-tab, .seg-option):not([aria-current='page'], [aria-checked='true']):active::after {
     background: rgb(255 180 84 / 0.5);
   }
 
   @media (prefers-reduced-motion: no-preference) {
-    /* no direction: growing out of a tab's center */
-    .nav-lume {
+    /* no direction: growing out of an option's center */
+    :is(.nav-lume, .seg-plate) {
       transition:
         left 180ms var(--ease-shelf),
         right 180ms var(--ease-shelf),
         opacity 90ms var(--ease-shelf-in);
     }
     /* the leading edge lunges and the trailing edge catches up a beat later */
-    .nav-lume[data-dir='right'] {
+    :is(.nav-lume, .seg-plate)[data-dir='right'] {
       transition:
         right 180ms var(--ease-panel),
         left 240ms var(--ease-shelf) 50ms;
     }
-    .nav-lume[data-dir='left'] {
+    :is(.nav-lume, .seg-plate)[data-dir='left'] {
       transition:
         left 180ms var(--ease-panel),
         right 240ms var(--ease-shelf) 50ms;
     }
-    .nav-lume[data-state='idle'] {
+    :is(.nav-lume, .seg-plate)[data-state='idle'] {
       transition:
         left 160ms var(--ease-shelf-in),
         right 160ms var(--ease-shelf-in),
         opacity 90ms var(--ease-shelf-in) 70ms;
     }
 
-    .nav-tab::after {
+    :is(.nav-tab, .seg-option)::after {
       transition:
         scale 90ms var(--ease-shelf-in),
         background-color 90ms ease-out;
     }
-    .nav-tab:not([aria-current='page']):hover::after {
+    :is(.nav-tab, .seg-option):not([aria-current='page'], [aria-checked='true']):hover::after {
       transition: scale 140ms var(--ease-shelf);
     }
   }
 
-  /* a first placement or a re-seat after the tabs change width never animates */
-  .nav-lume[data-instant] {
+  /* a first placement or a re-seat after the host changes width never animates */
+  :is(.nav-lume, .seg-plate)[data-instant] {
     transition: none !important;
   }
 }

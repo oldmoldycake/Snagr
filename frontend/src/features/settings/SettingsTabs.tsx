@@ -1,6 +1,14 @@
-import { NavLink } from 'react-router-dom'
+import { useEffect } from 'react'
+import { NavLink, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/cn'
+import { useTrack } from '@/lib/useTrack'
 import { useInstance, useSession } from '@/features/auth/useSession'
+
+/**
+ * The tab the plate sat on while a settings page was showing. Each page mounts
+ * its own tabs, so the next one starts its plate there and slides it over.
+ */
+let lastTab: string | null = null
 
 /**
  * The settings sub-navigation — one route per tab, styled as the Segmented
@@ -11,6 +19,19 @@ import { useInstance, useSession } from '@/features/auth/useSession'
 export function SettingsTabs() {
   const { data: user } = useSession()
   const { data: instance } = useInstance()
+  const { pathname } = useLocation()
+  const { hostRef, markerRef } = useTrack<HTMLElement>(
+    'a[aria-current="page"]',
+    pathname,
+    lastTab ? `a[href="${lastTab}"]` : undefined,
+  )
+  // cleared on the way out, so arriving from elsewhere in the app places the plate without a slide
+  useEffect(() => {
+    lastTab = pathname
+    return () => {
+      lastTab = null
+    }
+  }, [pathname])
 
   const tabs: { to: string; label: string; end?: boolean }[] = [
     { to: '/settings', label: 'General', end: true },
@@ -19,7 +40,12 @@ export function SettingsTabs() {
   if (user?.role === 'admin') tabs.push({ to: '/settings/users', label: 'Users' })
 
   return (
-    <nav aria-label="Settings sections" className="inline-flex gap-0.5">
+    <nav
+      ref={hostRef}
+      aria-label="Settings sections"
+      className="relative inline-flex gap-0.5 rounded-sm border border-hairline bg-well p-0.5"
+    >
+      <span ref={markerRef} aria-hidden className="seg-plate" />
       {tabs.map((tab) => (
         <NavLink
           key={tab.to}
@@ -27,8 +53,8 @@ export function SettingsTabs() {
           end={tab.end}
           className={({ isActive }) =>
             cn(
-              'rounded-sm px-2 py-1 font-mono text-[11px] tracking-[0.04em] uppercase transition-colors',
-              isActive ? 'bg-lume-glow text-lume' : 'text-ink-3 hover:text-ink-2',
+              'seg-option relative flex h-[22px] items-center rounded-[3px] px-2 font-mono text-[11px] tracking-[0.04em] whitespace-nowrap uppercase transition-colors focus-visible:-outline-offset-2 max-sm:h-[26px]',
+              isActive ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
             )
           }
         >

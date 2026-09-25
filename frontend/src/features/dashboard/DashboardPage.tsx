@@ -299,7 +299,7 @@ export function DashboardPage() {
               {anyOpen ? 'Collapse all' : 'Expand all'}
             </Button>
           ) : null}
-          <RangeSelector value={range} onChange={setRange} />
+          <RangeSelector value={range} onChange={setRange} className="max-sm:order-last max-sm:w-full" />
           <CreateCategoryDialog trigger="＋ New category" onCreated={onCreated} />
         </div>
 
