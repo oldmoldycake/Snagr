@@ -30,6 +30,20 @@ export interface WatchListProps {
   onEdit?: (item: ItemSummary) => void
   onDelete?: (item: ItemSummary) => void
   onHunt?: (item: ItemSummary) => void
+  /**
+   * Keep the header row for screen readers and for the fixed column widths, but
+   * draw it at zero height: a dashboard shelf sits under one shared label row
+   * (WatchListLabels). Not `sr-only`, whose absolute positioning drops the row
+   * out of the table layout and collapses every column.
+   */
+  hideHeader?: boolean
+  /**
+   * Fixed widths on every column but Item, so WatchLists stacked on one page
+   * (the dashboard's shelves) line up with each other and with WatchListLabels.
+   */
+  fixedColumns?: boolean
+  /** ids of rows that just struck, which flash once */
+  struck?: Set<number>
   className?: string
 }
 
@@ -80,6 +94,46 @@ function DropChip({ drop }: { drop: PriceDrop }) {
   )
 }
 
+/** The column header row; with `fixed`, the widths every column but Item keeps. */
+function WatchListHead({
+  showSite,
+  expandable,
+  hasActions,
+  hidden,
+  fixed,
+}: {
+  showSite?: boolean
+  expandable?: boolean
+  hasActions?: boolean
+  hidden?: boolean
+  fixed?: boolean
+}) {
+  return (
+    <THead className={cn(hidden && '[&_th]:h-0 [&_th]:py-0 [&_th]:text-[0px] [&_th]:leading-[0] [&_tr]:border-0')}>
+      <TR>
+        {expandable ? <TH className="w-8" /> : null}
+        <TH>Item</TH>
+        <TH className={cn('hidden md:table-cell', fixed && 'w-24')}>Trend</TH>
+        <TH className={cn('text-right', fixed && 'w-24 max-sm:w-20')}>Best</TH>
+        {showSite ? <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[88px]')}>Site</TH> : null}
+        <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[92px]')}>Target</TH>
+        <TH className={cn('text-right', fixed && 'w-[150px] max-sm:w-[104px]')}>To target</TH>
+        <TH className={cn('hidden text-right sm:table-cell', fixed && 'w-[84px]')}>Checked</TH>
+        {hasActions ? <TH className="w-10" /> : null}
+      </TR>
+    </THead>
+  )
+}
+
+/** The column labels alone, for a page that shows them once above several WatchLists with `hideHeader`. */
+export function WatchListLabels({ showSite, className }: { showSite?: boolean; className?: string }) {
+  return (
+    <Table className={cn('table-fixed', className)}>
+      <WatchListHead showSite={showSite} fixed />
+    </Table>
+  )
+}
+
 /** Table of the user's watches, optionally expandable to each one's listings. */
 export function WatchList({
   items,
@@ -90,6 +144,9 @@ export function WatchList({
   onEdit,
   onDelete,
   onHunt,
+  hideHeader,
+  fixedColumns,
+  struck,
   className,
 }: WatchListProps) {
   const navigate = useNavigate()
@@ -108,20 +165,14 @@ export function WatchList({
   const columnCount = 6 + (showSite ? 1 : 0) + (expandable ? 1 : 0) + (hasActions ? 1 : 0)
 
   return (
-    <Table className={className}>
-      <THead>
-        <TR>
-          {expandable ? <TH className="w-8" /> : null}
-          <TH>Item</TH>
-          <TH className="hidden md:table-cell">Trend</TH>
-          <TH className="text-right">Best</TH>
-          {showSite ? <TH className="hidden text-right md:table-cell">Site</TH> : null}
-          <TH className="hidden text-right md:table-cell">Target</TH>
-          <TH className="text-right">To target</TH>
-          <TH className="hidden text-right sm:table-cell">Checked</TH>
-          {hasActions ? <TH className="w-10" /> : null}
-        </TR>
-      </THead>
+    <Table className={cn(fixedColumns && 'table-fixed', className)}>
+      <WatchListHead
+        showSite={showSite}
+        expandable={expandable}
+        hasActions={hasActions}
+        hidden={hideHeader}
+        fixed={fixedColumns}
+      />
       <TBody>
         {items.map((item) => {
           const isExpanded = expanded.has(item.id)
@@ -136,9 +187,12 @@ export function WatchList({
             <Fragment key={item.id}>
               <TR
                 data-clickable="true"
+                data-strike={struck?.has(item.id) || undefined}
                 onClick={() => navigate(`/items/${item.id}`)}
                 className={cn(
                   'border-l-2 border-l-transparent',
+                  // the in-range gradient is a background image, so the flash shows through its clear end
+                  'data-strike:animate-strike-row motion-reduce:data-strike:shadow-[inset_2px_0_0_var(--color-lume)]',
                   item.target_met &&
                     'border-l-drop bg-linear-to-r from-drop-dim to-transparent to-60% [&>td]:py-3',
                   isExpanded && 'border-b-0',
@@ -164,7 +218,9 @@ export function WatchList({
                         ⌖
                       </span>
                     ) : null}
-                    <span className={cn('font-medium text-ink', item.target_met && 'text-sm font-semibold')}>
+                    <span
+                      className={cn('min-w-0 truncate font-medium text-ink', item.target_met && 'text-sm font-semibold')}
+                    >
                       {item.name}
                     </span>
                     {showCategory ? (
@@ -200,7 +256,10 @@ export function WatchList({
                   )}
                 </TD>
                 {showSite ? (
-                  <TD className="hidden text-right font-mono text-[11.5px] text-ink-3 md:table-cell">
+                  <TD
+                    title={item.best_site_name ?? undefined}
+                    className="hidden truncate text-right font-mono text-[11.5px] text-ink-3 md:table-cell"
+                  >
                     {item.best_site_name ?? '—'}
                   </TD>
                 ) : null}

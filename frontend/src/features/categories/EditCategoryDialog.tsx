@@ -18,15 +18,20 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { SitePicker } from '@/features/sites/SitePicker'
 
-/** Rename a category, choose which sites it searches, or delete it. */
+/**
+ * Rename a category, choose which sites it searches, or delete it. Saving opens
+ * the category's page, unless `onSaved` is given (a caller that stays put).
+ */
 export function EditCategoryDialog({
   category,
   open,
   onOpenChange,
+  onSaved,
 }: {
   category: Category
   open: boolean
   onOpenChange: (open: boolean) => void
+  onSaved?: () => void
 }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -44,7 +49,8 @@ export function EditCategoryDialog({
     onSuccess: async (slug) => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       onOpenChange(false)
-      navigate(`/categories/${slug}`, { replace: true })
+      if (onSaved) onSaved()
+      else navigate(`/categories/${slug}`, { replace: true })
     },
   })
 

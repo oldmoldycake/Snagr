@@ -66,6 +66,9 @@
   --animate-step-fwd: step-fwd 180ms ease-out both;
   --animate-step-back: step-back 180ms ease-out both;
   --animate-pick-new: pick-new 600ms ease-out;
+  --animate-shelf-row: shelf-row 140ms var(--ease-shelf) both;
+  --animate-strike-row: strike-row 1200ms ease-out;
+  --animate-strike-edge: strike-edge 1200ms ease-out;
 }
 
 @keyframes sweep {
@@ -132,6 +135,26 @@
   }
 }
 
+@keyframes shelf-row {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes strike-row {
+  from {
+    background-color: rgb(66 208 124 / 0.22);
+  }
+}
+
+@keyframes strike-edge {
+  0%,
+  25% {
+    border-color: rgb(255 180 84 / 0.6);
+  }
+}
+
 @layer base {
   html {
     color-scheme: dark;
@@ -165,6 +188,131 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+  }
+}
+
+/*
+ * Dashboard shelves (motion "Drawer"). CategoryShelf sets data-state, and the
+ * body's hidden="until-found", from a layout effect, so every transition here
+ * starts from a real "before" state. Reduced motion is the global rule above.
+ */
+@layer components {
+  .shelf-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 160ms var(--ease-shelf-in);
+  }
+  /* preflight hides [hidden]; a collapsed body must stay a grid so Ctrl-F can find its rows */
+  .shelf-body[hidden='until-found'] {
+    display: grid !important;
+  }
+  .shelf[data-state='open'] > .shelf-body {
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 200ms var(--ease-shelf);
+  }
+  .shelf-inner {
+    min-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 90ms ease-out;
+  }
+  .shelf[data-state='open'] .shelf-inner {
+    opacity: 1;
+    transition: opacity 140ms ease-out 40ms;
+  }
+
+  .shelf-head {
+    transition: background-color 120ms ease-out;
+  }
+  .shelf-head:has(.shelf-toggle:hover) {
+    background-color: rgb(193 255 208 / 0.03);
+  }
+  .shelf-chevron {
+    color: var(--color-ink-3);
+    transition:
+      rotate 160ms var(--ease-shelf-in),
+      translate 80ms ease-out,
+      color 120ms ease-out;
+  }
+  .shelf[data-state='open'] .shelf-chevron {
+    rotate: 90deg;
+    transition:
+      rotate 200ms var(--ease-shelf),
+      translate 80ms ease-out,
+      color 120ms ease-out;
+  }
+  .shelf-toggle:is(:hover, :focus-visible) .shelf-chevron {
+    color: var(--color-lume);
+  }
+  /* a press nudges the chevron the way it is about to turn */
+  .shelf-toggle:active .shelf-chevron {
+    translate: 2px 0;
+  }
+  .shelf[data-state='open'] .shelf-toggle:active .shelf-chevron {
+    translate: 0 2px;
+  }
+
+  /* The lead and site count stand in for the hidden rows. They fade as the rows
+     open but keep their space, so the header never reflows. */
+  .shelf-peek {
+    transition:
+      opacity 140ms ease-out 60ms,
+      visibility 0s linear 0s;
+  }
+  .shelf[data-state='open'] .shelf-peek {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 90ms ease-out,
+      visibility 0s linear 90ms;
+  }
+  @media (width < 40rem) {
+    /* on a phone the lead takes its own line, which folds away as the shelf opens */
+    .shelf-lead {
+      flex-basis: 100%;
+      max-height: 3.2em;
+      overflow: hidden;
+      padding-left: 26px;
+      transition:
+        max-height 160ms var(--ease-shelf-in),
+        opacity 140ms ease-out 60ms,
+        visibility 0s;
+    }
+    .shelf[data-state='open'] .shelf-lead {
+      max-height: 0;
+      transition:
+        max-height 200ms var(--ease-shelf),
+        opacity 90ms ease-out,
+        visibility 0s linear 90ms;
+    }
+  }
+
+  /* after a user opens a shelf (not on first render, not in Expand all) its rows drop in in turn */
+  .shelf tbody tr {
+    --i: 5;
+  }
+  .shelf tbody tr:nth-child(1) {
+    --i: 1;
+  }
+  .shelf tbody tr:nth-child(2) {
+    --i: 2;
+  }
+  .shelf tbody tr:nth-child(3) {
+    --i: 3;
+  }
+  .shelf tbody tr:nth-child(4) {
+    --i: 4;
+  }
+  .shelf[data-rows-in] :is(.shelf-stagger, tbody tr) {
+    animation: var(--animate-shelf-row);
+    animation-delay: calc(40ms + var(--i, 0) * 20ms);
+  }
+
+  /* Ctrl-F opened the shelf: open it at once, the browser is already scrolling to the match */
+  .shelf[data-instant],
+  .shelf[data-instant] * {
+    transition: none !important;
+    animation: none !important;
   }
 }
 

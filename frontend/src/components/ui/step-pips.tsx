@@ -8,17 +8,21 @@ import { cn } from '@/lib/cn'
 export function StepPips({
   steps,
   current,
+  size = 'sm',
   className,
 }: {
   steps: string[]
   /** 1-based index of the step in progress */
   current: number
+  /** sm fits a dialog eyebrow; md sits under a page title */
+  size?: 'sm' | 'md'
   className?: string
 }) {
   return (
     <ol
       className={cn(
-        'flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono text-[10px] tracking-[0.08em] text-ink-3 uppercase',
+        'flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono font-medium tracking-[0.08em] text-ink-3 uppercase',
+        size === 'sm' ? 'text-[10px]' : 'text-[11px]',
         className,
       )}
     >
@@ -39,7 +43,8 @@ export function StepPips({
             >
               <span
                 className={cn(
-                  'grid size-4 place-items-center rounded-full border text-[9px] tracking-normal',
+                  'grid place-items-center rounded-full border tracking-normal',
+                  size === 'sm' ? 'size-4 text-[9px]' : 'size-[18px] text-[10px]',
                   on ? 'border-lume' : 'border-hairline-strong',
                 )}
               >
