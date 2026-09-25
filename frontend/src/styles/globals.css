@@ -454,23 +454,29 @@
 }
 
 /*
- * Masthead nav and segmented controls (motion "Reticle Track"). One marker
- * tracks the active option — the nav's lume bar, a Segmented's plate: useTrack
- * sets its edges (--l, --r) and which way it is moving (data-dir). Every
- * transition is opt-in, so reduced motion moves it at once.
+ * Masthead nav, segmented controls and the category links (motion "Reticle
+ * Track"). One marker tracks the active option — a lume bar, or a Segmented's
+ * plate: useTrack sets its edges (--l, --r) and which way it is moving
+ * (data-dir). Every transition is opt-in, so reduced motion moves it at once.
  */
 @layer components {
-  :is(.nav-lume, .seg-plate) {
+  :is(.nav-lume, .seg-plate, .chip-lume) {
     position: absolute;
     left: var(--l, 0);
     right: var(--r, 100%);
     pointer-events: none;
   }
-  :is(.nav-lume, .seg-plate)[data-state='idle'] {
+  :is(.nav-lume, .seg-plate, .chip-lume)[data-state='idle'] {
     opacity: 0;
   }
   .nav-lume {
     bottom: -1px;
+    height: 2px;
+    background: var(--color-lume);
+  }
+  /* the category links wrap, so their bar rides the active link's bottom edge (--t) */
+  .chip-lume {
+    top: calc(var(--t, 0) - 2px);
     height: 2px;
     background: var(--color-lume);
   }
@@ -493,7 +499,7 @@
   }
 
   /* hovering an inactive option lights a faint candidate line where the marker would land */
-  :is(.nav-tab, .seg-option)::after {
+  :is(.nav-tab, .seg-option, .chip-tab)::after {
     content: '';
     position: absolute;
     height: 1px;
@@ -508,51 +514,55 @@
     inset-inline: 6px;
     bottom: 0;
   }
-  :is(.nav-tab, .seg-option):not([aria-current='page'], [aria-checked='true']):hover::after {
+  .chip-tab::after {
+    inset-inline: 0;
+    bottom: 0;
+  }
+  :is(.nav-tab, .seg-option, .chip-tab):not([aria-current='page'], [aria-checked='true']):hover::after {
     scale: 1 1;
   }
-  :is(.nav-tab, .seg-option):not([aria-current='page'], [aria-checked='true']):active::after {
+  :is(.nav-tab, .seg-option, .chip-tab):not([aria-current='page'], [aria-checked='true']):active::after {
     background: rgb(255 180 84 / 0.5);
   }
 
   @media (prefers-reduced-motion: no-preference) {
     /* no direction: growing out of an option's center */
-    :is(.nav-lume, .seg-plate) {
+    :is(.nav-lume, .seg-plate, .chip-lume) {
       transition:
         left 180ms var(--ease-shelf),
         right 180ms var(--ease-shelf),
         opacity 90ms var(--ease-shelf-in);
     }
     /* the leading edge lunges and the trailing edge catches up a beat later */
-    :is(.nav-lume, .seg-plate)[data-dir='right'] {
+    :is(.nav-lume, .seg-plate, .chip-lume)[data-dir='right'] {
       transition:
         right 180ms var(--ease-panel),
         left 240ms var(--ease-shelf) 50ms;
     }
-    :is(.nav-lume, .seg-plate)[data-dir='left'] {
+    :is(.nav-lume, .seg-plate, .chip-lume)[data-dir='left'] {
       transition:
         left 180ms var(--ease-panel),
         right 240ms var(--ease-shelf) 50ms;
     }
-    :is(.nav-lume, .seg-plate)[data-state='idle'] {
+    :is(.nav-lume, .seg-plate, .chip-lume)[data-state='idle'] {
       transition:
         left 160ms var(--ease-shelf-in),
         right 160ms var(--ease-shelf-in),
         opacity 90ms var(--ease-shelf-in) 70ms;
     }
 
-    :is(.nav-tab, .seg-option)::after {
+    :is(.nav-tab, .seg-option, .chip-tab)::after {
       transition:
         scale 90ms var(--ease-shelf-in),
         background-color 90ms ease-out;
     }
-    :is(.nav-tab, .seg-option):not([aria-current='page'], [aria-checked='true']):hover::after {
+    :is(.nav-tab, .seg-option, .chip-tab):not([aria-current='page'], [aria-checked='true']):hover::after {
       transition: scale 140ms var(--ease-shelf);
     }
   }
 
   /* a first placement or a re-seat after the host changes width never animates */
-  :is(.nav-lume, .seg-plate)[data-instant] {
+  :is(.nav-lume, .seg-plate, .chip-lume)[data-instant] {
     transition: none !important;
   }
 }
