@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
+import { isNotFound } from '@/api/client'
 import { cancelJob, getJob, getJobEvents } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { Job, JobEvent } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Radar } from '@/components/ui/radar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TerminalLog } from '@/components/ui/terminal-log'
@@ -76,6 +78,17 @@ export function JobPage() {
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-48" />
       </div>
+    )
+  }
+
+  if (job.isError && !isNotFound(job.error)) {
+    return (
+      <ErrorState
+        title="Couldn't load this job"
+        error={job.error}
+        onRetry={() => void job.refetch()}
+        retrying={job.isFetching}
+      />
     )
   }
 
@@ -151,7 +164,15 @@ export function JobPage() {
         ref={logRef}
         className="max-h-[32rem] overflow-y-auto rounded-lg border border-hairline bg-well px-4 py-3"
       >
-        {events.length === 0 ? (
+        {!isLive && fetched.isError ? (
+          <ErrorState
+            className="border-0 py-4"
+            title="Couldn't load the log"
+            error={fetched.error}
+            onRetry={() => void fetched.refetch()}
+            retrying={fetched.isFetching}
+          />
+        ) : events.length === 0 ? (
           <p className="py-2 font-mono text-xs text-ink-3">
             {isLive ? 'Waiting for the hunter…' : 'Nothing was recorded for this job.'}
           </p>

@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
@@ -116,6 +117,18 @@ export function CategoryPage() {
     )
   }
 
+  // the category is found in the list, so only a list that loaded can say it isn't there
+  if (categories.isError) {
+    return (
+      <ErrorState
+        title="Couldn't load this category"
+        error={categories.error}
+        onRetry={() => void categories.refetch()}
+        retrying={categories.isFetching}
+      />
+    )
+  }
+
   if (!category) {
     return <EmptyState title="Category not found" description="It may have been renamed or deleted." />
   }
@@ -203,6 +216,14 @@ export function CategoryPage() {
             <Skeleton className="h-6" />
             <Skeleton className="h-6" />
           </div>
+        ) : items.isError ? (
+          <ErrorState
+            className="m-4 border-0"
+            title="Couldn't load the items"
+            error={items.error}
+            onRetry={() => void items.refetch()}
+            retrying={items.isFetching}
+          />
         ) : rows.length === 0 && status === 'all' && !search ? (
           <EmptyState
             className="m-4 border-0"
@@ -211,7 +232,7 @@ export function CategoryPage() {
               linkedSites.length > 0 ? linkedSites.map((s) => s.name).join(', ') : "this category's sites"
             } for listings.`}
             action={
-              linkedSites.length === 0 ? (
+              category.site_ids.length === 0 ? (
                 <Button variant="warn" size="sm" onClick={openEditSites}>
                   Link sites
                 </Button>

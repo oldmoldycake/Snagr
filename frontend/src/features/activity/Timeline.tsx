@@ -5,6 +5,7 @@ import { listJobs } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { Job, JobListParams, JobsSummary } from '@/api/types'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Pagination } from '@/components/ui/pagination'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -81,7 +82,8 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
     summary.listings_watched === 0 &&
     summary.last_hunt == null &&
     live.length === 0 &&
-    (queued.data?.data.length ?? 0) === 0
+    queued.isSuccess &&
+    queued.data.data.length === 0
   if (nothingAtAll) {
     return (
       <EmptyState
@@ -100,9 +102,19 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
       <span aria-hidden className="absolute inset-y-0 left-[calc(5.125rem_-_1px)] w-0.5 bg-grid" />
       <ol className="relative space-y-0.5">
         <Heading label="Next" />
-        {upcoming.map((job) => (
-          <QueuedRow key={job.id} job={job} />
-        ))}
+        {queued.isError ? (
+          <Row>
+            <ErrorState
+              className="py-6"
+              title="Couldn't load the queue"
+              error={queued.error}
+              onRetry={() => void queued.refetch()}
+              retrying={queued.isFetching}
+            />
+          </Row>
+        ) : (
+          upcoming.map((job) => <QueuedRow key={job.id} job={job} />)
+        )}
         <QueuedChecks summary={summary} />
 
         <NowBlock summary={summary} />
@@ -125,6 +137,16 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
               <Skeleton className="h-6" />
               <Skeleton className="h-6" />
             </div>
+          </Row>
+        ) : history.isError ? (
+          <Row>
+            <ErrorState
+              className="py-6"
+              title="Couldn't load the history"
+              error={history.error}
+              onRetry={() => void history.refetch()}
+              retrying={history.isFetching}
+            />
           </Row>
         ) : groups.length === 0 ? (
           <Row>

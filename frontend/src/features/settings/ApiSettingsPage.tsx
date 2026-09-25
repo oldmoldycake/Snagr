@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
@@ -382,6 +383,14 @@ export function ApiSettingsPage() {
                 <div className="space-y-2 p-4">
                   <Skeleton className="h-6" />
                 </div>
+              ) : tokens.isError ? (
+                <ErrorState
+                  className="m-4 border-0 py-6"
+                  title="Couldn't load your tokens"
+                  error={tokens.error}
+                  onRetry={() => void tokens.refetch()}
+                  retrying={tokens.isFetching}
+                />
               ) : (tokens.data?.data.length ?? 0) === 0 ? (
                 <p className="px-4 py-3 text-[13px] text-ink-3">
                   No tokens yet — create one to connect your first agent.

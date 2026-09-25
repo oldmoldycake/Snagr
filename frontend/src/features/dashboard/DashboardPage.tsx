@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { getPriceDrops, listCategories, listItems, listSites } from '@/api/endpoints'
@@ -6,6 +6,7 @@ import { qk } from '@/api/queries'
 import type { Category, ItemSummary, PriceDrop } from '@/api/types'
 import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
 import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/components/ui/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { useMediaQuery } from '@/lib/useMediaQuery'
@@ -202,6 +203,7 @@ export function DashboardPage() {
   )
 
   if (search) {
+    const failed = matches.isError ? matches : categories.isError ? categories : null
     return (
       <div>
         <SearchResults
@@ -210,6 +212,16 @@ export function DashboardPage() {
           myItems={myItems}
           categories={categoryList}
           loading={matches.isLoading || categories.isLoading}
+          error={
+            failed ? (
+              <ErrorState
+                title="Couldn't search your shelves"
+                error={failed.error}
+                onRetry={() => void failed.refetch()}
+                retrying={failed.isFetching}
+              />
+            ) : null
+          }
           siteNamesOf={siteNamesOf}
           drops={dropsByItem}
           onEditSites={openSites}
@@ -234,6 +246,19 @@ export function DashboardPage() {
           <Skeleton className="h-12" />
         </div>
       </div>
+    )
+  }
+
+  // the guide and the shelves both say what exists, so neither may stand in for a failed load
+  const failed = items.isError ? items : categories.isError ? categories : null
+  if (failed) {
+    return (
+      <ErrorState
+        title="Couldn't load your watch"
+        error={failed.error}
+        onRetry={() => void failed.refetch()}
+        retrying={failed.isFetching}
+      />
     )
   }
 
@@ -370,6 +395,7 @@ function SearchResults({
   myItems,
   categories,
   loading,
+  error,
   siteNamesOf,
   drops,
   onEditSites,
@@ -380,6 +406,7 @@ function SearchResults({
   myItems: ItemSummary[]
   categories: Category[]
   loading: boolean
+  error: ReactNode
   siteNamesOf: (category: Category) => string[]
   drops: Map<number, PriceDrop>
   onEditSites: (category: Category) => void
@@ -410,6 +437,8 @@ function SearchResults({
           <Skeleton className="h-12" />
           <Skeleton className="h-12" />
         </div>
+      ) : error ? (
+        error
       ) : shelves.length === 0 ? (
         <p className="rounded-md border border-dashed border-hairline-strong px-3.5 py-[26px] text-center text-[13px] text-ink-3">
           Nothing on any shelf matches “{search}”. · {clear}
