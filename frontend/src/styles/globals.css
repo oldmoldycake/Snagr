@@ -421,6 +421,84 @@
   }
 }
 
+/*
+ * Masthead nav (motion "Reticle Track"). One lume bar tracks the active tab:
+ * Masthead's seatLume sets its edges (--l, --r) and which way it is moving
+ * (data-dir). Every transition is opt-in, so reduced motion moves it at once.
+ */
+@layer components {
+  .nav-lume {
+    position: absolute;
+    bottom: -1px;
+    left: var(--l, 0);
+    right: var(--r, 100%);
+    height: 2px;
+    background: var(--color-lume);
+    pointer-events: none;
+  }
+  .nav-lume[data-state='idle'] {
+    opacity: 0;
+  }
+
+  /* hovering an inactive tab lights a faint candidate line on the hairline */
+  .nav-tab::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    bottom: -1px;
+    height: 1px;
+    background: var(--color-hairline-strong);
+    scale: 0 1;
+  }
+  .nav-tab:not([aria-current='page']):hover::after {
+    scale: 1 1;
+  }
+  .nav-tab:not([aria-current='page']):active::after {
+    background: rgb(255 180 84 / 0.5);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    /* no direction: growing out of a tab's center */
+    .nav-lume {
+      transition:
+        left 180ms var(--ease-shelf),
+        right 180ms var(--ease-shelf),
+        opacity 90ms var(--ease-shelf-in);
+    }
+    /* the leading edge lunges and the trailing edge catches up a beat later */
+    .nav-lume[data-dir='right'] {
+      transition:
+        right 180ms var(--ease-panel),
+        left 240ms var(--ease-shelf) 50ms;
+    }
+    .nav-lume[data-dir='left'] {
+      transition:
+        left 180ms var(--ease-panel),
+        right 240ms var(--ease-shelf) 50ms;
+    }
+    .nav-lume[data-state='idle'] {
+      transition:
+        left 160ms var(--ease-shelf-in),
+        right 160ms var(--ease-shelf-in),
+        opacity 90ms var(--ease-shelf-in) 70ms;
+    }
+
+    .nav-tab::after {
+      transition:
+        scale 90ms var(--ease-shelf-in),
+        background-color 90ms ease-out;
+    }
+    .nav-tab:not([aria-current='page']):hover::after {
+      transition: scale 140ms var(--ease-shelf);
+    }
+  }
+
+  /* a first placement or a re-seat after the tabs change width never animates */
+  .nav-lume[data-instant] {
+    transition: none !important;
+  }
+}
+
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }
