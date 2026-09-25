@@ -301,7 +301,7 @@ function ExpandedRow({
   const fell = moved && nowC != null && startC != null && nowC < startC
 
   return (
-    <div className="flex items-start gap-4 bg-well py-3 pr-4 pl-10">
+    <div className="flex items-start gap-4 border-t border-hairline bg-well py-3 pr-4 pl-10">
       <p className="min-w-0 flex-1 font-mono text-[11px] leading-relaxed text-ink-3">
         {listing.match_score != null ? (
           <>
@@ -388,7 +388,7 @@ function BoardRow({
   const chip = listing.active ? exceptionChip(listing) : null
 
   return (
-    <>
+    <Collapsible open={expanded}>
       <div
         role="button"
         tabIndex={0}
@@ -457,8 +457,10 @@ function BoardRow({
         <DeltaCell listing={listing} targetC={targetC} currency={detail.currency} />
         <MatchPill score={listing.match_score} summary={listing.match_summary} quietMid />
       </div>
-      {expanded ? <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} /> : null}
-    </>
+      <CollapsibleContent className="row-detail">
+        <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} />
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
@@ -578,10 +580,20 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
               className="flex w-full items-center gap-3 bg-well px-4 py-1.5 font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase before:h-px before:flex-1 before:bg-hairline-strong before:content-[''] after:h-px after:flex-1 after:bg-hairline-strong after:content-[''] hover:text-ink-2"
             >
               {foldLabel} — {foldOpen ? 'hide' : 'show'}
+              <svg
+                viewBox="0 0 10 10"
+                aria-hidden
+                className={cn(
+                  'size-2.5 shrink-0 transition-transform duration-[180ms] ease-shelf',
+                  foldOpen && 'rotate-180',
+                )}
+              >
+                <path d="M1.5 3.5 5 7l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
             </button>
           </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="divide-y divide-hairline border-t border-hairline">
+          <CollapsibleContent className="fold">
+            <div className="fold-rows divide-y divide-hairline border-t border-hairline">
               {folded.map((l) => row(l, !l.active))}
             </div>
           </CollapsibleContent>
