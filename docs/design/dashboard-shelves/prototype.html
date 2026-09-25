@@ -1,0 +1,1602 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snagr Home Rework</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Night Hunt tokens, copied from frontend/src/styles/globals.css. Dark-only, like the app. */
+  :root {
+    color-scheme: dark;
+    --page: #0c120e;
+    --well: #0a0f0b;
+    --surface: #101812;
+    --raised: #16211a;
+    --overlay: #1c2820;
+    --hairline: rgb(193 255 208 / 0.09);
+    --hairline-strong: rgb(193 255 208 / 0.16);
+    --ink: #e9f1e9;
+    --ink-2: #a6b5a7;
+    --ink-3: #69796e;
+    --lume: #ffb454;
+    --lume-deep: #e89a34;
+    --lume-glow: rgb(255 180 84 / 0.13);
+    --drop: #42d07c;
+    --drop-dim: rgb(66 208 124 / 0.1);
+    --rise: #f0565c;
+    --warn: #e08a2e;
+    --warn-dim: rgb(224 138 46 / 0.1);
+    --display: 'Big Shoulders Display', 'Arial Narrow', sans-serif;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', monospace;
+    /* motion tokens proposed for globals.css */
+    --ease-shelf: cubic-bezier(.2, 0, 0, 1);
+    --ease-shelf-in: cubic-bezier(.4, 0, .2, 1);
+    --ease-panel: cubic-bezier(.16, 1, .3, 1);
+    --ease-sheet: cubic-bezier(.32, .72, 0, 1);
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0;
+    font: 14px/1.55 var(--sans);
+    color: var(--ink);
+    background:
+      radial-gradient(900px 340px at 30% 0%, rgb(66 208 124 / 0.045), transparent 70%),
+      var(--page);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: rgb(255 180 84 / 0.3); }
+  :focus-visible { outline: 2px solid var(--lume); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .01ms !important; animation-delay: 0ms !important; transition-duration: .01ms !important; transition-delay: 0ms !important; }
+  }
+  .tnum { font-variant-numeric: tabular-nums; }
+  .mono { font-family: var(--mono); }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* ---------- document shell ---------- */
+  .doc { max-width: 1080px; margin: 0 auto; padding: 40px 20px 80px; }
+  .eyebrow { font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+  h1.doc-title { font: 600 44px/1.02 var(--display); letter-spacing: .02em; margin: 12px 0 0; text-wrap: balance; }
+  h1.doc-title .reticle { color: var(--lume); font-size: 30px; vertical-align: 5px; margin-right: 6px; }
+  .lede { max-width: 68ch; color: var(--ink-2); font-size: 15px; margin: 14px 0 0; }
+  section.block { margin-top: 56px; }
+  h2.sec { font: 600 19px/1.2 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 4px; display: flex; gap: 12px; align-items: baseline; }
+  h2.sec .n { font: 500 11px var(--mono); color: var(--lume); letter-spacing: .1em; }
+  .sec-note { color: var(--ink-3); font-size: 13px; margin: 0 0 18px; max-width: 72ch; }
+
+  .changes { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin-top: 22px; }
+  .chg { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); padding: 12px 14px; font-size: 13px; color: var(--ink-2); }
+  .chg b { color: var(--ink); font-weight: 600; display: block; margin-bottom: 2px; }
+  .chg .src { font: 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  .chg .src.you { color: var(--lume); }
+  .still { margin: 12px 0 0; font-size: 12.5px; color: var(--ink-3); max-width: 90ch; }
+
+  /* option switches */
+  .controls { display: grid; gap: 10px; margin-bottom: 14px; }
+  .ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+  .ctl .k { width: 92px; font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .switch { display: inline-flex; border: 1px solid var(--hairline-strong); border-radius: 4px; overflow: hidden; flex-wrap: wrap; }
+  .switch button { all: unset; cursor: pointer; padding: 7px 12px; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); border-right: 1px solid var(--hairline); }
+  .switch button:last-child { border-right: 0; }
+  .switch button:hover { color: var(--ink-2); }
+  .switch button[aria-pressed="true"] { background: var(--lume-glow); color: var(--lume); }
+  .switch button:focus-visible { outline: 2px solid var(--lume); outline-offset: -2px; }
+  .switch .rec { font-size: 9px; color: var(--drop); margin-left: 5px; letter-spacing: .1em; }
+  .ctl .blurb { flex: 1; min-width: 240px; font-size: 12.5px; color: var(--ink-3); }
+  .try { font-size: 12.5px; color: var(--ink-3); margin: 4px 0 14px; max-width: 90ch; }
+  .try b { color: var(--ink-2); font-weight: 500; }
+  @media (max-width: 640px) { .ctl .k { width: 100%; } }
+
+  /* ---------- the mock app frame ---------- */
+  .frame { border: 1px solid var(--hairline-strong); border-radius: 8px; overflow: clip; background: var(--page); box-shadow: 0 30px 80px -40px rgb(0 0 0 / .8); position: relative; }
+  .chrome { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--well); border-bottom: 1px solid var(--hairline); }
+  .chrome i { width: 9px; height: 9px; border-radius: 50%; background: var(--raised); display: block; }
+  .chrome span { margin-left: 10px; font: 11px var(--mono); color: var(--ink-3); }
+  .mast { display: flex; align-items: center; gap: 22px; padding: 0 20px; height: 48px; border-bottom: 1px solid var(--hairline); overflow: hidden; }
+  .wordmark { display: flex; align-items: baseline; gap: 6px; }
+  .wordmark .r { color: var(--lume); font-size: 16px; }
+  .wordmark b { font: 700 20px/1 var(--display); letter-spacing: .1em; }
+  .mast nav { display: flex; gap: 2px; height: 100%; }
+  .mast nav a { display: flex; align-items: center; padding: 0 10px; font: 500 10.5px var(--mono); letter-spacing: .11em; text-transform: uppercase; color: var(--ink-3); border-bottom: 2px solid transparent; }
+  .mast nav a.on { color: var(--ink); border-color: var(--lume); }
+  .mast .sp { flex: 1; }
+  .mast input { width: 180px; height: 26px; border: 1px solid var(--hairline-strong); border-radius: 4px; background: var(--well); font: 11px var(--mono); color: var(--ink); padding: 0 9px; }
+  .mast input::placeholder { color: var(--ink-3); }
+  .mast .av { width: 26px; height: 26px; border-radius: 50%; border: 1px solid var(--hairline-strong); background: var(--raised); display: grid; place-items: center; font: 11px var(--mono); color: var(--ink-2); flex: none; }
+  .app { padding: 26px 24px 30px; min-height: 640px; }
+  .no-anim, .no-anim * { transition: none !important; animation: none !important; }
+  @media (max-width: 640px) {
+    .mast nav a:not(.on) { display: none; }
+    .mast { gap: 12px; padding: 0 12px; }
+    .mast input { width: 120px; }
+    .app { padding: 20px 12px 24px; }
+  }
+
+  /* app primitives */
+  .btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 4px; font: 500 11px var(--mono); letter-spacing: .06em; white-space: nowrap; box-sizing: border-box; transition: background-color 120ms ease-out, color 120ms ease-out; }
+  .btn:focus-visible { outline: 2px solid var(--lume); outline-offset: 2px; }
+  .btn.primary { background: var(--lume); color: #1a1206; }
+  .btn.primary:hover { background: var(--lume-deep); }
+  .btn.secondary { border: 1px solid var(--hairline-strong); color: var(--ink-2); background: var(--raised); }
+  .btn.secondary:hover { color: var(--ink); }
+  .btn.ghost { color: var(--ink-3); }
+  .btn.ghost:hover { color: var(--ink-2); }
+  .btn.warn { border: 1px solid rgb(224 138 46 / .45); background: var(--warn-dim); color: var(--warn); }
+  .btn.warn:hover { background: rgb(224 138 46 / .18); }
+  .btn.icon { width: 28px; padding: 0; font-size: 14px; }
+  .btn.big { height: 38px; padding: 0 16px; font-size: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--hairline); border-radius: 4px; }
+  .seg span { padding: 4px 8px; font: 10.5px var(--mono); color: var(--ink-3); }
+  .seg span.on { color: var(--lume); background: var(--lume-glow); }
+
+  .hero-eyebrow { font: 500 10px var(--mono); letter-spacing: .16em; color: var(--ink-3); text-transform: uppercase; }
+  .hero-h { font: 600 30px/1.05 var(--display); letter-spacing: .015em; margin: 8px 0 0; color: var(--drop); }
+  .hero-h.quiet { color: var(--ink-2); }
+  .hero-p { margin: 8px 0 0; color: var(--ink-2); font-size: 14px; }
+  .hero-p b { color: var(--ink); font-weight: 600; }
+  .hero-p .gap { font: 600 13.5px var(--mono); color: var(--lume); }
+  .pulse { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 4px 18px; font: 11.5px var(--mono); color: var(--ink-2); }
+  .pulse .k { font-size: 10px; letter-spacing: .1em; color: var(--ink-3); text-transform: uppercase; }
+  .pulse b { color: var(--ink); font-weight: 600; }
+  .ticker { margin-top: 8px; display: flex; align-items: center; gap: 10px; padding: 7px 12px; border: 1px solid var(--hairline); border-radius: 4px; background: var(--well); font: 11px var(--mono); color: var(--ink-3); }
+  .ticker .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--drop); flex: none; }
+  .ticker.live { color: var(--lume); border-color: rgb(255 180 84 / .35); }
+  .ticker.live .dot { background: var(--lume); animation: blink 1s ease-in-out infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+
+  .bar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; margin: 26px 0 10px; }
+  .bar h3 { font: 600 17px/1 var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); margin: 0; }
+  .bar .meta { font: 11px var(--mono); color: var(--ink-3); }
+  .bar .meta a { color: var(--ink-2); cursor: pointer; text-decoration: none; }
+  .bar .meta a:hover { color: var(--lume); }
+  .bar .grow { flex: 1; }
+
+  /* guide hero */
+  .guide { max-width: 640px; }
+  .guide .hero-h { color: var(--ink); font-size: 38px; }
+  .guide .hero-p { font-size: 15px; max-width: 58ch; }
+  .guide .hero-p b { font-weight: 500; }
+  .path { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 16px; font: 500 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); }
+  .path .stp { display: inline-flex; align-items: center; gap: 7px; transition: color 150ms ease-out; }
+  .path .g { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--hairline-strong); display: grid; place-items: center; font-size: 10px; letter-spacing: 0; transition: border-color 150ms ease-out; }
+  .path .stp.on { color: var(--lume); }
+  .path .stp.on .g { border-color: var(--lume); }
+  .path .stp.done { color: var(--ink-2); }
+  .path .arr { color: var(--ink-3); }
+  .cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 18px; }
+  .cta .aside { font-size: 12.5px; color: var(--ink-3); }
+  .ghost-shelf { margin-top: 30px; border: 1px dashed var(--hairline-strong); border-radius: 6px; padding: 14px 16px 16px; }
+  .ghost-shelf .gh { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+  .ghost-shelf .gn { font: 600 19px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+  .ghost-shelf .gs { font: 11px var(--mono); color: var(--ink-3); }
+  .ghost-shelf .bars { display: grid; gap: 8px; margin-top: 14px; }
+  .ghost-shelf .bars i { display: block; height: 10px; border-radius: 3px; background: var(--raised); }
+  .ghost-shelf p { margin: 12px 0 0; font-size: 12.5px; color: var(--ink-3); }
+
+  /* shared column labels, then one table per shelf with the same fixed widths */
+  .labels { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; background: var(--page); border: 1px solid transparent; border-bottom-color: var(--hairline); margin-bottom: 10px; }
+  table.watch { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  table.watch th { text-align: left; font: 500 9.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); padding: 7px 14px; }
+  table.watch thead.vh th { padding-block: 0; height: 0; line-height: 0; font-size: 0; overflow: hidden; }
+  table.watch td { padding: 10px 14px; border-top: 1px solid var(--hairline); font-size: 13px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.watch tbody tr:first-child td { border-top: 0; }
+  table.watch .r { text-align: right; }
+  .c-trend { width: 96px; } .c-best { width: 96px; } .c-site { width: 88px; } .c-target { width: 92px; } .c-to { width: 150px; } .c-when { width: 84px; }
+  tr.hit td { padding-block: 12px; }
+  tr.hit { background-image: linear-gradient(90deg, var(--drop-dim), transparent 60%); box-shadow: inset 2px 0 0 var(--drop); }
+  .iname { font-weight: 500; color: var(--ink); }
+  tr.hit .iname { font-weight: 600; font-size: 13.5px; }
+  .snag { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; padding: 1px 6px; border-radius: 999px; border: 1px solid rgb(66 208 124 / .3); background: var(--drop-dim); font: 10px var(--mono); color: var(--drop); vertical-align: 1px; }
+  .price { font: 500 13px var(--mono); }
+  .price.hit { color: var(--drop); }
+  .to { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; font: 500 12px var(--mono); }
+  .meter { width: 52px; height: 4px; border-radius: 99px; background: var(--raised); overflow: hidden; }
+  .meter i { display: block; height: 100%; background: var(--ink-3); }
+  .to.close .meter i { background: var(--lume); }
+  .to.close { color: var(--lume); }
+  .to.hit { color: var(--drop); gap: 5px; }
+  .to.far { color: var(--ink-2); }
+  .when { font: 11px var(--mono); color: var(--ink-3); }
+  svg.spark { display: block; }
+  mark { background: rgb(255 180 84 / .28); color: var(--ink); border-radius: 2px; }
+  @media (max-width: 700px) {
+    .hide-sm { display: none; }
+    table.watch td, table.watch th { padding-inline: 10px; }
+    .c-to { width: 104px; } .c-best { width: 80px; }
+    .meter { display: none; }
+    .u { display: none; }
+  }
+
+  /* ---------- shelves ---------- */
+  .shelves { display: grid; gap: 10px; }
+  .shelf { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); overflow: clip; scroll-margin-top: 44px; }
+  .sh-row { display: flex; align-items: center; gap: 8px; padding: 0 10px 0 0; min-height: 48px; transition: background-color 120ms ease-out; }
+  .sh-row:has(.sh-tog:hover) { background: rgb(193 255 208 / .03); }
+  .sh-h { margin: 0; flex: 1; min-width: 0; font: inherit; }
+  .sh-tog { all: unset; cursor: pointer; box-sizing: border-box; width: 100%; min-height: 48px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 8px 8px 8px 12px; border-radius: 6px 0 0 6px; }
+  .sh-tog:focus-visible { outline: 2px solid var(--lume); outline-offset: -2px; }
+  .chev { width: 14px; height: 14px; color: var(--ink-3); flex: none; transform-origin: 50% 50%; transition: transform 160ms var(--ease-shelf-in), color 120ms ease-out, translate 80ms ease-out; }
+  .shelf.open .chev { transform: rotate(90deg); transition-duration: 200ms, 120ms, 80ms; transition-timing-function: var(--ease-shelf), ease-out, ease-out; }
+  .sh-tog:hover .chev, .sh-tog:focus-visible .chev { color: var(--lume); }
+  .sh-tog:active .chev { translate: 2px 0; }
+  .shelf.open .sh-tog:active .chev { translate: 0 2px; }
+  .nm { font: 600 19px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); }
+  .ct { font: 11px var(--mono); color: var(--ink-3); }
+  .hits { font: 11px var(--mono); color: var(--drop); }
+  .lead, .sct { transition: opacity 140ms ease-out 60ms, visibility 0s linear 0s; }
+  .shelf.open .lead, .shelf.open .sct { opacity: 0; visibility: hidden; transition: opacity 90ms ease-out, visibility 0s linear 90ms; }
+  .lead { font-size: 12.5px; color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lead .amt { font: 600 12px var(--mono); color: var(--lume); }
+  .lead.hit { color: var(--drop); font-family: var(--mono); font-size: 11.5px; }
+  .lead.idle { font: 11px var(--mono); color: var(--ink-3); }
+  .sh-tog .grow { flex: 1; }
+  .sct { font: 11px var(--mono); color: var(--ink-3); }
+  .sct.w { color: var(--warn); }
+  .acts { display: flex; gap: 4px; align-items: center; flex: none; }
+  .add-ico { display: none; }
+
+  /* the collapsing body: grid rows 0fr -> 1fr; the header never moves */
+  .sh-clip { display: grid; grid-template-rows: 0fr; }
+  .sh-clip[hidden="until-found"] { display: grid !important; }
+  .shelf.open .sh-clip { grid-template-rows: 1fr; }
+  .sh-inner { min-height: 0; overflow: hidden; position: relative; opacity: 0; transition: opacity 90ms ease-out; }
+  .shelf.open .sh-inner { opacity: 1; transition: opacity 140ms ease-out 40ms; }
+  .m-drawer .sh-clip, .m-lockon .sh-clip { transition: grid-template-rows 160ms var(--ease-shelf-in); }
+  .m-drawer .shelf.open .sh-clip, .m-lockon .shelf.open .sh-clip { transition: grid-template-rows 200ms var(--ease-shelf); }
+  .m-ledger .sh-inner { transition: none; }
+  .m-ledger .shelf.open .sh-inner { transition: opacity 120ms cubic-bezier(0, 0, .2, 1); }
+  .m-ledger .chev, .m-ledger .shelf.open .chev { transition-duration: 120ms, 120ms, 80ms; }
+
+  /* row stagger on open (not on close, not during Expand all) */
+  .m-drawer .shelf.rows-in :is(.sites-btn, .strip, tbody tr, .sh-foot),
+  .m-lockon .shelf.rows-in :is(.sites-btn, .strip, tbody tr, .sh-foot) {
+    animation: shelf-row 140ms var(--ease-shelf) both;
+    animation-delay: calc(40ms + var(--i, 0) * 20ms);
+  }
+  .m-lockon .shelf.rows-in :is(.sites-btn, .strip, tbody tr, .sh-foot) { animation-delay: var(--d, 40ms); }
+  @keyframes shelf-row { from { opacity: 0; transform: translateY(-4px); } }
+  .scan { position: absolute; left: 0; right: 0; top: 0; height: 1px; background: rgb(255 180 84 / .55); box-shadow: 0 0 10px 1px rgb(255 180 84 / .35); pointer-events: none; animation: scan 240ms var(--ease-shelf) forwards; }
+  @keyframes scan { 85% { opacity: 1; } to { top: 100%; opacity: 0; } }
+
+  /* strike and created cues */
+  tr.strike { animation: strike-row 1200ms ease-out; }
+  @keyframes strike-row { from { background-color: rgb(66 208 124 / .22); } }
+  .shelf.edge, .line.edge { animation: strike-edge 1200ms ease-out; }
+  @keyframes strike-edge { 0%, 25% { border-color: rgb(255 180 84 / .6); } }
+  .m-ledger .shelf.edge .sh-row, .m-ledger .line.edge { animation: head-pulse 900ms ease-out; }
+  .m-ledger .shelf.edge { animation: none; }
+  @keyframes head-pulse { from { background-color: var(--lume-glow); } }
+  .lock { position: absolute; z-index: 4; pointer-events: none; animation: lock 1520ms linear forwards; }
+  .lock i { position: absolute; width: 10px; height: 10px; border: 0 solid var(--lume); }
+  .lock .tl { left: -3px; top: -3px; border-left-width: 2px; border-top-width: 2px; }
+  .lock .tr { right: -3px; top: -3px; border-right-width: 2px; border-top-width: 2px; }
+  .lock .bl { left: -3px; bottom: -3px; border-left-width: 2px; border-bottom-width: 2px; }
+  .lock .br { right: -3px; bottom: -3px; border-right-width: 2px; border-bottom-width: 2px; }
+  @keyframes lock {
+    0% { transform: scale(1.15); opacity: 0; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+    14.5% { transform: scale(1); opacity: 1; }
+    73.7% { opacity: 1; }
+    100% { transform: scale(1); opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    tr.strike { box-shadow: inset 2px 0 0 var(--lume); }
+    .lock { animation: none; }
+  }
+
+  .sites-btn { all: unset; cursor: pointer; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0 0 10px 38px; padding: 3px 6px; border-radius: 4px; font: 11px var(--mono); color: var(--ink-2); }
+  .sites-btn .lbl { font-size: 9.5px; letter-spacing: .14em; color: var(--ink-3); text-transform: uppercase; margin-right: 2px; }
+  .sites-btn .chip { display: inline-flex; align-items: center; height: 19px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--hairline); background: var(--raised); }
+  .sites-btn .ed { color: var(--ink-3); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-left: 4px; }
+  .sites-btn:hover { background: var(--raised); }
+  .sites-btn:hover .ed { color: var(--lume); }
+  .sites-btn:focus-visible { outline: 2px solid var(--lume); outline-offset: 0; }
+  .strip { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 9px 14px; background: var(--warn-dim); border-top: 1px solid rgb(224 138 46 / .25); color: var(--warn); font-size: 13px; }
+  .strip .grow { flex: 1; min-width: 180px; }
+  .sh-body { border-top: 1px solid var(--hairline); }
+  .sh-foot { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 7px 14px; border-top: 1px solid var(--hairline); background: var(--well); font: 11px var(--mono); color: var(--ink-3); }
+  .sh-foot .grow { flex: 1; }
+  .sh-foot a { color: var(--ink-2); text-decoration: none; cursor: pointer; }
+  .sh-foot a:hover { color: var(--lume); }
+
+  .line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 9px 10px 9px 38px; border: 1px solid var(--hairline); border-radius: 6px; background: transparent; min-height: 44px; }
+  .line .nm { font-size: 17px; color: var(--ink-2); }
+  .line .why { font: 11px var(--mono); color: var(--ink-3); flex: 1; min-width: 160px; }
+  .line .why.w { color: var(--warn); }
+  .line .why.new { color: var(--lume); }
+  .line.fresh { border-color: rgb(255 180 84 / .4); }
+  .sub-h { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); margin: 18px 0 2px 2px; }
+  .none { padding: 26px 14px; text-align: center; color: var(--ink-3); font-size: 13px; border: 1px dashed var(--hairline-strong); border-radius: 6px; }
+  .none a { color: var(--ink-2); cursor: pointer; }
+
+  @media (max-width: 640px) {
+    .sh-tog .grow, .sct { display: none; }
+    .lead { flex-basis: 100%; padding-left: 26px; white-space: normal; max-height: 3.2em; }
+    .m-drawer .lead, .m-lockon .lead { transition: max-height 200ms var(--ease-shelf), opacity 140ms ease-out 60ms, visibility 0s; }
+    .shelf.open .lead { max-height: 0; }
+    .add-txt { display: none; }
+    .add-ico { display: inline; }
+    .acts .btn.secondary { width: 36px; height: 36px; padding: 0; font-size: 16px; }
+    .sites-btn { margin-left: 26px; }
+    .line { padding-left: 12px; }
+  }
+
+  /* ⋯ menu */
+  .menu { position: absolute; z-index: 6; min-width: 170px; background: var(--overlay); border: 1px solid var(--hairline-strong); border-radius: 6px; padding: 4px; box-shadow: 0 16px 40px -12px rgb(0 0 0 / .8); transform-origin: top right; animation: menu-in 140ms var(--ease-panel) both; }
+  @keyframes menu-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } }
+  .menu button { all: unset; cursor: pointer; display: block; width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 4px; font-size: 13px; color: var(--ink-2); }
+  .menu button:hover, .menu button:focus-visible { background: var(--raised); color: var(--ink); outline: none; }
+  .menu hr { border: 0; border-top: 1px solid var(--hairline); margin: 4px 0; }
+
+  /* ---------- dialogs ---------- */
+  .scrim { position: absolute; inset: 0; z-index: 5; background: rgb(5 8 6 / .72); animation: scrim-in 200ms cubic-bezier(.2, 0, 0, 1) both; }
+  .scrim.closing { animation: scrim-out 150ms cubic-bezier(.4, 0, 1, 1) both; }
+  @keyframes scrim-in { from { opacity: 0; } }
+  @keyframes scrim-out { to { opacity: 0; } }
+
+  .dlg { position: absolute; left: 50%; top: max(8%, 32px); translate: -50% 0; width: min(480px, calc(100% - 32px)); max-height: calc(100% - 64px);
+    display: grid; grid-template-rows: auto minmax(0, 1fr) auto; grid-template-columns: minmax(0, 1fr);
+    background: var(--overlay); border: 1px solid var(--hairline-strong); border-radius: 8px; box-shadow: 0 24px 64px -16px rgb(0 0 0 / .8);
+    overflow: hidden; transform-origin: top center; animation: dlg-in 220ms var(--ease-panel) both; }
+  .dlg.wide { width: min(520px, calc(100% - 32px)); }
+  .scrim.closing .dlg { animation: dlg-out 150ms ease-in both; }
+  .dlg.nudge { animation: nudge 180ms ease-out; }
+  @keyframes dlg-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
+  @keyframes dlg-out { to { opacity: 0; transform: scale(.98); } }
+  @keyframes nudge { 40% { transform: scale(1.012); } }
+
+  .dlg-grab { display: none; }
+  .dlg-h { position: relative; padding: 18px 52px 14px 20px; border-bottom: 1px solid var(--hairline); }
+  .dlg-eyebrow { font: 500 10.5px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 18px; }
+  .dlg-eyebrow .path { margin: 0; font-size: 10px; }
+  .dlg-eyebrow .path .g { width: 16px; height: 16px; font-size: 9px; }
+  .dlg-h h5 { margin: 8px 0 0; font: 600 20px/1.1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--ink); }
+  .dlg-h .desc { margin: 6px 0 0; font-size: 13px; color: var(--ink-2); max-width: 52ch; }
+  .dlg-h .desc b { color: var(--ink); font-weight: 500; }
+  .dlg-x { position: absolute; top: 14px; right: 14px; width: 28px; height: 28px; border-radius: 4px; display: grid; place-items: center; color: var(--ink-3); cursor: pointer; background: none; border: 0; font-size: 18px; line-height: 1; }
+  .dlg-x:hover { color: var(--ink); background: var(--raised); }
+  .dlg-b { overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px; }
+  .dlg-f { display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--hairline); background: rgb(0 0 0 / .12); }
+  .dlg-f .grow { flex: 1; }
+  .step-fwd { animation: step-fwd 180ms ease-out both; }
+  .step-back { animation: step-back 180ms ease-out both; }
+  @keyframes step-fwd { from { opacity: 0; transform: translateX(12px); } }
+  @keyframes step-back { from { opacity: 0; transform: translateX(-12px); } }
+
+  /* B: side sheet */
+  .scrim.v-sheet .dlg { left: auto; right: 0; top: 0; bottom: 0; translate: none; width: min(420px, 100%); max-height: none; border-radius: 0; border-width: 0 0 0 1px; animation: sheet-in 280ms var(--ease-sheet) both; }
+  .scrim.v-sheet.closing .dlg { animation: sheet-out 200ms ease-in both; }
+  @keyframes sheet-in { from { transform: translateX(100%); } }
+  @keyframes sheet-out { to { transform: translateX(100%); } }
+
+  /* C: two-pane New category with a live preview */
+  .dlg.pane { width: min(740px, calc(100% - 32px)); grid-template-columns: 250px minmax(0, 1fr); }
+  .dlg.pane > .dlg-h, .dlg.pane > .dlg-b, .dlg.pane > .dlg-f { grid-column: 2; }
+  .dlg-rail { grid-column: 1; grid-row: 1 / -1; background: var(--surface); border-right: 1px solid var(--hairline); padding: 20px 18px; display: flex; flex-direction: column; gap: 18px; }
+  .rail-steps { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+  .rail-steps li { display: grid; grid-template-columns: 18px 1fr; gap: 2px 10px; font-size: 12.5px; color: var(--ink-3); }
+  .rail-steps .g { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--hairline-strong); display: grid; place-items: center; font: 10px var(--mono); grid-row: span 2; transition: border-color 150ms, color 150ms; }
+  .rail-steps b { font: 500 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+  .rail-steps li.on b, .rail-steps li.on .g { color: var(--lume); border-color: var(--lume); }
+  .rail-steps li.done b { color: var(--ink-2); }
+  .pv-k { font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .pv { border: 1px solid var(--hairline); border-radius: 6px; background: var(--page); padding: 12px; margin-top: 8px; }
+  .pv-n { font: 600 18px/1 var(--display); letter-spacing: .06em; text-transform: uppercase; color: var(--ink); overflow-wrap: anywhere; transition: color 150ms; }
+  .pv-n.ph { color: var(--ink-3); }
+  .pv-s { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; min-height: 19px; }
+  .pv-s .chip { display: inline-flex; align-items: center; height: 19px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--hairline); background: var(--raised); font: 10.5px var(--mono); color: var(--ink-2); animation: shelf-row 160ms var(--ease-shelf) both; }
+  .pv-s .none-yet { font: 11px var(--mono); color: var(--warn); }
+  .pv-rows { display: grid; gap: 6px; margin-top: 12px; }
+  .pv-rows i { display: block; height: 8px; border-radius: 3px; background: var(--raised); }
+  .pv-note { font-size: 12px; color: var(--ink-3); margin: 0; }
+
+  /* phones: bottom sheet */
+  @media (max-width: 560px) {
+    .dlg, .scrim.v-sheet .dlg, .dlg.pane { left: 0; right: 0; top: auto; bottom: 0; translate: none; width: 100%; max-height: 92%; border-radius: 12px 12px 0 0; border-width: 1px 0 0; grid-template-columns: minmax(0, 1fr); animation: sheet-up 280ms var(--ease-sheet) both; }
+    .scrim.closing .dlg, .scrim.v-sheet.closing .dlg { animation: sheet-down 200ms ease-in both; }
+    .dlg.pane > .dlg-h, .dlg.pane > .dlg-b, .dlg.pane > .dlg-f { grid-column: 1; }
+    .dlg-rail { display: none; }
+    .dlg { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    .dlg-grab { display: block; width: 32px; height: 4px; border-radius: 99px; background: var(--hairline-strong); margin: 8px auto 0; }
+    .dlg-f { padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+    .dlg-f .btn { height: 40px; flex: 1; }
+    .dlg-f .btn.primary { flex: 2; }
+    .dlg-f .grow { display: none; }
+  }
+  @keyframes sheet-up { from { transform: translateY(100%); } }
+  @keyframes sheet-down { to { transform: translateY(100%); } }
+
+  /* inline (section 03) */
+  .dlg.inline { position: relative; left: auto; top: auto; translate: none; width: 100%; max-width: 520px; max-height: none; animation: none; }
+  .dlg.inline.pane { max-width: 760px; }
+  @media (max-width: 560px) { .dlg.inline { border-radius: 8px; border-width: 1px; } }
+
+  /* form parts */
+  .field { display: grid; gap: 5px; margin-bottom: 14px; }
+  .field label, .lbl-row { font: 500 11.5px var(--sans); color: var(--ink-2); }
+  .field input, .field textarea { height: 32px; padding: 0 10px; border-radius: 4px; border: 1px solid var(--hairline-strong); background: var(--well); color: var(--ink); font: 13px var(--sans); width: 100%; transition: border-color 120ms ease-out; }
+  .field textarea { height: auto; padding: 8px 10px; resize: vertical; line-height: 1.45; }
+  .field input.m { font-family: var(--mono); }
+  .field input::placeholder, .field textarea::placeholder { color: var(--ink-3); }
+  .field input:focus, .field textarea:focus { outline: 2px solid var(--lume); outline-offset: 1px; }
+  .field input[aria-invalid="true"] { border-color: rgb(240 86 92 / .6); }
+  .adorn { position: relative; }
+  .adorn > span { position: absolute; left: 10px; top: 50%; translate: 0 -50%; font: 12px var(--mono); color: var(--ink-3); pointer-events: none; }
+  .adorn input { padding-left: 22px; }
+  .hint { font-size: 12px; color: var(--ink-3); margin: 0; }
+  .err { font-size: 12px; color: var(--rise); margin: 0; }
+  .note { font-size: 12px; color: var(--warn); margin: 0; }
+  .suggest { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+  .suggest .k { font: 11px var(--mono); color: var(--ink-3); margin-right: 2px; }
+  .suggest button { all: unset; cursor: pointer; font: 11px var(--mono); color: var(--ink-3); border: 1px solid var(--hairline); border-radius: 3px; padding: 2px 7px; transition: color 120ms, border-color 120ms; }
+  .suggest button:hover { color: var(--ink); border-color: var(--hairline-strong); }
+  .suggest button:focus-visible { outline: 2px solid var(--lume); outline-offset: 1px; }
+  .lead-q { margin: 0 0 12px; font-size: 13.5px; color: var(--ink-2); }
+  .lead-q b { color: var(--ink); font-weight: 500; }
+  .saved { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-radius: 4px; background: var(--drop-dim); border: 1px solid rgb(66 208 124 / .3); color: var(--drop); font: 12px var(--mono); }
+
+  /* site picker */
+  .pk-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; font: 500 10px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .pk-h .picked { color: var(--ink-2); }
+  .picker { border: 1px solid var(--hairline-strong); border-radius: 6px; overflow: hidden; background: var(--well); }
+  .pk-row { all: unset; box-sizing: border-box; cursor: pointer; position: relative; width: 100%; height: 40px; padding: 0 12px; display: grid; grid-template-columns: 16px 20px auto minmax(0, 1fr) auto; align-items: center; gap: 10px; border-top: 1px solid var(--hairline); transition: background-color 120ms ease-out; }
+  .pk-row:first-child { border-top: 0; }
+  .pk-row:hover { background: rgb(193 255 208 / .03); }
+  .pk-row:focus-visible { outline: 2px solid var(--lume); outline-offset: -2px; }
+  .pk-row::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--lume); transform: scaleY(0); transition: transform 150ms var(--ease-shelf); }
+  .pk-row[aria-checked="true"]::before { transform: scaleY(1); }
+  .cb { width: 16px; height: 16px; border-radius: 3px; border: 1px solid var(--hairline-strong); display: grid; place-items: center; transition: background-color 120ms, border-color 120ms; }
+  .cb svg { opacity: 0; transform: scale(.6); transition: opacity 120ms, transform 150ms var(--ease-panel); }
+  .pk-row[aria-checked="true"] .cb { background: var(--lume); border-color: var(--lume); }
+  .pk-row[aria-checked="true"] .cb svg { opacity: 1; transform: none; }
+  .mq { width: 20px; height: 20px; border-radius: 3px; background: var(--raised); border: 1px solid var(--hairline); display: grid; place-items: center; font: 500 9.5px var(--mono); color: var(--ink-2); text-transform: uppercase; }
+  .pk-name { font-size: 13px; color: var(--ink); white-space: nowrap; }
+  .pk-host { font: 11px var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pk-ct { font: 11px var(--mono); color: var(--ink-3); white-space: nowrap; }
+  .pk-ct.w { color: var(--warn); }
+  .pk-ct.n { color: var(--lume); }
+  .pk-row.new { animation: new-row 600ms ease-out; }
+  @keyframes new-row { from { background-color: var(--lume-glow); } }
+  .pk-add { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; height: 40px; padding: 0 12px; display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--hairline); font-size: 13px; color: var(--ink-3); transition: color 120ms; }
+  .pk-add:hover { color: var(--lume); }
+  .pk-add:focus-visible { outline: 2px solid var(--lume); outline-offset: -2px; }
+  .pk-add .plus { width: 16px; text-align: center; font-family: var(--mono); }
+  .pk-form { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms var(--ease-shelf); }
+  .pk-form.open { grid-template-rows: 1fr; }
+  .pk-form > div { min-height: 0; overflow: hidden; }
+  .pk-form .inner { padding: 10px 12px 12px; border-top: 1px solid var(--hairline); display: grid; gap: 8px; }
+  .pk-form .row { display: grid; grid-template-columns: 1.4fr 1fr auto auto; gap: 6px; align-items: end; }
+  .pk-form .field { margin: 0; }
+  .pk-form .field input { height: 30px; font-size: 12.5px; }
+  .pk-form .btn { height: 30px; }
+  @media (max-width: 560px) { .pk-form .row { grid-template-columns: 1fr 1fr; } .pk-host { display: none; } .pk-row { grid-template-columns: 16px 20px minmax(0, 1fr) auto; } }
+
+  /* Add item: tracking options */
+  .trk { border: 1px solid var(--hairline-strong); border-radius: 6px; background: var(--well); }
+  .trk-h { all: unset; box-sizing: border-box; cursor: pointer; width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 12px; font: 11px var(--mono); color: var(--ink-2); }
+  .trk-h:focus-visible { outline: 2px solid var(--lume); outline-offset: -2px; }
+  .trk-h .k { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .trk-h .sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .trk-h .chev { width: 12px; height: 12px; }
+  .trk.open .trk-h .chev { transform: rotate(90deg); transition-duration: 180ms; }
+  .trk-b { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 180ms var(--ease-shelf); }
+  .trk.open .trk-b { grid-template-rows: 1fr; }
+  .trk-b > div { min-height: 0; overflow: hidden; }
+  .trk-b .inner { padding: 4px 12px 12px; border-top: 1px solid var(--hairline); display: grid; gap: 12px; }
+  .trk-b .inner > div:first-child { margin-top: 10px; }
+  .segd { display: inline-flex; border: 1px solid var(--hairline-strong); border-radius: 4px; overflow: hidden; margin-top: 5px; }
+  .segd button { all: unset; cursor: pointer; padding: 5px 10px; font: 11px var(--mono); color: var(--ink-3); border-right: 1px solid var(--hairline); transition: background-color 120ms, color 120ms; }
+  .segd button:last-child { border-right: 0; }
+  .segd button[aria-pressed="true"] { background: var(--lume-glow); color: var(--lume); }
+  .segd button:focus-visible { outline: 2px solid var(--lume); outline-offset: -2px; }
+  .tgl { all: unset; cursor: pointer; width: 32px; height: 18px; border-radius: 99px; background: var(--raised); border: 1px solid var(--hairline-strong); position: relative; flex: none; transition: background-color 150ms, border-color 150ms; }
+  .tgl::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink-3); transition: transform 180ms var(--ease-panel), background-color 150ms; }
+  .tgl[aria-checked="true"] { background: var(--lume-glow); border-color: var(--lume); }
+  .tgl[aria-checked="true"]::after { transform: translateX(14px); background: var(--lume); }
+  .tgl:focus-visible { outline: 2px solid var(--lume); outline-offset: 2px; }
+  .hrow { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  .sitechips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+  .sitechips button { all: unset; cursor: pointer; font: 11px var(--mono); padding: 3px 8px; border-radius: 3px; border: 1px solid var(--hairline); color: var(--ink-3); transition: all 120ms; }
+  .sitechips button[aria-pressed="true"] { border-color: rgb(255 180 84 / .5); background: var(--lume-glow); color: var(--lume); }
+
+  /* spec + decisions */
+  .spec { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .spec > div { border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); padding: 14px 16px; }
+  .spec h4 { margin: 0 0 6px; font: 500 10.5px var(--mono); letter-spacing: .14em; text-transform: uppercase; color: var(--lume); }
+  .spec p, .spec li { margin: 0; font-size: 13px; color: var(--ink-2); }
+  .spec ul { margin: 0; padding-left: 16px; display: grid; gap: 4px; }
+  .spec code { font: 11.5px var(--mono); color: var(--ink); }
+  .tbl-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: 6px; background: var(--surface); margin-bottom: 12px; }
+  table.mt { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 12.5px; }
+  table.mt th, table.mt td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--hairline); vertical-align: top; color: var(--ink-2); }
+  table.mt th { font: 500 10px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); border-top: 0; }
+  table.mt td:first-child { color: var(--ink); font-weight: 500; white-space: nowrap; }
+  table.mt code { font: 11.5px var(--mono); color: var(--ink); }
+  .demo-row { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 28px; align-items: start; }
+  .demo-row ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; display: grid; gap: 8px; }
+  .demo-row ul b { color: var(--ink); font-weight: 500; }
+  .demo-row .btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  @media (max-width: 900px) { .demo-row { grid-template-columns: 1fr; } }
+  .qs { display: grid; gap: 10px; }
+  .q { border: 1px solid var(--hairline); border-radius: 6px; padding: 14px 16px; background: var(--surface); }
+  .q b { font-weight: 600; }
+  .q p { margin: 4px 0 0; color: var(--ink-2); font-size: 13px; }
+  .q .def { font: 11px var(--mono); color: var(--lume); margin-top: 6px; display: block; }
+  .files { font: 12px/1.9 var(--mono); color: var(--ink-2); border: 1px solid var(--hairline); border-radius: 6px; background: var(--well); padding: 14px 16px; overflow-x: auto; white-space: nowrap; }
+  .files .k { color: var(--ink-3); }
+</style>
+
+<div class="doc">
+  <p class="eyebrow">Snagr · home screen proposal · v4 · motion and dialog polish</p>
+  <h1 class="doc-title"><span class="reticle" aria-hidden="true">⌖</span>Every item lives on a shelf</h1>
+  <p class="lede">
+    v4 adds motion to the shelves and redesigns the dialogs. Two designer agents reviewed v3, one for each,
+    and each proposed three options. The switches above the mockup let you try every option. Both designers'
+    recommended options are on by default.
+  </p>
+
+  <div class="changes">
+    <div class="chg"><span class="src you">v4 · shelves</span><b>Smooth open and close</b>The body grows open in 200ms and closes in 160ms. The header never moves, so the page below slides instead of jumping. Rows drop in one after another.</div>
+    <div class="chg"><span class="src you">v4 · shelves</span><b>Strikes point at the row</b>When an item lands in range, that row lights up, not the whole shelf. With reduced motion it gets a steady amber edge for 8 seconds instead of a flash that's easy to miss.</div>
+    <div class="chg"><span class="src you">v4 · shelves</span><b>Toggling doesn't redraw the page</b>Opening a shelf now changes only that shelf. Because v3 redrew the whole page on every click, its chevron animation never actually played.</div>
+    <div class="chg"><span class="src you">v4 · dialogs</span><b>Field-card layout</b>Header and footer stay fixed and only the middle scrolls, so the main button is always visible. There's a close ×, and dialogs animate in and out. On phones they open as a bottom sheet.</div>
+    <div class="chg"><span class="src you">v4 · dialogs</span><b>Compact site picker</b>One-line rows with a monogram, the site's address and "N tracked". Paused sites are marked. <b style="display:inline">＋ Add a site that isn't listed</b> opens a small form in place, and fills in the name from the URL.</div>
+    <div class="chg"><span class="src you">v4 · dialogs</span><b>Friendlier validation</b>No warnings before you've done anything. Buttons are never greyed out; errors appear when you click. Clicking outside won't throw away a half-filled form. Focus stays put while you pick sites.</div>
+  </div>
+  <p class="still">Carried over: the v3 guide hero and the two-step New category (no item step), plus v2's collapsible shelves, urgency ordering and one-line rows.</p>
+
+  <section class="block">
+    <h2 class="sec"><span class="n">01</span>The home screen</h2>
+    <div class="controls">
+      <div class="ctl"><span class="k">Scenario</span>
+        <div class="switch" role="group" aria-label="Scenario">
+          <button type="button" data-sc="returning">Returning user</button>
+          <button type="button" data-sc="many">12 categories</button>
+          <button type="button" data-sc="newuser">New user</button>
+          <button type="button" data-sc="empty">Empty instance</button>
+        </div>
+        <button type="button" class="btn secondary" id="strike">Simulate a strike on Retro games</button>
+      </div>
+      <div class="ctl"><span class="k">Shelf motion</span>
+        <div class="switch" role="group" aria-label="Shelf motion">
+          <button type="button" data-mo="drawer">A · Drawer<span class="rec">REC</span></button>
+          <button type="button" data-mo="lockon">B · Lock-on</button>
+          <button type="button" data-mo="ledger">C · Ledger</button>
+        </div>
+        <span class="blurb" id="mo-blurb"></span>
+      </div>
+      <div class="ctl"><span class="k">Dialogs</span>
+        <div class="switch" role="group" aria-label="Dialog style">
+          <button type="button" data-dl="card">A · Field card<span class="rec">REC</span></button>
+          <button type="button" data-dl="sheet">B · Side sheet</button>
+          <button type="button" data-dl="pane">C · Two-pane</button>
+        </div>
+        <span class="blurb" id="dl-blurb"></span>
+      </div>
+    </div>
+    <p class="try" id="try"></p>
+    <div class="frame" id="frame">
+      <div class="chrome"><i></i><i></i><i></i><span>snagr.local /</span></div>
+      <div class="mast">
+        <div class="wordmark"><span class="r" aria-hidden="true">⌖</span><b>SNAGR</b></div>
+        <nav aria-label="Mock navigation"><a class="on">Dashboard</a><a>Sites</a><a>Activity</a><a>Settings</a></nav>
+        <span class="sp"></span>
+        <input id="q" type="search" placeholder="Search items…" aria-label="Search items (mock)" autocomplete="off">
+        <span class="av">N</span>
+      </div>
+      <div class="app" id="app"></div>
+      <p class="sr" aria-live="polite" id="live"></p>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="sec"><span class="n">02</span>How shelves move</h2>
+    <p class="sec-note">Option A · Drawer, as the motion designer specified it. Lock-on uses the same timings, adds the scan line and brackets, and its Expand all steps 50ms per shelf. Ledger has no height animation.</p>
+    <div class="tbl-wrap">
+      <table class="mt">
+        <thead><tr><th>Moment</th><th>What moves</th><th>Timing</th></tr></thead>
+        <tbody>
+          <tr><td>Open</td><td>Body height grows (grid rows 0fr → 1fr). Content fades in.</td><td><code>200ms</code> ease <code>(.2,0,0,1)</code> · fade <code>140ms</code> after <code>40ms</code></td></tr>
+          <tr><td>Close</td><td>Height shrinks and content fades out. No stagger.</td><td><code>160ms</code> ease <code>(.4,0,.2,1)</code> · fade <code>90ms</code></td></tr>
+          <tr><td>Chevron</td><td>SVG chevron turns 90°, in sync with the height. Pressing it nudges it 2px in the direction it's about to move.</td><td>same as the height · nudge <code>80ms</code></td></tr>
+          <tr><td>Rows</td><td>The sites line, then each row, drop 4px and fade in.</td><td><code>140ms</code> each, starting <code>40ms</code> in, <code>20ms</code> apart; the 6th row onward share one delay</td></tr>
+          <tr><td>Collapsed summary</td><td>The one-line lead and site count fade out, but the header keeps its size, so nothing below shifts.</td><td><code>90ms</code> out · <code>140ms</code> back in</td></tr>
+          <tr><td>Hover</td><td>Header background brightens slightly; chevron turns amber.</td><td><code>120ms</code></td></tr>
+          <tr><td>Collapse all / Expand all</td><td>Collapse: all shelves together. Expand: a cascade down the list, with no row stagger.</td><td>Expand: <code>40ms</code> between shelves, up to 4 steps</td></tr>
+          <tr><td>Strike</td><td>The shelf opens, the row that struck flashes green, and the shelf border flashes amber then fades.</td><td><code>1200ms</code>, long enough to catch after glancing away</td></tr>
+          <tr><td>Reduced motion</td><td>Everything is instant. The struck row keeps a steady amber edge for 8s instead.</td><td>none</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="spec">
+      <div><h4>What starts open</h4><ul>
+        <li>If 4 or fewer shelves hold your items, all of them start open.</li>
+        <li>With more than 4, only shelves with an item in range start open, plus the one holding the closest item.</li>
+        <li>Once you open or close shelves yourself, those choices win.</li>
+      </ul></div>
+      <div><h4>What reopens a shelf</h4><ul>
+        <li>A new item in range on a collapsed shelf. It opens without scrolling the page, so you aren't pulled away from what you're reading.</li>
+        <li>Adding an item to it. That shelf does scroll into view, because you just asked for it.</li>
+        <li>A search opens every shelf with a match. Ctrl-F also finds items inside collapsed shelves (<code>hidden="until-found"</code>).</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="sec"><span class="n">03</span>Dialogs</h2>
+    <p class="sec-note">This is the New category dialog, drawn right on the page in whichever style is picked above. The buttons open the other two dialogs inside the mockup, with their animations.</p>
+    <div class="demo-row">
+      <div id="wiz-inline"></div>
+      <div>
+        <ul>
+          <li><b>Header</b>: an eyebrow line, the title and a close ×. The step pips match the hero's ① → ②. A finished step shows ✓ in grey, because green means a good price.</li>
+          <li><b>Site picker</b>: one-line rows, with an amber edge and filled box when picked. The last row expands into an add-a-site form. A site you add is shared with everyone on the instance, and the form says so.</li>
+          <li><b>Buttons</b>: the main button is always on the right and never greyed out. Clicking it with something missing shows an error under the field.</li>
+          <li><b>Phones</b>: a bottom sheet with a grab bar. The buttons are 40px tall, and the main one is twice as wide.</li>
+        </ul>
+        <div class="btns">
+          <button type="button" class="btn secondary" id="demo-add">Open Add item</button>
+          <button type="button" class="btn secondary" id="demo-sites">Open Edit sites</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="sec"><span class="n">04</span>Still open</h2>
+    <p class="sec-note">My default for each is in amber.</p>
+    <div class="qs">
+      <div class="q"><b>Which shelf motion?</b>
+        <p>Drawer is the plain, fast option. Lock-on adds hunter-style extras: a scan line and reticle brackets. Brackets on a strike feel earned. A scan line on every open might get tiring.</p>
+        <span class="def">default: Drawer, plus Lock-on's brackets for strikes only</span></div>
+      <div class="q"><b>Which dialog style?</b>
+        <p>The field card works for all three dialogs. The two-pane preview teaches best, but it's too big for Add item and Edit sites. A mix is possible: two-pane only for your first category, when the hero sends you there.</p>
+        <span class="def">default: Field card everywhere; two-pane only for the first category</span></div>
+      <div class="q"><b>Can people reorder shelves?</b>
+        <p>Urgency order puts what needs you first, but shelves move as prices change. Pinning is the middle ground.</p>
+        <span class="def">default: urgency only for now</span></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2 class="sec"><span class="n">05</span>What would change in the code</h2>
+    <div class="files">
+      <span class="k">styles/</span>globals.css&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">ease-shelf tokens; shelf-row, strike-row, strike-edge keyframes; reduced-motion strike edge</span><br>
+      <span class="k">components/ui/</span>dialog.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">anchored panel, max-height; header, body and footer slots; enter and exit animations; bottom sheet on phones</span><br>
+      <span class="k">features/dashboard/</span>CategoryShelf.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">stays mounted; grid-rows animation; until-found; SVG chevron; row --i stagger</span><br>
+      <span class="k">features/dashboard/</span>useShelfState.ts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">localStorage, first-open defaults, reopen on strike, which row struck (+ a vitest)</span><br>
+      <span class="k">features/dashboard/</span>GuideHero.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">new · the hero while you have no items</span><br>
+      <span class="k">features/categories/</span>CreateCategoryDialog.tsx <span class="k">two steps with direction-aware slides; keeps work on outside click</span><br>
+      <span class="k">features/sites/</span>SitePicker.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">new · shared by New category and Edit sites; inline createSite, spots duplicate sites, shows paused ones</span><br>
+      <span class="k">features/items/</span>AddItemDialog.tsx&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="k">always scoped to a category; $ prefix; Tracking options as one expandable row</span><br>
+      <span class="k">backend · agent · API contract</span>&nbsp;&nbsp;&nbsp;<span class="k">untouched</span>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const RM = matchMedia('(prefers-reduced-motion: reduce)')
+  // ---------- data ----------
+  const BASE_SITES = [
+    { id: 1, name: 'eBay', url: 'ebay.com', listings: 14 },
+    { id: 2, name: 'Newegg', url: 'newegg.com', listings: 6 },
+    { id: 3, name: 'Amazon', url: 'amazon.com', listings: 5 },
+    { id: 4, name: 'Mercari', url: 'mercari.com', listings: 3, paused: true },
+    { id: 5, name: 'KEH', url: 'keh.com', listings: 2 },
+  ]
+  let SITES = []
+  const it = (name, best, target, site, when, trend) => {
+    const pts = []
+    for (let i = 0; i < 8; i++) pts.push(best * (1 + trend * (7 - i) / 7) + (i % 3 === 1 ? best * 0.008 : 0))
+    pts[7] = best
+    return { name, best, target, site, when, spark: pts }
+  }
+  function returningCats() {
+    return [
+      { id: 1, name: 'GPUs', sites: [1, 2, 3], items: [it('RX 7800 XT', 409, 420, 'Newegg', '4m', 0.14), it('RTX 4070 Super', 529.99, 480, 'Amazon', '11m', 0.13)] },
+      { id: 2, name: 'Retro games', sites: [1, 4], items: [it('Pokémon Emerald (GBA)', 138, 120, 'eBay', '22m', 0.09), it('Chrono Trigger (SNES)', 214.5, 180, 'Mercari', '1h', -0.04)] },
+      { id: 3, name: 'Home lab', sites: [], items: [it('MikroTik CRS309', null, 220, '—', '—', 0)] },
+      { id: 4, name: 'Keyboards', sites: [], items: [] },
+      { id: 5, name: 'Camera lenses', sites: [1, 5], items: [] },
+    ]
+  }
+  function manyCats() {
+    const names = ['GPUs', 'Retro games', 'Monitors', 'Watches', 'Vinyl', 'Road bikes', 'Espresso', 'Synths', 'Camera lenses', 'Home lab', 'Board games', 'Keyboards']
+    const seeds = [
+      [['RX 7800 XT', 409, 420], ['RTX 4070 Super', 529.99, 480]],
+      [['Pokémon Emerald (GBA)', 138, 120], ['Chrono Trigger (SNES)', 214.5, 180]],
+      [['Dell U2723QE', 489, 450], ['LG 27GP850', 329, 300]],
+      [['Seiko SPB143', 812, 700]],
+      [['Kind of Blue (1959 mono)', 260, 150], ['Rumours (OG press)', 44, 45]],
+      [['Canyon Endurace CF 7', 2250, 1800]],
+      [['Lelit Bianca V3', 2799, 2400], ['Niche Zero', 689, 600]],
+      [['Korg Minilogue XD', 449, 420], ['Arturia MiniFreak', 520, 450]],
+      [['Sigma 35mm f/1.4 Art', 459, 380]],
+      [['MikroTik CRS309', 239, 220]],
+      [], [],
+    ]
+    return names.map((name, i) => ({
+      id: i + 1, name, sites: i === 11 ? [] : [1 + (i % 4), 1 + ((i + 1) % 4)],
+      items: seeds[i].map(([n, b, t], j) => it(n, b, t, BASE_SITES[(i + j) % 4].name, `${5 + i * 7 + j}m`, 0.05 + (i % 3) * 0.04)),
+    }))
+  }
+  const newUserCats = () => returningCats().map((c) => ({ ...c, items: [] }))
+
+  const money = (n) => '$' + n.toFixed(2)
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+  const siteNames = (cat) => cat.sites.map((id) => SITES.find((s) => s.id === id)?.name).filter(Boolean)
+  const listNames = (names) => names.length <= 3 ? names.join(', ').replace(/, ([^,]*)$/, ' and $1') : `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
+  const inRange = (i) => i.best != null && i.best <= i.target
+  const ratio = (i) => (i.best == null ? Infinity : (i.best - i.target) / i.target)
+  const sortItems = (items) => [...items].sort((a, b) => (inRange(b) - inRange(a)) || (ratio(a) - ratio(b)) || a.name.localeCompare(b.name))
+  const CHEV = '<svg class="chev" viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 1.5 7 5l-3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
+  // ---------- state ----------
+  let scenario = 'returning'
+  let motion = 'drawer'
+  let dstyle = 'card'
+  let CATS = []
+  let store = new Map() // categoryId -> { collapsed, snaggedAt }; localStorage in the real build
+  let search = ''
+  let reveal = new Set() // shelves to animate open after the next paint
+  let created = null // category id to mark after the next paint
+  let scrollTo = null
+  let huntingName = null
+  let lastCreated = null // category id from the New category dialog that just ran (client state)
+
+  function setScenario(sc) {
+    scenario = sc
+    SITES = BASE_SITES.map((s) => ({ ...s }))
+    CATS = sc === 'returning' ? returningCats() : sc === 'many' ? manyCats() : sc === 'newuser' ? newUserCats() : []
+    store = new Map()
+    lastCreated = null
+    search = ''
+    document.getElementById('q').value = ''
+    closeModal(true); closeMenu()
+    paint()
+  }
+
+  function shelfStats(cat) {
+    const items = sortItems(cat.items)
+    return { items, hits: items.filter(inRange).length, closest: items.find((i) => i.best != null && !inRange(i)) || null, firstHit: items.find(inRange) || null }
+  }
+  function shelfRank(cat) {
+    const s = shelfStats(cat)
+    if (cat.items.length && !cat.sites.length) return [0, 0]
+    if (s.hits) return [1, -s.hits]
+    if (s.closest) return [2, ratio(s.closest)]
+    return [3, 0]
+  }
+  function orderedShelves() {
+    return CATS.filter((c) => c.items.length).sort((a, b) => {
+      const ra = shelfRank(a), rb = shelfRank(b)
+      return ra[0] - rb[0] || ra[1] - rb[1] || a.name.localeCompare(b.name)
+    })
+  }
+  function globallyClosestCat() {
+    let best = null
+    for (const c of CATS) for (const i of c.items) if (i.best != null && !inRange(i) && (!best || ratio(i) < best.r)) best = { r: ratio(i), id: c.id }
+    return best?.id
+  }
+  function isOpenState(cat, shelfCount) {
+    if (search) return true
+    const e = store.get(cat.id)
+    if (!e) return shelfCount <= 4 || shelfStats(cat).hits > 0 || cat.id === globallyClosestCat()
+    if (e.collapsed && shelfStats(cat).hits > e.snaggedAt) {
+      // a new strike on a collapsed shelf: render it closed, then animate it open
+      store.set(cat.id, { collapsed: false, snaggedAt: shelfStats(cat).hits })
+      reveal.add(cat.id)
+      return false
+    }
+    return !e.collapsed
+  }
+
+  // ---------- rendering ----------
+  function spark(values) {
+    if (values.some((v) => v == null || Number.isNaN(v))) return '<span class="when">—</span>'
+    const w = 76, h = 20, min = Math.min(...values), max = Math.max(...values), span = max - min || 1
+    const pts = values.map((v, i) => [(i / (values.length - 1)) * (w - 4) + 2, h - 2 - ((v - min) / span) * (h - 4)])
+    const d = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ')
+    const last = pts[pts.length - 1]
+    const falling = values[values.length - 1] <= values[0]
+    return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><path d="${d}" fill="none" stroke="#4e5d53" stroke-width="1.3"/><circle cx="${last[0]}" cy="${last[1]}" r="2" fill="${falling ? '#42d07c' : '#f0565c'}"/></svg>`
+  }
+  function toTarget(i) {
+    if (i.best == null) return '<span class="when">no price yet</span>'
+    const gap = i.best - i.target
+    if (gap <= 0) return `<span class="to hit">✓ ${money(-gap)}<span class="u">under</span></span>`
+    const fill = Math.max(0, Math.min(1, i.target / i.best))
+    return `<span class="to ${fill >= 0.95 ? 'close' : 'far'}"><span class="meter" aria-hidden="true"><i style="width:${(fill * 100).toFixed(0)}%"></i></span>${money(gap)}</span>`
+  }
+  const hl = (name) => {
+    if (!search) return esc(name)
+    const idx = name.toLowerCase().indexOf(search.toLowerCase())
+    if (idx < 0) return esc(name)
+    return esc(name.slice(0, idx)) + '<mark>' + esc(name.slice(idx, idx + search.length)) + '</mark>' + esc(name.slice(idx + search.length))
+  }
+  const COLS = `<th>Item</th><th class="c-trend hide-sm">Trend</th><th class="c-best r">Best</th><th class="c-site r hide-sm">Site</th><th class="c-target r hide-sm">Target</th><th class="c-to r">To target</th><th class="c-when r hide-sm">Checked</th>`
+  function rows(items) {
+    return items.map((i, idx) => `
+      <tr class="${inRange(i) ? 'hit' : ''} ${i.struck ? 'strike' : ''}" style="--i:${Math.min(idx + 1, 5)}">
+        <td>${inRange(i) ? '<span class="snag">⌖ Snagged</span>' : ''}<span class="iname">${hl(i.name)}</span></td>
+        <td class="c-trend hide-sm">${i.best == null ? '<span class="when">—</span>' : spark(i.spark)}</td>
+        <td class="c-best r"><span class="price ${inRange(i) ? 'hit' : ''}">${i.best == null ? '—' : money(i.best)}</span></td>
+        <td class="c-site r hide-sm"><span class="when">${esc(i.site)}</span></td>
+        <td class="c-target r hide-sm"><span class="price" style="color:var(--ink-2)">${money(i.target)}</span></td>
+        <td class="c-to r">${toTarget(i)}</td>
+        <td class="c-when r hide-sm"><span class="when">${i.when === '—' || i.when === 'just now' ? i.when : i.when + ' ago'}</span></td>
+      </tr>`).join('')
+  }
+  function lead(s) {
+    if (s.firstHit) return `<span class="lead hit">⌖ ${esc(s.firstHit.name)} at ${money(s.firstHit.best)}</span>`
+    if (s.closest) return `<span class="lead">${esc(s.closest.name)} · <span class="amt">${money(s.closest.best - s.closest.target)}</span> from striking</span>`
+    return `<span class="lead idle">hunting · no prices yet</span>`
+  }
+
+  function shelf(cat, shelfCount) {
+    const all = shelfStats(cat)
+    const items = search ? all.items.filter((i) => i.name.toLowerCase().includes(search.toLowerCase())) : all.items
+    const open = isOpenState(cat, shelfCount)
+    const names = siteNames(cat)
+    const noSites = names.length === 0
+    const count = search ? `${items.length} of ${all.items.length} match` : `${all.items.length} ${all.items.length === 1 ? 'item' : 'items'}`
+    const bodyId = `shelf-${cat.id}-body`
+    return `
+      <section class="shelf ${open ? 'open' : ''}" id="shelf-${cat.id}" data-cat="${cat.id}">
+        <div class="sh-row">
+          <h3 class="sh-h" id="shelf-${cat.id}-h">
+            <button type="button" class="sh-tog" data-tog="${cat.id}" aria-expanded="${open}" aria-controls="${bodyId}">
+              ${CHEV}
+              <span class="nm">${esc(cat.name)}</span>
+              <span class="ct tnum">${count}</span>
+              ${all.hits ? `<span class="hits tnum">⌖ ${all.hits} in range</span>` : ''}
+              ${lead(all)}
+              <span class="grow"></span>
+              ${noSites ? '<span class="sct w">⚠ no sites</span>' : `<span class="sct tnum">${names.length} ${names.length === 1 ? 'site' : 'sites'}</span>`}
+            </button>
+          </h3>
+          <div class="acts">
+            ${noSites
+              ? `<button type="button" class="btn warn" data-act="link" data-cat="${cat.id}">Link sites</button>`
+              : `<button type="button" class="btn secondary" data-act="add" data-cat="${cat.id}" aria-label="Add item to ${esc(cat.name)}"><span class="add-txt">＋ Add item</span><span class="add-ico" aria-hidden="true">＋</span></button>`}
+            <button type="button" class="btn ghost icon" data-act="menu" data-cat="${cat.id}" aria-label="More for ${esc(cat.name)}" aria-haspopup="menu">⋯</button>
+          </div>
+        </div>
+        <div class="sh-clip" id="${bodyId}" role="region" aria-labelledby="shelf-${cat.id}-h" ${open ? '' : 'hidden="until-found"'}>
+          <div class="sh-inner">
+            ${noSites ? '' : `<button type="button" class="sites-btn" style="--i:0" data-act="link" data-cat="${cat.id}" aria-label="Edit sites for ${esc(cat.name)}"><span class="lbl">Searching</span>${names.map((n) => `<span class="chip">${esc(n)}</span>`).join('')}<span class="ed">edit</span></button>`}
+            ${noSites ? `<div class="strip" style="--i:0"><span aria-hidden="true">⚠</span><span class="grow">No sites linked. The hunter can't search for ${all.items.length === 1 ? 'this item' : `these ${all.items.length} items`}.</span></div>` : ''}
+            <div class="sh-body">
+              <table class="watch"><thead class="vh"><tr>${COLS}</tr></thead><tbody>${rows(items)}</tbody></table>
+            </div>
+            <div class="sh-foot" style="--i:5"><span class="tnum">${all.items.length} ${all.items.length === 1 ? 'item' : 'items'} · closest first</span><span class="grow"></span><a data-act="page" data-cat="${cat.id}">Open ${esc(cat.name)} →</a></div>
+          </div>
+        </div>
+      </section>`
+  }
+
+  function lineRow(cat) {
+    const names = siteNames(cat)
+    const fresh = cat.id === lastCreated
+    return names.length
+      ? `<div class="line ${fresh ? 'fresh' : ''}" id="shelf-${cat.id}"><span class="nm">${esc(cat.name)}</span>${fresh ? `<span class="why new">new · searching ${esc(names.join(', '))}</span>` : `<span class="why">none of yours · searching ${esc(names.join(', '))}</span>`}
+          <button type="button" class="btn secondary" data-act="add" data-cat="${cat.id}" aria-label="Add item to ${esc(cat.name)}"><span class="add-txt">＋ Add item</span><span class="add-ico" aria-hidden="true">＋</span></button></div>`
+      : `<div class="line" id="shelf-${cat.id}"><span class="nm">${esc(cat.name)}</span><span class="why w">⚠ no sites. The hunter can't search here.</span>
+          <button type="button" class="btn warn" data-act="link" data-cat="${cat.id}">Link sites</button></div>`
+  }
+
+  function heroBlock() {
+    const all = CATS.flatMap((c) => c.items)
+    const hits = all.filter(inRange)
+    const next = sortItems(all).find((i) => i.best != null && !inRange(i))
+    return `
+      <p class="hero-eyebrow">Tonight · Fri, Sep 25</p>
+      ${hits.length
+        ? `<h2 class="hero-h">${hits.length} in range <span aria-hidden="true" style="font-size:.7em;vertical-align:3px">⌖</span></h2>`
+        : `<h2 class="hero-h quiet">Nothing in range yet</h2>`}
+      ${next ? `<p class="hero-p">${hits.length ? 'Next closest' : 'Closest'}: <b>${esc(next.name)}</b> is <span class="gap tnum">${money(next.best - next.target)}</span> from striking.</p>` : ''}
+      <p class="pulse tnum"><span class="k">Tonight</span><span><span style="color:var(--drop)">▼</span> <b>2</b> drops</span><span><b>$31.00</b> shaved</span><span><b>28</b> checked</span></p>
+      <div class="ticker ${huntingName ? 'live' : ''}"><span class="dot"></span>${huntingName ? `hunting ${esc(huntingName)} · 1 of 3 sites` : 'hunter idle · last sweep 11m ago'}</div>`
+  }
+
+  function pathPips(step, firstLabel = 'Create a category', secondLabel = 'Add items to it') {
+    return `<div class="path">
+      <span class="stp ${step === 1 ? 'on' : 'done'}"><span class="g">${step === 1 ? '1' : '✓'}</span>${firstLabel}</span>
+      <span class="arr" aria-hidden="true">→</span>
+      <span class="stp ${step === 2 ? 'on' : ''}"><span class="g">2</span>${secondLabel}</span></div>`
+  }
+
+  function guideHero() {
+    const fresh = CATS.find((c) => c.id === lastCreated)
+    if (fresh) {
+      return `<div class="guide">
+        <p class="hero-eyebrow">Getting started · Fri, Sep 25</p>
+        <h2 class="hero-h">${esc(fresh.name)} is ready</h2>
+        <p class="hero-p">The hunter will search <b>${esc(listNames(siteNames(fresh)))}</b>. Now give it something to hunt: a name and a target price.</p>
+        ${pathPips(2)}
+        <div class="cta"><button type="button" class="btn primary big" data-act="add" data-cat="${fresh.id}">＋ Add item to ${esc(fresh.name)}</button></div></div>`
+    }
+    if (CATS.length) {
+      return `<div class="guide">
+        <p class="hero-eyebrow">Getting started · Fri, Sep 25</p>
+        <h2 class="hero-h">Pick a category, or make your own</h2>
+        <p class="hero-p">Everything you track sits in a category: a shelf, plus the sites the hunter searches. People here already hunt <b>${CATS.length} categories</b>. Add an item to one below, or create one of your own.</p>
+        ${pathPips(1, 'Choose or create a category')}
+        <div class="cta"><button type="button" class="btn primary big" data-act="new">＋ Create a category</button><span class="aside">or use Add item on a category below</span></div></div>`
+    }
+    return `<div class="guide">
+        <p class="hero-eyebrow">Getting started · Fri, Sep 25</p>
+        <h2 class="hero-h">Nothing to hunt yet</h2>
+        <p class="hero-p">Everything you track sits in a category: a shelf, plus the sites the hunter searches, like eBay or Newegg. Create one first, then add items to it.</p>
+        ${pathPips(1)}
+        <div class="cta"><button type="button" class="btn primary big" data-act="new">＋ Create your first category</button></div></div>
+      <div class="ghost-shelf" aria-hidden="true">
+        <div class="gh"><span class="gn">Your first category</span><span class="gs">searching eBay · Newegg</span></div>
+        <div class="bars"><i style="width:92%"></i><i style="width:78%"></i><i style="width:85%"></i></div>
+        <p>This is what a shelf looks like. Items you add show up here, closest to target first.</p></div>`
+  }
+
+  function render() {
+    const shelves = orderedShelves()
+    const lines = CATS.filter((c) => !c.items.length).sort((a, b) => (b.id === lastCreated) - (a.id === lastCreated) || a.name.localeCompare(b.name))
+    let out = ''
+
+    if (search) {
+      const visible = shelves.filter((c) => c.items.some((i) => i.name.toLowerCase().includes(search.toLowerCase())))
+      out += `<div class="bar" style="margin-top:0"><h3>Search</h3><span class="meta">matching “${esc(search)}” · <a data-act="clear">clear</a></span></div>`
+      if (!visible.length) return out + `<div class="none">Nothing on any shelf matches “${esc(search)}”. · <a data-act="clear">clear</a></div>`
+      return out + `<div class="labels"><table class="watch"><thead><tr>${COLS}</tr></thead></table></div><div class="shelves">${visible.map((c) => shelf(c, shelves.length)).join('')}</div>`
+    }
+
+    if (!shelves.length) {
+      out += guideHero()
+      if (!CATS.length) return out
+      out += `<div class="bar"><h3>Categories</h3><span class="meta tnum">${CATS.length} on this instance</span><span class="grow"></span>${lastCreated ? '<button class="btn secondary" type="button" data-act="new">＋ New category</button>' : ''}</div>`
+      return out + `<div class="shelves">${lines.map(lineRow).join('')}</div>`
+    }
+
+    const shelfHtml = shelves.map((c) => shelf(c, shelves.length)).join('')
+    const openNow = shelves.some((c) => (store.get(c.id) ? !store.get(c.id).collapsed : true) && !(reveal.has(c.id)))
+    const itemCount = shelves.reduce((n, c) => n + c.items.length, 0)
+    out += heroBlock()
+    out += `<div class="bar">
+      <h3>The Watch</h3>
+      <span class="meta tnum">${shelves.length} ${shelves.length === 1 ? 'shelf' : 'shelves'} · ${itemCount} items</span>
+      <span class="grow"></span>
+      ${shelves.length >= 2 ? `<button type="button" class="btn ghost" data-act="all">${openNow ? 'Collapse all' : 'Expand all'}</button>` : ''}
+      <span class="seg"><span>7d</span><span class="on">30d</span><span>90d</span></span>
+      <button class="btn primary" type="button" data-act="new">＋ New category</button>
+    </div>`
+    out += `<div class="labels"><table class="watch"><thead><tr>${COLS}</tr></thead></table></div>`
+    out += `<div class="shelves">${shelfHtml}</div>`
+    if (lines.length) {
+      const shown = lines.slice(0, 5)
+      out += `<p class="sub-h">No items of yours yet</p><div class="shelves">${shown.map(lineRow).join('')}</div>`
+      if (lines.length > shown.length) out += `<p class="sub-h" style="margin-top:8px">＋ ${lines.length - shown.length} more categories</p>`
+    }
+    return out
+  }
+
+  const TRY = {
+    returning: '<b>Try:</b> open and close shelves, and hover a header. Collapse Retro games, then press <b>Simulate a strike</b>. Type <b>pok</b> in the search box. Open <b>＋ New category</b>, <b>Add item</b>, or the <b>Searching</b> chips to see the dialogs.',
+    many: '<b>Try:</b> <b>Expand all</b>, which cascades down the list, then <b>Collapse all</b>. Only GPUs, Vinyl and the closest item’s shelf start open.',
+    newuser: '<b>Try:</b> <b>Add item</b> on Retro games. It becomes your first shelf and opens with the full animation.',
+    empty: '<b>Try:</b> <b>Create your first category</b>. Pick the Two-pane dialog style above to see the live preview. Then the hero moves on to <b>Add item to …</b>.',
+  }
+  const MO_BLURB = {
+    drawer: 'Height slides open (200ms) and closed (160ms), rows drop in one after another, and Expand all cascades. Strikes flash the row that struck.',
+    lockon: 'Drawer, plus a scan line that sweeps down each opening shelf, and ⌖ brackets that lock onto the row that struck.',
+    ledger: 'No height animation. Shelves snap open and content fades in. The cheapest option, but the page below still jumps.',
+  }
+  const DL_BLURB = {
+    card: 'Centered panel with a fixed header and footer, and only the middle scrolls. A bottom sheet on phones.',
+    sheet: 'Slides in from the right at full height, so the shelves stay visible. Not recommended: the right edge already means Activity.',
+    pane: 'New category only: a live preview of the shelf next to the form. The other dialogs use the field card.',
+  }
+
+  // ---------- paint and in-place toggles ----------
+  const app = document.getElementById('app')
+  const frame = document.getElementById('frame')
+  const live = document.getElementById('live')
+  const catById = (id) => CATS.find((c) => c.id === Number(id))
+
+  function paint() {
+    app.className = `app m-${motion}`
+    app.innerHTML = render()
+    syncBar()
+    afterPaint()
+    document.getElementById('try').innerHTML = TRY[scenario]
+    document.getElementById('strike').hidden = scenario !== 'returning'
+    document.getElementById('mo-blurb').textContent = MO_BLURB[motion]
+    document.getElementById('dl-blurb').textContent = DL_BLURB[dstyle]
+    document.querySelectorAll('[data-sc]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sc === scenario)))
+    document.querySelectorAll('[data-mo]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mo === motion)))
+    document.querySelectorAll('[data-dl]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.dl === dstyle)))
+  }
+
+  function afterPaint() {
+    const toReveal = [...reveal]
+    reveal = new Set()
+    const target = scrollTo
+    scrollTo = null
+    requestAnimationFrame(() => {
+      for (const id of toReveal) {
+        const sec = document.getElementById(`shelf-${id}`)
+        if (!sec) continue
+        toggleShelf(sec, true)
+        edge(sec)
+      }
+      if (created != null) {
+        const el = document.getElementById(`shelf-${created}`)
+        if (el) { edge(el); if (motion === 'lockon') lockOn(el.querySelector('.sh-row') || el, 0) }
+        created = null
+      }
+      if (target != null) {
+        const el = document.getElementById(`shelf-${target}`)
+        const r = el?.getBoundingClientRect()
+        if (r && (r.top < 0 || r.top > innerHeight - 80)) el.scrollIntoView({ block: 'nearest', behavior: RM.matches ? 'auto' : 'smooth' })
+      }
+      app.querySelectorAll('tr.strike').forEach((tr) => {
+        const wasClosed = toReveal.includes(Number(tr.closest('.shelf')?.dataset.cat))
+        if (motion === 'lockon') lockOn(tr, wasClosed ? 220 : 0)
+        setTimeout(() => tr.classList.remove('strike'), RM.matches ? 8000 : 1300)
+      })
+      for (const c of CATS) for (const i of c.items) delete i.struck
+    })
+  }
+
+  function edge(el) {
+    if (motion === 'lockon' && el.classList.contains('shelf') && !el.querySelector('tr.strike')) lockOn(el.querySelector('.sh-row'), 0)
+    el.classList.remove('edge')
+    void el.offsetWidth
+    el.classList.add('edge')
+    setTimeout(() => el.classList.remove('edge'), 1300)
+  }
+
+  function lockOn(target, delay) {
+    setTimeout(() => {
+      if (!target.isConnected) return
+      const fr = frame.getBoundingClientRect(), r = target.getBoundingClientRect()
+      const el = document.createElement('div')
+      el.className = 'lock'
+      el.innerHTML = '<i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>'
+      Object.assign(el.style, { left: `${r.left - fr.left + 4}px`, top: `${r.top - fr.top + 2}px`, width: `${r.width - 8}px`, height: `${r.height - 4}px` })
+      frame.appendChild(el)
+      setTimeout(() => el.remove(), 1600)
+    }, delay)
+  }
+
+  function syncBar() {
+    const allBtn = app.querySelector('[data-act="all"]')
+    const anyOpen = !!app.querySelector('.shelf.open')
+    if (allBtn) allBtn.textContent = anyOpen ? 'Collapse all' : 'Expand all'
+    const labels = app.querySelector('.labels')
+    if (labels) labels.hidden = !anyOpen
+  }
+
+  /** Opens or closes one shelf in place: no re-render, so transitions have a "before" state. */
+  function toggleShelf(sec, open, { stagger = true } = {}) {
+    const cat = catById(sec.dataset.cat)
+    const clip = sec.querySelector('.sh-clip')
+    const btn = sec.querySelector('.sh-tog')
+    if (!search) store.set(cat.id, { collapsed: !open, snaggedAt: shelfStats(cat).hits })
+    btn.setAttribute('aria-expanded', String(open))
+    clearTimeout(sec._t)
+    if (open) {
+      clip.removeAttribute('hidden')
+      void clip.offsetHeight
+      if (motion !== 'ledger' && stagger) {
+        if (motion === 'lockon') {
+          const inner = sec.querySelector('.sh-inner')
+          const top = inner.getBoundingClientRect().top, h = inner.scrollHeight || 1
+          inner.querySelectorAll('.sites-btn, .strip, tbody tr, .sh-foot').forEach((el) => {
+            el.style.setProperty('--d', `${Math.round(((el.getBoundingClientRect().top - top) / h) * 200)}ms`)
+          })
+        }
+        sec.classList.add('rows-in')
+        sec._rt = setTimeout(() => sec.classList.remove('rows-in'), 460)
+      }
+      if (motion === 'lockon') {
+        const inner = sec.querySelector('.sh-inner')
+        inner.querySelector('.scan')?.remove()
+        const scan = document.createElement('i')
+        scan.className = 'scan'
+        inner.appendChild(scan)
+        setTimeout(() => scan.remove(), 300)
+      }
+      sec.classList.add('open')
+    } else {
+      const top = sec.getBoundingClientRect().top
+      if (top < 0) sec.scrollIntoView({ block: 'nearest' })
+      sec.classList.remove('open', 'rows-in')
+      const hide = () => { if (!sec.classList.contains('open')) clip.setAttribute('hidden', 'until-found') }
+      if (motion === 'ledger' || RM.matches) hide()
+      else {
+        const onEnd = (e) => { if (e.target === clip && e.propertyName === 'grid-template-rows') { clip.removeEventListener('transitionend', onEnd); hide() } }
+        clip.addEventListener('transitionend', onEnd)
+        sec._t = setTimeout(() => { clip.removeEventListener('transitionend', onEnd); hide() }, 260)
+      }
+    }
+    syncBar()
+  }
+
+  // Ctrl-F found something inside a collapsed shelf: open it at once, the browser is already scrolling there
+  app.addEventListener('beforematch', (e) => {
+    const sec = e.target.closest?.('.shelf')
+    if (!sec || sec.classList.contains('open')) return
+    app.classList.add('no-anim')
+    toggleShelf(sec, true, { stagger: false })
+    requestAnimationFrame(() => app.classList.remove('no-anim'))
+  }, true)
+
+  // ---------- controls ----------
+  document.querySelectorAll('.switch').forEach((sw) => sw.addEventListener('click', (e) => {
+    const b = e.target.closest('button')
+    if (!b) return
+    if (b.dataset.sc) setScenario(b.dataset.sc)
+    if (b.dataset.mo) { motion = b.dataset.mo; paint() }
+    if (b.dataset.dl) { dstyle = b.dataset.dl; closeModal(true); paint(); mountInline() }
+  }))
+  document.getElementById('strike').addEventListener('click', () => {
+    const cat = CATS.find((c) => c.name === 'Retro games')
+    const target = cat?.items.find((i) => !inRange(i))
+    if (!target) return
+    target.spark = [...target.spark.slice(1), target.target - 6]
+    target.best = target.target - 6
+    target.when = 'just now'
+    target.struck = true
+    paint()
+  })
+  document.getElementById('q').addEventListener('input', (e) => { search = e.target.value.trim(); paint() })
+
+  app.addEventListener('click', (e) => {
+    const tog = e.target.closest('[data-tog]')
+    if (tog) {
+      if (search) return
+      const sec = tog.closest('.shelf')
+      toggleShelf(sec, !sec.classList.contains('open'))
+      return
+    }
+    const b = e.target.closest('[data-act]')
+    if (!b) return
+    const cat = catById(b.dataset.cat)
+    const act = b.dataset.act
+    if (act === 'new') openDialog(b, (d) => newCategory(d, {}))
+    if (act === 'link') openDialog(b, (d) => editSites(d, cat))
+    if (act === 'add') openDialog(b, (d) => addItem(d, cat))
+    if (act === 'menu') openMenu(b, cat)
+    if (act === 'clear') { search = ''; document.getElementById('q').value = ''; paint() }
+    if (act === 'all') {
+      const secs = [...app.querySelectorAll('.shelf')]
+      const anyOpen = secs.some((s) => s.classList.contains('open'))
+      if (anyOpen) secs.filter((s) => s.classList.contains('open')).forEach((s) => toggleShelf(s, false))
+      else {
+        const step = motion === 'lockon' ? 50 : motion === 'drawer' ? 40 : 0
+        const cap = motion === 'lockon' ? 5 : 4
+        secs.forEach((s, i) => { const d = Math.min(i, cap) * step; d ? setTimeout(() => toggleShelf(s, true, { stagger: false }), d) : toggleShelf(s, true, { stagger: false }) })
+      }
+    }
+  })
+
+  // ---------- ⋯ menu ----------
+  let menu = null
+  function closeMenu() { if (menu) { menu.remove(); menu = null } }
+  function openMenu(btn, cat) {
+    const wasFor = menu?.dataset.for
+    closeMenu()
+    if (wasFor === String(cat.id)) return
+    menu = document.createElement('div')
+    menu.className = 'menu'
+    menu.setAttribute('role', 'menu')
+    menu.dataset.for = String(cat.id)
+    menu.innerHTML = `
+      <button role="menuitem" data-m="hunt" ${cat.sites.length ? '' : 'disabled style="opacity:.4;cursor:not-allowed"'}>Hunt now</button>
+      <button role="menuitem" data-m="sites">Edit sites</button>
+      <button role="menuitem" data-m="rename">Rename</button>
+      <hr>
+      <button role="menuitem" data-m="page">Open category page</button>`
+    const fr = frame.getBoundingClientRect(), br = btn.getBoundingClientRect()
+    menu.style.top = `${br.bottom - fr.top + 4}px`
+    menu.style.right = `${fr.right - br.right}px`
+    frame.appendChild(menu)
+    menu.querySelector('button:not([disabled])').focus({ preventScroll: true })
+    menu.addEventListener('click', (e) => {
+      const m = e.target.closest('[data-m]')
+      if (!m || m.disabled) return
+      closeMenu()
+      if (m.dataset.m === 'hunt') { huntingName = cat.name; paint(); setTimeout(() => { huntingName = null; paint() }, 4000) }
+      if (m.dataset.m === 'sites') openDialog(btn, (d) => editSites(d, cat))
+    })
+  }
+  document.addEventListener('click', (e) => { if (menu && !menu.contains(e.target) && !e.target.closest('[data-act="menu"]')) closeMenu() })
+
+  // ---------- dialog shell ----------
+  let modal = null // { scrim, dlg, opener, dirty }
+  function openDialog(opener, build) {
+    closeModal(true); closeMenu()
+    const scrim = document.createElement('div')
+    scrim.className = `scrim ${dstyle === 'sheet' ? 'v-sheet' : ''}`
+    const dlg = document.createElement('div')
+    dlg.className = 'dlg'
+    dlg.setAttribute('role', 'dialog')
+    dlg.setAttribute('aria-modal', 'true')
+    scrim.appendChild(dlg)
+    frame.appendChild(scrim)
+    modal = { scrim, dlg, opener, dirty: () => false }
+    build(modal)
+    placeDialog(dlg)
+    scrim.addEventListener('mousedown', (e) => {
+      if (e.target !== scrim) return
+      if (modal.dirty()) { dlg.classList.remove('nudge'); void dlg.offsetWidth; dlg.classList.add('nudge'); return }
+      closeModal()
+    })
+  }
+  /** The frame is taller than the screen, so anchor the panel to the part of it that's visible. */
+  function placeDialog(dlg) {
+    let fr = frame.getBoundingClientRect()
+    const want = Math.min(600, fr.height, innerHeight)
+    const vis = Math.min(fr.bottom, innerHeight) - Math.max(fr.top, 0)
+    if (vis < want) {
+      window.scrollBy(0, fr.top > 0 ? Math.min(fr.top, want - vis) : -(want - vis))
+      fr = frame.getBoundingClientRect()
+    }
+    const visTop = Math.max(0, -fr.top)
+    const visBottom = Math.min(fr.height, innerHeight - fr.top)
+    const visH = Math.max(320, visBottom - visTop)
+    if (innerWidth <= 560) {
+      dlg.style.bottom = `${Math.max(0, fr.height - visBottom)}px`
+      dlg.style.maxHeight = `${Math.round(visH * 0.92)}px`
+    } else if (dstyle === 'sheet') {
+      dlg.style.top = `${visTop}px`
+      dlg.style.bottom = `${Math.max(0, fr.height - visBottom)}px`
+    } else {
+      const gap = Math.max(32, visH * 0.08)
+      dlg.style.top = `${Math.round(visTop + gap)}px`
+      dlg.style.maxHeight = `${Math.round(visH - gap - 32)}px`
+    }
+  }
+  function closeModal(instant) {
+    if (!modal) return
+    const { scrim, opener } = modal
+    modal = null
+    const done = () => { scrim.remove(); if (opener?.isConnected) opener.focus({ preventScroll: true }) }
+    if (instant || RM.matches) return done()
+    scrim.classList.add('closing')
+    setTimeout(done, dstyle === 'sheet' || innerWidth <= 560 ? 200 : 150)
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { if (menu) closeMenu(); else closeModal() }
+    if (e.key === 'Tab' && modal) {
+      const f = [...modal.dlg.querySelectorAll('button, input, textarea, [tabindex="0"]')].filter((el) => el.offsetParent !== null && !el.closest('[inert]'))
+      if (!f.length) return
+      const first = f[0], last = f[f.length - 1]
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+  })
+
+  function frameDialog(dlg, { eyebrow, title, desc, body, foot, rail }) {
+    dlg.innerHTML = `${rail ? `<aside class="dlg-rail">${rail}</aside>` : ''}
+      <div class="dlg-grab" aria-hidden="true"></div>
+      <header class="dlg-h">
+        <div class="dlg-eyebrow">${eyebrow}</div>
+        <h5 id="dlg-title-${dlg.dataset.k || 'm'}">${title}</h5>
+        ${desc ? `<p class="desc">${desc}</p>` : ''}
+        ${dlg.classList.contains('inline') ? '' : '<button type="button" class="dlg-x" aria-label="Close">×</button>'}
+      </header>
+      <div class="dlg-b">${body}</div>
+      <footer class="dlg-f">${foot}</footer>`
+    dlg.setAttribute('aria-labelledby', `dlg-title-${dlg.dataset.k || 'm'}`)
+    dlg.querySelector('.dlg-x')?.addEventListener('click', () => closeModal())
+  }
+
+  // ---------- site picker (shared by New category and Edit sites) ----------
+  const CHECK = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 5.2 4.1 7.3 8 2.9" fill="none" stroke="#1a1206" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+  function pkRow(s, on) {
+    const ct = s.paused ? '<span class="pk-ct w">⚠ paused</span>' : s.listings === 0 ? '<span class="pk-ct n">new</span>' : `<span class="pk-ct tnum">${s.listings} tracked</span>`
+    return `<button type="button" class="pk-row" role="checkbox" aria-checked="${on}" data-site="${s.id}">
+      <span class="cb">${CHECK}</span><span class="mq" aria-hidden="true">${esc(s.name.slice(0, 2))}</span>
+      <span class="pk-name">${esc(s.name)}</span><span class="pk-host">${esc(s.url)}</span>${ct}</button>`
+  }
+  function pickerHtml(k, sel) {
+    return `<div class="pk-h"><span>Sites</span><span class="picked" id="${k}-picked">${sel.size} picked</span></div>
+      <div class="picker" id="${k}-picker">
+        <div id="${k}-rows">${SITES.map((s) => pkRow(s, sel.has(s.id))).join('')}</div>
+        <button type="button" class="pk-add" id="${k}-add" aria-expanded="false" aria-controls="${k}-form"><span class="plus">＋</span>Add a site that isn't listed</button>
+        <div class="pk-form" id="${k}-form"><div><div class="inner">
+          <div class="row">
+            <div class="field"><label for="${k}-su">Site URL</label><input id="${k}-su" class="m" placeholder="facebook.com/marketplace" autocomplete="off"></div>
+            <div class="field"><label for="${k}-sn">Name</label><input id="${k}-sn" placeholder="Facebook" autocomplete="off"></div>
+            <button type="button" class="btn secondary" id="${k}-ok">Add</button>
+            <button type="button" class="btn ghost icon" id="${k}-cancel" aria-label="Cancel adding a site">×</button>
+          </div>
+          <p class="err" id="${k}-serr" role="alert" hidden></p>
+          <p class="hint">Added sites are shared with everyone on this instance.</p>
+        </div></div></div>
+      </div>`
+  }
+  function bindPicker(root, k, sel, onChange) {
+    const q = (id) => root.querySelector(`#${k}-${id}`)
+    const form = q('form'), addBtn = q('add'), su = q('su'), sn = q('sn'), serr = q('serr')
+    let nameTouched = false
+    const setOpen = (open) => {
+      form.classList.toggle('open', open)
+      addBtn.setAttribute('aria-expanded', String(open))
+      addBtn.hidden = open
+      form.querySelector('.inner').inert = !open
+      if (open) setTimeout(() => su.focus({ preventScroll: true }), 30)
+    }
+    form.querySelector('.inner').inert = true
+    const refreshCount = () => { q('picked').textContent = `${sel.size} picked`; onChange() }
+    q('rows').addEventListener('click', (e) => {
+      const row = e.target.closest('[data-site]')
+      if (!row) return
+      const id = Number(row.dataset.site)
+      sel.has(id) ? sel.delete(id) : sel.add(id)
+      row.setAttribute('aria-checked', String(sel.has(id)))
+      refreshCount()
+    })
+    addBtn.addEventListener('click', () => setOpen(true))
+    q('cancel').addEventListener('click', () => { setOpen(false); addBtn.focus({ preventScroll: true }) })
+    sn.addEventListener('input', () => { nameTouched = true })
+    su.addEventListener('input', () => {
+      serr.hidden = true; su.removeAttribute('aria-invalid')
+      if (nameTouched) return
+      const host = su.value.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0]
+      const label = host.split('.')[0]
+      sn.value = label ? label[0].toUpperCase() + label.slice(1) : ''
+    })
+    const submit = () => {
+      const raw = su.value.trim().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '')
+      if (!/^[^\s./]+(\.[^\s./]+)+(\/\S*)?$/.test(raw)) {
+        serr.className = 'err'; serr.textContent = "⚠ That doesn't look like a URL."; serr.hidden = false; su.setAttribute('aria-invalid', 'true'); su.focus(); return
+      }
+      const host = raw.split('/')[0]
+      const dup = SITES.find((s) => s.url.split('/')[0] === host)
+      if (dup) {
+        sel.add(dup.id)
+        root.querySelector(`[data-site="${dup.id}"]`)?.setAttribute('aria-checked', 'true')
+        refreshCount()
+        serr.className = 'note'; serr.textContent = `⚠ ${dup.name} is already listed. Picked it for you.`; serr.hidden = false
+        return
+      }
+      const name = sn.value.trim() || host
+      const site = { id: Math.max(0, ...SITES.map((s) => s.id)) + 1, name, url: raw, listings: 0 }
+      SITES.push(site)
+      sel.add(site.id)
+      q('rows').insertAdjacentHTML('beforeend', pkRow(site, true))
+      const row = q('rows').lastElementChild
+      row.classList.add('new')
+      su.value = ''; sn.value = ''; nameTouched = false; serr.hidden = true
+      setOpen(false)
+      row.focus({ preventScroll: false })
+      live.textContent = `${name} added and picked.`
+      refreshCount()
+    }
+    q('ok').addEventListener('click', submit)
+    ;[su, sn].forEach((el) => el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submit() } }))
+  }
+
+  // ---------- New category ----------
+  function newCategory(m, { inline = false }) {
+    const dlg = m.dlg
+    const k = inline ? 'wi' : 'wm'
+    dlg.dataset.k = k
+    const pane = dstyle === 'pane'
+    dlg.classList.toggle('pane', pane)
+    const st = { step: 1, name: '', sites: new Set(), made: null }
+    m.dirty = () => !st.made && (st.name.trim() !== '' || st.sites.size > 0)
+
+    const rail = () => `
+      <ol class="rail-steps">
+        <li class="${st.step === 1 ? 'on' : 'done'}"><span class="g">${st.step === 1 ? '1' : '✓'}</span><b>Name</b><span>What you're hunting</span></li>
+        <li class="${st.step === 2 ? 'on' : ''}"><span class="g">2</span><b>Sites</b><span>Where the hunter looks</span></li>
+      </ol>
+      <div><div class="pv-k">Preview</div>
+        <div class="pv"><div class="pv-n" id="${k}-pvn"></div><div class="pv-s" id="${k}-pvs"></div><div class="pv-rows" aria-hidden="true"><i style="width:90%"></i><i style="width:70%"></i></div></div></div>
+      <p class="pv-note">This is how it will look on your dashboard. You'll add items to it next.</p>`
+    const updatePreview = () => {
+      if (!pane) return
+      const n = dlg.querySelector(`#${k}-pvn`), s = dlg.querySelector(`#${k}-pvs`)
+      if (!n) return
+      n.textContent = st.name.trim() || 'Your category'
+      n.classList.toggle('ph', !st.name.trim())
+      const names = [...st.sites].map((id) => SITES.find((x) => x.id === id)?.name).filter(Boolean)
+      s.innerHTML = names.length ? names.map((x) => `<span class="chip">${esc(x)}</span>`).join('') : '<span class="none-yet">⚠ no sites yet</span>'
+    }
+
+    function draw(dir) {
+      const pips = pane ? `Step ${st.step} of 2` : pathPips(st.step, 'Name', 'Sites')
+      if (st.made) {
+        frameDialog(dlg, { eyebrow: 'Created', title: 'New category', body: `<div class="saved">✓ ${esc(st.made)} created. Its shelf is on the dashboard, ready for Add item.</div>`,
+          foot: `<span class="grow"></span><button type="button" class="btn secondary" data-w="again">Make another</button>`, rail: pane ? rail() : '' })
+        updatePreview()
+        dlg.querySelector('[data-w="again"]').addEventListener('click', () => { Object.assign(st, { step: 1, name: '', sites: new Set(), made: null }); draw('back') })
+        return
+      }
+      if (st.step === 1) {
+        frameDialog(dlg, {
+          eyebrow: pips, title: 'New category',
+          desc: 'A category is a shelf: things you want, plus the sites the hunter searches for them.',
+          body: `<div class="${dir ? 'step-' + dir : ''}">
+            <div class="field"><label for="${k}-name">Name</label><input id="${k}-name" value="${esc(st.name)}" placeholder="e.g. Keyboards" autocomplete="off" aria-describedby="${k}-nerr"></div>
+            <div class="suggest"><span class="k">Try:</span>${['Keyboards', 'Retro games', 'Camera lenses', 'Home lab'].map((s) => `<button type="button" data-sug="${s}">${s}</button>`).join('')}</div>
+            <p class="err" id="${k}-nerr" role="alert" hidden style="margin-top:10px">⚠ Give it a name.</p></div>`,
+          foot: `<span class="grow"></span>${inline ? '' : '<button type="button" class="btn ghost" data-w="cancel">Cancel</button>'}<button type="button" class="btn primary" data-w="next">Next: sites →</button>`,
+          rail: pane ? rail() : '',
+        })
+        const nameIn = dlg.querySelector(`#${k}-name`), nerr = dlg.querySelector(`#${k}-nerr`)
+        const next = () => {
+          if (!st.name.trim()) { nerr.hidden = false; nameIn.setAttribute('aria-invalid', 'true'); nameIn.focus(); return }
+          st.step = 2; draw('fwd')
+        }
+        nameIn.addEventListener('input', () => { st.name = nameIn.value; nerr.hidden = true; nameIn.removeAttribute('aria-invalid'); updatePreview() })
+        nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') next() })
+        dlg.querySelectorAll('[data-sug]').forEach((b) => b.addEventListener('click', () => { st.name = b.dataset.sug; nameIn.value = st.name; nerr.hidden = true; updatePreview(); nameIn.focus() }))
+        dlg.querySelector('[data-w="next"]').addEventListener('click', next)
+        dlg.querySelector('[data-w="cancel"]')?.addEventListener('click', () => closeModal())
+        updatePreview()
+        if (!inline || dir) nameIn.focus({ preventScroll: true })
+      } else {
+        frameDialog(dlg, {
+          eyebrow: pips, title: 'New category',
+          body: `<div class="step-${dir}">
+            <p class="lead-q">Where should the hunter look for <b>${esc(st.name.trim())}</b>?</p>
+            ${pickerHtml(k, st.sites)}
+            <p class="hint" id="${k}-shint" style="margin-top:10px">Pick one or more. You can change them any time from the shelf.</p>
+            <p class="err" id="${k}-serr2" role="alert" hidden style="margin-top:10px">⚠ Pick at least one site. The hunter needs somewhere to look.</p></div>`,
+          foot: `<button type="button" class="btn ghost" data-w="back">← Back</button><span class="grow"></span>${inline ? '' : '<button type="button" class="btn ghost" data-w="cancel">Cancel</button>'}<button type="button" class="btn primary" data-w="create">Create category</button>`,
+          rail: pane ? rail() : '',
+        })
+        const serr = dlg.querySelector(`#${k}-serr2`), hint = dlg.querySelector(`#${k}-shint`)
+        bindPicker(dlg, k, st.sites, () => { if (st.sites.size) { serr.hidden = true; hint.hidden = false } updatePreview() })
+        dlg.querySelector('[data-w="back"]').addEventListener('click', () => { st.step = 1; draw('back') })
+        dlg.querySelector('[data-w="cancel"]')?.addEventListener('click', () => closeModal())
+        dlg.querySelector('[data-w="create"]').addEventListener('click', () => {
+          if (!st.sites.size) { serr.hidden = false; hint.hidden = true; return }
+          const cat = { id: Math.max(0, ...CATS.map((c) => c.id)) + 1, name: st.name.trim(), sites: [...st.sites], items: [] }
+          if (inline) { st.made = cat.name; draw('fwd'); return }
+          CATS.push(cat)
+          lastCreated = cat.id
+          created = cat.id
+          scrollTo = cat.id
+          closeModal()
+          paint()
+        })
+        updatePreview()
+        dlg.querySelector('.pk-row')?.focus({ preventScroll: true })
+      }
+    }
+    draw(null)
+  }
+
+  // ---------- Edit sites ----------
+  function editSites(m, cat) {
+    const dlg = m.dlg
+    dlg.dataset.k = 'es'
+    const sel = new Set(cat.sites)
+    const start = [...sel].sort().join()
+    m.dirty = () => [...sel].sort().join() !== start
+    frameDialog(dlg, {
+      eyebrow: 'Sites', title: esc(cat.name),
+      desc: `The hunter searches these for every item on ${esc(cat.name)}.`,
+      body: `${pickerHtml('es', sel)}<p class="err" id="es-err" role="alert" hidden style="margin-top:10px">⚠ Pick at least one site. The hunter needs somewhere to look.</p>`,
+      foot: `<span class="grow"></span><button type="button" class="btn ghost" data-w="cancel">Cancel</button><button type="button" class="btn primary" data-w="save">Save sites</button>`,
+    })
+    const err = dlg.querySelector('#es-err')
+    bindPicker(dlg, 'es', sel, () => { if (sel.size) err.hidden = true })
+    dlg.querySelector('[data-w="cancel"]').addEventListener('click', () => closeModal())
+    dlg.querySelector('[data-w="save"]').addEventListener('click', () => {
+      if (!sel.size) { err.hidden = false; return }
+      cat.sites = [...sel]
+      closeModal()
+      if (cat.items.length) { store.set(cat.id, { collapsed: false, snaggedAt: shelfStats(cat).hits }) }
+      created = cat.id
+      paint()
+    })
+    dlg.querySelector('.pk-row')?.focus({ preventScroll: true })
+  }
+
+  // ---------- Add item ----------
+  function addItem(m, cat) {
+    const dlg = m.dlg
+    dlg.dataset.k = 'ai'
+    dlg.classList.add('wide')
+    const t = { mode: 'cheapest', max: 5, hunt: true, every: '30m', sites: new Set(cat.sites) }
+    m.dirty = () => !!(dlg.querySelector('#ai-name')?.value.trim() || dlg.querySelector('#ai-tgt')?.value.trim() || dlg.querySelector('#ai-crit')?.value.trim())
+    const names = siteNames(cat)
+    const sum = () => `${t.mode === 'cheapest' ? 'Cheapest' : 'Best match'} · up to ${t.max} · every ${t.every} · ${t.sites.size === cat.sites.length ? 'all sites' : `${t.sites.size} of ${cat.sites.length} sites`}${t.hunt ? '' : ' · hunting off'}`
+    frameDialog(dlg, {
+      eyebrow: 'Add item', title: esc(cat.name),
+      desc: `The hunter searches <b>${esc(listNames(names))}</b> on its next sweep. No URLs needed.`,
+      body: `
+        <div class="field"><label for="ai-name">Item name</label><input id="ai-name" placeholder="e.g. Pokémon Sapphire (GBA)" autocomplete="off"><p class="err" id="ai-err" role="alert" hidden>⚠ Give it a name.</p></div>
+        <div class="field"><label for="ai-tgt">Target price <span style="color:var(--ink-3);font-weight:400">(optional)</span></label>
+          <div class="adorn"><span>$</span><input id="ai-tgt" class="m tnum" placeholder="120.00" inputmode="decimal" autocomplete="off"></div>
+          <p class="hint">You'll see <span style="color:var(--drop)">⌖ Snagged</span> when the best price hits this.</p></div>
+        <div class="field"><label for="ai-crit">What are you looking for? <span style="color:var(--ink-3);font-weight:400">(optional)</span></label>
+          <textarea id="ai-crit" rows="3" placeholder="e.g. authentic cartridge, label in good shape; dead save battery is fine"></textarea>
+          <p class="hint">The hunter reads this when it picks which listings to track.</p></div>
+        <div class="trk" id="ai-trk">
+          <button type="button" class="trk-h" aria-expanded="false" aria-controls="ai-trk-b"><span class="k">Tracking</span><span class="sum" id="ai-sum">${sum()}</span>${CHEV}</button>
+          <div class="trk-b" id="ai-trk-b"><div><div class="inner">
+            <div><span class="lbl-row">How to pick listings</span><br><span class="segd" data-seg="mode"><button type="button" data-v="cheapest" aria-pressed="true">Cheapest</button><button type="button" data-v="best" aria-pressed="false">Best match</button></span></div>
+            <div><span class="lbl-row">Track up to</span><br><span class="segd" data-seg="max">${[1, 3, 5, 10].map((n) => `<button type="button" data-v="${n}" aria-pressed="${n === 5}">${n}</button>`).join('')}</span> <span class="hint" style="display:inline">listings at once</span></div>
+            <div class="hrow"><div><span class="lbl-row">Hunting</span><p class="hint" id="ai-hunt-h">Looks for new listings on its own while slots are open.</p></div><button type="button" class="tgl" role="switch" aria-checked="true" id="ai-hunt" aria-label="Hunting"></button></div>
+            <div><span class="lbl-row">Check every</span><br><span class="segd" data-seg="every">${['15m', '30m', '1h', '6h'].map((v) => `<button type="button" data-v="${v}" aria-pressed="${v === '30m'}">${v}</button>`).join('')}</span></div>
+            <div><span class="lbl-row">Search these sites</span><div class="sitechips">${cat.sites.map((id) => SITES.find((s) => s.id === id)).map((s) => `<button type="button" data-ts="${s.id}" aria-pressed="true">${esc(s.name)}</button>`).join('')}</div></div>
+          </div></div></div>
+        </div>`,
+      foot: `<span class="grow"></span><button type="button" class="btn ghost" data-w="cancel">Cancel</button><button type="button" class="btn primary" data-w="add">Add item</button>`,
+    })
+    const nameIn = dlg.querySelector('#ai-name'), err = dlg.querySelector('#ai-err')
+    const trk = dlg.querySelector('#ai-trk'), trkH = trk.querySelector('.trk-h'), trkInner = trk.querySelector('.inner')
+    trkInner.inert = true
+    trkH.addEventListener('click', () => { const open = !trk.classList.contains('open'); trk.classList.toggle('open', open); trkH.setAttribute('aria-expanded', String(open)); trkInner.inert = !open })
+    const refresh = () => { dlg.querySelector('#ai-sum').textContent = sum() }
+    dlg.querySelectorAll('[data-seg]').forEach((seg) => seg.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return
+      seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      const key = seg.dataset.seg
+      t[key] = key === 'max' ? Number(b.dataset.v) : b.dataset.v === 'best' ? 'best_match' : b.dataset.v
+      refresh()
+    }))
+    const hunt = dlg.querySelector('#ai-hunt')
+    hunt.addEventListener('click', () => {
+      t.hunt = !t.hunt; hunt.setAttribute('aria-checked', String(t.hunt))
+      dlg.querySelector('#ai-hunt-h').textContent = t.hunt ? 'Looks for new listings on its own while slots are open.' : 'Only when you press Hunt now. Prices are still checked.'
+      refresh()
+    })
+    dlg.querySelectorAll('[data-ts]').forEach((b) => b.addEventListener('click', () => {
+      const id = Number(b.dataset.ts)
+      if (t.sites.has(id) && t.sites.size === 1) return
+      t.sites.has(id) ? t.sites.delete(id) : t.sites.add(id)
+      b.setAttribute('aria-pressed', String(t.sites.has(id)))
+      refresh()
+    }))
+    nameIn.addEventListener('input', () => { err.hidden = true; nameIn.removeAttribute('aria-invalid') })
+    const submit = () => {
+      if (!nameIn.value.trim()) { err.hidden = false; nameIn.setAttribute('aria-invalid', 'true'); nameIn.focus(); return }
+      const target = parseFloat(dlg.querySelector('#ai-tgt').value.replace(/[^0-9.]/g, '')) || 100
+      cat.items.push({ name: nameIn.value.trim(), best: null, target, site: '—', when: '—', spark: [] })
+      closeModal()
+      store.set(cat.id, { collapsed: true, snaggedAt: 0 })
+      reveal.add(cat.id)
+      scrollTo = cat.id
+      paint()
+      // isOpenState renders it closed (collapsed entry); afterPaint animates it open
+      store.set(cat.id, { collapsed: false, snaggedAt: 0 })
+    }
+    nameIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit() })
+    dlg.querySelector('[data-w="add"]').addEventListener('click', submit)
+    dlg.querySelector('[data-w="cancel"]').addEventListener('click', () => closeModal())
+    nameIn.focus({ preventScroll: true })
+  }
+
+  // ---------- section 03 inline wizard ----------
+  function mountInline() {
+    const host = document.getElementById('wiz-inline')
+    host.innerHTML = ''
+    const dlg = document.createElement('div')
+    dlg.className = 'dlg inline'
+    host.appendChild(dlg)
+    newCategory({ dlg, dirty: () => false }, { inline: true })
+  }
+  document.getElementById('demo-add').addEventListener('click', (e) => {
+    const cat = CATS.find((c) => c.sites.length) || { id: 0, name: 'GPUs', sites: [1, 2, 3], items: [] }
+    frame.scrollIntoView({ block: 'start' })
+    openDialog(e.currentTarget, (d) => addItem(d, cat))
+  })
+  document.getElementById('demo-sites').addEventListener('click', (e) => {
+    const cat = CATS.find((c) => c.sites.length) || { id: 0, name: 'GPUs', sites: [1, 2, 3], items: [] }
+    frame.scrollIntoView({ block: 'start' })
+    openDialog(e.currentTarget, (d) => editSites(d, cat))
+  })
+
+  setScenario('returning')
+  mountInline()
+})()
+</script>
