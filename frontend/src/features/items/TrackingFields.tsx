@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ChevronDown, ChevronRight } from 'lucide-react'
 import { listCategories, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { SelectionMode } from '@/api/types'
@@ -146,20 +145,25 @@ export function TrackingFields({
         </p>
       </div>
 
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="flex w-full items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
-          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-          <span className="shrink-0">Tracking options</span>
-          <span className="ml-1 text-left text-ink-3/80">
-            — {value.selectionMode === 'best_match' ? 'Best match' : 'Cheapest'} · up to{' '}
-            {value.maxListings} listing{value.maxListings === 1 ? '' : 's'} ·{' '}
+      <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border border-hairline-strong bg-well">
+        <CollapsibleTrigger className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[11px] text-ink-2 focus-visible:-outline-offset-2">
+          <span className="text-[10px] tracking-[0.14em] text-ink-3 uppercase">Tracking</span>
+          <span className="min-w-0 flex-1 truncate">
+            {value.selectionMode === 'best_match' ? 'Best match' : 'Cheapest'} · up to {value.maxListings} ·{' '}
             {interval != null ? `every ${formatInterval(interval)} · ` : ''}
             {siteSummary}
             {value.hunt ? '' : ' · hunting off'}
           </span>
+          <svg
+            viewBox="0 0 10 10"
+            aria-hidden
+            className={cn('size-3 shrink-0 transition-transform duration-[180ms] ease-shelf', open && 'rotate-90')}
+          >
+            <path d="M3.5 1.5 7 5l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <div className="mt-3 space-y-3 rounded-sm border border-hairline bg-well p-3">
+          <div className="space-y-3 border-t border-hairline p-3">
             <div>
               <Label>How to pick listings</Label>
               <Segmented

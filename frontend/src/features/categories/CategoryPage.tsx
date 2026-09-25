@@ -30,6 +30,7 @@ import { useJobs } from '@/features/activity/JobsProvider'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
 import { EditCategoryDialog } from './EditCategoryDialog'
+import { EditSitesDialog } from './EditSitesDialog'
 
 const STATUS_FILTERS = [
   { value: 'all', label: 'All' },
@@ -49,6 +50,8 @@ export function CategoryPage() {
   const [siteFilter, setSiteFilter] = useState<number | undefined>(undefined)
   const [search, setSearch] = useState('')
   const [editOpen, setEditOpen] = useState(false)
+  const [editSitesOpen, setEditSitesOpen] = useState(false)
+  const [editSitesSession, setEditSitesSession] = useState(0)
   // The last item picked for editing stays set after close, so the dialog
   // stays mounted through its exit animation; the session remounts it fresh
   // on every open.
@@ -118,6 +121,10 @@ export function CategoryPage() {
   }
 
   const rows = sortByDistanceToTarget(items.data?.data ?? [])
+  const openEditSites = () => {
+    setEditSitesSession((n) => n + 1)
+    setEditSitesOpen(true)
+  }
 
   return (
     <div className="space-y-5">
@@ -150,7 +157,14 @@ export function CategoryPage() {
         </div>
         <div className="flex items-center gap-2">
           <HuntButton scope="category" scopeId={category.id} label="Hunt this category" size="sm" />
-          <AddItemDialog categoryId={category.id} categoryName={category.name} />
+          {/* a category with no sites can't take new items from the UI: the hunter would have nowhere to look */}
+          {linkedSites.length === 0 ? (
+            <Button variant="warn" size="sm" onClick={openEditSites}>
+              Link sites
+            </Button>
+          ) : (
+            <AddItemDialog categoryId={category.id} categoryName={category.name} />
+          )}
         </div>
       </div>
 
@@ -196,7 +210,15 @@ export function CategoryPage() {
             description={`Give it a name and a target price — the agent will search ${
               linkedSites.length > 0 ? linkedSites.map((s) => s.name).join(', ') : "this category's sites"
             } for listings.`}
-            action={<AddItemDialog categoryId={category.id} categoryName={category.name} />}
+            action={
+              linkedSites.length === 0 ? (
+                <Button variant="warn" size="sm" onClick={openEditSites}>
+                  Link sites
+                </Button>
+              ) : (
+                <AddItemDialog categoryId={category.id} categoryName={category.name} />
+              )
+            }
           />
         ) : rows.length === 0 ? (
           <p className="px-4 py-6 text-[13px] text-ink-3">No items match this filter.</p>
@@ -238,6 +260,12 @@ export function CategoryPage() {
         </Card>
       ) : null}
 
+      <EditSitesDialog
+        key={`sites-${editSitesSession}`}
+        category={category}
+        open={editSitesOpen}
+        onOpenChange={setEditSitesOpen}
+      />
       <EditCategoryDialog
         key={category.id}
         category={category}

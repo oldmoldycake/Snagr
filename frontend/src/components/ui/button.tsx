@@ -13,6 +13,7 @@ export const buttonVariants = cva(
         snag: 'bg-drop font-semibold text-[#10150e] hover:brightness-110',
         ghost: 'text-ink-2 hover:bg-raised hover:text-ink',
         destructive: 'bg-rise/10 text-rise border border-rise/40 hover:bg-rise/20',
+        warn: 'bg-warn/10 text-warn border border-warn/40 hover:bg-warn/20',
       },
       size: {
         default: 'h-8 px-3 text-xs',

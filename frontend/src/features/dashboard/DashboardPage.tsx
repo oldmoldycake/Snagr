@@ -10,7 +10,6 @@ import { Card } from '@/components/ui/card'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
-import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { CategoryChips } from '@/features/categories/CategoryChips'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
@@ -114,7 +113,6 @@ export function DashboardPage() {
           {search ? null : <CategoryChips className="ml-2" />}
           <span className="flex-1" />
           <RangeSelector value={range} onChange={setRange} />
-          <AddItemDialog />
         </div>
 
         <Card className={cn(items.isFetching && 'opacity-60')}>
@@ -130,8 +128,16 @@ export function DashboardPage() {
             <EmptyState
               className="m-4 border-0"
               title="Add an item to start tracking"
-              description="Pick a category, give the item a name and a target price — the agent searches the category's sites for listings."
-              action={<AddItemDialog />}
+              description="Items are added from a category: pick one above and use Add item there, or create a new one."
+              action={
+                <CreateCategoryDialog
+                  trigger={
+                    <span className="inline-flex items-center gap-1.5">
+                      <Plus className="size-4" /> New category
+                    </span>
+                  }
+                />
+              }
             />
           ) : (
             <>

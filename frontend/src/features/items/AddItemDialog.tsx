@@ -1,15 +1,17 @@
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Plus } from 'lucide-react'
-import { createItem, listCategories } from '@/api/endpoints'
+import { createItem, listCategories, listSites } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
+import type { ItemSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogDescription,
+  DialogEyebrow,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -17,56 +19,73 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { DEFAULT_TRACKING, TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
-/** Without a `categoryId` the dialog grows a category picker (dashboard use). */
+/** "eBay", "eBay and Amazon", "eBay, Newegg and Amazon", "eBay, Newegg and 2 more". */
+function siteList(names: string[]): string {
+  if (names.length <= 1) return names.join('')
+  if (names.length <= 3) return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+  return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
+}
+
+/** Add an item to one category, whose sites the hunter then searches for it. */
 export function AddItemDialog({
   categoryId,
   categoryName,
   trigger,
+  onAdded,
 }: {
-  categoryId?: number
-  categoryName?: string
+  categoryId: number
+  categoryName: string
   trigger?: ReactNode
+  onAdded?: (item: ItemSummary) => void
 }) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('')
+  const [nameMissing, setNameMissing] = useState(false)
   const [target, setTarget] = useState('')
-  const [pickedCategoryId, setPickedCategoryId] = useState<number | undefined>(undefined)
   const [tracking, setTracking] = useState<TrackingValue>(DEFAULT_TRACKING)
+  const nameRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
-  const categories = useQuery({
-    queryKey: qk.categories,
-    queryFn: listCategories,
-    enabled: categoryId == null && open,
-  })
-  const effectiveCategoryId = categoryId ?? pickedCategoryId
+  const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories, enabled: open })
+  const sites = useQuery({ queryKey: qk.sites, queryFn: listSites, enabled: open })
+  const siteIds = categories.data?.data.find((c) => c.id === categoryId)?.site_ids ?? []
+  const siteNames = (sites.data?.data ?? []).filter((s) => siteIds.includes(s.id)).map((s) => s.name)
 
   const create = useMutation({
     mutationFn: () =>
       createItem({
-        category_id: effectiveCategoryId!,
+        category_id: categoryId,
         name: name.trim(),
         target_price: target.trim() ? Number(target).toFixed(2) : null,
         ...trackingPayload(tracking),
       }),
-    onSuccess: () => {
+    onSuccess: (item) => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
       setOpen(false)
-      setName('')
-      setTarget('')
-      setPickedCategoryId(undefined)
-      setTracking(DEFAULT_TRACKING)
+      onAdded?.(item)
     },
   })
 
   const errorMessage = create.error instanceof ApiError ? create.error.message : null
+  const dirty = name.trim() !== '' || target.trim() !== '' || tracking.criteria.trim() !== ''
+
+  // Reset when opening rather than closing, so the exit animation shows the dialog as it was.
+  const onOpenChange = (next: boolean) => {
+    if (next) {
+      setName('')
+      setNameMissing(false)
+      setTarget('')
+      setTracking(DEFAULT_TRACKING)
+      create.reset()
+    }
+    setOpen(next)
+  }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
         <Button variant="primary" size="sm">
           {trigger ?? (
@@ -76,48 +95,59 @@ export function AddItemDialog({
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent className="max-w-[520px]" onInteractOutside={(e) => dirty && e.preventDefault()}>
         <DialogHeader>
-          <DialogTitle>{categoryName ? `Add item to ${categoryName}` : 'Add item'}</DialogTitle>
+          <DialogEyebrow>Add item</DialogEyebrow>
+          <DialogTitle>{categoryName}</DialogTitle>
           <DialogDescription>
-            The agent searches the category's sites for listings on its next run — no URLs needed.
+            The hunter searches{' '}
+            {siteNames.length > 0 ? (
+              <b className="font-medium text-ink">{siteList(siteNames)}</b>
+            ) : (
+              "this category's sites"
+            )}{' '}
+            on its next sweep. No URLs needed.
           </DialogDescription>
         </DialogHeader>
         <form
           className="contents"
           onSubmit={(e) => {
             e.preventDefault()
+            if (!name.trim()) {
+              setNameMissing(true)
+              nameRef.current?.focus()
+              return
+            }
             create.mutate()
           }}
         >
           <DialogBody className="space-y-3">
-            {errorMessage ? <p className="text-xs text-rise">{errorMessage}</p> : null}
-            {categoryId == null ? (
-              <div>
-                <Label htmlFor="item-category">Category</Label>
-                <Select
-                  ariaLabel="Category"
-                  className="w-full"
-                  placeholder="Pick a category"
-                  value={pickedCategoryId != null ? String(pickedCategoryId) : undefined}
-                  onValueChange={(v) => setPickedCategoryId(Number(v))}
-                  options={(categories.data?.data ?? []).map((c) => ({
-                    value: String(c.id),
-                    label: c.name,
-                  }))}
-                />
-              </div>
+            {errorMessage ? (
+              <p role="alert" className="text-xs text-rise">
+                {errorMessage}
+              </p>
             ) : null}
             <div>
               <Label htmlFor="item-name">Item name</Label>
               <Input
+                ref={nameRef}
                 id="item-name"
-                required
                 autoFocus
-                placeholder="Pokemon Emerald (GBA)"
+                autoComplete="off"
+                placeholder="e.g. Pokémon Sapphire (GBA)"
+                aria-invalid={nameMissing || undefined}
+                className="aria-invalid:border-rise/60"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setNameMissing(false)
+                }}
               />
+              {nameMissing ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ Give it a name.
+                </p>
+              ) : null}
             </div>
             <div>
               <Label htmlFor="item-target">Target price (optional)</Label>
@@ -137,25 +167,18 @@ export function AddItemDialog({
                 />
               </div>
               <p className="mt-1.5 text-xs text-ink-3">
-                You'll see a <span className="text-drop">⌖ Snagged</span> badge when the best price hits this.
+                You'll see <span className="text-drop">⌖ Snagged</span> when the best price hits this.
               </p>
             </div>
 
-            {effectiveCategoryId != null ? (
-              <TrackingFields categoryId={effectiveCategoryId} value={tracking} onChange={setTracking} />
-            ) : null}
+            <TrackingFields categoryId={categoryId} value={tracking} onChange={setTracking} />
           </DialogBody>
 
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button
-              type="submit"
-              variant="primary"
-              className="max-sm:flex-[2]"
-              disabled={create.isPending || !name.trim() || effectiveCategoryId == null}
-            >
+            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={create.isPending}>
               {create.isPending ? <Loader2 className="animate-spin" /> : null}
               Add item
             </Button>
