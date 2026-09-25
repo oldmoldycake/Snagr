@@ -49,7 +49,12 @@ export function CategoryPage() {
   const [siteFilter, setSiteFilter] = useState<number | undefined>(undefined)
   const [search, setSearch] = useState('')
   const [editOpen, setEditOpen] = useState(false)
+  // The last item picked for editing stays set after close, so the dialog
+  // stays mounted through its exit animation; the session remounts it fresh
+  // on every open.
   const [editingItem, setEditingItem] = useState<ItemSummary | null>(null)
+  const [editItemOpen, setEditItemOpen] = useState(false)
+  const [editItemSession, setEditItemSession] = useState(0)
   const [deletingItem, setDeletingItem] = useState<ItemSummary | null>(null)
   const queryClient = useQueryClient()
   const { enqueue } = useJobs()
@@ -200,7 +205,11 @@ export function CategoryPage() {
             <WatchList
               items={rows}
               expandable
-              onEdit={(item) => setEditingItem(item)}
+              onEdit={(item) => {
+                setEditingItem(item)
+                setEditItemSession((n) => n + 1)
+                setEditItemOpen(true)
+              }}
               onDelete={(item) => setDeletingItem(item)}
               onHunt={(item) => enqueue({ kind: 'hunt', scope: 'item', scope_id: item.id })}
             />
@@ -236,13 +245,7 @@ export function CategoryPage() {
         onOpenChange={setEditOpen}
       />
       {editingItem ? (
-        <EditItemDialog
-          item={editingItem}
-          open={editingItem != null}
-          onOpenChange={(open) => {
-            if (!open) setEditingItem(null)
-          }}
-        />
+        <EditItemDialog key={`item-${editItemSession}`} item={editingItem} open={editItemOpen} onOpenChange={setEditItemOpen} />
       ) : null}
       <ConfirmDialog
         open={deletingItem != null}

@@ -6,7 +6,15 @@ import { deleteCategory, listSites, setCategorySites, updateCategory } from '@/a
 import { qk } from '@/api/queries'
 import type { Category } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
@@ -59,12 +67,14 @@ export function EditCategoryDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>Edit category</DialogTitle>
-        <DialogDescription>
-          The hunter searches this category's linked sites.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle>Edit category</DialogTitle>
+          <DialogDescription>
+            The hunter searches this category's linked sites.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="mt-4 space-y-4">
+        <DialogBody className="space-y-4">
           <div>
             <Label htmlFor="edit-category-name">Name</Label>
             <Input id="edit-category-name" value={name} onChange={(e) => setName(e.target.value)} />
@@ -122,13 +132,13 @@ export function EditCategoryDialog({
               </Button>
             )}
           </div>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="primary" disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
+          <Button variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
             {save.isPending ? <Loader2 className="animate-spin" /> : null}
             Save changes
           </Button>

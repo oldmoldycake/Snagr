@@ -7,9 +7,11 @@ import { ApiError } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
@@ -52,32 +54,36 @@ export function CreateCategoryDialog({
         </Button>
       </DialogTrigger>
       <DialogContent>
-        <DialogTitle>New category</DialogTitle>
-        <DialogDescription>
-          A category groups the items you track and the sites the agent searches for them.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle>New category</DialogTitle>
+          <DialogDescription>
+            A category groups the items you track and the sites the agent searches for them.
+          </DialogDescription>
+        </DialogHeader>
         <form
-          className="mt-4"
+          className="contents"
           onSubmit={(e) => {
             e.preventDefault()
             create.mutate()
           }}
         >
-          <Label htmlFor="category-name">Name</Label>
-          <Input
-            id="category-name"
-            required
-            autoFocus
-            placeholder="GPUs, Keyboards, Home Lab…"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          {fieldError ? <p className="mt-1.5 text-xs text-rise">{fieldError}</p> : null}
+          <DialogBody>
+            <Label htmlFor="category-name">Name</Label>
+            <Input
+              id="category-name"
+              required
+              autoFocus
+              placeholder="GPUs, Keyboards, Home Lab…"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            {fieldError ? <p className="mt-1.5 text-xs text-rise">{fieldError}</p> : null}
+          </DialogBody>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={create.isPending || !name.trim()}>
+            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={create.isPending || !name.trim()}>
               {create.isPending ? <Loader2 className="animate-spin" /> : null}
               Create category
             </Button>
