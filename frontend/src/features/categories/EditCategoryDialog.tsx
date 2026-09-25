@@ -1,9 +1,8 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, Trash2 } from 'lucide-react'
-import { deleteCategory, listSites, setCategorySites, updateCategory } from '@/api/endpoints'
-import { qk } from '@/api/queries'
+import { deleteCategory, setCategorySites, updateCategory } from '@/api/endpoints'
 import type { Category } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
@@ -17,7 +16,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/cn'
+import { SitePicker } from '@/features/sites/SitePicker'
 
 /** Rename a category, choose which sites it searches, or delete it. */
 export function EditCategoryDialog({
@@ -34,8 +33,6 @@ export function EditCategoryDialog({
   const [name, setName] = useState(category.name)
   const [siteIds, setSiteIds] = useState<number[]>(category.site_ids)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-
-  const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
 
   const save = useMutation({
     mutationFn: async () => {
@@ -60,10 +57,6 @@ export function EditCategoryDialog({
     },
   })
 
-  const toggleSite = (id: number) => {
-    setSiteIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]))
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -80,34 +73,7 @@ export function EditCategoryDialog({
             <Input id="edit-category-name" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
 
-          <div>
-            <Label>Linked sites</Label>
-            {sites.data?.data.length === 0 ? (
-              <p className="text-xs text-ink-3">No sites yet — add sites on the Sites page first.</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {sites.data?.data.map((site) => {
-                  const selected = siteIds.includes(site.id)
-                  return (
-                    <button
-                      key={site.id}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => toggleSite(site.id)}
-                      className={cn(
-                        'rounded-sm border px-2 py-1 text-xs transition-colors',
-                        selected
-                          ? 'border-lume/50 bg-lume-glow text-lume'
-                          : 'border-hairline text-ink-3 hover:text-ink-2',
-                      )}
-                    >
-                      {site.name}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
+          <SitePicker selected={siteIds} onChange={setSiteIds} />
 
           <div className="border-t border-hairline pt-3">
             {confirmingDelete ? (

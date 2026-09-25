@@ -65,6 +65,7 @@
   --animate-sheet-down: sheet-down 200ms ease-in both;
   --animate-step-fwd: step-fwd 180ms ease-out both;
   --animate-step-back: step-back 180ms ease-out both;
+  --animate-pick-new: pick-new 600ms ease-out;
 }
 
 @keyframes sweep {
@@ -122,6 +123,12 @@
   from {
     opacity: 0;
     transform: translateX(-12px);
+  }
+}
+
+@keyframes pick-new {
+  from {
+    background-color: var(--color-lume-glow);
   }
 }
 
