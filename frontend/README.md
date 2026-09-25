@@ -74,9 +74,10 @@ values, not CSS vars — change both together). Dark-only, by design.
   `hairline` / `hairline-strong`, never solid grays.
 - **`lume`** (illuminated-reticle amber) is the identity color: active nav, primary buttons,
   focus, live states, "close to target". It is never semantic. The desktop nav's active tab
-  is one lume bar that tracks between tabs (`.nav-lume`, motion "Reticle Track"); `Segmented`
-  and the settings tabs track their checked option the same way, with one raised plate
-  (`.seg-plate`). `lib/useTrack.ts` seats both.
+  is one lume bar that tracks between tabs (`.nav-lume`, motion "Reticle Track"); the category
+  links track theirs with the same bar (`.chip-lume`, which follows the active link onto
+  another row); `Segmented` and the settings tabs track their checked option with one raised
+  plate (`.seg-plate`). `lib/useTrack.ts` seats all of them.
 - **Semantics are unchanged and inverted vs finance**: `drop` green = price fell / target
   met = good; `rise` red = price rose. Every semantic color ships with a glyph
   (`▲▼✓✗⚠⌖○✚`) — never color alone. Green `⌖` always means "in range".
