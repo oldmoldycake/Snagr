@@ -1,13 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import { cn } from '@/lib/cn'
-import { ChecksTail } from './ChecksTail'
-import { HistoryTable } from './HistoryTable'
 import { HunterHero } from './HunterHero'
-import { LiveHunts } from './LiveHunts'
-import { NextUp } from './NextUp'
-import { PausedSiteBanner } from './PausedSiteBanner'
+import { NeedsYou } from './NeedsYou'
+import { Timeline } from './Timeline'
 import { useJobs } from './JobsProvider'
 
 /** The summary is cheap and its numbers age visibly (a countdown), so it is
@@ -15,10 +11,10 @@ import { useJobs } from './JobsProvider'
 const SUMMARY_POLL_MS = 30_000
 
 /**
- * What the hunter is doing, in the dashboard's three beats: a sentence, the
- * live work, then the ledger. Nothing here repeats a per-item fact the item
- * page shows — the hero aggregates, and the one per-listing detail is the
- * checks tail.
+ * What the hunter is doing, answered in the order people ask: is it working
+ * (the hero), does anything need me (the rail), and what is it doing, about
+ * to do and done (the timeline). On a phone the rail comes first, because it
+ * is the only part that asks something of the reader.
  */
 export function ActivityPage() {
   const { connection } = useJobs()
@@ -29,33 +25,16 @@ export function ActivityPage() {
   })
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
-          Activity
-        </h1>
-        <span className="flex items-center gap-1.5 font-mono text-[11px] text-ink-3">
-          <span
-            aria-hidden
-            className={cn(
-              'size-1.5 rounded-full',
-              connection === 'live' ? 'bg-drop' : 'animate-pulse bg-warn',
-            )}
-          />
-          {connection === 'live' ? 'live' : 'reconnecting…'}
-        </span>
+    <div className="space-y-8">
+      <HunterHero summary={summary.data} connection={connection} />
+      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+        <div className="lg:order-2 lg:sticky lg:top-20">
+          <NeedsYou summary={summary.data} />
+        </div>
+        <div className="lg:order-1">
+          <Timeline summary={summary.data} />
+        </div>
       </div>
-
-      <HunterHero summary={summary.data} />
-
-      {(summary.data?.paused_sites ?? []).map((site) => (
-        <PausedSiteBanner key={site.site_id} site={site} />
-      ))}
-
-      <LiveHunts />
-      <ChecksTail summary={summary.data} />
-      <NextUp summary={summary.data} />
-      <HistoryTable />
     </div>
   )
 }
