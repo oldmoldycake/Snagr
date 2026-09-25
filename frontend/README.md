@@ -73,7 +73,8 @@ values, not CSS vars — change both together). Dark-only, by design.
   (`well` is for inset grounds: search, terminal logs, list footers). Borders are always
   `hairline` / `hairline-strong`, never solid grays.
 - **`lume`** (illuminated-reticle amber) is the identity color: active nav, primary buttons,
-  focus, live states, "close to target". It is never semantic.
+  focus, live states, "close to target". It is never semantic. The desktop nav's active tab
+  is one lume bar that tracks between tabs (`.nav-lume`, motion "Reticle Track").
 - **Semantics are unchanged and inverted vs finance**: `drop` green = price fell / target
   met = good; `rise` red = price rose. Every semantic color ships with a glyph
   (`▲▼✓✗⚠⌖○✚`) — never color alone. Green `⌖` always means "in range".
