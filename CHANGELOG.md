@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.7.0](https://github.com/oldmoldycake/Snagr/compare/v0.6.1...v0.7.0) (2026-09-25)
+
+
+### Features
+
+* **frontend:** animate listing detail rows ([7be4535](https://github.com/oldmoldycake/Snagr/commit/7be4535a6c502aec312f38077d4c37ea264954fa))
+* **frontend:** animate the listings panel's show-more fold and detail rows ([4f87685](https://github.com/oldmoldycake/Snagr/commit/4f876856379c06433a592e669a3537cc5765c6be))
+* **frontend:** animate the listings panel's show-more reveal ([166bd44](https://github.com/oldmoldycake/Snagr/commit/166bd4458297e56a00c15c51711c8260888b2e15))
+* **frontend:** give every dropdown menu a header and a tracking highlight ([d7725f1](https://github.com/oldmoldycake/Snagr/commit/d7725f159416105a11be763ea87401583a296ac0))
+* **frontend:** give every dropdown menu a header and a tracking highlight ([f0354ad](https://github.com/oldmoldycake/Snagr/commit/f0354ade0c669f3ba42d1b9a4e815ed79ac4b28b))
+* **frontend:** track the active nav tab with one lume bar ([3d83071](https://github.com/oldmoldycake/Snagr/commit/3d8307103de3f07818fc246350f83578aa6b5145))
+* **frontend:** track the active nav tab with one lume bar ([f0c68c7](https://github.com/oldmoldycake/Snagr/commit/f0c68c77964411e825b430ae3785a3d33b7ba370))
+
+
+### Bug Fixes
+
+* **frontend:** drop the to-target bar on phones so it stops overlapping the price ([bb998d5](https://github.com/oldmoldycake/Snagr/commit/bb998d5d8ec54850e230975dcbc3616b081863b2))
+* **frontend:** drop the to-target bar on phones so it stops overlapping the price ([2bbdcf8](https://github.com/oldmoldycake/Snagr/commit/2bbdcf8a4d5b2b4c06924b4049feb55b17ad412f))
+* **frontend:** line up the Activity history result column ([8336c2d](https://github.com/oldmoldycake/Snagr/commit/8336c2d9af0a964632e0b24e96aef97d14a29aa7))
+* **frontend:** line up the Activity history result column ([ea7fe7b](https://github.com/oldmoldycake/Snagr/commit/ea7fe7b9051ff3a6eacb714ca3f741692e23157a))
+
 ## [0.6.1](https://github.com/oldmoldycake/Snagr/compare/v0.6.0...v0.6.1) (2026-09-25)
 
 
