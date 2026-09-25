@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     HUNT_ENABLED: bool = True
 
     # Instance / notifications
-    APP_VERSION: str = "0.6.0"  # x-release-please-version
+    APP_VERSION: str = "0.6.1"  # x-release-please-version
     NTFY_SERVER_URL: str | None = None  # drives InstanceInfo.ntfy_server_url
 
 
