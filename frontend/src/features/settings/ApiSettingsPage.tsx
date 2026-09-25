@@ -12,9 +12,11 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -217,66 +219,73 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent>
-        <DialogTitle>New API token</DialogTitle>
-        <DialogDescription>
-          A token lets an agent or script act as you — on your items and the hunter, never on your account.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle>New API token</DialogTitle>
+          <DialogDescription>
+            A token lets an agent or script act as you — on your items and the hunter, never on your account.
+          </DialogDescription>
+        </DialogHeader>
 
         {created != null ? (
-          <div className="mt-4 space-y-3">
-            <div>
-              <Label>Token — shown once, store it now</Label>
-              <div className="flex gap-2">
-                <Input readOnly value={created} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
-                <CopyButton text={created} label="Copy token" />
+          <>
+            <DialogBody className="space-y-3">
+              <div>
+                <Label>Token — shown once, store it now</Label>
+                <div className="flex gap-2">
+                  <Input readOnly value={created} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                  <CopyButton text={created} label="Copy token" />
+                </div>
               </div>
-            </div>
-            <ConnectSnippets token={created} compact />
+              <ConnectSnippets token={created} compact />
+            </DialogBody>
             <DialogFooter>
               <Button variant="primary" onClick={() => close(false)}>
                 Done
               </Button>
             </DialogFooter>
-          </div>
+          </>
         ) : (
           <form
-            className="mt-4 space-y-3"
+            className="contents"
             onSubmit={(e) => {
               e.preventDefault()
               create.mutate()
             }}
           >
-            <div>
-              <Label htmlFor="token-name">Name</Label>
-              <Input
-                id="token-name"
-                placeholder="claude code (laptop)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              {fieldError('name') ? <p className="mt-1 text-xs text-rise">{fieldError('name')}</p> : null}
-            </div>
+            <DialogBody className="space-y-3">
+              <div>
+                <Label htmlFor="token-name">Name</Label>
+                <Input
+                  id="token-name"
+                  placeholder="claude code (laptop)"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                {fieldError('name') ? <p className="mt-1 text-xs text-rise">{fieldError('name')}</p> : null}
+              </div>
 
-            <div>
-              <Label>Access</Label>
-              <Segmented options={ACCESS_OPTIONS} value={access} onChange={setAccess} ariaLabel="Token access" />
-              <p className="mt-1.5 text-xs text-ink-3">{ACCESS_HINT[access]}</p>
-              {fieldError('scopes') ? <p className="mt-1 text-xs text-rise">{fieldError('scopes')}</p> : null}
-            </div>
+              <div>
+                <Label>Access</Label>
+                <Segmented options={ACCESS_OPTIONS} value={access} onChange={setAccess} ariaLabel="Token access" />
+                <p className="mt-1.5 text-xs text-ink-3">{ACCESS_HINT[access]}</p>
+                {fieldError('scopes') ? <p className="mt-1 text-xs text-rise">{fieldError('scopes')}</p> : null}
+              </div>
 
-            <div>
-              <Label>Expires</Label>
-              <Segmented options={EXPIRY_OPTIONS} value={expiry} onChange={setExpiry} ariaLabel="Token expiry" />
-              {fieldError('expires_in_days') ? (
-                <p className="mt-1 text-xs text-rise">{fieldError('expires_in_days')}</p>
-              ) : null}
-            </div>
+              <div>
+                <Label>Expires</Label>
+                <Segmented options={EXPIRY_OPTIONS} value={expiry} onChange={setExpiry} ariaLabel="Token expiry" />
+                {fieldError('expires_in_days') ? (
+                  <p className="mt-1 text-xs text-rise">{fieldError('expires_in_days')}</p>
+                ) : null}
+              </div>
+
+            </DialogBody>
 
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" disabled={create.isPending || !name.trim()}>
+              <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={create.isPending || !name.trim()}>
                 {create.isPending ? <Loader2 className="animate-spin" /> : null}
                 Create token
               </Button>

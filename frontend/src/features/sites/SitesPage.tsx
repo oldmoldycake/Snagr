@@ -10,9 +10,11 @@ import { Card, CardBody } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
@@ -57,44 +59,47 @@ function SiteDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>{site ? 'Edit site' : 'Add site'}</DialogTitle>
-        <DialogDescription>
-          The agent browses this site when it's linked to a category.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle>{site ? 'Edit site' : 'Add site'}</DialogTitle>
+          <DialogDescription>
+            The agent browses this site when it's linked to a category.
+          </DialogDescription>
+        </DialogHeader>
         <form
-          className="mt-4 space-y-3"
+          className="contents"
           onSubmit={(e) => {
             e.preventDefault()
             save.mutate()
           }}
         >
-          <div>
-            <Label htmlFor="site-name">Name</Label>
-            <Input
-              id="site-name"
-              required
-              autoFocus
-              placeholder="newegg.com"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="site-url">Base URL</Label>
-            <Input
-              id="site-url"
-              type="url"
-              required
-              placeholder="https://www.newegg.com"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </div>
+          <DialogBody className="space-y-3">
+            <div>
+              <Label htmlFor="site-name">Name</Label>
+              <Input
+                id="site-name"
+                required
+                placeholder="newegg.com"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="site-url">Base URL</Label>
+              <Input
+                id="site-url"
+                type="url"
+                required
+                placeholder="https://www.newegg.com"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+              />
+            </div>
+          </DialogBody>
           <DialogFooter>
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" disabled={save.isPending || !name.trim() || !baseUrl.trim()}>
+            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !name.trim() || !baseUrl.trim()}>
               {save.isPending ? <Loader2 className="animate-spin" /> : null}
               {site ? 'Save changes' : 'Add site'}
             </Button>
@@ -109,6 +114,9 @@ function SiteDialog({
 export function SitesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Site | null>(null)
+  // Bumped on every open so the dialog's form starts fresh, while staying
+  // mounted after close long enough to play its exit animation.
+  const [dialogSession, setDialogSession] = useState(0)
   const [deleting, setDeleting] = useState<Site | null>(null)
   const queryClient = useQueryClient()
 
@@ -137,6 +145,7 @@ export function SitesPage() {
           size="sm"
           onClick={() => {
             setEditing(null)
+            setDialogSession((n) => n + 1)
             setDialogOpen(true)
           }}
         >
@@ -212,6 +221,7 @@ export function SitesPage() {
                             <DropdownMenuItem
                               onSelect={() => {
                                 setEditing(site)
+                                setDialogSession((n) => n + 1)
                                 setDialogOpen(true)
                               }}
                             >
@@ -233,14 +243,7 @@ export function SitesPage() {
         </CardBody>
       </Card>
 
-      {dialogOpen ? (
-        <SiteDialog
-          key={editing?.id ?? 'new'}
-          site={editing}
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-        />
-      ) : null}
+      <SiteDialog key={`site-${dialogSession}`} site={editing} open={dialogOpen} onOpenChange={setDialogOpen} />
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {

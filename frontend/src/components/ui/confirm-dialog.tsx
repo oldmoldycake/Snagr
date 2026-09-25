@@ -1,6 +1,13 @@
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 /** In-design replacement for window.confirm on destructive actions. */
 export function ConfirmDialog({
@@ -23,13 +30,15 @@ export function ConfirmDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
-        <DialogTitle>{title}</DialogTitle>
-        <DialogDescription>{description}</DialogDescription>
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+          <Button variant="destructive" className="max-sm:flex-[2]" disabled={pending} onClick={onConfirm}>
             {pending ? <Loader2 className="animate-spin" /> : null}
             {confirmLabel}
           </Button>

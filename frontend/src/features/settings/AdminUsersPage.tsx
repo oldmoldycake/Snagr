@@ -11,9 +11,11 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
@@ -68,53 +70,59 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent>
-        <DialogTitle>Invite a user</DialogTitle>
-        <DialogDescription>
-          Share the invite link — it lets someone create their own account on this instance.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle>Invite a user</DialogTitle>
+          <DialogDescription>
+            Share the invite link — it lets someone create their own account on this instance.
+          </DialogDescription>
+        </DialogHeader>
 
         {created ? (
-          <div className="mt-4 space-y-3">
-            <Label>Invite link (expires {relativeTime(created.expires_at).replace(' ago', '')})</Label>
-            <div className="flex gap-2">
-              <Input readOnly value={inviteUrl(created)} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
-              <Button onClick={copy} aria-label="Copy invite link">
-                {copied ? <Check className="text-drop" /> : <Copy />}
-                {copied ? 'Copied' : 'Copy'}
-              </Button>
-            </div>
+          <>
+            <DialogBody className="space-y-3">
+              <Label>Invite link (expires {relativeTime(created.expires_at).replace(' ago', '')})</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={inviteUrl(created)} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                <Button onClick={copy} aria-label="Copy invite link">
+                  {copied ? <Check className="text-drop" /> : <Copy />}
+                  {copied ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            </DialogBody>
             <DialogFooter>
               <Button variant="primary" onClick={() => close(false)}>
                 Done
               </Button>
             </DialogFooter>
-          </div>
+          </>
         ) : (
           <form
-            className="mt-4 space-y-3"
+            className="contents"
             onSubmit={(e) => {
               e.preventDefault()
               create.mutate()
             }}
           >
-            <div>
-              <Label htmlFor="invite-email-input">Email (optional)</Label>
-              <Input
-                id="invite-email-input"
-                type="email"
-                placeholder="teammate@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-              <p className="mt-1.5 text-xs text-ink-3">
-                If set, the invite is locked to this address; otherwise anyone with the link can join.
-              </p>
-            </div>
+            <DialogBody className="space-y-3">
+              <div>
+                <Label htmlFor="invite-email-input">Email (optional)</Label>
+                <Input
+                  id="invite-email-input"
+                  type="email"
+                  placeholder="teammate@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+                <p className="mt-1.5 text-xs text-ink-3">
+                  If set, the invite is locked to this address; otherwise anyone with the link can join.
+                </p>
+              </div>
+            </DialogBody>
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" disabled={create.isPending}>
+              <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={create.isPending}>
                 {create.isPending ? <Loader2 className="animate-spin" /> : null}
                 Create invite
               </Button>

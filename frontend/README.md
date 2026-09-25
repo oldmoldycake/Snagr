@@ -87,3 +87,11 @@ values, not CSS vars — change both together). Dark-only, by design.
   per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
   ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.
+- **Dialogs are field cards** (`components/ui/dialog.tsx`): `DialogHeader` (optional
+  `DialogEyebrow`, title, description) → `DialogBody` → `DialogFooter`. Only the body
+  scrolls, so the footer's buttons never leave the screen; under `sm` the card becomes a
+  bottom sheet. A form wraps body and footer in `<form className="contents">` so both stay
+  grid rows. Footer order is Back (`mr-auto`), Cancel, then the primary, always rightmost.
+  Enter and exit are keyframe animations (`animate-dialog-in/out`, `animate-sheet-up/down`)
+  because Radix waits for `animationend` before unmounting; keep a dialog mounted after
+  close rather than rendering it conditionally, or the exit never plays.

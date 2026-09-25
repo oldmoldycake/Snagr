@@ -12,9 +12,11 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -109,112 +111,119 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent>
-        <DialogTitle>Add a channel</DialogTitle>
-        <DialogDescription>
-          Where Snagr should send a push when something happens on an item you watch.
-        </DialogDescription>
+        <DialogHeader>
+          <DialogTitle>Add a channel</DialogTitle>
+          <DialogDescription>
+            Where Snagr should send a push when something happens on an item you watch.
+          </DialogDescription>
+        </DialogHeader>
 
         {secret != null ? (
-          <div className="mt-4 space-y-3">
-            <Label>Signing secret — shown once, store it now</Label>
-            <div className="flex gap-2">
-              <Input readOnly value={secret} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
-              <Button onClick={copy} aria-label="Copy signing secret">
-                {copied ? <Check className="text-drop" /> : <Copy />}
-                {copied ? 'Copied' : 'Copy'}
-              </Button>
-            </div>
-            <p className="text-xs text-ink-3">
-              Every delivery carries an <code className="rounded-sm bg-well px-1 py-0.5 font-mono">X-Snagr-Signature</code>{' '}
-              header — an HMAC-SHA256 of the timestamp and body under this secret.
-            </p>
+          <>
+            <DialogBody className="space-y-3">
+              <Label>Signing secret — shown once, store it now</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={secret} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                <Button onClick={copy} aria-label="Copy signing secret">
+                  {copied ? <Check className="text-drop" /> : <Copy />}
+                  {copied ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+              <p className="text-xs text-ink-3">
+                Every delivery carries an <code className="rounded-sm bg-well px-1 py-0.5 font-mono">X-Snagr-Signature</code>{' '}
+                header — an HMAC-SHA256 of the timestamp and body under this secret.
+              </p>
+            </DialogBody>
             <DialogFooter>
               <Button variant="primary" onClick={() => close(false)}>
                 Done
               </Button>
             </DialogFooter>
-          </div>
+          </>
         ) : (
           <form
-            className="mt-4 space-y-3"
+            className="contents"
             onSubmit={(e) => {
               e.preventDefault()
               create.mutate()
             }}
           >
-            <div>
-              <Label>Kind</Label>
-              <Segmented options={kindOptions} value={kind} onChange={setKind} ariaLabel="Channel kind" />
-              {!ntfyAvailable ? (
-                <p className="mt-1.5 text-xs text-ink-3">
-                  ntfy channels need{' '}
-                  <code className="rounded-sm bg-well px-1 py-0.5 font-mono break-all">NTFY_SERVER_URL</code> configured
-                  on the backend.
-                </p>
-              ) : null}
-            </div>
-
-            <div>
-              <Label htmlFor="channel-name">Name</Label>
-              <Input
-                id="channel-name"
-                placeholder={kind === 'ntfy' ? 'my phone' : kind === 'discord' ? 'deals channel' : 'automation'}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              {fieldError('name') ? <p className="mt-1 text-xs text-rise">{fieldError('name')}</p> : null}
-            </div>
-
-            {kind === 'ntfy' ? (
+            <DialogBody className="space-y-3">
               <div>
-                <Label htmlFor="channel-topic">Topic</Label>
-                <Input
-                  id="channel-topic"
-                  placeholder={suggestedTopic}
-                  className="font-mono"
-                  value={topic}
-                  onChange={(e) => setTopic(e.target.value)}
-                />
-                {fieldError('topic') ? <p className="mt-1 text-xs text-rise">{fieldError('topic')}</p> : null}
-                <p className="mt-1.5 text-xs text-ink-3">
-                  Subscribe to{' '}
-                  <code className="rounded-sm bg-well px-1 py-0.5 font-mono break-all">
-                    {instance?.ntfy_server_url}/{topic.trim() || suggestedTopic}
-                  </code>{' '}
-                  in the ntfy app.
-                </p>
+                <Label>Kind</Label>
+                <Segmented options={kindOptions} value={kind} onChange={setKind} ariaLabel="Channel kind" />
+                {!ntfyAvailable ? (
+                  <p className="mt-1.5 text-xs text-ink-3">
+                    ntfy channels need{' '}
+                    <code className="rounded-sm bg-well px-1 py-0.5 font-mono break-all">NTFY_SERVER_URL</code> configured
+                    on the backend.
+                  </p>
+                ) : null}
               </div>
-            ) : (
-              <div>
-                <Label htmlFor="channel-url">{kind === 'discord' ? 'Discord webhook URL' : 'Webhook URL'}</Label>
-                <Input
-                  id="channel-url"
-                  placeholder={
-                    kind === 'discord' ? 'https://discord.com/api/webhooks/…' : 'https://example.com/hooks/snagr'
-                  }
-                  className="font-mono"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                />
-                {fieldError('url') ? <p className="mt-1 text-xs text-rise">{fieldError('url')}</p> : null}
-                <p className="mt-1.5 text-xs text-ink-3">
-                  {kind === 'discord'
-                    ? 'Server Settings → Integrations → Webhooks → New Webhook → Copy URL.'
-                    : 'Snagr POSTs a signed JSON envelope here — the signing secret is shown once after creating.'}
-                </p>
-              </div>
-            )}
 
-            <div>
-              <Label>Events</Label>
-              <Segmented options={EVENT_OPTIONS} value={events} onChange={setEvents} ariaLabel="Events to receive" />
-            </div>
+              <div>
+                <Label htmlFor="channel-name">Name</Label>
+                <Input
+                  id="channel-name"
+                  placeholder={kind === 'ntfy' ? 'my phone' : kind === 'discord' ? 'deals channel' : 'automation'}
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                {fieldError('name') ? <p className="mt-1 text-xs text-rise">{fieldError('name')}</p> : null}
+              </div>
+
+              {kind === 'ntfy' ? (
+                <div>
+                  <Label htmlFor="channel-topic">Topic</Label>
+                  <Input
+                    id="channel-topic"
+                    placeholder={suggestedTopic}
+                    className="font-mono"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                  />
+                  {fieldError('topic') ? <p className="mt-1 text-xs text-rise">{fieldError('topic')}</p> : null}
+                  <p className="mt-1.5 text-xs text-ink-3">
+                    Subscribe to{' '}
+                    <code className="rounded-sm bg-well px-1 py-0.5 font-mono break-all">
+                      {instance?.ntfy_server_url}/{topic.trim() || suggestedTopic}
+                    </code>{' '}
+                    in the ntfy app.
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <Label htmlFor="channel-url">{kind === 'discord' ? 'Discord webhook URL' : 'Webhook URL'}</Label>
+                  <Input
+                    id="channel-url"
+                    placeholder={
+                      kind === 'discord' ? 'https://discord.com/api/webhooks/…' : 'https://example.com/hooks/snagr'
+                    }
+                    className="font-mono"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                  />
+                  {fieldError('url') ? <p className="mt-1 text-xs text-rise">{fieldError('url')}</p> : null}
+                  <p className="mt-1.5 text-xs text-ink-3">
+                    {kind === 'discord'
+                      ? 'Server Settings → Integrations → Webhooks → New Webhook → Copy URL.'
+                      : 'Snagr POSTs a signed JSON envelope here — the signing secret is shown once after creating.'}
+                  </p>
+                </div>
+              )}
+
+              <div>
+                <Label>Events</Label>
+                <Segmented options={EVENT_OPTIONS} value={events} onChange={setEvents} ariaLabel="Events to receive" />
+              </div>
+
+            </DialogBody>
 
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" disabled={create.isPending}>
+              <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={create.isPending}>
                 {create.isPending ? <Loader2 className="animate-spin" /> : null}
                 Add channel
               </Button>
