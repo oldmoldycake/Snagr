@@ -14,7 +14,6 @@ more trustworthy than a marketplace page. The site-domain half does not apply,
 because a price guide is deliberately somewhere else entirely.
 """
 
-import asyncio
 import html
 import json
 import logging
@@ -30,7 +29,6 @@ from config import (
     EXPECTED_CURRENCY,
     MARKET_PRICE_MAX_REFRESH_PER_RUN,
     MARKET_PRICE_TTL_HOURS,
-    SEARXNG_URL,
 )
 from database import (
     get_category_item_names,
@@ -44,6 +42,7 @@ from database import (
 )
 from llm import build_llm, callbacks
 from prompt import generate_condition_tiers_prompt, generate_price_extraction_prompt
+from search import search
 from validation import public_url
 
 log = logging.getLogger(__name__)
@@ -59,14 +58,6 @@ QUERY_TEMPLATES = [
     "{} price guide",
     "{} loose cib sealed price",
 ]
-
-# Pages per query; this SearXNG instance returns nothing past page 5.
-SEARCH_PAGES = 3
-
-# SearXNG suspends its upstream engines when queried too fast. Grounding is not
-# time-sensitive, so pace generously and back off long when it happens anyway.
-INTER_REQUEST_DELAY_S = 5.0
-SUSPENSION_BACKOFF_S = 900
 
 # Snippets priced only in some other currency never reach extraction.
 CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
@@ -102,7 +93,6 @@ DEAD_CONSECUTIVE_MISSES = 5
 # candidates earn promotion without burning the whole search budget.
 MIN_PRODUCTIVE_DOMAINS = 2
 SOURCE_FETCH_TIMEOUT_S = 15
-SEARCH_TIMEOUT_SECONDS = 10
 
 # Below this a tier is stored but not reported: two prices from one eBay page
 # once published "loose $137" while the real loose market sat around $226.
@@ -114,84 +104,17 @@ MIN_TIER_SAMPLE = 3
 OUTLIER_RATIO = 20
 
 
-async def search_searxng(
-    queries: list[str], base_url: str = "http://localhost:8888", pages: int = SEARCH_PAGES
-) -> dict[str, str] | None:
-    """Run each query against SearXNG and merge the results into
-    {url: snippet}, deduped by url across queries and pages.
-
-    No address guard on this one: SearXNG is the operator's own service and
-    usually lives on the private network the guard exists to keep pages away
-    from."""
-    try:
-        search_results = {}
-        backed_off = False
-
-        async with httpx.AsyncClient(timeout=SEARCH_TIMEOUT_SECONDS) as client:
-            for query in queries:
-                pageno = 1
-                while pageno <= pages:
-                    log.info(f"Searching SearXNG (page {pageno}): {query}")
-                    params = {"q": query, "format": "json", "pageno": pageno}
-                    response = await client.get(f"{base_url}/search", params=params)
-                    response.raise_for_status()
-                    response_json = response.json()
-
-                    results = response_json["results"]
-
-                    # A suspension looks like success - HTTP 200 with an empty
-                    # result list - so raise_for_status never sees it.
-                    # Suspensions expire on their own; sleep it off and retry
-                    # once.
-                    if not results:
-                        suspended = response_json.get("unresponsive_engines") or []
-                        if suspended and not backed_off:
-                            backed_off = True
-                            log.warning(
-                                f"SearXNG engines suspended ({suspended}), "
-                                f"backing off {SUSPENSION_BACKOFF_S}s before one retry"
-                            )
-                            await asyncio.sleep(SUSPENSION_BACKOFF_S)
-                            continue
-                        if suspended:
-                            log.error(
-                                f"SearXNG engines still suspended, stopping search: {suspended}"
-                            )
-                            return search_results
-                        log.warning(f"No results on page {pageno} for: {query}")
-                        break
-
-                    known = len(search_results)
-                    for result in results:
-                        # Not every engine returns a snippet; the url is what dedupes.
-                        search_results[result["url"]] = result.get("content") or ""
-                    log.info(
-                        f"{len(results)} results, {len(search_results) - known} new "
-                        f"({len(results) - (len(search_results) - known)} already seen)"
-                    )
-
-                    pageno += 1
-                    await asyncio.sleep(INTER_REQUEST_DELAY_S)
-
-        log.info(f"SearXNG search completed: {len(search_results)} unique urls")
-        return search_results
-
-    except Exception as e:
-        log.error(f"Error searching SearXNG: {e}")
-
-
-async def search_searxng_queries(
-    item: str, base_url: str = "http://localhost:8888"
-) -> dict[str, str] | None:
+async def search_queries(item: str) -> dict[str, str] | None:
     """Run every query template for one item - the broad-market snippet search
     the fallback ladder escalates to when guides come up dry."""
-    return await search_searxng([template.format(item) for template in QUERY_TEMPLATES], base_url)
+    return await search([template.format(item) for template in QUERY_TEMPLATES])
 
 
 def site_query(domain: str, alias: str) -> str:
     """One site-scoped query: how a guide page is found the first time. A
-    handful of these per item stays under SearXNG's suspension threshold in a
-    way the broad template shotgun does not."""
+    handful of these per item stays under SearXNG's suspension threshold, and
+    costs a handful of Brave requests, in a way the broad template shotgun
+    does not."""
     return f"site:{domain} {alias}"
 
 
@@ -467,7 +390,7 @@ async def fetch_domain_observations(
     url = cached_url
     text = await fetch_source_page(url) if url else None
     if text is None:
-        results = await search_searxng([site_query(domain, alias)], SEARXNG_URL, pages=1)
+        results = await search([site_query(domain, alias)], pages=1)
         found = pick_domain_url(results or {}, domain)
         if found and found != cached_url:
             url = found
@@ -541,7 +464,7 @@ async def collect_observations(
     """The fallback ladder deciding where an item's prices come from: when the
     guide pass alone produces reportable stats, the broad template shotgun
     stays unfired - it is the fallback, not the method, and skipping it keeps
-    SearXNG well under its suspension threshold.
+    SearXNG well under its suspension threshold and a Brave bill small.
 
     Outliers are quarantined before that call is made, so a transcription error
     cannot pad a tier over MIN_TIER_SAMPLE and talk the ladder out of a fallback
@@ -553,7 +476,7 @@ async def collect_observations(
         return observations
 
     log.info(f"Guide pass insufficient for {item_name}, falling back to broad snippet search")
-    search_results = await search_searxng_queries(item_name, SEARXNG_URL)
+    search_results = await search_queries(item_name)
     snippets = filter_snippets(search_results or {})
     if snippets:
         observations = observations + await extract_observations(item_name, snippets, tiers)

@@ -38,6 +38,7 @@ from config import (
     HUNT_ENABLED,
     JOB_HEARTBEAT_INTERVAL_SECONDS,
     RECHECK_CONCURRENCY,
+    SEARCH_PROVIDER,
 )
 from database import (
     DATABASE_URL,
@@ -403,6 +404,16 @@ def _say_if_hunting_is_off() -> None:
         )
 
 
+def _say_if_search_is_off() -> None:
+    """Once, at startup, for the same reason: with no search provider every
+    grounding still runs, and would otherwise say so on every item."""
+    if SEARCH_PROVIDER == "none":
+        log.warning(
+            "Grounding search is off (SEARCH_PROVIDER=none): market prices refresh "
+            "from guide pages already found, and no new ones are looked for"
+        )
+
+
 async def serve() -> None:
     """Run until stopped: the pools, the listener and the scheduler."""
     workers = worker_ids()
@@ -416,6 +427,7 @@ async def serve() -> None:
         f"Hunter serving — {RECHECK_CONCURRENCY} check worker(s), {HUNT_CONCURRENCY} hunt worker(s)"
     )
     _say_if_hunting_is_off()
+    _say_if_search_is_off()
     try:
         await asyncio.gather(*tasks)
     finally:
@@ -435,6 +447,7 @@ async def once() -> None:
     """
     workers = worker_ids()
     _say_if_hunting_is_off()
+    _say_if_search_is_off()
     await housekeeping()
     try:
         for worker in workers:

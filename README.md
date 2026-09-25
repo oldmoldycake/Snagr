@@ -40,7 +40,7 @@ A self-hosted price tracker for secondhand-marketplace hunting. You describe wha
 - **An agent that is always on** — the agent is a daemon working a queue, not a batch job you start. A new watch is being hunted within seconds, and keeps being hunted on its own while it has open slots — backing off from 15 minutes to 6 hours while a site has nothing new, and stopping once every slot is filled until one frees. On a full watch, **Hunt for better** asks for one more look: a hunt that swaps out the weakest tracked listing only for something better (in cheapest mode, only for a strictly lower price). Tracked listings are re-read on their own every half hour, or at a watch's own interval; **Hunt now** and **Check prices** jump the queue; and a watch can switch its own hunting off. The Activity page shows every hunt's log live, what is queued next, and the history.
 - **Most re-checks never call the model** — the first time the model confirms a listing's price, code learns where on that page the price lives and replays that on every later check; where the same locator works against the raw HTML, the check is a plain HTTP GET with no browser at all. A site that starts answering challenge pages trips a circuit breaker and is left alone — an hour at first, doubling on each repeat trip up to a day — rather than burning tokens on every listing.
 - **Price history that means something** — every re-check is recorded; best/average price, sparklines, and percent drift are derived from the raw checks. Prices are `Numeric(10,2)` in the database and decimal strings in the API, never floats. A reading wildly out of line is recorded but disbelieved — it never counts, and only a second read that agrees with it is believed — and auction bids are never recorded as prices (Buy It Now is the exception), so neither a scraping slip nor a $1 opening bid can fake a target hit.
-- **Market-price grounding** — the agent periodically researches a reference market price per item and condition tier (price guides first, then a broad [SearXNG](https://docs.searxng.org) snippet search) so "is this a deal?" has a denominator.
+- **Market-price grounding** — the agent periodically researches a reference market price per item and condition tier (price guides first, then a broad web-search snippet search through [SearXNG](https://docs.searxng.org) or the [Brave Search API](https://brave.com/search/api/)) so "is this a deal?" has a denominator.
 - **Notifications you own** — when a watch's best price crosses its target, or a genuinely new listing shows up, the backend delivers it to the channels you configure under Settings: your own [ntfy](https://ntfy.sh) server, a Discord channel, or any webhook (HMAC-signed JSON, so other tools can build on top). Target hits are edge-triggered with a cooldown, so a listing that merely stays cheap isn't re-announced every night.
 - **Agents as users** — the same operations the web app uses are exposed over the [Model Context Protocol](https://modelcontextprotocol.io), so Claude Code or any MCP client can browse your watches and ask the hunter for work with a scoped API token.
 - **Visual authenticity (optional)** — a DINOv3 sidecar embeds listing photos and scores them against a per-item reference library of real and fake examples. Suspicious listings are flagged on the board, and their photos land in a review queue where confirming one grows the library. Fully opt-in; the stack runs without it.
@@ -56,7 +56,7 @@ flowchart LR
     db <-->|jobs| agent["agent<br/>the hunter"]
     backend --> push(["ntfy · Discord · webhook"])
     agent --> mcp["Playwright MCP"] --> sites(["marketplaces"])
-    agent --> searx["SearXNG"]
+    agent -.-> searx["SearXNG or Brave Search<br/>(optional)"]
     agent --> llm["LLM provider"]
     agent -.-> vision["vision sidecar + MinIO<br/>(optional)"]
     backend -.-> vision
@@ -89,19 +89,19 @@ The backend and the agent never talk to each other directly; the database is the
 
   `--storage-state` seeds cookie-consent state into every fresh context (an isolated context starts with none). `--blocked-origins` is defence in depth for the agent's own URL guard: the pages it reads are untrusted, and nothing they suggest should be able to point the browser at your own services. It takes origins, not CIDR ranges — list the names your stack actually resolves — and Playwright notes that it does not affect redirects, which is why the agent guards every URL itself as well.
 - An LLM API key — or a local model server — for any [LangChain `init_chat_model`](https://python.langchain.com/docs/how_to/chat_models_universal_init/) provider.
-- A [SearXNG](https://docs.searxng.org) instance with the JSON output format enabled, for market-price grounding. Without one, grounding attempts fail and are logged; hunting and price checks are unaffected.
+- **Optionally, a search provider for market-price grounding** (`SEARCH_PROVIDER` in `agent/.env`): a [SearXNG](https://docs.searxng.org) instance with the JSON output format enabled (free, self-hosted), or a [Brave Search API](https://brave.com/search/api/) key (nothing to run, but billed per query after a small monthly allowance — roughly 7–10 queries per item per refresh — and your item names are sent to Brave). With neither, grounding refreshes only the guide pages it has already found and new items get no market price; hunting and price checks are unaffected.
 - **Docker + Docker Compose v2** for the reference stack. To run components outside Docker instead: **Python 3.14** (a hard floor — the backend and agent use 3.14-only syntax) and **Node 22** (what CI and the images use).
 
 ## Quick start
 
-The dev compose stack is the reference wiring: it builds the frontend, backend and the hunter from source. Postgres, the Playwright MCP and SearXNG stay external.
+The dev compose stack is the reference wiring: it builds the frontend, backend and the hunter from source. Postgres, the Playwright MCP and SearXNG (if you use it) stay external.
 
 ```bash
 git clone https://github.com/oldmoldycake/Snagr.git && cd Snagr
 
 # 1. Configure the components (the .env.example files are annotated)
 cp backend/.env.example backend/.env   # DATABASE_URL, JWT_SECRET, ...
-cp agent/.env.example agent/.env       # AI_* provider vars, PLAYWRIGHT_MCP_URL, SEAR_XNG_URL, DATABASE_URL
+cp agent/.env.example agent/.env       # AI_* provider vars, PLAYWRIGHT_MCP_URL, SEARCH_PROVIDER, DATABASE_URL
 $EDITOR agent/.env.docker              # container-side overrides, see below
 
 # 2. Create the schema (run CREATE EXTENSION vector first — see Requirements)
@@ -173,7 +173,7 @@ Each component reads its own `.env`; the annotated `.env.example` files are the 
 | File | The important ones |
 |---|---|
 | [`backend/.env.example`](backend/.env.example) | `DATABASE_URL`, `JWT_SECRET` (generate one!), `ACCESS_TTL_MIN` / `REFRESH_TTL_DAYS`, `COOKIE_SECURE`, `REGISTRATION_OPEN`, `OIDC_*`, `NTFY_SERVER_URL`, `VISION_SIDECAR_URL`, `MCP_ENABLED`, and — with the same values as the agent's — `RECHECK_INTERVAL_MINUTES`, `RECHECK_INTERVAL_FLOOR_MINUTES`, `HUNT_ENABLED` |
-| [`agent/.env.example`](agent/.env.example) | **provider** `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY` · **connections** `DATABASE_URL`, `PLAYWRIGHT_MCP_URL`, `SEAR_XNG_URL`, `VISION_SIDECAR_URL` / `VISION_TIMEOUT_SECONDS` · **hunting** `HUNT_ENABLED`, `HUNT_CONCURRENCY`, `HUNT_BACKOFF_MIN_MINUTES` / `HUNT_BACKOFF_CAP_MINUTES` · **checks** `RECHECK_INTERVAL_MINUTES` (the default a watch's own "check every" overrides) / `RECHECK_INTERVAL_FLOOR_MINUTES`, `RECHECK_CONCURRENCY`, `CHEAP_RECHECK`, `STATIC_FETCH`, `LOCATOR_MAX_FAILURES` · **safety** `SITE_BREAKER_*`, `PRICE_BAND_LOW` / `PRICE_BAND_HIGH` / `PRICE_MARKET_FLOOR`, `EXPECTED_CURRENCY`, `NOTIFY_COOLDOWN_HOURS` · **lifecycle** `JOB_*`, `HUNT_RETENTION_DAYS`, `AGENT_MAX_STEPS` / `AGENT_UNIT_TIMEOUT_SECONDS` · **grounding** `MARKET_PRICE_TTL_HOURS`, `MARKET_PRICE_MAX_REFRESH_PER_RUN` · optional LangSmith / Langfuse tracing |
+| [`agent/.env.example`](agent/.env.example) | **provider** `AI_PROVIDER` / `AI_MODEL` / `AI_URL` / `AI_API_KEY` · **connections** `DATABASE_URL`, `PLAYWRIGHT_MCP_URL`, `SEARCH_PROVIDER` + `SEAR_XNG_URL` or `BRAVE_API_KEY`, `VISION_SIDECAR_URL` / `VISION_TIMEOUT_SECONDS` · **hunting** `HUNT_ENABLED`, `HUNT_CONCURRENCY`, `HUNT_BACKOFF_MIN_MINUTES` / `HUNT_BACKOFF_CAP_MINUTES` · **checks** `RECHECK_INTERVAL_MINUTES` (the default a watch's own "check every" overrides) / `RECHECK_INTERVAL_FLOOR_MINUTES`, `RECHECK_CONCURRENCY`, `CHEAP_RECHECK`, `STATIC_FETCH`, `LOCATOR_MAX_FAILURES` · **safety** `SITE_BREAKER_*`, `PRICE_BAND_LOW` / `PRICE_BAND_HIGH` / `PRICE_MARKET_FLOOR`, `EXPECTED_CURRENCY`, `NOTIFY_COOLDOWN_HOURS` · **lifecycle** `JOB_*`, `HUNT_RETENTION_DAYS`, `AGENT_MAX_STEPS` / `AGENT_UNIT_TIMEOUT_SECONDS` · **grounding** `MARKET_PRICE_TTL_HOURS`, `MARKET_PRICE_MAX_REFRESH_PER_RUN` · optional LangSmith / Langfuse tracing |
 | [`vision/.env.example`](vision/.env.example) | `DATABASE_URL` (sync `postgresql+psycopg://` driver), `S3_*`, `HF_TOKEN`, `VISION_MODEL` (must embed at dim 384), `VISION_RETENTION_DAYS` |
 | compose environment (root `.env` or your shell; `vision` profile only) | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` — must match `S3_ACCESS_KEY` / `S3_SECRET_KEY` in `vision/.env` |
 

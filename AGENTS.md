@@ -6,12 +6,12 @@ The working guide for anyone — person or coding agent — changing code in thi
 
 Snagr — a self-hosted price tracker. Four independently-deployed components in one repo, sharing **one Postgres database** (pgvector required; not in `docker-compose.yml` — each component points at it via `DATABASE_URL`):
 
-- **`agent/`** — the hunter. A daemon that claims jobs from a `jobs` table in Postgres and works them: hunting one (watch, site) pair with a LangChain agent over a headless browser (Playwright MCP), re-reading one listing's price (usually with no model at all), or refreshing an item's market stats (plain HTTP + SearXNG, with a model to parse what it fetched). `main.py --serve`, or `--once` under cron.
+- **`agent/`** — the hunter. A daemon that claims jobs from a `jobs` table in Postgres and works them: hunting one (watch, site) pair with a LangChain agent over a headless browser (Playwright MCP), re-reading one listing's price (usually with no model at all), or refreshing an item's market stats (plain HTTP + web search, with a model to parse what it fetched). `main.py --serve`, or `--once` under cron.
 - **`backend/`** — FastAPI (async SQLAlchemy 2.0 / asyncpg) JSON API under `/api`. Serves the frontend, queues work for the hunter, delivers notifications, and exposes the same operations to agents as MCP tools at `POST /api/mcp` (`app/mcp/`).
 - **`frontend/`** — React 19 + Vite + TS + Tailwind v4 SPA. Talks to the backend over same-origin `/api`.
 - **`vision/`** — optional visual-authenticity sidecar (FastAPI + DINOv3 embeddings, sync psycopg, S3-compatible object store — MinIO under compose). Off unless `VISION_SIDECAR_URL` is set in `backend/.env` and the agent's env.
 
-External services the stack needs but doesn't ship: Postgres, a Playwright MCP server, a SearXNG instance (market-price grounding), an LLM provider.
+External services the stack needs but doesn't ship: Postgres, a Playwright MCP server, an LLM provider — and, optionally, a search provider for market-price grounding (a SearXNG instance or a Brave Search API key; `SEARCH_PROVIDER` in `agent/.env`).
 
 ## Read these first
 
@@ -45,7 +45,7 @@ Backend extras (from `backend/`):
 ./venv/bin/alembic check                                # models vs. migrations agree
 ```
 
-**Agent:** there is no bare mode — `main.py` without `--serve`/`--once` prints usage and exits 2, so a typo can't start an expensive sweep silently. Both modes need the `AI_*` provider vars, `DATABASE_URL` and `PLAYWRIGHT_MCP_URL` (plus `SEAR_XNG_URL` for grounding; see `agent/.env.example`); the MCP server **must** run with `--isolated`.
+**Agent:** there is no bare mode — `main.py` without `--serve`/`--once` prints usage and exits 2, so a typo can't start an expensive sweep silently. Both modes need the `AI_*` provider vars, `DATABASE_URL` and `PLAYWRIGHT_MCP_URL` (plus `SEARCH_PROVIDER` with `SEAR_XNG_URL` or `BRAVE_API_KEY` for grounding; see `agent/.env.example`); the MCP server **must** run with `--isolated`.
 
 **Vision:** handlers are sync by design (not the backend's async rule). Real scoring needs the license-gated DINOv3 weights (`HF_TOKEN` in `vision/.env` for the first download). `/health` reports `degraded` whenever `embedder.load()` fails for *any* reason — `/check-images` and `/references` then answer 503 while `/images` and `/rescore` keep working. Degraded is a supported steady state, not a crash.
 
