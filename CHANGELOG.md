@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/oldmoldycake/Snagr/compare/v0.6.0...v0.6.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* **frontend:** keep a past job's time and tokens on one line ([8f3c640](https://github.com/oldmoldycake/Snagr/commit/8f3c6407e60ae60b4cbf23a4a09bb37885adaa8b))
+* **frontend:** keep a past job's time and tokens on one line ([f18ae91](https://github.com/oldmoldycake/Snagr/commit/f18ae91e5377192c93cbfb38c1bedb60ee27af33))
+
 ## [0.6.0](https://github.com/oldmoldycake/Snagr/compare/v0.5.0...v0.6.0) (2026-09-25)
 
 
