@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Loader2, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react'
+import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { createSite, deleteSite, listCategories, listSites, updateSite } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { Site } from '@/api/types'
@@ -21,8 +21,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuMoreTrigger,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
@@ -212,12 +213,31 @@ export function SitesPage() {
                       <div className="flex items-center justify-end gap-1">
                         <HuntButton scope="site" scopeId={site.id} label="Hunt this site" variant="ghost" size="sm" />
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="iconSm" aria-label={`Actions for ${site.name}`}>
-                              <MoreHorizontal />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
+                          <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
+                          <DropdownMenuContent align="end" className="w-60">
+                            <DropdownMenuLabel
+                              title={site.name}
+                              meta={
+                                <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                                  {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'}
+                                </span>
+                              }
+                            >
+                              {site.category_ids.length === 0 ? (
+                                <span className="font-mono text-[10.5px] text-ink-3">not linked to a category</span>
+                              ) : (
+                                <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
+                                  {site.category_ids.map((cid) => (
+                                    <span
+                                      key={cid}
+                                      className="inline-flex h-[17px] items-center rounded-[3px] border border-hairline bg-raised px-[5px]"
+                                    >
+                                      {categoryName(cid)}
+                                    </span>
+                                  ))}
+                                </span>
+                              )}
+                            </DropdownMenuLabel>
                             <DropdownMenuItem
                               onSelect={() => {
                                 setEditing(site)
@@ -228,7 +248,7 @@ export function SitesPage() {
                               <Pencil /> Edit
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-rise" onSelect={() => setDeleting(site)}>
+                            <DropdownMenuItem tone="danger" onSelect={() => setDeleting(site)}>
                               <Trash2 /> Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>

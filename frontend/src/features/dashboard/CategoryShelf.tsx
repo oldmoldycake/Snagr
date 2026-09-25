@@ -1,17 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ArrowRight, Globe, MoreHorizontal, Pencil, Search } from 'lucide-react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { ArrowRight, Globe, Pencil, Search, Trash2 } from 'lucide-react'
+import { deleteCategory } from '@/api/endpoints'
 import type { Category, PriceDrop } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuHint,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuMoreTrigger,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
 import { useJobs } from '@/features/activity/JobsProvider'
+import { useInstance } from '@/features/auth/useSession'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { WatchList } from '@/features/items/WatchList'
 import type { Lead, Shelf } from './shelves'
@@ -58,8 +63,6 @@ export function CategoryShelf({
   onRename: (category: Category) => void
 }) {
   const { category, items, hits, lead } = shelf
-  const navigate = useNavigate()
-  const { enqueue } = useJobs()
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const mounted = useRef(false)
@@ -220,31 +223,14 @@ export function CategoryShelf({
               }
             />
           )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="iconSm" aria-label={`More for ${category.name}`}>
-                <MoreHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                disabled={noSites}
-                onSelect={() => enqueue({ kind: 'hunt', scope: 'category', scope_id: category.id })}
-              >
-                <Search /> Hunt now
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onEditSites(category)}>
-                <Globe /> Edit sites
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onRename(category)}>
-                <Pencil /> Rename
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => navigate(`/categories/${category.slug}`)}>
-                <ArrowRight /> Open category page
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <ShelfMenu
+            category={category}
+            hits={hits}
+            lead={lead}
+            siteNames={siteNames}
+            onEditSites={onEditSites}
+            onRename={onRename}
+          />
         </div>
       </div>
 
@@ -302,10 +288,206 @@ export function CategoryShelf({
   )
 }
 
+/**
+ * The shelf's ⋯ menu. Its header repeats the shelf it acts on, so the menu
+ * still says which category it is about when the shelf is collapsed; Hunt now
+ * has HuntButton's states; Delete confirms inside the menu.
+ */
+function ShelfMenu({
+  category,
+  hits,
+  lead,
+  siteNames,
+  onEditSites,
+  onRename,
+}: {
+  category: Category
+  hits: number
+  lead: Lead
+  siteNames: string[]
+  onEditSites: (category: Category) => void
+  onRename: (category: Category) => void
+}) {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { enqueue, isEnqueuing, setPanelOpen, liveHuntFor } = useJobs()
+  const huntingOff = useInstance().data?.hunt_enabled === false
+  const live = liveHuntFor('category', category.id)
+  const [confirming, setConfirming] = useState(false)
+  const keepRef = useRef<HTMLDivElement>(null)
+  const deleteRef = useRef<HTMLDivElement>(null)
+  const confirmed = useRef(false)
+
+  const noSites = category.site_ids.length === 0
+
+  const remove = useMutation({
+    mutationFn: () => deleteCategory(category.id),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['categories'] })
+      await queryClient.invalidateQueries({ queryKey: ['items'] })
+    },
+  })
+
+  // Radix only moves focus on pointer and arrow keys, so the swap into and out
+  // of the confirmation hands focus over by hand: to Keep, then back to Delete.
+  useEffect(() => {
+    if (confirming) keepRef.current?.focus()
+    else if (confirmed.current) deleteRef.current?.focus()
+    confirmed.current = confirming
+  }, [confirming])
+
+  return (
+    <DropdownMenu onOpenChange={(open) => !open && setConfirming(false)}>
+      <DropdownMenuMoreTrigger label={`More for ${category.name}`} />
+      <DropdownMenuContent
+        align="end"
+        className="w-[276px]"
+        onEscapeKeyDown={(e) => {
+          // Esc backs out of the confirmation before it closes the menu
+          if (!confirming) return
+          e.preventDefault()
+          setConfirming(false)
+        }}
+      >
+        <DropdownMenuLabel
+          title={category.name}
+          meta={
+            <>
+              <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                {plural(category.item_count, 'item', 'items')}
+              </span>
+              {hits > 0 ? (
+                <span className="font-mono text-[10.5px] whitespace-nowrap text-drop tnum">⌖ {hits} in range</span>
+              ) : null}
+            </>
+          }
+        >
+          {noSites ? (
+            <span className="font-mono text-[10.5px] text-warn">⚠ no sites · the hunter can't search this category</span>
+          ) : (
+            <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
+              {siteNames.map((name) => (
+                <span
+                  key={name}
+                  className="inline-flex h-[17px] items-center rounded-[3px] border border-hairline bg-raised px-[5px]"
+                >
+                  {name}
+                </span>
+              ))}
+            </span>
+          )}
+          {noSites && lead.kind === 'idle' ? null : <LeadLine lead={lead} className="leading-snug" />}
+        </DropdownMenuLabel>
+
+        {live ? (
+          <DropdownMenuItem onSelect={() => setPanelOpen(true)}>
+            <span aria-hidden className="grid size-3.5 shrink-0 place-items-center">
+              <span className="size-1.5 animate-pulse rounded-full bg-lume" />
+            </span>
+            <MenuRowText label="Hunting…" sub="open the activity sheet" subClassName="text-lume" />
+          </DropdownMenuItem>
+        ) : (
+          <DropdownMenuItem
+            disabled={noSites || huntingOff || isEnqueuing}
+            onSelect={() => enqueue({ kind: 'hunt', scope: 'category', scope_id: category.id })}
+          >
+            <Search />
+            {noSites ? (
+              <MenuRowText label="Hunt now" sub="⚠ link a site first" subClassName="text-warn" />
+            ) : huntingOff ? (
+              <MenuRowText label="Hunt now" sub="hunting is paused by the operator" />
+            ) : (
+              <>
+                Hunt now
+                <DropdownMenuHint>{plural(category.site_ids.length, 'site', 'sites')}</DropdownMenuHint>
+              </>
+            )}
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onSelect={() => onEditSites(category)}>
+          <Globe /> Edit sites
+          {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => onRename(category)}>
+          <Pencil /> Rename
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate(`/categories/${category.slug}`)}>
+          <ArrowRight /> Open category page
+          <DropdownMenuHint>/{category.slug}</DropdownMenuHint>
+        </DropdownMenuItem>
+        {confirming ? (
+          <div
+            role="group"
+            aria-label="Confirm delete"
+            className="relative z-[1] my-0.5 grid animate-menu-row gap-2 rounded-sm border border-rise/30 bg-rise/10 py-2 pr-2 pl-[11px]"
+          >
+            <p className="text-xs leading-snug text-rise">
+              Delete “{category.name}” and its {plural(category.item_count, 'item', 'items')}? This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-1.5">
+              <DropdownMenuItem
+                ref={keepRef}
+                data-noplate
+                className="min-h-[26px] border border-transparent px-2.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase data-highlighted:border-hairline-strong data-highlighted:bg-raised"
+                onSelect={(e) => {
+                  e.preventDefault()
+                  setConfirming(false)
+                }}
+              >
+                Keep
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-noplate
+                tone="danger"
+                disabled={remove.isPending}
+                className="min-h-[26px] border border-rise/40 bg-rise/10 px-2.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase data-highlighted:bg-rise/20 data-highlighted:outline-2 data-highlighted:outline-offset-1 data-highlighted:outline-rise"
+                onSelect={() => remove.mutate()}
+              >
+                <Trash2 /> Delete
+              </DropdownMenuItem>
+            </div>
+          </div>
+        ) : (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              ref={deleteRef}
+              tone="danger"
+              onSelect={(e) => {
+                e.preventDefault()
+                setConfirming(true)
+              }}
+            >
+              <Trash2 /> Delete category…
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/** A menu row's label with a second, mono line under it: why it is disabled, or what it will do. */
+function MenuRowText({ label, sub, subClassName }: { label: string; sub: string; subClassName?: string }) {
+  return (
+    <span className="grid min-w-0 flex-1 gap-px">
+      <span>{label}</span>
+      <span className={cn('font-mono text-[10.5px] text-ink-3', subClassName)}>{sub}</span>
+    </span>
+  )
+}
+
 /** The collapsed shelf's one line; it fades while the shelf is open but keeps its space. */
-function LeadLine({ lead }: { lead: Lead }) {
+function LeadLine({
+  lead,
   // on a phone the lead wraps onto its own line instead (see .shelf-lead in globals.css)
-  const base = 'shelf-peek shelf-lead min-w-0 sm:truncate'
+  className: base = 'shelf-peek shelf-lead min-w-0 sm:truncate',
+}: {
+  lead: Lead
+  /** the menu header shows the lead as it is, without the shelf's fade */
+  className?: string
+}) {
   switch (lead.kind) {
     case 'hit':
       return (

@@ -1,17 +1,17 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pencil, Search, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, ListFilter, Pencil, Search, Trash2 } from 'lucide-react'
 import type { ItemSummary, PriceDrop } from '@/api/types'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { SnaggedBadge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { MeterToTarget } from '@/components/ui/meter'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuMoreTrigger,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { SimpleTooltip } from '@/components/ui/tooltip'
@@ -281,12 +281,28 @@ export function WatchList({
                 {hasActions ? (
                   <TD onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="iconSm" aria-label={`Actions for ${item.name}`}>
-                          <MoreHorizontal />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuMoreTrigger label={`Actions for ${item.name}`} />
+                      <DropdownMenuContent align="end" className="w-60">
+                        <DropdownMenuLabel
+                          title={item.name}
+                          meta={
+                            <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                              target {formatMoney(effectiveTarget(item), item.currency)}
+                            </span>
+                          }
+                        >
+                          <span className="font-mono text-[10.5px] text-ink-2 tnum">
+                            {item.best_price == null ? (
+                              <span className="text-ink-3">no price yet</span>
+                            ) : (
+                              <>
+                                best {formatMoney(item.best_price, item.currency)}
+                                {item.best_site_name ? ` on ${item.best_site_name}` : ''}
+                                {item.target_met ? <span className="text-drop"> · ⌖ at target</span> : null}
+                              </>
+                            )}
+                          </span>
+                        </DropdownMenuLabel>
                         {onHunt ? (
                           <DropdownMenuItem onSelect={() => onHunt(item)}>
                             <Search /> Hunt now
@@ -300,7 +316,7 @@ export function WatchList({
                         {onDelete ? (
                           <>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-rise" onSelect={() => onDelete(item)}>
+                            <DropdownMenuItem tone="danger" onSelect={() => onDelete(item)}>
                               <Trash2 /> Delete
                             </DropdownMenuItem>
                           </>

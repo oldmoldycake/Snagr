@@ -1,19 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { LogOut, Menu, Plus, Search, User as UserIcon } from 'lucide-react'
-import { listCategories } from '@/api/endpoints'
+import { ChevronRight, KeyRound, LogOut, Menu, Plus, Search, SlidersHorizontal, User as UserIcon, Users } from 'lucide-react'
+import { getJobsSummary, listCategories } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
+import { countdown } from '@/lib/time'
 import { useInstance, useLogout, useSession } from '@/features/auth/useSession'
 import { useJobs } from '@/features/activity/JobsProvider'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { Input } from '@/components/ui/input'
+import { Radar } from '@/components/ui/radar'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuHint,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -162,13 +166,101 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
 }
 
 /**
+ * The avatar's menu: who is signed in, what the hunter is doing, the settings
+ * tabs the viewer can use (SettingsTabs' rules), and sign out. The jobs summary
+ * is fetched only while the menu is open.
+ */
+function AccountMenu() {
+  const navigate = useNavigate()
+  const { data: user } = useSession()
+  const { data: instance } = useInstance()
+  const logout = useLogout()
+  const { live, setPanelOpen } = useJobs()
+  const [open, setOpen] = useState(false)
+  const summary = useQuery({ queryKey: qk.jobsSummary, queryFn: getJobsSummary, enabled: open })
+
+  const checksRunning = summary.data?.checks_running ?? 0
+  const hunts = live.filter((job) => job.kind === 'hunt').length
+  let status: string
+  if (hunts > 0) status = `${hunts} ${hunts === 1 ? 'hunt' : 'hunts'} running`
+  else if (checksRunning > 0) status = `checking · ${checksRunning} live`
+  else if (instance?.hunt_enabled === false) status = 'hunting paused by the operator · checks continue'
+  else if (summary.data?.next_check_at) status = `idle · next check ${countdown(summary.data.next_check_at)}`
+  else status = 'idle'
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger className="relative flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[11px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
+        {user?.email ? user.email[0].toUpperCase() : <UserIcon className="size-3.5" />}
+        <span className="sr-only">Account menu</span>
+        <svg viewBox="0 0 40 40" aria-hidden className="avatar-ticks size-10">
+          <path d="M20 1.5v4M38.5 20h-4M20 38.5v-4M1.5 20h4" />
+        </svg>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-[272px]">
+        <DropdownMenuLabel className="flex items-center gap-2.5">
+          <span
+            aria-hidden
+            className="grid size-[30px] shrink-0 place-items-center rounded-full border border-lume bg-lume-glow font-mono text-xs text-lume"
+          >
+            {user?.email ? user.email[0].toUpperCase() : null}
+          </span>
+          <span className="grid min-w-0 gap-px">
+            <span className="font-mono text-[9.5px] tracking-[0.16em] text-ink-3 uppercase">Signed in as</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate text-[13px] text-ink">{user?.email}</span>
+              {user?.role === 'admin' ? (
+                <span className="rounded-[3px] border border-hairline-strong px-[5px] font-mono text-[9.5px] leading-[15px] font-medium tracking-[0.12em] text-ink-2 uppercase">
+                  Admin
+                </span>
+              ) : null}
+            </span>
+          </span>
+        </DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => setPanelOpen(true)}>
+          <Radar size={16} animate={hunts + checksRunning > 0} />
+          <span className="grid min-w-0 flex-1 gap-px">
+            <span>Hunter</span>
+            <span className={cn('font-mono text-[10.5px]', hunts + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
+              {status}
+            </span>
+          </span>
+          <ChevronRight />
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={() => navigate('/settings')}>
+          <SlidersHorizontal /> Settings
+          <DropdownMenuHint>general</DropdownMenuHint>
+        </DropdownMenuItem>
+        {instance?.mcp_enabled ? (
+          <DropdownMenuItem onSelect={() => navigate('/settings/api')}>
+            <KeyRound /> MCP &amp; API
+            <DropdownMenuHint>tokens</DropdownMenuHint>
+          </DropdownMenuItem>
+        ) : null}
+        {user?.role === 'admin' ? (
+          <DropdownMenuItem onSelect={() => navigate('/settings/users')}>
+            <Users /> Users
+            <DropdownMenuHint>invites</DropdownMenuHint>
+          </DropdownMenuItem>
+        ) : null}
+        <div className="-mx-1 mt-1 -mb-1 grid border-t border-hairline bg-well p-1">
+          <DropdownMenuItem onSelect={() => logout.mutate()}>
+            <LogOut /> Sign out
+            {instance ? <DropdownMenuHint>v{instance.version}</DropdownMenuHint> : null}
+          </DropdownMenuItem>
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
  * Top bar of every signed-in page: navigation, item search, the live-job
  * indicator that opens the activity sheet, and the account menu.
  */
 export function Masthead() {
   const navigate = useNavigate()
-  const { data: user } = useSession()
-  const logout = useLogout()
   const { live, setPanelOpen } = useJobs()
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
@@ -283,26 +375,7 @@ export function Masthead() {
             </button>
           ) : null}
 
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[11px] text-ink-2 hover:text-ink">
-              {user?.email ? (
-                user.email[0].toUpperCase()
-              ) : (
-                <UserIcon className="size-3.5" />
-              )}
-              <span className="sr-only">Account menu</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <div className="px-2 py-1.5 text-xs text-ink-3">{user?.email}</div>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => navigate('/settings')}>
-                <UserIcon /> Settings
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => logout.mutate()}>
-                <LogOut /> Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <AccountMenu />
         </div>
       </div>
     </header>
