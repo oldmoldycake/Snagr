@@ -352,20 +352,23 @@
 }
 
 /*
- * The listings board's fold (the same "Drawer" motion as the shelves). Radix
- * Collapsible measures the rows into --radix-collapsible-content-height and
- * keeps them mounted until fold-close ends, then unmounts them, so a closed
- * fold leaves nothing in the tab order.
+ * The listings board's fold and each row's detail (the same "Drawer" motion as
+ * the shelves). Radix Collapsible measures the content into
+ * --radix-collapsible-content-height and keeps it mounted until fold-close
+ * ends, then unmounts it, so a closed fold or detail leaves nothing in the tab order.
  */
 @layer components {
-  .fold {
+  .fold,
+  .row-detail {
     position: relative;
     overflow: hidden;
   }
-  .fold[data-state='open'] {
+  .fold[data-state='open'],
+  .row-detail[data-state='open'] {
     animation: var(--animate-fold-open);
   }
-  .fold[data-state='closed'] {
+  .fold[data-state='closed'],
+  .row-detail[data-state='closed'] {
     animation: var(--animate-fold-close);
   }
 
@@ -406,10 +409,14 @@
     .fold-rows > :nth-child(6) {
       --i: 5;
     }
-    /* rows, not a detail row expanded later: that opens without motion, as it does above the fold */
-    .fold-rows > [role='button'] {
+    /* each child is one listing, row and detail together, so opening a detail replays nothing */
+    .fold-rows > * {
       animation: var(--animate-fold-row);
       animation-delay: calc(40ms + var(--i) * 25ms);
+    }
+    .row-detail[data-state='open'] > * {
+      animation: var(--animate-fold-row);
+      animation-delay: 40ms;
     }
   }
 }

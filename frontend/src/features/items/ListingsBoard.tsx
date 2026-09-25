@@ -301,7 +301,7 @@ function ExpandedRow({
   const fell = moved && nowC != null && startC != null && nowC < startC
 
   return (
-    <div className="flex items-start gap-4 bg-well py-3 pr-4 pl-10">
+    <div className="flex items-start gap-4 border-t border-hairline bg-well py-3 pr-4 pl-10">
       <p className="min-w-0 flex-1 font-mono text-[11px] leading-relaxed text-ink-3">
         {listing.match_score != null ? (
           <>
@@ -388,7 +388,7 @@ function BoardRow({
   const chip = listing.active ? exceptionChip(listing) : null
 
   return (
-    <>
+    <Collapsible open={expanded}>
       <div
         role="button"
         tabIndex={0}
@@ -457,8 +457,10 @@ function BoardRow({
         <DeltaCell listing={listing} targetC={targetC} currency={detail.currency} />
         <MatchPill score={listing.match_score} summary={listing.match_summary} quietMid />
       </div>
-      {expanded ? <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} /> : null}
-    </>
+      <CollapsibleContent className="row-detail">
+        <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} />
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
