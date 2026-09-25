@@ -30,8 +30,8 @@ export function ItemListingsPanel({ itemId }: { itemId: number }) {
     return (
       <p className="py-2 text-xs text-ink-3">
         {item.data?.criteria
-          ? 'No listings met the criteria yet — run the agent to search for matches.'
-          : 'No tracked listings yet — run the agent to discover some.'}
+          ? "No listings met the criteria yet — loosen them, or choose Hunt now from this row's menu to search again."
+          : "No tracked listings yet — choose Hunt now from this row's menu to search for some."}
       </p>
     )
   }

@@ -49,7 +49,7 @@ export function ActivitySheet() {
             <Radar size={22} animate={live.length + checksRunning > 0} />
             <SheetTitle className="min-w-0 truncate font-display text-[15px] font-semibold tracking-[0.06em] text-ink uppercase">
               {live.length + checksRunning > 0
-                ? `Live · ${live.length} hunts · ${checksRunning} checks`
+                ? `Live · ${live.length} ${live.length === 1 ? 'hunt' : 'hunts'} · ${checksRunning} ${checksRunning === 1 ? 'check' : 'checks'}`
                 : 'The hunter is quiet'}
             </SheetTitle>
           </div>

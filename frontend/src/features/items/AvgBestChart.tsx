@@ -104,7 +104,7 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
   if (avgPts.length === 0 && bestPts.length === 0) {
     return (
       <p className="px-4 py-10 text-center text-[13px] text-ink-3">
-        Not enough data to summarize yet — run the agent to collect prices.
+        Not enough data to summarize yet — it fills in as the hunter checks this item's listings.
       </p>
     )
   }

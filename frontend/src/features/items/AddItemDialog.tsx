@@ -168,7 +168,7 @@ export function AddItemDialog({
                 />
               </div>
               <p className="mt-1.5 text-xs text-ink-3">
-                You'll see <span className="text-drop">⌖ Snagged</span> when the best price hits this.
+                You'll see <span className="text-drop">⌖ in range</span> when the best price hits this.
               </p>
             </div>
 
