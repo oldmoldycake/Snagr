@@ -19,25 +19,26 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { siteList } from '@/features/sites/siteList'
 import { DEFAULT_TRACKING, TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
-
-/** "eBay", "eBay and Amazon", "eBay, Newegg and Amazon", "eBay, Newegg and 2 more". */
-function siteList(names: string[]): string {
-  if (names.length <= 1) return names.join('')
-  if (names.length <= 3) return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
-  return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`
-}
 
 /** Add an item to one category, whose sites the hunter then searches for it. */
 export function AddItemDialog({
   categoryId,
   categoryName,
   trigger,
+  variant = 'primary',
+  className,
+  label,
   onAdded,
 }: {
   categoryId: number
   categoryName: string
   trigger?: ReactNode
+  variant?: 'primary' | 'default'
+  className?: string
+  /** accessible name for the trigger, when its visible text alone doesn't name the category */
+  label?: string
   onAdded?: (item: ItemSummary) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -87,7 +88,7 @@ export function AddItemDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        <Button variant="primary" size="sm">
+        <Button variant={variant} size="sm" className={className} aria-label={label}>
           {trigger ?? (
             <>
               <Plus /> Add item

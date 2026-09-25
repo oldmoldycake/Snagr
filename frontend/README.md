@@ -82,7 +82,7 @@ values, not CSS vars — change both together). Dark-only, by design.
   eyebrow, button label, log line).
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
   sentence plus one line of tonight's totals — aggregates only, since per-item facts appear
-  exactly once, in the watch table; `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
+  exactly once, on the shelves; `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into one log-scale price rail
   per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
   ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice
@@ -101,3 +101,11 @@ values, not CSS vars — change both together). Dark-only, by design.
   last row adds a site inline and picks it (`siteUrl.ts` normalizes the address and catches
   a host that's already listed). A category with no sites offers **Link sites** (warn) in
   place of Add item, and Add item always belongs to one category.
+- **The dashboard is shelves**, not one flat table: one collapsible `CategoryShelf` per
+  category holding your items, most urgent first (no sites, then strikes, then closest to
+  target), under one shared, sticky column-label row (`WatchListLabels`; each shelf's own
+  header row is kept at zero height so the fixed column widths line up). Categories with
+  none of your items are one-line `CategoryRow`s. The rules live in
+  `features/dashboard/shelves.ts`; collapse state is per browser and per user
+  (`useShelfState`), and a new strike always reopens a collapsed shelf. Until you have an
+  item, `GuideHero` replaces the verdict hero and walks you through ① a category → ② items.

@@ -37,7 +37,7 @@ export function CreateCategoryDialog({
   onCreated,
 }: {
   trigger: ReactNode
-  variant?: 'primary' | 'ghost'
+  variant?: 'primary' | 'default' | 'ghost'
   className?: string
   onCreated?: (category: Category) => void
 }) {

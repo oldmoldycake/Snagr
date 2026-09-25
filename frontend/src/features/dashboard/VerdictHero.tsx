@@ -45,14 +45,14 @@ export function VerdictHero({
       <p className="font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase">{eyebrow}</p>
 
       {snagged.length > 0 ? (
-        <h1 className="mt-3 font-display text-[42px] leading-[1.05] font-semibold tracking-[0.015em] text-drop text-balance">
+        <h1 className="mt-3 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.015em] text-drop text-balance">
           {snagged.length} in range
-          <span aria-hidden className="ml-1 align-[4px] text-3xl">
+          <span aria-hidden className="ml-1 align-[3px] text-[0.7em]">
             ⌖
           </span>
         </h1>
       ) : (
-        <h1 className="mt-3 font-display text-[42px] leading-[1.05] font-semibold tracking-[0.015em] text-ink-2 text-balance">
+        <h1 className="mt-3 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.015em] text-ink-2 text-balance">
           Nothing in range yet
         </h1>
       )}
