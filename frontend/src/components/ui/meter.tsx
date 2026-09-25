@@ -4,7 +4,8 @@ import { formatMoney, fromCents, toCents } from '@/lib/money'
 /**
  * Distance-to-target meter: fill = target/best, so a full bar means the price
  * has descended to the target. Lume within 5% — "in striking distance". The
- * gap label carries the number; color is never the only channel.
+ * gap label carries the number; color is never the only channel. Below `sm`
+ * the bar is dropped: a phone-width column only fits the label.
  */
 export function MeterToTarget({
   best,
@@ -29,7 +30,7 @@ export function MeterToTarget({
 
   return (
     <span className={cn('flex items-center justify-end gap-2', className)}>
-      <span aria-hidden className="h-1 w-14 shrink-0 overflow-hidden rounded-full bg-raised">
+      <span aria-hidden className="h-1 w-14 shrink-0 overflow-hidden rounded-full bg-raised max-sm:hidden">
         <span
           className={cn(
             'block h-full rounded-full transition-[width]',
@@ -38,7 +39,7 @@ export function MeterToTarget({
           style={{ width: `${(fill * 100).toFixed(1)}%` }}
         />
       </span>
-      <span className={cn('font-mono text-[11px] tnum', close ? 'text-lume' : 'text-ink-3')}>
+      <span className={cn('font-mono text-[11px] whitespace-nowrap tnum', close ? 'text-lume' : 'text-ink-3')}>
         {formatMoney(fromCents(Math.max(gap, 0)), currency)}
       </span>
     </span>
