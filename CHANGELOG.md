@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/oldmoldycake/Snagr/compare/v0.4.1...v0.5.0) (2026-09-25)
+
+
+### Features
+
+* **frontend:** category shelves and a guided first run on the dashboard ([ea2005d](https://github.com/oldmoldycake/Snagr/commit/ea2005d9a0328b21f732bf49a87deb402f2adcd8))
+* **frontend:** category shelves and a guided first run on the dashboard ([16649e2](https://github.com/oldmoldycake/Snagr/commit/16649e272baa17ff15f84352a7a6b809147e3339))
+* **frontend:** field-card dialogs with enter and exit motion ([703fa69](https://github.com/oldmoldycake/Snagr/commit/703fa6935db3312c068aaca9a2dfc7bd3cee1eab))
+* **frontend:** field-card dialogs with enter and exit motion ([be4ceb8](https://github.com/oldmoldycake/Snagr/commit/be4ceb8247ceca013b7d3ab4538a1b6782ab52da))
+* **frontend:** pick or add sites while creating a category ([a69ce25](https://github.com/oldmoldycake/Snagr/commit/a69ce2512e92251a053b610689cf6e1fa47233bc))
+* **frontend:** pick or add sites while creating a category ([25b2b46](https://github.com/oldmoldycake/Snagr/commit/25b2b46c1a65b8bc82412f758e3eeae210144989))
+
 ## [0.4.1](https://github.com/oldmoldycake/Snagr/compare/v0.4.0...v0.4.1) (2026-09-24)
 
 
