@@ -135,9 +135,12 @@ export function logTime(iso: string): string {
   })
 }
 
-/** `12.4k` — token counts are read at a glance, never audited. */
+/** `12.4k`, `1.8M` — token counts are read at a glance, never audited. */
 export function formatTokens(n: number): string {
-  return n < 1000 ? String(n) : `${(n / 1000).toFixed(1)}k`
+  if (n < 1000) return String(n)
+  // 999.95k would round to "1000.0k"; hand it to the M branch instead
+  if (n < 999_950) return `${(n / 1000).toFixed(1)}k`
+  return `${(n / 1_000_000).toFixed(1)}M`
 }
 
 /** `1.8s` — how long one job took. */
