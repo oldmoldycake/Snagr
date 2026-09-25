@@ -69,6 +69,10 @@
   --animate-shelf-row: shelf-row 140ms var(--ease-shelf) both;
   --animate-strike-row: strike-row 1200ms ease-out;
   --animate-strike-edge: strike-edge 1200ms ease-out;
+  --animate-fold-open: fold-open 260ms var(--ease-shelf);
+  --animate-fold-close: fold-close 180ms var(--ease-shelf-in) both;
+  --animate-fold-row: shelf-row 180ms var(--ease-shelf) both;
+  --animate-fold-scan: fold-scan 260ms ease-out both;
 }
 
 @keyframes sweep {
@@ -152,6 +156,37 @@
   0%,
   25% {
     border-color: rgb(255 180 84 / 0.6);
+  }
+}
+
+@keyframes fold-open {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+
+@keyframes fold-close {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes fold-scan {
+  from {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
 
@@ -313,6 +348,69 @@
   .shelf[data-instant] * {
     transition: none !important;
     animation: none !important;
+  }
+}
+
+/*
+ * The listings board's fold (the same "Drawer" motion as the shelves). Radix
+ * Collapsible measures the rows into --radix-collapsible-content-height and
+ * keeps them mounted until fold-close ends, then unmounts them, so a closed
+ * fold leaves nothing in the tab order.
+ */
+@layer components {
+  .fold {
+    position: relative;
+    overflow: hidden;
+  }
+  .fold[data-state='open'] {
+    animation: var(--animate-fold-open);
+  }
+  .fold[data-state='closed'] {
+    animation: var(--animate-fold-close);
+  }
+
+  /* opt-in rather than overridden: the global reduced-motion rule shortens
+     durations but not delays, which would leave staggered rows blank */
+  @media (prefers-reduced-motion: no-preference) {
+    /* a faint phosphor line rides the reveal edge down */
+    .fold[data-state='open']::after {
+      content: '';
+      position: absolute;
+      inset-inline: 0;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgb(193 255 208 / 0.45), transparent);
+      box-shadow: 0 0 8px rgb(193 255 208 / 0.25);
+      pointer-events: none;
+      animation: var(--animate-fold-scan);
+    }
+
+    .fold-rows > * {
+      --i: 6;
+    }
+    .fold-rows > :nth-child(1) {
+      --i: 0;
+    }
+    .fold-rows > :nth-child(2) {
+      --i: 1;
+    }
+    .fold-rows > :nth-child(3) {
+      --i: 2;
+    }
+    .fold-rows > :nth-child(4) {
+      --i: 3;
+    }
+    .fold-rows > :nth-child(5) {
+      --i: 4;
+    }
+    .fold-rows > :nth-child(6) {
+      --i: 5;
+    }
+    /* rows, not a detail row expanded later: that opens without motion, as it does above the fold */
+    .fold-rows > [role='button'] {
+      animation: var(--animate-fold-row);
+      animation-delay: calc(40ms + var(--i) * 25ms);
+    }
   }
 }
 
