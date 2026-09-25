@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { cancelJob } from '@/api/endpoints'
@@ -9,16 +8,7 @@ import { useSession } from '@/features/auth/useSession'
 import { formatDuration } from '@/lib/time'
 import { GLYPHS, glyphFor } from './lines'
 import { useJobs } from './JobsProvider'
-
-/** Elapsed re-renders once a second while anything is live. */
-function useTick(active: boolean) {
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    if (!active) return
-    const id = setInterval(() => setTick((n) => n + 1), 1000)
-    return () => clearInterval(id)
-  }, [active])
-}
+import { useTick } from './useTick'
 
 /**
  * Beat two: hunts have a voice. One row per live hunt or grounding pass,
@@ -42,7 +32,8 @@ export function LiveHunts({ onOpen }: { onOpen?: () => void }) {
   )
 }
 
-function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
+/** One live hunt: its latest line, how long it has run, and a way out or in. */
+export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
   const { events } = useJobs()
   const { data: me } = useSession()
   const queryClient = useQueryClient()

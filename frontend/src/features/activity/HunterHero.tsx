@@ -1,91 +1,93 @@
 import type { JobsSummary } from '@/api/types'
 import { Radar } from '@/components/ui/radar'
 import { cn } from '@/lib/cn'
-import { countdown, relativeTime } from '@/lib/time'
-import { resultText } from './lines'
+import { countdown } from '@/lib/time'
 
 /**
- * Beat one: the hunter's presence as a sentence. Sweeping or quiet, and what
- * happens next — never what happened, which is the ledger's job.
+ * The hunter's presence as a sentence, then the few numbers that say how the
+ * night is going. What needs a person lives in the rail and what happened in
+ * the timeline, so nothing here repeats either.
  */
-export function HunterHero({ summary }: { summary?: JobsSummary }) {
+export function HunterHero({
+  summary,
+  connection,
+}: {
+  summary?: JobsSummary
+  connection: 'live' | 'reconnecting'
+}) {
   const hunts = summary?.hunts_running ?? 0
   const checks = summary?.checks_running ?? 0
   const busy = hunts + checks > 0
   const nothingYet = summary != null && summary.listings_watched === 0 && summary.last_hunt == null
 
+  const eyebrow = `Tonight · ${new Date().toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  })}`
+
   return (
-    <div
-      className={cn(
-        'rounded-lg border bg-surface p-4',
-        busy ? 'border-lume/25' : 'border-hairline',
-      )}
-    >
-      <div className="flex items-center gap-4">
-        <Radar size={44} glyph animate={busy} />
-        <div className="min-w-0 flex-1">
-          <p
+    <section className="flex flex-wrap items-end gap-x-8 gap-y-5">
+      <div className="flex min-w-0 flex-1 basis-80 items-center gap-4">
+        <Radar size={56} glyph animate={busy} />
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase">
+            {eyebrow}
+            <span aria-hidden>·</span>
+            <span className="flex items-center gap-1.5 tracking-[0.08em]">
+              <span
+                aria-hidden
+                className={cn(
+                  'size-1.5 rounded-full',
+                  connection === 'live' ? 'bg-drop' : 'animate-pulse bg-warn',
+                )}
+              />
+              {connection === 'live' ? 'live' : 'reconnecting…'}
+            </span>
+          </p>
+          <h1
             className={cn(
-              'font-display text-[22px] leading-tight font-semibold tracking-[0.04em] uppercase',
+              'mt-1.5 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.04em] uppercase sm:text-[36px]',
               busy ? 'text-lume' : 'text-ink',
             )}
           >
-            {headline(hunts, checks, nothingYet, summary)}
-          </p>
-          <p className="mt-0.5 font-mono text-[11px] text-ink-3 tnum">
-            {subline(summary, nothingYet)}
-          </p>
+            {headline(hunts, checks, nothingYet)}
+          </h1>
         </div>
       </div>
+      {summary && !nothingYet ? (
+        <dl className="flex gap-7">
+          <Stat label="Next check" value={shortCountdown(summary.next_check_at)} />
+          <Stat label="Hunts today" value={String(summary.hunts_today)} />
+          <Stat label="Watched" value={String(summary.listings_watched)} />
+        </dl>
+      ) : null}
+    </section>
+  )
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col-reverse gap-1 sm:items-end">
+      <dt className="font-mono text-[10px] tracking-[0.14em] text-ink-3 uppercase">{label}</dt>
+      <dd className="font-mono text-[24px] leading-none font-medium text-ink tnum">{value}</dd>
     </div>
   )
 }
 
-function headline(
-  hunts: number,
-  checks: number,
-  nothingYet: boolean,
-  summary?: JobsSummary,
-): string {
+function headline(hunts: number, checks: number, nothingYet: boolean): string {
   if (hunts > 0 && checks > 0) {
     return `Sweeping — ${hunts} ${plural(hunts, 'hunt')} · ${checks} ${plural(checks, 'check')}`
   }
   if (hunts > 0) return `Sweeping — ${hunts} ${plural(hunts, 'hunt')}`
   if (checks > 0) return `Checking — ${checks} live`
   if (nothingYet) return 'Quiet — nothing yet'
-  return `Quiet — next check ${countdown(summary?.next_check_at)}`
+  return 'Quiet — between checks'
 }
 
-function subline(summary: JobsSummary | undefined, nothingYet: boolean): string {
-  if (summary == null) return ''
-  if (nothingYet) return 'Add an item and the hunter starts looking for it.'
-
-  const parts: string[] = []
-  const paused = summary.paused_sites[0]
-  if (paused) parts.push(`⚠ ${paused.site_name} paused until ${clock(paused.paused_until)}`)
-  parts.push(`${summary.listings_watched} listings watched`)
-  if (summary.hunts_running + summary.checks_running > 0 && summary.next_check_at) {
-    parts.push(`next check ${countdown(summary.next_check_at)}`)
-  }
-  parts.push(`${summary.hunts_today} hunts today`)
-  if (summary.last_hunt?.finished_at) {
-    parts.push(
-      `last hunt ${relativeTime(summary.last_hunt.finished_at)}: ${resultShort(summary.last_hunt)}`,
-    )
-  }
-  return parts.join(' · ')
-}
-
-function resultShort(job: JobsSummary['last_hunt']): string {
-  return job ? resultText(job).text.replace(/^✚ /, '') : ''
-}
-
-function clock(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+/** The stat reads as a figure, so the countdown drops its "in". */
+function shortCountdown(iso: string | null): string {
+  return countdown(iso).replace(/^in /, '')
 }
 
 function plural(n: number, word: string): string {
