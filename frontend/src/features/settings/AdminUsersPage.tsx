@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Loader2, MoreHorizontal, Plus, Trash2, UserX, UserCheck } from 'lucide-react'
+import { Check, Copy, Loader2, Plus, Trash2, UserX, UserCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { createInvite, deleteUser, listInvites, listUsers, revokeInvite, updateUser } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -22,8 +22,9 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuMoreTrigger,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -215,12 +216,16 @@ export function AdminUsersPage() {
                     <TD>
                       {user.id !== me?.id ? (
                         <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="iconSm" aria-label={`Actions for ${user.email}`}>
-                              <MoreHorizontal />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
+                          <DropdownMenuMoreTrigger label={`Actions for ${user.email}`} />
+                          <DropdownMenuContent align="end" className="w-60">
+                            <DropdownMenuLabel>
+                              <span className="truncate text-[13px] text-ink">{user.email}</span>
+                              <span className="font-mono text-[10.5px] text-ink-3 tnum">
+                                {user.role} ·{' '}
+                                {user.is_active ? 'active' : <span className="text-warn">deactivated</span>} ·{' '}
+                                {user.item_count} {user.item_count === 1 ? 'item' : 'items'}
+                              </span>
+                            </DropdownMenuLabel>
                             <DropdownMenuItem
                               onSelect={() => patchUser.mutate({ id: user.id, is_active: !user.is_active })}
                             >
@@ -235,7 +240,7 @@ export function AdminUsersPage() {
                               )}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-rise" onSelect={() => setDeleting(user)}>
+                            <DropdownMenuItem tone="danger" onSelect={() => setDeleting(user)}>
                               <Trash2 /> Delete user
                             </DropdownMenuItem>
                           </DropdownMenuContent>

@@ -73,6 +73,10 @@
   --animate-fold-close: fold-close 180ms var(--ease-shelf-in) both;
   --animate-fold-row: shelf-row 180ms var(--ease-shelf) both;
   --animate-fold-scan: fold-scan 260ms ease-out both;
+  --animate-menu-in: menu-in 170ms var(--ease-panel) both;
+  --animate-menu-out: menu-out 110ms var(--ease-shelf-in) both;
+  --animate-menu-row: shelf-row 150ms var(--ease-shelf) both;
+  --animate-menu-scan: menu-scan 300ms ease-out both;
 }
 
 @keyframes sweep {
@@ -186,6 +190,34 @@
     opacity: 1;
   }
   to {
+    opacity: 0;
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--menu-dy, -4px)) scale(0.96);
+  }
+}
+
+@keyframes menu-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes menu-scan {
+  from {
+    top: 0;
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    top: 100%;
     opacity: 0;
   }
 }
@@ -496,6 +528,155 @@
   /* a first placement or a re-seat after the tabs change width never animates */
   .nav-lume[data-instant] {
     transition: none !important;
+  }
+}
+
+/*
+ * Dropdown menus (the nav's "Reticle Track" motion). The panel grows out of its
+ * trigger, its rows drop in in turn, and one plate slides onto the highlighted
+ * row instead of each row lighting its own ground: DropdownMenuContent's
+ * placePlate sets its offset (--y), height (--h) and tone.
+ */
+@layer components {
+  /* a menu flipped above its trigger rises into place instead of dropping */
+  .menu-panel[data-side='top'] {
+    --menu-dy: 4px;
+  }
+
+  .menu-plate {
+    position: absolute;
+    top: 0;
+    inset-inline: 4px;
+    height: var(--h, 0);
+    transform: translateY(var(--y, 0));
+    border-radius: var(--radius-sm);
+    background: var(--color-raised);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .menu-plate::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 7px;
+    bottom: 7px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--color-lume);
+  }
+  .menu-plate[data-state='on'] {
+    opacity: 1;
+  }
+  .menu-plate[data-tone='danger'] {
+    background: rgb(240 86 92 / 0.1);
+  }
+  .menu-plate[data-tone='danger']::before {
+    background: var(--color-rise);
+  }
+
+  /* opt-in, like the fold: the global reduced-motion rule shortens durations but not delays */
+  @media (prefers-reduced-motion: no-preference) {
+    .menu-plate {
+      transition:
+        transform 170ms var(--ease-panel),
+        height 170ms var(--ease-panel),
+        opacity 90ms var(--ease-shelf-in),
+        background-color 120ms ease-out;
+    }
+
+    .menu-panel > * {
+      --i: 6;
+    }
+    .menu-panel > :nth-child(1) {
+      --i: 0;
+    }
+    .menu-panel > :nth-child(2) {
+      --i: 1;
+    }
+    .menu-panel > :nth-child(3) {
+      --i: 2;
+    }
+    .menu-panel > :nth-child(4) {
+      --i: 3;
+    }
+    .menu-panel > :nth-child(5) {
+      --i: 4;
+    }
+    .menu-panel > :nth-child(6) {
+      --i: 5;
+    }
+    .menu-panel[data-state='open'] > :not(.menu-plate) {
+      animation: var(--animate-menu-row);
+      animation-delay: calc(50ms + var(--i) * 22ms);
+    }
+
+    /* the listings fold's phosphor line, riding down the panel once as it opens */
+    .menu-panel[data-state='open']::after {
+      content: '';
+      position: absolute;
+      inset-inline: 0;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgb(193 255 208 / 0.45), transparent);
+      box-shadow: 0 0 8px rgb(193 255 208 / 0.25);
+      pointer-events: none;
+      animation: var(--animate-menu-scan);
+    }
+  }
+
+  .menu-plate[data-instant] {
+    transition: none !important;
+  }
+
+  /* the account avatar locks on with four reticle ticks while its menu is open */
+  .avatar-ticks {
+    position: absolute;
+    inset: -7px;
+    fill: none;
+    stroke: var(--color-lume);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0;
+    scale: 0.7;
+    rotate: 45deg;
+    pointer-events: none;
+  }
+  [data-state='open'] > .avatar-ticks {
+    opacity: 1;
+    scale: 1;
+    rotate: 0deg;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .avatar-ticks {
+      transition:
+        opacity 90ms ease-out,
+        scale 120ms var(--ease-shelf-in),
+        rotate 120ms var(--ease-shelf-in);
+    }
+    [data-state='open'] > .avatar-ticks {
+      transition:
+        opacity 120ms ease-out,
+        scale 240ms var(--ease-panel),
+        rotate 260ms var(--ease-panel);
+    }
+  }
+}
+
+/* What a menu acts on stays lit while it is open: a shelf's edge, a table row's
+   ground. In the utilities layer so it wins over the border and background
+   utilities those elements already carry. */
+@layer utilities {
+  .shelf {
+    transition: border-color 160ms ease-out;
+  }
+  .shelf:has(.shelf-head [aria-haspopup='menu'][data-state='open']) {
+    border-color: rgb(255 180 84 / 0.38);
+  }
+  .shelf:has(.shelf-head [aria-haspopup='menu'][data-state='open']) .shelf-head {
+    background-color: rgb(193 255 208 / 0.03);
+  }
+  tr:has(> td [aria-haspopup='menu'][data-state='open']) {
+    background-color: rgb(193 255 208 / 0.03);
   }
 }
 
