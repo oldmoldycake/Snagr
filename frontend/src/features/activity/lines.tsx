@@ -41,7 +41,7 @@ export function reasonText(job: Job): string {
     case 'created':
       return 'new item'
     case 'slot_freed':
-      return 'a slot freed'
+      return 'room for a new listing'
     case 'sweep':
       return 'hunting on its own'
     case 'backoff':
@@ -85,9 +85,9 @@ export function checkLine(check: ListingChecked, index: number): LogLine {
       <span className={check.confirmed ? undefined : 'text-ink-3'}>
         {head} · {check.item_name} · {check.site_name}
         {tag ? <span className="text-ink-3"> · {tag}</span> : null}
-        {check.slot_freed ? <span className="text-ink-3"> · slot freed</span> : null}
+        {check.slot_freed ? <span className="text-ink-3"> · room for a new listing</span> : null}
         {check.confirmed ? null : (
-          <span className="text-ink-3"> · unconfirmed — the model is re-reading it</span>
+          <span className="text-ink-3"> · unconfirmed · waiting for a second reading</span>
         )}
       </span>
     ),

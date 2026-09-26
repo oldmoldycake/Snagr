@@ -24,7 +24,7 @@ const UNCHANGED_CENTS = 100
 const STALE_MS = 24 * 3_600_000
 const LABEL_FLIP_PCT = 78
 
-const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_34px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_34px]'
+const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_44px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_44px]'
 const COL_LABEL = 'font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase'
 
 function stockText(listing: Listing): string {
@@ -122,7 +122,7 @@ function AxisStrip({
         </div>
       </div>
       <span className={cn(COL_LABEL, 'text-right')}>vs ⌖</span>
-      <span className={COL_LABEL}>Fit</span>
+      <span className={COL_LABEL}>Match</span>
     </div>
   )
 }
@@ -345,11 +345,11 @@ function ExpandedRow({
         </a>
       </p>
       <label className="flex shrink-0 items-center gap-2 font-mono text-[10px] tracking-[0.08em] text-ink-3 uppercase">
-        active
+        Track
         <Switch
           checked={listing.active}
           onCheckedChange={(active) => toggle.mutate(active)}
-          aria-label={`${listing.active ? 'Deactivate' : 'Activate'} ${listing.site_name} listing`}
+          aria-label={`${listing.active ? 'Stop tracking' : 'Track'} this ${listing.site_name} listing`}
         />
       </label>
     </div>
@@ -536,7 +536,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
     `${folded.length} more`,
     lowMatch.length > 0 ? `${lowMatch.length} lower match` : null,
     soldCount > 0 ? `${soldCount} sold` : null,
-    inactive.length - soldCount > 0 ? `${inactive.length - soldCount} inactive` : null,
+    inactive.length - soldCount > 0 ? `${inactive.length - soldCount} not tracked` : null,
   ]
     .filter(Boolean)
     .join(' · ')

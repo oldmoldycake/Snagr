@@ -59,7 +59,7 @@ export function HunterHero({
         <dl className="flex gap-7">
           <Stat label="Next check" value={shortCountdown(summary.next_check_at)} />
           <Stat label="Hunts today" value={String(summary.hunts_today)} />
-          <Stat label="Watched" value={String(summary.listings_watched)} />
+          <Stat label="Listings tracked" value={String(summary.listings_watched)} />
         </dl>
       ) : null}
     </section>
@@ -77,12 +77,12 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function headline(hunts: number, checks: number, nothingYet: boolean): string {
   if (hunts > 0 && checks > 0) {
-    return `Sweeping — ${hunts} ${plural(hunts, 'hunt')} · ${checks} ${plural(checks, 'check')}`
+    return `Working: ${hunts} ${plural(hunts, 'hunt')}, ${checks} ${plural(checks, 'price check')}`
   }
-  if (hunts > 0) return `Sweeping — ${hunts} ${plural(hunts, 'hunt')}`
-  if (checks > 0) return `Checking — ${checks} live`
-  if (nothingYet) return 'Quiet — nothing yet'
-  return 'Quiet — between checks'
+  if (hunts > 0) return `Working: ${hunts} ${plural(hunts, 'hunt')}`
+  if (checks > 0) return `Checking ${checks} ${plural(checks, 'price')}`
+  if (nothingYet) return 'Nothing has run yet'
+  return 'Idle until the next price check'
 }
 
 /** The stat reads as a figure, so the countdown drops its "in". */

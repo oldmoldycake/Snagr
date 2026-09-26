@@ -168,8 +168,15 @@ const ACCESS_SCOPES: Record<Access, ApiTokenScope[]> = {
   write: ['read', 'write'],
   full: ['read', 'write', 'jobs'],
 }
+/** The create dialog's access name for a token's scopes; a set made through the API that matches none keeps its raw scopes. */
+function accessLabels(scopes: readonly ApiTokenScope[]): string[] {
+  const match = ACCESS_OPTIONS.find(
+    (o) => ACCESS_SCOPES[o.value].length === scopes.length && ACCESS_SCOPES[o.value].every((s) => scopes.includes(s)),
+  )
+  return match ? [match.label] : [...scopes]
+}
 const ACCESS_HINT: Record<Access, string> = {
-  read: 'Browse items, prices, the hunter\'s activity and the review queue.',
+  read: 'Browse items, prices, activity and the photo review queue.',
   write: 'Also add and edit categories, sites, items, listings and photo reviews.',
   full: 'Also queue hunts and price checks, and cancel jobs.',
 }
@@ -223,7 +230,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         <DialogHeader>
           <DialogTitle>New API token</DialogTitle>
           <DialogDescription>
-            A token lets an agent or script act as you — on your items and the hunter, never on your account.
+            A token lets an AI agent or script act as you on your items, hunts and price checks, never on your account.
           </DialogDescription>
         </DialogHeader>
 
@@ -357,7 +364,7 @@ export function ApiSettingsPage() {
               <p className="text-[13px] text-ink-2">
                 Snagr speaks the Model Context Protocol: point Claude Code, Hermes, OpenClaw or any MCP
                 client at the endpoint below with a token, and it can browse your items and prices, add
-                watches, and ask the hunter for work — exactly what you can do here, nothing more.
+                items, and start hunts and price checks. It can do exactly what you can do here, nothing more.
               </p>
               <ConnectSnippets token={null} />
               <p className="text-xs text-ink-3">
@@ -412,9 +419,9 @@ export function ApiSettingsPage() {
                         <TD className="font-medium text-ink">{token.name}</TD>
                         <TD>
                           <div className="flex gap-1">
-                            {token.scopes.map((scope) => (
-                              <Badge key={scope} variant="muted" className="font-mono">
-                                {scope}
+                            {accessLabels(token.scopes).map((label) => (
+                              <Badge key={label} variant="muted" className="font-mono">
+                                {label}
                               </Badge>
                             ))}
                           </div>

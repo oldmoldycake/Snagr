@@ -88,7 +88,7 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
     return (
       <EmptyState
         title="Nothing has happened yet"
-        description="Add an item and the hunter starts looking. Prices are re-checked on their own from then on."
+        description="Add an item and Snagr starts looking. Its prices are checked automatically from then on."
       />
     )
   }

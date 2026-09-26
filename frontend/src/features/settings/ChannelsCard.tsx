@@ -27,15 +27,15 @@ import { Switch } from '@/components/ui/switch'
 import { useInstance, useSession } from '@/features/auth/useSession'
 
 const EVENT_LABELS: Record<NotificationEvent, string> = {
-  'target.hit': 'target hits',
+  'target.hit': 'at target',
   'listing.new': 'new listings',
 }
 
 /** With two events every meaningful subset is "all", one, or the other — a
  *  segmented picker covers the whole space. Revisit when a third event lands. */
 const EVENT_OPTIONS = [
-  { value: 'all', label: 'All events' },
-  { value: 'target.hit', label: 'Target hits' },
+  { value: 'all', label: 'Everything' },
+  { value: 'target.hit', label: 'At target' },
   { value: 'listing.new', label: 'New listings' },
 ] as const
 
@@ -275,8 +275,8 @@ export function ChannelsCard() {
       </CardHeader>
       <CardBody className="space-y-3">
         <p className="text-[13px] text-ink-2">
-          Channels this account's notifications go to — a target price hit, a new listing found. Toggle
-          "Notify at target" on each item to control which watches fire.
+          Where your alerts go when an item reaches its target or Snagr finds a new listing. To silence one
+          item, turn off Notify at target on its page.
         </p>
 
         {channels.isPending ? (
@@ -299,7 +299,7 @@ export function ChannelsCard() {
                     <span className="font-sans">
                       {' · '}
                       {channel.events == null
-                        ? 'all events'
+                        ? 'everything'
                         : channel.events.map((e) => EVENT_LABELS[e]).join(', ')}
                     </span>
                   </p>

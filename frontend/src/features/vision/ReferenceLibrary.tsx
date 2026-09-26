@@ -115,7 +115,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Library</CardTitle>
+        <CardTitle>Reference photos</CardTitle>
         <div className="flex items-center gap-3">
           {rows.length > 0 ? (
             <span className="font-mono text-[11px] text-ink-3 tnum">
@@ -143,7 +143,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
           <EmptyState
             className="border-0 py-8"
             title="No reference photos yet"
-            description="Photo checks stay inconclusive until this library holds known-real or known-fake photos. Confirm suggestions from your Review queue as hunts capture them, or upload photos of a unit you know first-hand."
+            description="Photo checks can't reach a verdict until this item has photos of known-real or known-fake copies. Confirm photos on the Photo review page, or upload your own."
             action={
               <Button size="sm" onClick={() => setUploadOpen(true)}>
                 Add photo

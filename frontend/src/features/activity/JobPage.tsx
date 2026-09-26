@@ -174,7 +174,7 @@ export function JobPage() {
           />
         ) : events.length === 0 ? (
           <p className="py-2 font-mono text-xs text-ink-3">
-            {isLive ? 'Waiting for the hunter…' : 'Nothing was recorded for this job.'}
+            {isLive ? 'Waiting for Snagr…' : 'Nothing was recorded for this job.'}
           </p>
         ) : (
           <TerminalLog lines={events.map(eventLine)} />

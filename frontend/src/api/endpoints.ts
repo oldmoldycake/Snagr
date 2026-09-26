@@ -118,34 +118,34 @@ export const revokeToken = (id: number) =>
 /** Every category, with counts read through the caller's watches. */
 export const listCategories = () => api<{ data: Category[] }>('/api/categories')
 
-/** Create a category; 422 duplicate when the name exists (case-insensitive). */
+/** Create a category (admin only); 422 duplicate when the name exists (case-insensitive). */
 export const createCategory = (body: CategoryCreateRequest) =>
   api<Category>('/api/categories', { method: 'POST', body })
 
-/** Rename a category; its slug stays the same. */
+/** Rename a category (admin only); its slug stays the same. */
 export const updateCategory = (id: number, body: CategoryUpdateRequest) =>
   api<Category>(`/api/categories/${id}`, { method: 'PATCH', body })
 
-/** Delete a category and everything under it, including every user's watches on its items. */
+/** Delete a category and everything under it, including every user's watches on its items (admin only). */
 export const deleteCategory = (id: number) =>
   api<void>(`/api/categories/${id}`, { method: 'DELETE' })
 
-/** Replace the sites a category is searched on; unknown site ids are dropped. */
+/** Replace the sites a category is searched on (admin only); unknown site ids are dropped. */
 export const setCategorySites = (id: number, siteIds: number[]) =>
   api<Category>(`/api/categories/${id}/sites`, { method: 'PUT', body: { site_ids: siteIds } })
 
 /** Every site, with its counts and any circuit-breaker pause. */
 export const listSites = () => api<{ data: Site[] }>('/api/sites')
 
-/** Add a site for the hunter to search. */
+/** Add a site for the hunter to search (admin only). */
 export const createSite = (body: SiteCreateRequest) =>
   api<Site>('/api/sites', { method: 'POST', body })
 
-/** Rename a site, change its base URL, or lift a breaker pause (`paused_until: null`). */
+/** Rename a site, change its base URL, or lift a breaker pause (`paused_until: null`); admin only. */
 export const updateSite = (id: number, body: SiteUpdateRequest) =>
   api<Site>(`/api/sites/${id}`, { method: 'PATCH', body })
 
-/** Delete a site; one that listings still reference fails with 503 db_unavailable. */
+/** Delete a site (admin only); one that listings still reference fails with 503 db_unavailable. */
 export const deleteSite = (id: number) => api<void>(`/api/sites/${id}`, { method: 'DELETE' })
 
 /** The caller's watched items, filtered and paged, each with its price rollup. */

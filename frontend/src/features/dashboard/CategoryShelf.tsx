@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
 import { useJobs } from '@/features/activity/JobsProvider'
-import { useInstance } from '@/features/auth/useSession'
+import { useInstance, useSession } from '@/features/auth/useSession'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { WatchList } from '@/features/items/WatchList'
 import type { Lead, Shelf } from './shelves'
@@ -63,6 +63,8 @@ export function CategoryShelf({
   onRename: (category: Category) => void
 }) {
   const { category, items, hits, lead } = shelf
+  // categories are shared, so only an admin links their sites
+  const isAdmin = useSession().data?.role === 'admin'
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const mounted = useRef(false)
@@ -188,7 +190,7 @@ export function CategoryShelf({
             <span className="font-mono text-[11px] text-ink-3 tnum">
               {total != null ? `${items.length} of ${total} match` : plural(items.length, 'item', 'items')}
             </span>
-            {hits > 0 ? <span className="font-mono text-[11px] text-drop tnum">⌖ {hits} in range</span> : null}
+            {hits > 0 ? <span className="font-mono text-[11px] text-drop tnum">⌖ {hits} at target</span> : null}
             <LeadLine lead={lead} />
             <span className="flex-1 max-sm:hidden" />
             <span
@@ -203,9 +205,11 @@ export function CategoryShelf({
         </h3>
         <div className="flex shrink-0 items-center gap-1">
           {noSites ? (
-            <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
-              Link sites
-            </Button>
+            isAdmin ? (
+              <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
+                Link sites
+              </Button>
+            ) : null
           ) : (
             <AddItemDialog
               categoryId={category.id}
@@ -243,11 +247,11 @@ export function CategoryShelf({
             >
               <span aria-hidden>⚠</span>
               <span>
-                No sites linked. The hunter can't search for{' '}
+                No sites linked. Snagr can't search for{' '}
                 {items.length === 1 ? 'this item' : `these ${items.length} items`}.
               </span>
             </div>
-          ) : (
+          ) : isAdmin ? (
             <button
               type="button"
               aria-label={`Edit sites for ${category.name}`}
@@ -255,19 +259,18 @@ export function CategoryShelf({
               style={{ '--i': 0 } as CSSProperties}
               className="shelf-stagger group/sites mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] rounded-sm px-1.5 py-[3px] font-mono text-[11px] text-ink-2 transition-colors hover:bg-raised max-sm:ml-[26px]"
             >
-              <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
-              {siteNames.map((name) => (
-                <span
-                  key={name}
-                  className="inline-flex h-[19px] items-center rounded-[3px] border border-hairline bg-raised px-1.5"
-                >
-                  {name}
-                </span>
-              ))}
+              <SearchingSites siteNames={siteNames} />
               <span className="ml-1 text-[10px] tracking-[0.08em] text-ink-3 uppercase group-hover/sites:text-lume">
                 edit
               </span>
             </button>
+          ) : (
+            <div
+              style={{ '--i': 0 } as CSSProperties}
+              className="shelf-stagger mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] px-1.5 py-[3px] font-mono text-[11px] text-ink-2 max-sm:ml-[26px]"
+            >
+              <SearchingSites siteNames={siteNames} />
+            </div>
           )}
           <div className="border-t border-hairline">
             <WatchList items={items} drops={drops} struck={struck} showSite hideHeader fixedColumns />
@@ -313,6 +316,8 @@ function ShelfMenu({
   const { enqueue, isEnqueuing, setPanelOpen, liveHuntFor } = useJobs()
   const huntingOff = useInstance().data?.hunt_enabled === false
   const live = liveHuntFor('category', category.id)
+  // categories are shared, so only an admin edits or deletes one
+  const isAdmin = useSession().data?.role === 'admin'
   const [confirming, setConfirming] = useState(false)
   const keepRef = useRef<HTMLDivElement>(null)
   const deleteRef = useRef<HTMLDivElement>(null)
@@ -357,13 +362,13 @@ function ShelfMenu({
                 {plural(category.item_count, 'item', 'items')}
               </span>
               {hits > 0 ? (
-                <span className="font-mono text-[10.5px] whitespace-nowrap text-drop tnum">⌖ {hits} in range</span>
+                <span className="font-mono text-[10.5px] whitespace-nowrap text-drop tnum">⌖ {hits} at target</span>
               ) : null}
             </>
           }
         >
           {noSites ? (
-            <span className="font-mono text-[10.5px] text-warn">⚠ no sites · the hunter can't search this category</span>
+            <span className="font-mono text-[10.5px] text-warn">⚠ no sites · Snagr can't search this category</span>
           ) : (
             <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
               {siteNames.map((name) => (
@@ -395,7 +400,7 @@ function ShelfMenu({
             {noSites ? (
               <MenuRowText label="Hunt now" sub="⚠ link a site first" subClassName="text-warn" />
             ) : huntingOff ? (
-              <MenuRowText label="Hunt now" sub="hunting is paused by the operator" />
+              <MenuRowText label="Hunt now" sub="hunting is off on this server" />
             ) : (
               <>
                 Hunt now
@@ -404,19 +409,23 @@ function ShelfMenu({
             )}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => onEditSites(category)}>
-          <Globe /> Edit sites
-          {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => onRename(category)}>
-          <Pencil /> Rename
-        </DropdownMenuItem>
+        {isAdmin ? (
+          <>
+            <DropdownMenuItem onSelect={() => onEditSites(category)}>
+              <Globe /> Edit sites
+              {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onRename(category)}>
+              <Pencil /> Rename
+            </DropdownMenuItem>
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate(`/categories/${category.slug}`)}>
           <ArrowRight /> Open category page
           <DropdownMenuHint>/{category.slug}</DropdownMenuHint>
         </DropdownMenuItem>
-        {confirming ? (
+        {!isAdmin ? null : confirming ? (
           <div
             role="group"
             aria-label="Confirm delete"
@@ -468,6 +477,20 @@ function ShelfMenu({
   )
 }
 
+/** The shelf's "Searching" line: the sites the hunter searches for this category. */
+function SearchingSites({ siteNames }: { siteNames: string[] }) {
+  return (
+    <>
+      <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
+      {siteNames.map((name) => (
+        <span key={name} className="inline-flex h-[19px] items-center rounded-[3px] border border-hairline bg-raised px-1.5">
+          {name}
+        </span>
+      ))}
+    </>
+  )
+}
+
 /** A menu row's label with a second, mono line under it: why it is disabled, or what it will do. */
 function MenuRowText({ label, sub, subClassName }: { label: string; sub: string; subClassName?: string }) {
   return (
@@ -498,8 +521,8 @@ function LeadLine({
     case 'closest':
       return (
         <span className={cn(base, 'text-[12.5px] text-ink-2')}>
-          {lead.name} · <span className="font-mono text-xs font-semibold text-lume tnum">{lead.amount}</span> from
-          striking
+          {lead.name} · <span className="font-mono text-xs font-semibold text-lume tnum">{lead.amount}</span> above
+          target
         </span>
       )
     case 'priced':

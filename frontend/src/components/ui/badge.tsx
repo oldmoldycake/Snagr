@@ -29,11 +29,11 @@ export function Badge({ className, variant, ...props }: BadgeProps) {
   return <span className={cn(badgeVariants({ variant }), className)} {...props} />
 }
 
-/** The in-range state — target hit. Always carries the crosshair glyph. */
+/** The at-target state — the best price reached the target. Always carries the crosshair glyph. */
 export function SnaggedBadge({ className }: { className?: string }) {
   return (
-    <Badge variant="snagged" className={cn('rounded-full font-mono', className)}>
-      <span aria-hidden>⌖</span> in range
+    <Badge variant="snagged" className={cn('rounded-full font-mono whitespace-nowrap', className)}>
+      <span aria-hidden>⌖</span> at target
     </Badge>
   )
 }

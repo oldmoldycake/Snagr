@@ -27,7 +27,7 @@ const NAV_ITEMS: readonly { to: string; label: string; end?: boolean; visionOnly
   { to: '/', label: 'Dashboard', end: true },
   { to: '/sites', label: 'Sites' },
   { to: '/activity', label: 'Activity' },
-  { to: '/review', label: 'Review', visionOnly: true },
+  { to: '/review', label: 'Photo review', visionOnly: true },
   { to: '/settings', label: 'Settings' },
 ]
 
@@ -54,6 +54,8 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const categories = data?.data ?? []
   const navItems = useNavItems()
+  // categories are shared, so only an admin creates one
+  const isAdmin = useSession().data?.role === 'admin'
 
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-4">
@@ -101,15 +103,17 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
         </NavLink>
       ))}
       {/* No onNavigate here: closing the drawer would unmount this dialog before it opens. */}
-      <CreateCategoryDialog
-        variant="ghost"
-        className="mt-1 justify-start px-2.5 text-ink-3"
-        trigger={
-          <span className="inline-flex items-center gap-2">
-            <Plus className="size-3.5" /> New category
-          </span>
-        }
-      />
+      {isAdmin ? (
+        <CreateCategoryDialog
+          variant="ghost"
+          className="mt-1 justify-start px-2.5 text-ink-3"
+          trigger={
+            <span className="inline-flex items-center gap-2">
+              <Plus className="size-3.5" /> New category
+            </span>
+          }
+        />
+      ) : null}
     </nav>
   )
 }
@@ -133,7 +137,7 @@ function AccountMenu() {
   let status: string
   if (hunts > 0) status = `${hunts} ${hunts === 1 ? 'hunt' : 'hunts'} running`
   else if (checksRunning > 0) status = `checking · ${checksRunning} live`
-  else if (instance?.hunt_enabled === false) status = 'hunting paused by the operator · checks continue'
+  else if (instance?.hunt_enabled === false) status = 'Hunting is off on this server · prices are still checked'
   else if (summary.data?.next_check_at) status = `idle · next check ${countdown(summary.data.next_check_at)}`
   else status = 'idle'
 
@@ -169,7 +173,7 @@ function AccountMenu() {
         <DropdownMenuItem onSelect={() => setPanelOpen(true)}>
           <Radar size={16} animate={hunts + checksRunning > 0} />
           <span className="grid min-w-0 flex-1 gap-px">
-            <span>Hunter</span>
+            <span>Activity</span>
             <span className={cn('font-mono text-[10.5px]', hunts + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
               {status}
             </span>

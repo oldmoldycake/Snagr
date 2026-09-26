@@ -91,7 +91,7 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
       </ResponsiveContainer>
       {data.length > MAX_BARS ? (
         <p className="px-4 pb-2 text-xs text-ink-3">
-          Showing the {MAX_BARS} biggest movers — the table below has every item.
+          Showing the {MAX_BARS} biggest movers — the table above has every item.
         </p>
       ) : null}
     </div>

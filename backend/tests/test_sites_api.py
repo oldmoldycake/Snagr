@@ -13,7 +13,7 @@ its own session — uncommitted rows would be invisible to the endpoint under te
 """
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from app.models import SiteCategories, User
@@ -391,3 +391,41 @@ async def test_delete_a_site_that_still_has_listings_is_db_unavailable(client, d
 
     assert res.status_code == 503, res.text
     assert res.json()["error"]["code"] == "db_unavailable"
+
+
+# --- writes are admin-only ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/sites", {"name": "Evil", "base_url": "http://evil.example"}),
+        ("PATCH", "/api/sites/{id}", {"base_url": "http://evil.example"}),
+        ("PATCH", "/api/sites/{id}", {"paused_until": None}),
+        ("DELETE", "/api/sites/{id}", None),
+    ],
+)
+async def test_site_writes_are_admin_only(client, db_session, method, path, body):
+    """Sites are shared — the hunter searches a site's base_url for every
+    user — so a non-admin's write is 403 forbidden and changes nothing."""
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        site = await sc.site()
+        site.paused_until = datetime(2099, 1, 1, tzinfo=UTC)
+        site.paused_reason = "5 consecutive read errors: challenge page"
+        site_id = site.id
+
+    # the first registered user is the admin, so demote them to test this
+    async with db_session() as session:
+        user = await session.get(User, user_id)
+        user.role = "user"
+        await session.commit()
+
+    res = await client.request(method, path.format(id=site_id), json=body, headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    sites = await _sites_by_name(client)
+    assert list(sites) == ["TestBay"]
+    assert sites["TestBay"]["base_url"] == "https://example.test"
+    assert sites["TestBay"]["paused_until"] is not None

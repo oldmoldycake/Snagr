@@ -1,4 +1,6 @@
-"""Categories — /api/categories. Auth required.
+"""Categories — /api/categories. Auth required; every write is admin-only
+(403 forbidden otherwise): categories are shared by every user, and deleting
+one takes every user's items, watches and price history in it with it.
 
 item_count / snagged_count / site_ids are computed at query time
 (services/catalog.py, shared with the MCP tools).
@@ -8,7 +10,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import csrf_guard, current_user
+from app.core.deps import csrf_guard, current_user, require_admin
 from app.core.errors import err
 from app.database import get_db
 from app.schemas.catalog import (
@@ -39,7 +41,7 @@ async def list_categories(user=Depends(current_user), db: AsyncSession = Depends
     dependencies=[Depends(csrf_guard)],
 )
 async def create_category(
-    body: CategoryCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+    body: CategoryCreateRequest, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """Create a category; 422 validation_error for a blank name, 422 duplicate
     for one that already exists (case-insensitive)."""
@@ -53,7 +55,7 @@ async def create_category(
 async def update_category(
     category_id: int,
     body: CategoryUpdateRequest,
-    user=Depends(current_user),
+    user=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Rename a category (the slug stays); 404 for an unknown category."""
@@ -67,7 +69,7 @@ async def update_category(
     "/{category_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)]
 )
 async def delete_category(
-    category_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+    category_id: int, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """Delete a category and everything under it — its items and every user's
     watches, listings and price checks on them. 404 for an unknown category."""
@@ -82,7 +84,7 @@ async def delete_category(
 async def set_category_sites(
     category_id: int,
     body: SetCategorySitesRequest,
-    user=Depends(current_user),
+    user=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the sites a category is searched on; unknown site ids are dropped.

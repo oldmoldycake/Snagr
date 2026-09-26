@@ -153,7 +153,7 @@ export function SettingsPage() {
               Confidence thresholds for the image-based authenticity check, 0.50–1.00. Auto-reject
               drops a listing before it's saved; auto-promote lets a strong suggestion join an
               item's library without review — it also needs three confirmed references of that
-              label and the agent's own read to agree.
+              label and Snagr's own read of the listing to agree.
             </p>
             <div className="grid gap-3 sm:grid-cols-3">
               {(

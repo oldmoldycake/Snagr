@@ -52,7 +52,7 @@ export function EditSitesDialog({
         <DialogHeader>
           <DialogEyebrow>Sites</DialogEyebrow>
           <DialogTitle>{category.name}</DialogTitle>
-          <DialogDescription>The hunter searches these for every item on {category.name}.</DialogDescription>
+          <DialogDescription>Snagr searches these for every item in {category.name}.</DialogDescription>
         </DialogHeader>
         <form
           className="contents"
@@ -75,7 +75,7 @@ export function EditSitesDialog({
             />
             {sitesMissing ? (
               <p role="alert" className="mt-2.5 text-xs text-rise">
-                ⚠ Pick at least one site. The hunter needs somewhere to look.
+                ⚠ Pick at least one site. Snagr needs somewhere to look.
               </p>
             ) : null}
             {errorMessage ? (

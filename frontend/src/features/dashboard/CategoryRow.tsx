@@ -1,6 +1,7 @@
 import type { Category, ItemSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
+import { useSession } from '@/features/auth/useSession'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 
 /** A category holding none of the caller's items, as one line: its sites and a way in. */
@@ -22,6 +23,8 @@ export function CategoryRow({
   onAdded: (item: ItemSummary) => void
 }) {
   const noSites = category.site_ids.length === 0
+  // categories are shared, so only an admin links their sites
+  const isAdmin = useSession().data?.role === 'admin'
   return (
     <div
       id={`shelf-${category.id}`}
@@ -41,13 +44,15 @@ export function CategoryRow({
         )}
       >
         {noSites
-          ? "⚠ no sites. The hunter can't search here."
+          ? "⚠ no sites. Snagr can't search here."
           : `${isNew ? 'new' : 'none of yours'} · searching ${siteNames.join(', ')}`}
       </span>
       {noSites ? (
-        <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
-          Link sites
-        </Button>
+        isAdmin ? (
+          <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
+            Link sites
+          </Button>
+        ) : null
       ) : (
         <AddItemDialog
           categoryId={category.id}
