@@ -116,7 +116,7 @@ async def claim(worker: str, kinds: Sequence[str]) -> dict | None:
     Args:
       worker: An identifier for this worker, recorded on the row so an
         abandoned job can be traced back to the process that had it.
-      kinds: Which kinds this pool works — ("recheck",) or ("hunt", "ground").
+      kinds: Which kinds this pool works — ("recheck",), ("hunt",) or ("ground",).
     Returns:
       The claimed row as a plain dict (captured before commit expires it), or
       None when nothing is due.
@@ -229,6 +229,29 @@ async def release(job_id: int) -> bool:
         job.run_after = datetime.now(UTC)
         await session.commit()
         log.info(f"Returned job {job_id} to the queue")
+        return True
+
+
+async def defer(job_id: int, until: datetime) -> bool:
+    """Hand a running job back to the queue, due at `until` — for work that
+    cannot go ahead yet through no fault of its own, like grounding while
+    SearXNG has its engines suspended.
+
+    The attempt the claim spent is given back: waiting out someone else's
+    outage is not a failure, and counting it as one would fail the job for
+    good once a suspension had outlasted JOB_MAX_ATTEMPTS waits.
+    """
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Jobs, job_id, with_for_update=True)
+        if job is None or job.status != "running":
+            return False
+        job.status = "pending"
+        job.locked_by = None
+        job.started_at = None
+        job.attempts = max(job.attempts - 1, 0)
+        job.run_after = until
+        await session.commit()
+        log.info(f"Deferred job {job_id} to {until:%H:%M} UTC")
         return True
 
 

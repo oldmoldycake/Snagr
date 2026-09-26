@@ -5,7 +5,9 @@ The entry point is ground_item(), one item per `ground` job; the scheduler
 picks which items are due with select_grounding_work(). Its model calls are
 recorded inside the trace the ground job opens (llm.job_trace). Grounding is
 best-effort by design: a failed search, fetch or extraction costs
-observations, never the job.
+observations, never the job. The one exception is SearXNG suspending its
+engines: that raises SearchSuspended, and the worker hands the job back to
+the queue for later instead of finishing it on whatever it had.
 
 Every fetch here is async — one blocking GET would stall every other job on
 the daemon's event loop — and guarded against private addresses, the same
@@ -20,7 +22,7 @@ import json
 import logging
 import re
 from dataclasses import asdict, dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from statistics import median
 from urllib.parse import urlparse
@@ -64,9 +66,12 @@ QUERY_TEMPLATES = [
 SEARCH_PAGES = 3
 
 # SearXNG suspends its upstream engines when queried too fast. Grounding is not
-# time-sensitive, so pace generously and back off long when it happens anyway.
+# time-sensitive, so pace generously and back off long when it happens anyway:
+# 15 minutes first, doubling while the suspension outlasts the wait, so a long
+# one costs a search every few hours rather than one per item per wait.
 INTER_REQUEST_DELAY_S = 5.0
 SUSPENSION_BACKOFF_S = 900
+SUSPENSION_BACKOFF_CAP_S = 4 * 3600
 
 # Snippets priced only in some other currency never reach extraction.
 CURRENCY_SYMBOLS = {"USD": "$", "EUR": "€", "GBP": "£"}
@@ -114,18 +119,69 @@ MIN_TIER_SAMPLE = 3
 OUTLIER_RATIO = 20
 
 
+class SearchSuspended(Exception):
+    """SearXNG has suspended its upstream engines, so no search can succeed
+    before `until`. Not the ground job's failure: the worker puts the job back
+    in the queue, due then, with its attempt given back."""
+
+    def __init__(self, until: datetime):
+        """`until` is when the gate reopens: the job's new run_after."""
+        super().__init__(f"SearXNG has suspended its engines; trying again at {until:%H:%M} UTC")
+        self.until = until
+
+
+@dataclass
+class SearchGate:
+    """Whether SearXNG is worth asking yet, for the whole process.
+
+    One suspension means every ground job behind it would meet the same one,
+    so the gate closes for all of them: a job that finds it closed is deferred
+    before it spends a model call, and only one search goes out per wait to
+    see whether the suspension has lifted. Each time it has not, the wait
+    doubles up to SUSPENSION_BACKOFF_CAP_S; any search that returns results
+    resets it. In memory on purpose — a restart that forgets costs one search.
+    """
+
+    until: datetime | None = None
+    backoff_s: int = SUSPENSION_BACKOFF_S
+
+    def closed_until(self) -> datetime | None:
+        """When the current wait ends, or None when a search may go out now."""
+        if self.until is not None and self.until > datetime.now(UTC):
+            return self.until
+        return None
+
+    def close(self) -> datetime:
+        """Start a wait after a suspension, doubling the next; returns its end."""
+        self.until = datetime.now(UTC) + timedelta(seconds=self.backoff_s)
+        self.backoff_s = min(self.backoff_s * 2, SUSPENSION_BACKOFF_CAP_S)
+        return self.until
+
+    def reopen(self) -> None:
+        """A search came back with results: the suspension is over."""
+        self.until = None
+        self.backoff_s = SUSPENSION_BACKOFF_S
+
+
+search_gate = SearchGate()
+
+
 async def search_searxng(
     queries: list[str], base_url: str = "http://localhost:8888", pages: int = SEARCH_PAGES
 ) -> dict[str, str] | None:
     """Run each query against SearXNG and merge the results into
     {url: snippet}, deduped by url across queries and pages.
 
+    Raises SearchSuspended when SearXNG has suspended its engines, or already
+    had when this was called; every other failure is logged and answers None.
+
     No address guard on this one: SearXNG is the operator's own service and
     usually lives on the private network the guard exists to keep pages away
     from."""
+    if until := search_gate.closed_until():
+        raise SearchSuspended(until)
     try:
         search_results = {}
-        backed_off = False
 
         async with httpx.AsyncClient(timeout=SEARCH_TIMEOUT_SECONDS) as client:
             for query in queries:
@@ -141,26 +197,21 @@ async def search_searxng(
 
                     # A suspension looks like success - HTTP 200 with an empty
                     # result list - so raise_for_status never sees it.
-                    # Suspensions expire on their own; sleep it off and retry
-                    # once.
+                    # Suspensions expire on their own, but in minutes to hours:
+                    # sleeping one off here would hold a pool slot all that time.
                     if not results:
                         suspended = response_json.get("unresponsive_engines") or []
-                        if suspended and not backed_off:
-                            backed_off = True
-                            log.warning(
-                                f"SearXNG engines suspended ({suspended}), "
-                                f"backing off {SUSPENSION_BACKOFF_S}s before one retry"
-                            )
-                            await asyncio.sleep(SUSPENSION_BACKOFF_S)
-                            continue
                         if suspended:
-                            log.error(
-                                f"SearXNG engines still suspended, stopping search: {suspended}"
+                            until = search_gate.close()
+                            log.warning(
+                                f"SearXNG engines suspended ({suspended}); "
+                                f"no searches until {until:%H:%M} UTC"
                             )
-                            return search_results
+                            raise SearchSuspended(until)
                         log.warning(f"No results on page {pageno} for: {query}")
                         break
 
+                    search_gate.reopen()
                     known = len(search_results)
                     for result in results:
                         # Not every engine returns a snippet; the url is what dedupes.
@@ -176,6 +227,8 @@ async def search_searxng(
         log.info(f"SearXNG search completed: {len(search_results)} unique urls")
         return search_results
 
+    except SearchSuspended:
+        raise
     except Exception as e:
         log.error(f"Error searching SearXNG: {e}")
 
@@ -787,7 +840,14 @@ async def ground_item(item_id: int, item_name: str, category_id: int) -> dict:
     """Ground one item end to end: resolve its category's tier vocabulary,
     collect observations up the fallback ladder, shape them into the
     market_prices payload, and write it. Returns the payload so callers can
-    log or serve it without re-reading the row."""
+    log or serve it without re-reading the row.
+
+    Raises SearchSuspended - before anything is spent when the gate is already
+    closed, or midway when a search meets a fresh suspension. Nothing is
+    written either way: stats built on half a search would read as the
+    market, and a write would stamp the item as attempted for a whole TTL."""
+    if until := search_gate.closed_until():
+        raise SearchSuspended(until)
     tiers = await resolve_condition_tiers(category_id)
     observations = flag_outliers(await collect_observations(item_id, item_name, category_id, tiers))
     payload = build_market_price(tier_stats(observations), observations)

@@ -27,7 +27,7 @@ stating its job.
 ```
 agent/
 ├── main.py            # entry point: logging, --serve | --once (no bare mode), SIGTERM/SIGINT → cancellation via _supervised
-├── worker.py          # the daemon: the two pools, LISTEN snagr_jobs + 30 s tick, per-kind job runners, housekeeping (reap, grounding, sweep, prune)
+├── worker.py          # the daemon: the three pools, LISTEN snagr_jobs + 30 s tick, per-kind job runners, housekeeping (reap, grounding, sweep, prune)
 ├── jobs.py            # the queue: claim, heartbeat, complete / fail_or_retry, successors, hunt backoff + wakes, sweep, reap, prune, job events
 ├── agent.py           # the model-facing units: browser session + tool filtering, guarded browser_navigate, run_hunt_job, recheck_listing, the unit budgets
 ├── prompt.py          # prompt text: the hunt prompt (TRACKING SLOTS / TRACKED LISTINGS), the recheck prompt, grounding's two prompts
@@ -85,10 +85,12 @@ across all of it deciding what is believed and which sites are read at all.
    `heartbeat_at`, `started_at` and spends an attempt.
 2. **Pools.** `worker.serve` starts `RECHECK_CONCURRENCY` check workers that
    claim `recheck` (browser session always, a model only when the ladder gives
-   up) and `HUNT_CONCURRENCY` hunt workers that claim `hunt` (model + browser)
-   and `ground` (model + SearXNG + plain HTTP, no browser). Under
-   `HUNT_ENABLED=false` the hunt pool claims only `ground` (`worker.kinds_for`).
-   Worker ids are `host:pid#check-N` / `#hunt-N`, recorded on every claimed row.
+   up), `HUNT_CONCURRENCY` hunt workers that claim `hunt` (model + browser),
+   and `GROUND_CONCURRENCY` ground workers that claim `ground` (model +
+   SearXNG + plain HTTP, no browser) — a pool of its own, so grounding stuck
+   behind SearXNG never holds up a hunt. Under `HUNT_ENABLED=false` there is
+   no hunt pool at all (`worker.worker_ids`). Worker ids are
+   `host:pid#check-N` / `#hunt-N` / `#ground-N`, recorded on every claimed row.
 3. **Wake-ups.** Migration 015's trigger `NOTIFY`s `snagr_jobs` on every job
    insert and status change; one `LISTEN` connection nudges every worker, and
    each drains its kinds until the queue is empty. A 30 s tick does the same
@@ -107,7 +109,11 @@ across all of it deciding what is believed and which sites are read at all.
    `JOB_HEARTBEAT_INTERVAL_SECONDS` meanwhile.
 5. **Finish.** `jobs.complete` (done, stats) or `jobs.fail_or_retry` (back to
    `pending`, due at once, until `JOB_MAX_ATTEMPTS` attempts are spent, then
-   `failed`). A job the API cancelled mid-flight keeps `cancelled`. Successors
+   `failed`). A job the API cancelled mid-flight keeps `cancelled`. A ground
+   job that meets a SearXNG suspension is neither: `jobs.defer` puts it back
+   to `pending`, due when the suspension should be over, with its attempt
+   given back (`pricing.SearchGate` — 15 min, doubling to 4 h while it lasts;
+   every ground job behind it waits too, spending nothing). Successors
    are inserted **in the same transaction**: a recheck that completes, is
    cancelled, or fails for good queues the listing's next check; a hunt that
    completes queues its pair's next hunt (see below).
@@ -253,8 +259,10 @@ across all of it deciding what is believed and which sites are read at all.
 
 9. **Who writes job events.** A hunt writes its story — `job_started`, each
    page read, `listing_discovered` / `listing_evaluated` / `listing_ended`,
-   `price_found`, `job_finished`. A `ground` job writes one `job_finished`. A
-   recheck writes nothing when it succeeds: its whole output is its
+   `price_found`, `job_finished`. A `ground` job writes one `job_finished`
+   (`warn` when the stats came out insufficient, and saying so outright when
+   it found no price at all), plus a `warn` line each time a SearXNG
+   suspension defers it. A recheck writes nothing when it succeeds: its whole output is its
    `price_checks` row, which migration 015's trigger turns into a
    `listing.checked` frame. Every kind, recheck included, gets the worker's
    generic lines (`worker._work_one`) — an `error` when it raises, a `warn`
@@ -275,7 +283,8 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | | `SEAR_XNG_URL` | unset | SearXNG for grounding (read into `config.SEARXNG_URL`) |
 | | `VISION_SIDECAR_URL` | unset | vision sidecar; unset = `check_images` not registered |
 | Pools | `RECHECK_CONCURRENCY` | 3 | check workers |
-| | `HUNT_CONCURRENCY` | 1 | hunt workers (hunt + ground); raise only after measuring the provider |
+| | `HUNT_CONCURRENCY` | 1 | hunt workers; raise only after measuring the provider |
+| | `GROUND_CONCURRENCY` | 1 | ground workers (model work too, counted against the same provider) |
 | Hunting | `HUNT_ENABLED` | true | kill switch; same value in `backend/.env` |
 | | `HUNT_BACKOFF_MIN_MINUTES` / `_CAP_MINUTES` | 15 / 360 | empty-hunt backoff, doubling |
 | Recheck | `RECHECK_INTERVAL_MINUTES` | 30 | default cadence; same value in `backend/.env` |

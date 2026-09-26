@@ -10,11 +10,13 @@ coroutine with asyncio.run, like the rest of this suite.
 
 import asyncio
 from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime
 
 import pytest
 import worker
 from langchain_core.messages import AIMessage, ToolMessage
 from observations import UnitContext
+from pricing import SearchSuspended
 
 import agent
 
@@ -96,6 +98,7 @@ def wire(monkeypatch, **overrides):
         "released": [],
         "outcomes": [],
         "grounded": [],
+        "deferred": [],
         "reaped": 0,
         "pruned": 0,
         "swept": 0,
@@ -144,6 +147,10 @@ def wire(monkeypatch, **overrides):
         seen["grounded"].append(item_id)
         return True
 
+    async def defer(job_id, until):
+        seen["deferred"].append((job_id, until))
+        return True
+
     async def record_outcome(site_id, ok, **kwargs):
         seen["outcomes"].append((site_id, ok))
         return None
@@ -159,6 +166,7 @@ def wire(monkeypatch, **overrides):
         ("prune", prune),
         ("sweep", sweep),
         ("enqueue_ground", enqueue_ground),
+        ("defer", defer),
     ):
         monkeypatch.setattr(worker.job_queue, name, overrides.get(name, fake))
     monkeypatch.setattr(worker.breaker, "record_outcome", record_outcome)
@@ -212,6 +220,8 @@ def wire(monkeypatch, **overrides):
         )
 
     async def ground(item_id, item_name, category_id):
+        if "ground_raises" in overrides:
+            raise overrides["ground_raises"]
         return overrides.get(
             "ground_payload", {"status": "ok", "confidence": "high", "observations": [1, 2, 3]}
         )
@@ -341,6 +351,19 @@ class TestGroundPath:
         assert stats["prices_found"] == 3
         assert any(event_type == "job_finished" for _, _, event_type, _ in seen["events"])
 
+    def test_a_grounding_that_found_no_price_finishes_with_a_warning(self, monkeypatch):
+        # nothing broke, so it is not a failure — but "done" alone would hide
+        # that the market stats came to nothing
+        seen = wire(
+            monkeypatch,
+            ground_payload={"status": "insufficient", "confidence": "low", "observations": []},
+        )
+        stats = asyncio.run(worker.run_job(job("ground", listing_id=None)))
+        assert stats["prices_found"] == 0
+        assert [(level, m) for _, level, t, m in seen["events"] if t == "job_finished"] == [
+            ("warn", "Market price for Item 1: found no prices")
+        ]
+
     def test_grounding_runs_inside_one_trace_per_item_for_no_one_user(self, monkeypatch):
         wire(monkeypatch)
         opened = []
@@ -379,6 +402,20 @@ class TestTerminalWrites:
         assert seen["completed"] == []
         assert (1, False) in seen["outcomes"]
         assert any(event_type == "error" for _, _, event_type, _ in seen["events"])
+
+    def test_a_suspended_search_hands_the_job_back_instead_of_holding_its_slot(self, monkeypatch):
+        until = datetime(2026, 9, 26, 16, 31, tzinfo=UTC)
+        seen = wire(monkeypatch, ground_raises=SearchSuspended(until))
+        asyncio.run(worker._work_one("w1", job("ground", listing_id=None)))
+        assert seen["deferred"] == [(1, until)]
+        # waiting out SearXNG is neither a failure nor a finish, and it is no
+        # site's fault
+        assert seen["failed"] == []
+        assert seen["completed"] == []
+        assert seen["outcomes"] == []
+        assert [(level, m) for _, level, _, m in seen["events"]] == [
+            ("warn", "SearXNG has suspended its engines; trying again at 16:31 UTC")
+        ]
 
     def test_a_cancelled_job_keeps_the_apis_terminal_state(self, monkeypatch):
         seen = wire(monkeypatch, hunt_raises=agent.Cancelled("job 1 was cancelled"))
@@ -495,28 +532,37 @@ class TestPool:
 
         async def scenario():
             wake = asyncio.Event()
-            checks = asyncio.create_task(worker._pool("x#check-0", worker.CHECK_KINDS, wake))
-            hunts = asyncio.create_task(worker._pool("x#hunt-0", worker.HUNT_KINDS, wake))
+            pools = [
+                asyncio.create_task(worker._pool(worker_id, worker.kinds_for(worker_id), wake))
+                for worker_id in ("x#check-0", "x#hunt-0", "x#ground-0")
+            ]
             await asyncio.sleep(0.02)
-            checks.cancel()
-            hunts.cancel()
+            for pool in pools:
+                pool.cancel()
 
         asyncio.run(scenario())
         assert ("x#check-0", ("recheck",)) in seen["claimed"]
-        assert ("x#hunt-0", ("hunt", "ground")) in seen["claimed"]
+        assert ("x#hunt-0", ("hunt",)) in seen["claimed"]
+        # grounding waits on SearXNG, so it never holds a hunt's slot
+        assert ("x#ground-0", ("ground",)) in seen["claimed"]
 
-    def test_with_hunting_off_the_hunt_pool_only_grounds(self, monkeypatch):
+    def test_every_pool_is_sized_on_its_own(self, monkeypatch):
+        monkeypatch.setattr(worker, "RECHECK_CONCURRENCY", 3)
+        monkeypatch.setattr(worker, "HUNT_CONCURRENCY", 1)
+        monkeypatch.setattr(worker, "GROUND_CONCURRENCY", 2)
+        slots = [worker_id.rsplit("#", 1)[1] for worker_id in worker.worker_ids()]
+        assert slots == ["check-0", "check-1", "check-2", "hunt-0", "ground-0", "ground-1"]
+
+    def test_with_hunting_off_there_is_no_hunt_pool(self, monkeypatch):
         # the kill switch: a queued hunt is left waiting, never claimed
         seen = wire(monkeypatch, queue=[])
         monkeypatch.setattr(worker, "HUNT_ENABLED", False)
 
         asyncio.run(worker.once())
 
-        hunt_pool = [kinds for worker_id, kinds in seen["claimed"] if "#hunt-" in worker_id]
-        check_pool = [kinds for worker_id, kinds in seen["claimed"] if "#check-" in worker_id]
-        assert hunt_pool and all(kinds == ("ground",) for kinds in hunt_pool)
-        # checks are what the operator still wants
-        assert check_pool and all(kinds == ("recheck",) for kinds in check_pool)
+        claimed = {kinds for _, kinds in seen["claimed"]}
+        # checks and grounding are what the operator still wants
+        assert claimed == {("recheck",), ("ground",)}
 
 
 class TestShutdown:
