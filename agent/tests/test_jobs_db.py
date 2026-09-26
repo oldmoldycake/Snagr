@@ -277,6 +277,21 @@ class TestClaim:
         assert claimed["id"] == urgent
         assert claimed["priority"] == 100
 
+    def test_a_long_enough_wait_outranks_a_users_request(self):
+        # priority is a head start in minutes, not a rank: a backoff hunt two
+        # hours overdue goes before a batch of new items' hunts, or a steady
+        # stream of them would starve it
+        async def scenario():
+            ids = await seed_scope_graph()
+            starved, _ = await seed(
+                pending_job(ids, kind="hunt", run_after=NOW - timedelta(hours=2)),
+                pending_job(ids, priority=100, run_after=NOW),
+            )
+            return starved, await job_queue.claim("w1", ("recheck", "hunt"))
+
+        starved, claimed = db(scenario())
+        assert claimed["id"] == starved
+
     def test_the_longest_wait_wins_at_equal_priority(self):
         async def scenario():
             ids = await seed_scope_graph()

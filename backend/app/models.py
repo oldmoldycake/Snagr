@@ -343,7 +343,8 @@ class Jobs(Base):
     status: Mapped[str] = mapped_column(
         Text, server_default=text("'pending'")
     )  # pending|running|done|failed|cancelled
-    priority: Mapped[int] = mapped_column(server_default=text("0"))  # user-triggered = 100
+    # minutes of head start in the claim order; user-triggered = 100
+    priority: Mapped[int] = mapped_column(server_default=text("0"))
     run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     attempts: Mapped[int] = mapped_column(server_default=text("0"))
     locked_by: Mapped[str | None] = mapped_column(Text)

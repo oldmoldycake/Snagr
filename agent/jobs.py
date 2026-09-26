@@ -80,6 +80,12 @@ _CLAIMED = (
 # exist. SKIP LOCKED is what lets several workers claim concurrently; FOR
 # UPDATE OF j is required because a paused site sits on the nullable side of
 # the join and Postgres will not lock that.
+#
+# The order is by due time with priority as a head start in minutes, not
+# priority first: a job worth 100 is taken as if it had come due 100 minutes
+# earlier. Ranked strictly by priority, a steady stream of new items would
+# starve every backoff hunt behind them; this way anything that has waited
+# longer than the head start goes first, so no job waits forever.
 _CLAIM = text(
     f"""
     UPDATE jobs SET
@@ -96,7 +102,7 @@ _CLAIM = text(
                AND j.kind IN :kinds
                AND j.run_after <= now()
                AND (s.paused_until IS NULL OR s.paused_until <= now())
-             ORDER BY j.priority DESC, j.run_after, j.id
+             ORDER BY j.run_after - make_interval(mins => j.priority), j.id
              FOR UPDATE OF j SKIP LOCKED
              LIMIT 1
      )
@@ -108,10 +114,11 @@ _CLAIM = text(
 async def claim(worker: str, kinds: Sequence[str]) -> dict | None:
     """Take the most urgent due job of these kinds, or None when there is none.
 
-    Highest priority first (a user's "hunt now" is 100), then oldest due, then
-    oldest row. Jobs for a paused site are invisible here — that is the
-    circuit breaker: while a site answers challenge pages, its work is not
-    claimed at all, so no browser opens and no model is asked to look at it.
+    Longest overdue first, counting a job's priority as minutes it has
+    already waited (a user's "hunt now" is 100), then oldest row. Jobs for a
+    paused site are invisible here — that is the circuit breaker: while a
+    site answers challenge pages, its work is not claimed at all, so no
+    browser opens and no model is asked to look at it.
 
     Args:
       worker: An identifier for this worker, recorded on the row so an

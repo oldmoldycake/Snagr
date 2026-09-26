@@ -143,6 +143,15 @@ function newJob(kind: MockJob['kind'], over: Partial<MockJob> = {}): MockJob {
 }
 
 /**
+ * The head start a person's hunt of a watch's index-th site gets: 100 for the
+ * first, 10 less for each after it, so a batch of new items has every item's
+ * first site hunted before anyone's second.
+ */
+function sitePriority(index: number): number {
+  return Math.max(100 - index * 10, 0)
+}
+
+/**
  * At most one open hunt per (watch, site) — the partial unique index, in mock
  * form. A pending one is bumped to now with its backoff forgotten, a running
  * one is handed back untouched, and a watch with no open slot gets nothing at
@@ -824,8 +833,12 @@ export const handlers = [
     // (for the watch, or for the instance) queues no hunt: creating it is not
     // a press of Hunt now.
     if (tracking.hunt && HUNT_ENABLED) {
-      for (const siteId of tracking.site_ids ?? category.site_ids) {
-        enqueueHunt(watch.id, item.id, siteId, { user_id: user.id, reason: 'created', priority: 100 })
+      for (const [index, siteId] of (tracking.site_ids ?? category.site_ids).entries()) {
+        enqueueHunt(watch.id, item.id, siteId, {
+          user_id: user.id,
+          reason: 'created',
+          priority: sitePriority(index),
+        })
       }
     }
     store.jobs.push(newJob('ground', { item_id: item.id, user_id: user.id, reason: 'created' }))
@@ -1378,11 +1391,11 @@ export const handlers = [
         // a full watch still gets a person's hunt: a swap hunt, for something
         // better than its weakest listing
         const full = activeListings(item.id).length >= item.max_listings
-        for (const siteId of sites) {
+        for (const [index, siteId] of sites.entries()) {
           const job = enqueueHunt(watch.id, watch.item_id, siteId, {
             user_id: user.id,
             reason: 'user',
-            priority: 100,
+            priority: sitePriority(index),
             payload: full ? { swap: true } : null,
           })
           if (job) queued.push(job)

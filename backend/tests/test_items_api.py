@@ -598,6 +598,9 @@ async def test_a_new_watch_is_hunting_before_the_request_returns(client):
     hunts = [j for j in jobs if j["kind"] == "hunt"]
     assert sorted(j["site_name"] for j in hunts) == ["Mercari", "eBay"]
     assert {j["reason"] for j in hunts} == {"created"}
+    # the first site at the front, the next a step back, so a batch of new
+    # items gets every item's first site hunted before anyone's second
+    assert sorted(j["priority"] for j in hunts) == [90, 100]
     # and the market stats its prompts read from
     assert [j["kind"] for j in jobs if j["kind"] == "ground"] == ["ground"]
 

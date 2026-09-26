@@ -90,8 +90,20 @@ class TestEnqueue:
         assert sorted(j["site_name"] for j in queued) == ["Mercari", "eBay"]
         assert {j["kind"] for j in queued} == {"hunt"}
         assert {j["reason"] for j in queued} == {"user"}
-        assert {j["priority"] for j in queued} == {100}
+        assert sorted(j["priority"] for j in queued) == [90, 100]
         assert queued[0]["label"].startswith("Game Boy Color × ")
+
+    async def test_one_site_asked_for_gets_the_whole_head_start(self, client):
+        """A watch's later sites start a step back only among the sites asked
+        for — hunting one site is asking for that one first."""
+        await _sign_in(client)
+        await _watched_item(client, sites=("eBay", "Mercari"))
+
+        for hunt in await _jobs(client, kind="hunt"):
+            body = {"kind": "hunt", "scope": "site", "scope_id": hunt["site_id"]}
+            res = await client.post("/api/jobs", json=body, headers=CSRF)
+            assert res.status_code == 202, res.text
+            assert [j["priority"] for j in res.json()["data"]] == [100]
 
     async def test_asking_twice_brings_the_same_job_forward(self, client, db_session):
         """The open-job index is the design: a double-click cannot queue two
