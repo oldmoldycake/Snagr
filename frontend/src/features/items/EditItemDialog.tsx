@@ -86,7 +86,8 @@ export function EditItemDialog({
                   id="edit-item-target"
                   type="number"
                   step="0.01"
-                  min="0"
+                  min="0.01"
+                  max="99999999.99"
                   className="pl-6 font-mono tnum"
                   value={target}
                   onChange={(e) => setTarget(e.target.value)}

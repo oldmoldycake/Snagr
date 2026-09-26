@@ -591,6 +591,31 @@ async def test_the_check_interval_over_mcp(client, db_session):
                 assert set(error["fields"]) == {"recheck_interval_minutes"}
 
 
+async def test_a_target_that_is_not_an_amount_is_a_tool_error(client, db_session):
+    """The REST routes' 422, on both tools that take a target."""
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        created = await _ok(
+            agent, "create_item", category=seed["slug"], name="Leica M6", target_price="1500"
+        )
+        assert created["target_price"] == "1500.00"
+
+        for target in ("NaN", "abc", "1e20", "0"):
+            for error in (
+                await _error(
+                    agent,
+                    "create_item",
+                    category=seed["slug"],
+                    name="Nikon F3",
+                    target_price=target,
+                ),
+                await _error(agent, "update_item", item=created["id"], target_price=target),
+            ):
+                assert error["code"] == "validation_error"
+                assert set(error["fields"]) == {"target_price"}
+
+
 async def test_the_hunting_switch_over_mcp(client, db_session):
     """The allow_reproductions pattern: set on create, changed on update, and
     left alone when the argument is left out."""

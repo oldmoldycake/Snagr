@@ -13,7 +13,7 @@ list_items, get_item_detail, list_listings, list_price_checks.
 Writes: create_item, update_item, delete_item, update_watch, update_listing.
 """
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +50,10 @@ from app.services.vision import authenticity_for_listings
 
 # A day: past it a price stops being tracked in any sense the item page means.
 MAX_RECHECK_INTERVAL_MINUTES = 1440
+
+# The largest amount watches.target_price (Numeric(10, 2)) can hold; one more
+# cent overflows the column and reaches the caller as a 503.
+MAX_TARGET_PRICE = Decimal("99999999.99")
 
 # --- serializers --------------------------------------------------------------
 
@@ -402,6 +406,36 @@ def _check_interval(minutes: int | None) -> None:
         )
 
 
+def _parse_target(value: str | None) -> Decimal | None:
+    """The target price as a Decimal (null = no target), or 422 unless it is
+    a finite amount in whole cents from 0.01 up to MAX_TARGET_PRICE.
+
+    Decimal() alone is not enough: it takes "NaN" and "Infinity", and a NaN
+    target makes every later `best_price <= target` raise, taking the item
+    list down with it."""
+    if value is None:
+        return None
+    try:
+        target = Decimal(value)
+    except InvalidOperation:
+        target = None
+    # finiteness first: comparing a NaN raises, and quantizing one is no test
+    if (
+        target is None
+        or not target.is_finite()
+        or not Decimal("0.01") <= target <= MAX_TARGET_PRICE
+        or target != target.quantize(Decimal("0.01"))
+    ):
+        bounds = f"between 0.01 and {MAX_TARGET_PRICE}"
+        raise err(
+            422,
+            "validation_error",
+            f"Target price must be an amount {bounds}",
+            fields={"target_price": f"Must be an amount {bounds}, in whole cents"},
+        )
+    return target
+
+
 async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -> ItemSummary:
     """Find-or-create the shared items row, create the caller's watch, insert
     the watch_sites subset. Commits.
@@ -409,9 +443,11 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     The contract's 404 for an unknown category and the 422s (selection_mode,
     max_listings 1-10, site_ids ⊆ the category's sites) are not enforced yet —
     an unknown category surfaces as the FK violation's 503. The
-    recheck_interval_minutes range (the floor to 1440) is enforced.
+    recheck_interval_minutes range (the floor to 1440) and the target price
+    are enforced.
     """
     _check_interval(body.recheck_interval_minutes)
+    target_price = _parse_target(body.target_price)
     stmt = select(Items).where(Items.name == body.name).where(Items.category_id == body.category_id)
     item = (await db.execute(stmt)).scalar_one_or_none()
 
@@ -424,7 +460,7 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     watch = Watches(
         user_id=user_id,
         item_id=item.id,
-        target_price=Decimal(body.target_price) if body.target_price is not None else None,
+        target_price=target_price,
         criteria=body.criteria,
         max_listings=body.max_listings,
         selection_mode=body.selection_mode,
@@ -467,6 +503,7 @@ async def update_item(
     null means "back to the instance default"; site_ids is accepted but not
     applied yet. Commits."""
     _check_interval(body.recheck_interval_minutes)
+    target_price = _parse_target(body.target_price)
     stmt = (
         select(Items, Watches, Categories)
         .join(Watches, Items.id == Watches.item_id)
@@ -482,8 +519,8 @@ async def update_item(
     room_before, hunting_before = watch.max_listings, watch.hunt
     if body.name is not None:
         item.name = body.name
-    if body.target_price is not None:
-        watch.target_price = Decimal(body.target_price)
+    if target_price is not None:
+        watch.target_price = target_price
     if body.criteria is not None:
         watch.criteria = body.criteria
     if body.selection_mode is not None:
@@ -533,7 +570,9 @@ async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
 async def update_watch(
     db: AsyncSession, user_id: int, item_id: int, body: WatchUpdateRequest
 ) -> Watch:
-    """The notify toggle and the per-user target override; 404 when unwatched. Commits."""
+    """The notify toggle and the per-user target override; 404 when unwatched,
+    422 for a target _parse_target refuses. Commits."""
+    target_price = _parse_target(body.target_price)
     stmt = select(Watches).where(Watches.item_id == item_id).where(Watches.user_id == user_id)
     # scalar_one_or_none() -> the Watches ENTITY (tracked), not a Row
     watch = (await db.execute(stmt)).scalar_one_or_none()
@@ -542,8 +581,8 @@ async def update_watch(
 
     if body.notify is not None:
         watch.notify = body.notify
-    if body.target_price is not None:
-        watch.target_price = Decimal(body.target_price)
+    if target_price is not None:
+        watch.target_price = target_price
 
     await db.commit()
     return Watch(
