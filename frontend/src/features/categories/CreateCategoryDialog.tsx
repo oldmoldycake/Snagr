@@ -135,7 +135,7 @@ export function CreateCategoryDialog({
           <DialogTitle>New category</DialogTitle>
           {step === 1 ? (
             <DialogDescription>
-              A category is a shelf: things you want, plus the sites the hunter searches for them.
+              A category groups similar items and sets which sites Snagr searches for them.
             </DialogDescription>
           ) : null}
         </DialogHeader>
@@ -195,7 +195,7 @@ export function CreateCategoryDialog({
               ) : (
                 <>
                   <p className="mb-3 text-[13.5px] text-ink-2">
-                    Where should the hunter look for <b className="font-medium text-ink">{name.trim()}</b>?
+                    Where should Snagr look for <b className="font-medium text-ink">{name.trim()}</b>?
                   </p>
                   <SitePicker
                     selected={siteIds}
@@ -206,11 +206,11 @@ export function CreateCategoryDialog({
                   />
                   {sitesMissing ? (
                     <p role="alert" className="mt-2.5 text-xs text-rise">
-                      ⚠ Pick at least one site. The hunter needs somewhere to look.
+                      ⚠ Pick at least one site. Snagr needs somewhere to look.
                     </p>
                   ) : (
                     <p className="mt-2.5 text-xs text-ink-3">
-                      Pick one or more. You can change them any time from the shelf.
+                      Pick one or more. You can change them any time from the dashboard or the category page.
                     </p>
                   )}
                   {fieldError ? (

@@ -59,8 +59,8 @@ export function HunterTicker({ className }: { className?: string }) {
       >
         <Radar size={24} />
         <span className="shrink-0 tracking-[0.12em] text-lume uppercase">
-          Sweeping · {live.length} {live.length === 1 ? 'hunt' : 'hunts'}
-          {checksRunning > 0 ? ` · ${checksRunning} checks` : ''}
+          Hunting · {live.length} running
+          {checksRunning > 0 ? ` · ${checksRunning} price checks` : ''}
         </span>
         <span aria-hidden className="shrink-0 text-ink-3">
           │
@@ -78,7 +78,7 @@ export function HunterTicker({ className }: { className?: string }) {
           )}
         </span>
         {elapsed ? <span className="shrink-0 text-ink-3 tnum">{elapsed}</span> : null}
-        <span className="shrink-0 tracking-[0.08em] text-ink-2">Watch ↗</span>
+        <span className="shrink-0 tracking-[0.08em] text-ink-2">View ↗</span>
       </button>
     )
   }
@@ -93,7 +93,7 @@ export function HunterTicker({ className }: { className?: string }) {
           checksRunning > 0 ? 'text-lume' : 'text-ink-3',
         )}
       >
-        {checksRunning > 0 ? `Checking · ${checksRunning} live` : huntingOff ? 'Hunting off' : 'Hunter idle'}
+        {checksRunning > 0 ? `Checking ${checksRunning} ${checksRunning === 1 ? 'price' : 'prices'}` : huntingOff ? 'Hunting off' : 'Idle'}
       </span>
       <span aria-hidden className="shrink-0 text-ink-3">
         │
@@ -103,7 +103,7 @@ export function HunterTicker({ className }: { className?: string }) {
           <TickerCheck check={lastCheck} />
         ) : huntingOff ? (
           <>
-            paused by the operator · prices are still checked every{' '}
+            off on this server · prices are still checked every{' '}
             {formatInterval(instance.recheck_interval_default)}
           </>
         ) : (
@@ -141,7 +141,7 @@ function IdleMessage({
   // empty-state copy can't flash on load.
   if (pending || summary == null) return null
   if (summary.listings_watched === 0 && summary.last_hunt == null) {
-    return <>Add an item and the hunter starts looking for it.</>
+    return <>Add an item and Snagr starts looking for it.</>
   }
   const paused = summary.paused_sites[0]
   const parts: string[] = []

@@ -35,8 +35,8 @@ import { EditSitesDialog } from './EditSitesDialog'
 
 const STATUS_FILTERS = [
   { value: 'all', label: 'All' },
-  { value: 'snagged', label: 'In range' },
-  { value: 'above_target', label: 'Hunting' },
+  { value: 'snagged', label: 'At target' },
+  { value: 'above_target', label: 'Above target' },
   { value: 'no_listings', label: 'No listings' },
 ] as const satisfies readonly { value: ItemStatusFilter; label: string }[]
 
@@ -156,7 +156,7 @@ export function CategoryPage() {
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {linkedSites.length === 0 ? (
               <span className="text-xs text-warn">
-                <span aria-hidden>⚠</span> No sites linked — the agent has nowhere to search. Edit the
+                <span aria-hidden>⚠</span> No sites linked, so Snagr has nowhere to search. Edit the
                 category to link sites.
               </span>
             ) : (
@@ -228,7 +228,7 @@ export function CategoryPage() {
           <EmptyState
             className="m-4 border-0"
             title="Add an item to start tracking"
-            description={`Give it a name and a target price — the agent will search ${
+            description={`Give it a name and a target price, and Snagr will search ${
               linkedSites.length > 0 ? linkedSites.map((s) => s.name).join(', ') : "this category's sites"
             } for listings.`}
             action={
@@ -301,11 +301,13 @@ export function CategoryPage() {
         onOpenChange={(open) => {
           if (!open) setDeletingItem(null)
         }}
-        title="Delete item"
+        title="Remove item"
         description={
-          deletingItem ? `“${deletingItem.name}” and its price history will be permanently removed.` : ''
+          deletingItem
+            ? `Remove “${deletingItem.name}” from your items? Your listings and price history for it are deleted. Anyone else tracking it keeps theirs.`
+            : ''
         }
-        confirmLabel="Delete item"
+        confirmLabel="Remove item"
         pending={removeItem.isPending}
         onConfirm={() => {
           if (deletingItem) removeItem.mutate(deletingItem)

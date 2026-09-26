@@ -378,12 +378,13 @@ async def enqueue(
     """
     _validate(kind, scope, scope_id)
     if kind == "hunt" and not settings.HUNT_ENABLED:
-        raise err(409, "hunting_disabled", "Hunting is paused by the operator")
+        raise err(409, "hunting_disabled", "Hunting is turned off on this server")
     watches = await _scoped_watches(db, viewer, scope, scope_id)
     # an unknown target and one holding none of the caller's watches are the
     # same 404: neither is anything this caller can ask the hunter about
     if not watches:
-        raise err(404, "not_found", f"Nothing to {kind} in that scope")
+        action = "hunt for" if kind == "hunt" else "check prices for"
+        raise err(404, "not_found", f"You have no items here to {action}")
 
     queued = (
         await _hunts(db, watches, viewer.id, scope, scope_id)

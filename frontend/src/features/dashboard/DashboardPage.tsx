@@ -215,7 +215,7 @@ export function DashboardPage() {
           error={
             failed ? (
               <ErrorState
-                title="Couldn't search your shelves"
+                title="Couldn't search your items"
                 error={failed.error}
                 onRetry={() => void failed.refetch()}
                 retrying={failed.isFetching}
@@ -313,9 +313,9 @@ export function DashboardPage() {
 
       <section className="mt-[26px]">
         <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
-          <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">The Watch</h2>
+          <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">Your items</h2>
           <span className="font-mono text-[11px] text-ink-3 tnum">
-            {shelves.length} {shelves.length === 1 ? 'shelf' : 'shelves'} · {myItems.length}{' '}
+            {shelves.length} {shelves.length === 1 ? 'category' : 'categories'} · {myItems.length}{' '}
             {myItems.length === 1 ? 'item' : 'items'}
           </span>
           <span className="flex-1" />
@@ -441,7 +441,7 @@ function SearchResults({
         error
       ) : shelves.length === 0 ? (
         <p className="rounded-md border border-dashed border-hairline-strong px-3.5 py-[26px] text-center text-[13px] text-ink-3">
-          Nothing on any shelf matches “{search}”. · {clear}
+          None of your items match “{search}”. · {clear}
         </p>
       ) : (
         <>

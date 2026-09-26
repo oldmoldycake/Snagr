@@ -10,7 +10,7 @@ export class ApiError extends Error {
   fields?: Record<string, string>
 
   constructor(status: number, body: ApiErrorBody | null) {
-    super(body?.error.message ?? `Request failed (${status})`)
+    super(body?.error.message ?? `Something went wrong (error ${status}). Try again, and tell your admin if it keeps happening.`)
     this.status = status
     this.code = body?.error.code ?? 'unknown'
     this.fields = body?.error.fields

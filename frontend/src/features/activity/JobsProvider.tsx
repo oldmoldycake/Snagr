@@ -162,7 +162,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['jobs'] }),
     onError: (error) => {
       toast.error(
-        error instanceof ApiError ? error.message : 'Could not ask the hunter for that',
+        error instanceof ApiError ? error.message : 'Snagr could not start that',
       )
     },
   })

@@ -69,7 +69,7 @@ export function EditCategoryDialog({
         <DialogHeader>
           <DialogTitle>Edit category</DialogTitle>
           <DialogDescription>
-            The hunter searches this category's linked sites.
+            Snagr searches this category's linked sites.
           </DialogDescription>
         </DialogHeader>
 

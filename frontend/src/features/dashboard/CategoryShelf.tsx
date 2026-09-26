@@ -188,7 +188,7 @@ export function CategoryShelf({
             <span className="font-mono text-[11px] text-ink-3 tnum">
               {total != null ? `${items.length} of ${total} match` : plural(items.length, 'item', 'items')}
             </span>
-            {hits > 0 ? <span className="font-mono text-[11px] text-drop tnum">⌖ {hits} in range</span> : null}
+            {hits > 0 ? <span className="font-mono text-[11px] text-drop tnum">⌖ {hits} at target</span> : null}
             <LeadLine lead={lead} />
             <span className="flex-1 max-sm:hidden" />
             <span
@@ -243,7 +243,7 @@ export function CategoryShelf({
             >
               <span aria-hidden>⚠</span>
               <span>
-                No sites linked. The hunter can't search for{' '}
+                No sites linked. Snagr can't search for{' '}
                 {items.length === 1 ? 'this item' : `these ${items.length} items`}.
               </span>
             </div>
@@ -357,13 +357,13 @@ function ShelfMenu({
                 {plural(category.item_count, 'item', 'items')}
               </span>
               {hits > 0 ? (
-                <span className="font-mono text-[10.5px] whitespace-nowrap text-drop tnum">⌖ {hits} in range</span>
+                <span className="font-mono text-[10.5px] whitespace-nowrap text-drop tnum">⌖ {hits} at target</span>
               ) : null}
             </>
           }
         >
           {noSites ? (
-            <span className="font-mono text-[10.5px] text-warn">⚠ no sites · the hunter can't search this category</span>
+            <span className="font-mono text-[10.5px] text-warn">⚠ no sites · Snagr can't search this category</span>
           ) : (
             <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
               {siteNames.map((name) => (
@@ -395,7 +395,7 @@ function ShelfMenu({
             {noSites ? (
               <MenuRowText label="Hunt now" sub="⚠ link a site first" subClassName="text-warn" />
             ) : huntingOff ? (
-              <MenuRowText label="Hunt now" sub="hunting is paused by the operator" />
+              <MenuRowText label="Hunt now" sub="hunting is off on this server" />
             ) : (
               <>
                 Hunt now
@@ -498,8 +498,8 @@ function LeadLine({
     case 'closest':
       return (
         <span className={cn(base, 'text-[12.5px] text-ink-2')}>
-          {lead.name} · <span className="font-mono text-xs font-semibold text-lume tnum">{lead.amount}</span> from
-          striking
+          {lead.name} · <span className="font-mono text-xs font-semibold text-lume tnum">{lead.amount}</span> above
+          target
         </span>
       )
     case 'priced':

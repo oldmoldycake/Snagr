@@ -38,7 +38,7 @@ export function HuntButton({
     <Button
       {...buttonProps}
       disabled={huntingOff || isEnqueuing || buttonProps.disabled}
-      title={huntingOff ? 'Hunting is paused by the operator' : buttonProps.title}
+      title={huntingOff ? 'Hunting is turned off on this server' : buttonProps.title}
       onClick={() => enqueue({ kind: 'hunt', scope, scope_id: scopeId })}
     >
       {isEnqueuing ? <Loader2 className="animate-spin" /> : <Search />}

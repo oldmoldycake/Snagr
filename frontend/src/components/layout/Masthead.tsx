@@ -27,7 +27,7 @@ const NAV_ITEMS: readonly { to: string; label: string; end?: boolean; visionOnly
   { to: '/', label: 'Dashboard', end: true },
   { to: '/sites', label: 'Sites' },
   { to: '/activity', label: 'Activity' },
-  { to: '/review', label: 'Review', visionOnly: true },
+  { to: '/review', label: 'Photo review', visionOnly: true },
   { to: '/settings', label: 'Settings' },
 ]
 
@@ -133,7 +133,7 @@ function AccountMenu() {
   let status: string
   if (hunts > 0) status = `${hunts} ${hunts === 1 ? 'hunt' : 'hunts'} running`
   else if (checksRunning > 0) status = `checking · ${checksRunning} live`
-  else if (instance?.hunt_enabled === false) status = 'hunting paused by the operator · checks continue'
+  else if (instance?.hunt_enabled === false) status = 'Hunting is off on this server · prices are still checked'
   else if (summary.data?.next_check_at) status = `idle · next check ${countdown(summary.data.next_check_at)}`
   else status = 'idle'
 
@@ -169,7 +169,7 @@ function AccountMenu() {
         <DropdownMenuItem onSelect={() => setPanelOpen(true)}>
           <Radar size={16} animate={hunts + checksRunning > 0} />
           <span className="grid min-w-0 flex-1 gap-px">
-            <span>Hunter</span>
+            <span>Activity</span>
             <span className={cn('font-mono text-[10.5px]', hunts + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
               {status}
             </span>

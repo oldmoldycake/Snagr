@@ -41,7 +41,7 @@ export function CategoryRow({
         )}
       >
         {noSites
-          ? "⚠ no sites. The hunter can't search here."
+          ? "⚠ no sites. Snagr can't search here."
           : `${isNew ? 'new' : 'none of yours'} · searching ${siteNames.join(', ')}`}
       </span>
       {noSites ? (

@@ -207,7 +207,7 @@ export function ItemDetailPage() {
         <div className="pb-1">
           <p className="font-mono text-[13px] text-ink-2 tnum">
             target <span className="font-semibold text-ink">{formatMoney(target, detail.currency)}</span>
-            {' — '}best of {trackedCount} active {trackedCount === 1 ? 'listing' : 'listings'}
+            {' · '}best of {trackedCount} tracked {trackedCount === 1 ? 'listing' : 'listings'}
           </p>
           <p className="mt-1 font-mono text-[11px] text-ink-3">
             avg {formatMoney(detail.avg_price, detail.currency)}
@@ -248,8 +248,9 @@ export function ItemDetailPage() {
             <CardHeader>
               <CardTitle>Listings</CardTitle>
               <span className="font-mono text-[11px] text-ink-3 tnum">
-                {detail.listings.length} tracked · {trackedCount} active
-                {detail.selection_mode === 'best_match' ? ' · best match mode' : ''}
+                {trackedCount} tracked
+                {detail.listings.length > trackedCount ? ` · ${detail.listings.length - trackedCount} not tracked` : ''}
+                {detail.selection_mode === 'best_match' ? ' · picked by best match' : ''}
               </span>
             </CardHeader>
             <CardBody className="px-0 pb-1">
@@ -259,8 +260,8 @@ export function ItemDetailPage() {
                   title={detail.criteria ? 'No listings met your criteria' : 'No listings yet'}
                   description={
                     detail.criteria
-                      ? 'The hunter left the slots empty rather than track poor matches. Loosen the criteria, or press Hunt now to search again.'
-                      : "The hunter finds listings by searching this category's sites — it is already looking, and Hunt now asks it to go again."
+                      ? 'Snagr found listings, but none matched your criteria well enough to track. Loosen the criteria, or press Hunt now to try again.'
+                      : "Snagr finds listings by searching this category's sites. It's already looking, and Hunt now asks it to look again."
                   }
                   action={<HuntButton scope="item" scopeId={detail.id} variant="snag" size="sm" />}
                 />
@@ -300,7 +301,7 @@ export function ItemDetailPage() {
                 />
               ) : checkRows.length === 0 ? (
                 <p className="py-2 font-mono text-[11px] text-ink-3">
-                  No checks yet — the log fills in as the agent sweeps.
+                  No price checks yet. They appear once Snagr is tracking a listing.
                 </p>
               ) : (
                 <TerminalLog lines={shownChecks.map(checkLine)} />
@@ -318,7 +319,7 @@ export function ItemDetailPage() {
               {[
                 ['Target', formatMoney(target, detail.currency)],
                 ['Mode', detail.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'],
-                ['Slots', `${trackedCount} of ${detail.max_listings} used`],
+                ['Listings', `${trackedCount} of ${detail.max_listings} tracked`],
                 ['Sites', siteNames],
                 ['Reproductions', detail.allow_reproductions ? 'allowed' : 'not allowed'],
               ].map(([key, value]) => (
@@ -338,12 +339,12 @@ export function ItemDetailPage() {
                 </div>
               ))}
               <div className="flex items-center justify-between gap-3 py-2">
-                <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">Notify</dt>
+                <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">Notify at target</dt>
                 <dd>
                   <Switch
                     checked={detail.watch.notify}
                     onCheckedChange={(v) => notifyToggle.mutate(v)}
-                    aria-label="Notify me when the target price is hit"
+                    aria-label="Notify me when this item reaches its target"
                   />
                 </dd>
               </div>
@@ -361,7 +362,7 @@ export function ItemDetailPage() {
               className="mt-3 block w-full text-center font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase hover:text-rise"
               onClick={() => setDeleteOpen(true)}
             >
-              Delete item
+              Remove item
             </button>
           </Card>
         </div>
@@ -370,13 +371,11 @@ export function ItemDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
-        title="Delete item"
-        description={`“${detail.name}” and its price history will be permanently removed.${
-          instance?.vision_enabled
-            ? ' Its photo-reference library and stored listing images are deleted with it.'
-            : ''
-        }`}
-        confirmLabel="Delete item"
+        title="Remove item"
+        description={`Remove “${detail.name}” from your items? Your listings and price history for it are deleted${
+          instance?.vision_enabled ? ', along with the listing photos saved for it. Its reference photos stay' : ''
+        }. Anyone else tracking it keeps theirs.`}
+        confirmLabel="Remove item"
         pending={remove.isPending}
         onConfirm={() => remove.mutate()}
       />

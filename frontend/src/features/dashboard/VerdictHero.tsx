@@ -46,20 +46,20 @@ export function VerdictHero({
 
       {snagged.length > 0 ? (
         <h1 className="mt-3 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.015em] text-drop text-balance">
-          {snagged.length} in range
+          {snagged.length} at target
           <span aria-hidden className="ml-1 align-[3px] text-[0.7em]">
             ⌖
           </span>
         </h1>
       ) : (
         <h1 className="mt-3 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.015em] text-ink-2 text-balance">
-          Nothing in range yet
+          Nothing at target yet
         </h1>
       )}
 
       {closest ? (
         <p className="mt-2.5 text-base text-ink-2">
-          {snagged.length > 0 ? 'Next closest: ' : 'Closest: '}
+          {snagged.length > 0 ? 'Next closest: ' : 'Closest to target: '}
           <Link to={`/items/${closest.item.id}`} className="font-semibold text-ink hover:text-lume">
             {closest.item.name}
           </Link>{' '}
@@ -67,11 +67,11 @@ export function VerdictHero({
           <span className="font-mono text-[15px] font-semibold text-lume tnum">
             {formatMoney(fromCents(closest.gapCents), closest.item.currency)}
           </span>{' '}
-          from striking.
+          above its target.
         </p>
       ) : snagged.length === 0 ? (
         <p className="mt-2.5 text-base text-ink-2">
-          No prices yet — run a sweep to get eyes on your targets.
+          No prices yet. Snagr is searching your sites and fills this in as it finds listings.
         </p>
       ) : null}
 
@@ -115,7 +115,7 @@ function PulseLine({ items, drops }: { items: ItemSummary[]; drops: Map<number, 
       {quiet ? <span>no movement</span> : null}
       {struck > 0 ? (
         <span className="text-drop">
-          <span aria-hidden>⌖</span> <b className="font-semibold text-ink">{struck}</b> struck
+          <span aria-hidden>⌖</span> <b className="font-semibold text-ink">{struck}</b> reached target
         </span>
       ) : null}
       {dropped > 0 ? (

@@ -140,8 +140,8 @@ export function TrackingFields({
           onChange={(e) => setCriteria(e.target.value)}
         />
         <p className="mt-1.5 text-xs text-ink-3">
-          The agent reads this when picking which listings to track — condition, completeness,
-          anything a human would check.
+          Snagr reads this when choosing listings: condition, completeness, anything you'd check
+          yourself.
         </p>
       </div>
 
@@ -178,8 +178,8 @@ export function TrackingFields({
               <p className="mt-1.5 text-xs text-ink-3">
                 {value.selectionMode === 'best_match'
                   ? value.criteria.trim()
-                    ? 'Ranks listings by how well they fit your criteria; price breaks ties. Poor matches are skipped even if slots are free.'
-                    : 'Add criteria above so the agent has something to rank against.'
+                    ? "Ranks listings by how well they fit your criteria; price breaks ties. Poor matches are skipped even when there's room for more listings."
+                    : 'Add criteria above so Snagr has something to rank against.'
                   : 'Tracks the lowest-priced listings, criteria ignored for selection.'}
               </p>
             </div>
@@ -205,10 +205,10 @@ export function TrackingFields({
 
             <div className="flex items-start justify-between gap-3">
               <div>
-                <Label htmlFor="item-hunt">Hunting</Label>
+                <Label htmlFor="item-hunt">Hunt automatically</Label>
                 <p className="text-xs text-ink-3">
                   {value.hunt
-                    ? 'Look for new listings on its own while slots are open.'
+                    ? "Search for new listings on its own whenever there's room for more."
                     : 'Only when you press Hunt now. Prices are still checked.'}
                 </p>
               </div>

@@ -1330,7 +1330,7 @@ export const handlers = [
     }
     // the operator's kill switch: nothing would claim a hunt, so none is queued
     if (body.kind === 'hunt' && !HUNT_ENABLED) {
-      return err(409, 'hunting_disabled', 'Hunting is paused by the operator')
+      return err(409, 'hunting_disabled', 'Hunting is turned off on this server')
     }
 
     const scopeId = body.scope === 'global' ? null : (body.scope_id ?? null)
@@ -1338,7 +1338,8 @@ export const handlers = [
     // an unknown target and one holding none of the caller's watches are the
     // same 404: neither is anything this caller can ask the hunter about
     if (watches == null || watches.length === 0) {
-      return err(404, 'not_found', `Nothing to ${body.kind} in that scope`)
+      const action = body.kind === 'hunt' ? 'hunt for' : 'check prices for'
+      return err(404, 'not_found', `You have no items here to ${action}`)
     }
 
     const queued: MockJob[] = []

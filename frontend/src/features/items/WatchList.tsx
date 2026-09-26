@@ -317,7 +317,7 @@ export function WatchList({
                           <>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem tone="danger" onSelect={() => onDelete(item)}>
-                              <Trash2 /> Delete
+                              <Trash2 /> Remove
                             </DropdownMenuItem>
                           </>
                         ) : null}

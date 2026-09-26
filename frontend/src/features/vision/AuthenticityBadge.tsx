@@ -25,7 +25,7 @@ export function AuthenticityChip({ read }: { read: AuthenticityRead }) {
   return (
     <SimpleTooltip content={<span className="max-w-64">{VERDICT_COPY.leans_fake}</span>}>
       <Badge variant="rise" className="shrink-0 font-mono text-[10px] tnum">
-        ✗ photos·fakes{read.fake_confidence != null ? ` ${read.fake_confidence}` : ''}
+        ✗ likely fake{read.fake_confidence != null ? ` · ${Math.round(Number(read.fake_confidence) * 100)}%` : ''}
       </Badge>
     </SimpleTooltip>
   )

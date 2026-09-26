@@ -64,7 +64,7 @@ function SiteDialog({
         <DialogHeader>
           <DialogTitle>{site ? 'Edit site' : 'Add site'}</DialogTitle>
           <DialogDescription>
-            The agent browses this site when it's linked to a category.
+            Snagr searches this site for items in the categories it's linked to.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -174,7 +174,7 @@ export function SitesPage() {
             <EmptyState
               className="m-4 border-0"
               title="No sites yet"
-              description="Add the stores you want the agent to search, then link them to categories."
+              description="Add the sites you want Snagr to search, then link them to categories."
             />
           ) : (
             <Table>

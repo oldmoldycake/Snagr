@@ -36,7 +36,7 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
           ●
         </span>
         hunting {live.site_name ?? 'now'} · {formatDuration(live.started_at)} ·{' '}
-        {detail.hunt.slots_open} of {detail.max_listings} slots open
+        room for {detail.hunt.slots_open} more {detail.hunt.slots_open === 1 ? 'listing' : 'listings'}
       </p>
     )
   }
@@ -68,12 +68,12 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
       </span>
       {huntingOff ? (
         <>
-          <span>hunting</span> paused by the operator
+          <span>hunting</span> is off on this server
         </>
       ) : (
         <>
           <span className={cn(detail.hunt.slots_open === 0 && 'text-ink-3')}>hunting</span>
-          {detail.hunt.enabled ? ' ' : ' off — only when you press Hunt now · '}
+          {detail.hunt.enabled ? ' · ' : ' off — only when you press Hunt now · '}
           {huntingHalf(detail)}
         </>
       )}
@@ -94,11 +94,11 @@ function huntingHalf(detail: ItemDetail): string {
   const { hunt } = detail
   const full = hunt.slots_open === 0
   let slots = full
-    ? `${detail.max_listings} of ${detail.max_listings} slots filled · paused until a slot frees`
-    : `${hunt.slots_open} of ${detail.max_listings} slots open`
+    ? `tracking ${detail.max_listings} of ${detail.max_listings} listings · automatic hunts wait until you stop tracking one`
+    : `room for ${hunt.slots_open} more ${hunt.slots_open === 1 ? 'listing' : 'listings'}`
   // a switched-off watch has nothing queued on its own, so there is no "next"
   if (hunt.enabled && !full && hunt.next_at != null) {
-    slots += ` · next hunt ${countdown(hunt.next_at)}${hunt.backoff_minutes != null ? ' (backoff)' : ''}`
+    slots += ` · next hunt ${countdown(hunt.next_at)}${hunt.backoff_minutes != null ? ' (slowed down after finding nothing)' : ''}`
   }
   if (hunt.last_at == null || hunt.last_result == null) return slots
   // a full watch was never going to save anything, so "nothing new" would be

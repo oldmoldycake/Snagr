@@ -151,7 +151,7 @@ export function ReviewQueuePage() {
     <div className="space-y-5">
       <div className="flex items-baseline gap-3">
         <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
-          Review
+          Photo review
         </h1>
         {queue.data ? (
           <span className="font-mono text-[11px] text-ink-3 tnum">
@@ -180,8 +180,8 @@ export function ReviewQueuePage() {
         />
       ) : entries.length === 0 ? (
         <EmptyState
-          title="Queue clear"
-          description="When a scan finds a listing photo that strongly matches an item's references, it lands here for your call. Confirming grows that item's library — the more it holds, the sharper future checks get."
+          title="Nothing to review"
+          description="When Snagr finds a listing photo that closely matches an item's reference photos, it shows up here for you to confirm. Each one you confirm makes future photo checks more accurate."
         />
       ) : (
         <>

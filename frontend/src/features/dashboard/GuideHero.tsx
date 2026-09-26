@@ -46,22 +46,22 @@ export function GuideHero({
         <p className="mt-2 max-w-[58ch] text-[15px] text-ink-2">
           {state.kind === 'ready' ? (
             <>
-              The hunter will search <b className="font-semibold text-ink">{siteList(state.siteNames)}</b>. Now give it
+              Snagr will search <b className="font-semibold text-ink">{siteList(state.siteNames)}</b>. Now give it
               something to hunt: a name and a target price.
             </>
           ) : state.kind === 'shared' ? (
             <>
-              Everything you track sits in a category: a shelf, plus the sites the hunter searches. People here
-              already hunt{' '}
+              Everything you track belongs to a category, which sets the sites Snagr searches. This server already
+              has{' '}
               <b className="font-semibold text-ink">
                 {state.categoryCount} {state.categoryCount === 1 ? 'category' : 'categories'}
               </b>
-              . Add an item to one below, or create one of your own.
+              . Add an item to one below, or create your own.
             </>
           ) : (
             <>
-              Everything you track sits in a category: a shelf, plus the sites the hunter searches, like eBay or
-              Newegg. Create one first, then add items to it.
+              Everything you track belongs to a category, which sets the sites Snagr searches, like eBay or
+              Newegg. Create a category first, then add items to it.
             </>
           )}
         </p>
@@ -107,7 +107,7 @@ export function GuideHero({
             <i className="block h-2.5 w-[85%] rounded-[3px] bg-raised" />
           </div>
           <p className="mt-3 text-[12.5px] text-ink-3">
-            This is what a shelf looks like. Items you add show up here, closest to target first.
+            This is how a category looks on your dashboard. Items you add appear here, closest to target first.
           </p>
         </div>
       ) : null}

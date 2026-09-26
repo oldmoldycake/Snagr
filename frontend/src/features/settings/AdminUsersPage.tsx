@@ -81,7 +81,7 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
         {created ? (
           <>
             <DialogBody className="space-y-3">
-              <Label>Invite link (expires {relativeTime(created.expires_at).replace(' ago', '')})</Label>
+              <Label>Invite link (expires {new Date(created.expires_at).toLocaleDateString()})</Label>
               <div className="flex gap-2">
                 <Input readOnly value={inviteUrl(created)} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
                 <Button onClick={copy} aria-label="Copy invite link">
@@ -315,7 +315,7 @@ export function AdminUsersPage() {
         title="Delete user"
         description={
           deleting
-            ? `${deleting.email}'s account, categories, items, and price history are removed permanently.`
+            ? `This permanently deletes ${deleting.email}'s account. You can only delete users who have no items; for anyone else, deactivate the account instead.`
             : ''
         }
         confirmLabel="Delete user"

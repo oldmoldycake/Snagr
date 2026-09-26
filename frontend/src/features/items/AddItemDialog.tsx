@@ -101,13 +101,13 @@ export function AddItemDialog({
           <DialogEyebrow>Add item</DialogEyebrow>
           <DialogTitle>{categoryName}</DialogTitle>
           <DialogDescription>
-            The hunter searches{' '}
+            Snagr searches{' '}
             {siteNames.length > 0 ? (
               <b className="font-medium text-ink">{siteList(siteNames)}</b>
             ) : (
               "this category's sites"
             )}{' '}
-            on its next sweep. No URLs needed.
+            for listings. You don't need to paste any links.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -168,7 +168,7 @@ export function AddItemDialog({
                 />
               </div>
               <p className="mt-1.5 text-xs text-ink-3">
-                You'll see <span className="text-drop">⌖ Snagged</span> when the best price hits this.
+                You'll see <span className="text-drop">⌖ at target</span> when the best price is at or below this.
               </p>
             </div>
 
