@@ -2,15 +2,18 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { updateSite } from '@/api/endpoints'
 import type { PausedSite } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { useSession } from '@/features/auth/useSession'
 import { clockTime, countdown } from '@/lib/time'
 
 /**
  * The circuit breaker, said out loud. A paused site is read by nothing until
  * its pause lifts, which is a thing a person needs told rather than left to
- * infer from a queue that stopped moving.
+ * infer from a queue that stopped moving. Sites are shared, so only an admin
+ * can lift the pause early.
  */
 export function PausedSiteCard({ site }: { site: PausedSite }) {
   const queryClient = useQueryClient()
+  const isAdmin = useSession().data?.role === 'admin'
   const resume = useMutation({
     mutationFn: () => updateSite(site.site_id, { paused_until: null }),
     onSuccess: () => {
@@ -32,9 +35,11 @@ export function PausedSiteCard({ site }: { site: PausedSite }) {
         {site.paused_reason}. Its checks and hunts wait until {clockTime(site.paused_until)}, then
         resume on their own.
       </p>
-      <Button variant="warn" size="sm" disabled={resume.isPending} onClick={() => resume.mutate()}>
-        Resume now
-      </Button>
+      {isAdmin ? (
+        <Button variant="warn" size="sm" disabled={resume.isPending} onClick={() => resume.mutate()}>
+          Resume now
+        </Button>
+      ) : null}
     </div>
   )
 }

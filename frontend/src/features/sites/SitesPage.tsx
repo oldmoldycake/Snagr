@@ -32,6 +32,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { relativeTime } from '@/lib/time'
 import { HuntButton } from '@/features/activity/HuntButton'
+import { useSession } from '@/features/auth/useSession'
 
 function SiteDialog({
   site,
@@ -111,7 +112,7 @@ function SiteDialog({
   )
 }
 
-/** The site list: add, edit and delete the stores the hunter searches. */
+/** The site list: the stores the hunter searches. Sites are shared, so only an admin adds, edits or deletes one. */
 export function SitesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Site | null>(null)
@@ -120,6 +121,7 @@ export function SitesPage() {
   const [dialogSession, setDialogSession] = useState(0)
   const [deleting, setDeleting] = useState<Site | null>(null)
   const queryClient = useQueryClient()
+  const isAdmin = useSession().data?.role === 'admin'
 
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
@@ -141,17 +143,19 @@ export function SitesPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-3">
         <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Sites</h1>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => {
-            setEditing(null)
-            setDialogSession((n) => n + 1)
-            setDialogOpen(true)
-          }}
-        >
-          <Plus /> Add site
-        </Button>
+        {isAdmin ? (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => {
+              setEditing(null)
+              setDialogSession((n) => n + 1)
+              setDialogOpen(true)
+            }}
+          >
+            <Plus /> Add site
+          </Button>
+        ) : null}
       </div>
 
       <Card>
@@ -165,7 +169,11 @@ export function SitesPage() {
             <EmptyState
               className="m-4 border-0"
               title="No sites yet"
-              description="Add the stores you want the agent to search, then link them to categories."
+              description={
+                isAdmin
+                  ? 'Add the stores you want the agent to search, then link them to categories.'
+                  : 'An admin adds the stores the agent searches and links them to categories.'
+              }
             />
           ) : (
             <Table>
@@ -212,47 +220,49 @@ export function SitesPage() {
                     <TD>
                       <div className="flex items-center justify-end gap-1">
                         <HuntButton scope="site" scopeId={site.id} label="Hunt this site" variant="ghost" size="sm" />
-                        <DropdownMenu>
-                          <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
-                          <DropdownMenuContent align="end" className="w-60">
-                            <DropdownMenuLabel
-                              title={site.name}
-                              meta={
-                                <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
-                                  {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'}
-                                </span>
-                              }
-                            >
-                              {site.category_ids.length === 0 ? (
-                                <span className="font-mono text-[10.5px] text-ink-3">not linked to a category</span>
-                              ) : (
-                                <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
-                                  {site.category_ids.map((cid) => (
-                                    <span
-                                      key={cid}
-                                      className="inline-flex h-[17px] items-center rounded-[3px] border border-hairline bg-raised px-[5px]"
-                                    >
-                                      {categoryName(cid)}
-                                    </span>
-                                  ))}
-                                </span>
-                              )}
-                            </DropdownMenuLabel>
-                            <DropdownMenuItem
-                              onSelect={() => {
-                                setEditing(site)
-                                setDialogSession((n) => n + 1)
-                                setDialogOpen(true)
-                              }}
-                            >
-                              <Pencil /> Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem tone="danger" onSelect={() => setDeleting(site)}>
-                              <Trash2 /> Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        {isAdmin ? (
+                          <DropdownMenu>
+                            <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
+                            <DropdownMenuContent align="end" className="w-60">
+                              <DropdownMenuLabel
+                                title={site.name}
+                                meta={
+                                  <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                                    {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'}
+                                  </span>
+                                }
+                              >
+                                {site.category_ids.length === 0 ? (
+                                  <span className="font-mono text-[10.5px] text-ink-3">not linked to a category</span>
+                                ) : (
+                                  <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
+                                    {site.category_ids.map((cid) => (
+                                      <span
+                                        key={cid}
+                                        className="inline-flex h-[17px] items-center rounded-[3px] border border-hairline bg-raised px-[5px]"
+                                      >
+                                        {categoryName(cid)}
+                                      </span>
+                                    ))}
+                                  </span>
+                                )}
+                              </DropdownMenuLabel>
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  setEditing(site)
+                                  setDialogSession((n) => n + 1)
+                                  setDialogOpen(true)
+                                }}
+                              >
+                                <Pencil /> Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem tone="danger" onSelect={() => setDeleting(site)}>
+                                <Trash2 /> Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
                       </div>
                     </TD>
                   </TR>

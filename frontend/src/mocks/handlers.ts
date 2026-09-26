@@ -616,7 +616,7 @@ export const handlers = [
   }),
 
   http.post('/api/categories', async ({ request }) => {
-    requireUser()
+    requireAdmin()
     const body = (await request.json()) as CategoryCreateRequest
     const name = body.name?.trim()
     if (!name) return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
@@ -631,7 +631,7 @@ export const handlers = [
   }),
 
   http.patch('/api/categories/:id', async ({ params, request }) => {
-    requireUser()
+    requireAdmin()
     const category = store.categories.find((c) => c.id === Number(params.id))
     if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
     const body = (await request.json()) as CategoryUpdateRequest
@@ -642,7 +642,7 @@ export const handlers = [
   }),
 
   http.delete('/api/categories/:id', async ({ params }) => {
-    requireUser()
+    requireAdmin()
     const id = Number(params.id)
     const itemIds = new Set(store.items.filter((i) => i.category_id === id).map((i) => i.id))
     store.categories = store.categories.filter((c) => c.id !== id)
@@ -659,7 +659,7 @@ export const handlers = [
   }),
 
   http.put('/api/categories/:id/sites', async ({ params, request }) => {
-    requireUser()
+    requireAdmin()
     const category = store.categories.find((c) => c.id === Number(params.id))
     if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
     const body = (await request.json()) as { site_ids: number[] }
@@ -674,7 +674,7 @@ export const handlers = [
   }),
 
   http.post('/api/sites', async ({ request }) => {
-    requireUser()
+    requireAdmin()
     const body = (await request.json()) as SiteCreateRequest
     if (!body.name?.trim() || !body.base_url?.trim()) {
       return err(422, 'validation_error', 'Name and base URL are required')
@@ -692,7 +692,7 @@ export const handlers = [
   }),
 
   http.patch('/api/sites/:id', async ({ params, request }) => {
-    requireUser()
+    requireAdmin()
     const site = store.sites.find((s) => s.id === Number(params.id))
     if (!site) return err(404, 'not_found', `Site ${params.id} does not exist`)
     const body = (await request.json()) as SiteUpdateRequest
@@ -719,7 +719,7 @@ export const handlers = [
   }),
 
   http.delete('/api/sites/:id', async ({ params }) => {
-    requireUser()
+    requireAdmin()
     const id = Number(params.id)
     store.sites = store.sites.filter((s) => s.id !== id)
     for (const category of store.categories) {

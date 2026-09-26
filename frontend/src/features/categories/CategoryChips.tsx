@@ -4,6 +4,7 @@ import { listCategories } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
 import { useTrack } from '@/lib/useTrack'
+import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from './CreateCategoryDialog'
 
 /**
@@ -13,6 +14,8 @@ import { CreateCategoryDialog } from './CreateCategoryDialog'
 export function CategoryChips({ activeSlug, className }: { activeSlug?: string; className?: string }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const categories = data?.data ?? []
+  // categories are shared, so only an admin creates one
+  const isAdmin = useSession().data?.role === 'admin'
   // one lume bar tracks the active link, as the masthead's does its tabs; a new
   // category can push the active link along, so the count moves it too
   const { hostRef, markerRef } = useTrack<HTMLElement>('a[aria-current="page"]', `${activeSlug}:${categories.length}`)
@@ -49,11 +52,13 @@ export function CategoryChips({ activeSlug, className }: { activeSlug?: string; 
           ) : null}
         </Link>
       ))}
-      <CreateCategoryDialog
-        variant="ghost"
-        className="h-auto px-1 py-0 text-[11px] text-ink-3"
-        trigger={<span>＋ category</span>}
-      />
+      {isAdmin ? (
+        <CreateCategoryDialog
+          variant="ghost"
+          className="h-auto px-1 py-0 text-[11px] text-ink-3"
+          trigger={<span>＋ category</span>}
+        />
+      ) : null}
     </nav>
   )
 }

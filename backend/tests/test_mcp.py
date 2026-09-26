@@ -465,6 +465,46 @@ async def test_catalog_writes(client):
         assert await _ok(agent, "list_categories") == []
 
 
+async def test_catalog_writes_are_admin_only(client, db_session):
+    """The catalog is shared, so its write tools answer `forbidden` to a
+    non-admin's token — checked before the category or site is even looked
+    up — while the reads stay open."""
+    user_id = await _sign_in(client)
+    cat = (await client.post("/api/categories", json={"name": "Cameras"}, headers=CSRF)).json()
+    site_body = {"name": "eBay", "base_url": "https://ebay.com"}
+    site = (await client.post("/api/sites", json=site_body, headers=CSRF)).json()
+    token = await _token(client, scopes=("read", "write"))
+
+    # the first registered user is the admin, so demote them to test this
+    async with db_session() as session:
+        user = await session.get(User, user_id)
+        user.role = "user"
+        await session.commit()
+
+    async with _agent(token) as agent:
+        calls = [
+            ("create_category", {"name": "Lenses"}),
+            ("update_category", {"category": "cameras", "name": "Film cameras"}),
+            ("update_category", {"category": "cameras", "site_ids": ["ebay"]}),
+            ("delete_category", {"category": "cameras"}),
+            ("create_site", {"name": "Evil", "base_url": "http://evil.example"}),
+            ("update_site", {"site": "ebay", "base_url": "http://evil.example"}),
+            ("delete_site", {"site": "ebay"}),
+            ("delete_category", {"category": "nope"}),
+        ]
+        for tool, args in calls:
+            assert (await _error(agent, tool, **args))["code"] == "forbidden", tool
+
+        (category,) = await _ok(agent, "list_categories")
+        assert (category["id"], category["name"], category["site_ids"]) == (
+            cat["id"],
+            "Cameras",
+            [],
+        )
+        (listed,) = await _ok(agent, "list_sites")
+        assert (listed["id"], listed["base_url"]) == (site["id"], "https://ebay.com")
+
+
 async def test_item_writes(client, db_session):
     user_id = await _sign_in(client)
     seed = await _seed_listings(db_session, user_id)

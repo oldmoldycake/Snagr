@@ -1,4 +1,6 @@
-"""Sites — /api/sites. Auth required.
+"""Sites — /api/sites. Auth required; every write is admin-only (403
+forbidden otherwise): sites are shared, and the hunter searches a site's
+base_url on every user's behalf.
 
 category_ids / listing_count / last_checked_at are computed at query time
 (services/catalog.py, shared with the MCP tools), never stored. paused_until
@@ -10,7 +12,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import csrf_guard, current_user
+from app.core.deps import csrf_guard, current_user, require_admin
 from app.core.errors import err
 from app.database import get_db
 from app.schemas.catalog import Site, SiteCreateRequest, SiteUpdateRequest
@@ -33,7 +35,7 @@ async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_
     "", response_model=Site, status_code=status.HTTP_201_CREATED, dependencies=[Depends(csrf_guard)]
 )
 async def create_site(
-    body: SiteCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+    body: SiteCreateRequest, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """Add a site; 422 validation_error when the name or base URL is blank."""
     try:
@@ -47,7 +49,7 @@ async def update_site(
     site_id: int,
     body: SiteUpdateRequest,
     request: Request,
-    user=Depends(current_user),
+    user=Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Rename a site, change its base URL, or lift a pause; 404 for an unknown site.
@@ -75,7 +77,9 @@ async def update_site(
 @router.delete(
     "/{site_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_guard)]
 )
-async def delete_site(site_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def delete_site(
+    site_id: int, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
+):
     """Delete a site; 404 for an unknown site. One that listings still reference
     fails the foreign key and answers 503 db_unavailable."""
     try:

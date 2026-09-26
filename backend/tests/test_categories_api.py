@@ -19,12 +19,14 @@ each request runs on its own session, so uncommitted rows are invisible.
 from contextlib import asynccontextmanager
 
 import pytest
-from app.models import User
+from app.config import settings
+from app.models import SiteCategories, User
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
 
 OWNER = {"email": "categories@example.com", "password": "hunter2hunter2"}
+STRANGER = {"email": "stranger@example.com", "password": "hunter2hunter2"}
 
 
 async def _sign_in(client, creds=OWNER):
@@ -238,3 +240,61 @@ async def test_write_routes_return_the_callers_snagged_count(client, db_session)
     )
     assert sites.status_code == 200, sites.text
     assert sites.json()["snagged_count"] == 1
+
+
+# --- writes are admin-only ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/categories", {"name": "Consoles"}),
+        ("PATCH", "/api/categories/{id}", {"name": "Games (renamed)"}),
+        ("PUT", "/api/categories/{id}/sites", {"site_ids": []}),
+        ("DELETE", "/api/categories/{id}", None),
+    ],
+)
+async def test_category_writes_are_admin_only(client, db_session, method, path, body):
+    """Categories are shared by every user, so a non-admin's write is 403
+    forbidden and changes nothing."""
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        category = await sc.category("Games")
+        site = await sc.site()
+        sc.db.add(SiteCategories(site_id=site.id, category_id=category.id))
+        category_id, site_id = category.id, site.id
+
+    # the first registered user is the admin, so demote them to test this
+    async with db_session() as session:
+        user = await session.get(User, user_id)
+        user.role = "user"
+        await session.commit()
+
+    res = await client.request(method, path.format(id=category_id), json=body, headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    categories = await _categories_by_name(client)
+    assert list(categories) == ["Games"]
+    assert categories["Games"]["site_ids"] == [site_id]
+
+
+async def test_a_user_cannot_delete_a_category_holding_anothers_watches(
+    client, make_client, monkeypatch
+):
+    """Deleting a category cascades through every user's items, watches and
+    price history in it — a plain user must not be able to trigger that."""
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _sign_in(client)  # the admin
+    category = (await client.post("/api/categories", json={"name": "Games"}, headers=CSRF)).json()
+    body = {"category_id": category["id"], "name": "Chrono Trigger", "target_price": "150.00"}
+    item = await client.post("/api/items", json=body, headers=CSRF)
+    assert item.status_code == 201, item.text
+
+    stranger = await make_client()
+    await _sign_in(stranger, STRANGER)
+    res = await stranger.delete(f"/api/categories/{category['id']}", headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    assert (await client.get(f"/api/items/{item.json()['id']}")).status_code == 200

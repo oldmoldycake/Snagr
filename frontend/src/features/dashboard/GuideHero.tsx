@@ -1,5 +1,6 @@
 import type { Category, ItemSummary } from '@/api/types'
 import { StepPips } from '@/components/ui/step-pips'
+import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { siteList } from '@/features/sites/siteList'
@@ -16,6 +17,8 @@ const CTA = 'h-[38px] px-4 text-xs'
  * The dashboard's hero until the caller has an item: it walks them through
  * ① a category → ② items in it. "Ready" is only known to the page that just ran
  * New category (categories have no owner), so after a reload it reads "shared".
+ * Categories are shared, so only an admin creates one: everyone else is walked
+ * to an existing category, or told to ask an admin when there is none.
  */
 export function GuideHero({
   state,
@@ -26,6 +29,7 @@ export function GuideHero({
   onCreated: (category: Category) => void
   onAdded: (item: ItemSummary) => void
 }) {
+  const isAdmin = useSession().data?.role === 'admin'
   const eyebrow = `Getting started · ${new Date().toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
@@ -40,7 +44,9 @@ export function GuideHero({
           {state.kind === 'ready'
             ? `${state.category.name} is ready`
             : state.kind === 'shared'
-              ? 'Pick a category, or make your own'
+              ? isAdmin
+                ? 'Pick a category, or make your own'
+                : 'Pick a category'
               : 'Nothing to hunt yet'}
         </h1>
         <p className="mt-2 max-w-[58ch] text-[15px] text-ink-2">
@@ -56,19 +62,31 @@ export function GuideHero({
               <b className="font-semibold text-ink">
                 {state.categoryCount} {state.categoryCount === 1 ? 'category' : 'categories'}
               </b>
-              . Add an item to one below, or create one of your own.
+              . {isAdmin ? 'Add an item to one below, or create one of your own.' : 'Add an item to one below.'}
             </>
           ) : (
             <>
               Everything you track sits in a category: a shelf, plus the sites the hunter searches, like eBay or
-              Newegg. Create one first, then add items to it.
+              Newegg.{' '}
+              {isAdmin
+                ? 'Create one first, then add items to it.'
+                : 'An admin creates them. Ask yours for one, then add items to it.'}
             </>
           )}
         </p>
         <StepPips
           size="md"
           className="mt-4"
-          steps={[state.kind === 'shared' ? 'Choose or create a category' : 'Create a category', 'Add items to it']}
+          steps={[
+            state.kind === 'shared'
+              ? isAdmin
+                ? 'Choose or create a category'
+                : 'Choose a category'
+              : isAdmin
+                ? 'Create a category'
+                : 'Get a category from an admin',
+            'Add items to it',
+          ]}
           current={state.kind === 'ready' ? 2 : 1}
         />
         <div className="mt-[18px] flex flex-wrap items-center gap-x-3.5 gap-y-2.5">
@@ -80,15 +98,17 @@ export function GuideHero({
               trigger={`＋ Add item to ${state.category.name}`}
               onAdded={onAdded}
             />
-          ) : (
+          ) : isAdmin ? (
             <CreateCategoryDialog
               className={CTA}
               trigger={state.kind === 'shared' ? '＋ Create a category' : '＋ Create your first category'}
               onCreated={onCreated}
             />
-          )}
+          ) : null}
           {state.kind === 'shared' ? (
-            <span className="text-[12.5px] text-ink-3">or use Add item on a category below</span>
+            <span className="text-[12.5px] text-ink-3">
+              {isAdmin ? 'or use Add item on a category below' : 'Use Add item on a category below'}
+            </span>
           ) : null}
         </div>
       </section>
