@@ -20,7 +20,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 from app.config import settings
-from app.models import SiteCategories, User
+from app.models import Items, MarketPrices, SiteCategories, User
+from sqlalchemy import func, select
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -298,3 +299,28 @@ async def test_a_user_cannot_delete_a_category_holding_anothers_watches(
     assert res.status_code == 403, res.text
     assert res.json()["error"]["code"] == "forbidden"
     assert (await client.get(f"/api/items/{item.json()['id']}")).status_code == 200
+
+
+# --- delete -------------------------------------------------------------------
+
+
+async def test_deleting_a_category_removes_its_grounded_items(client, db_session):
+    """Every new item gets a grounding job, so in normal use an item has a
+    market_prices row; deleting its category must remove that row too rather
+    than trip the foreign key."""
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        category = await sc.category("Games")
+        item = await sc.item("Chrono Trigger", category=category)
+        watch = await sc.watch(item, target_price="150.00")
+        await sc.checks(await sc.listing(watch, item), (1, "149.00"))
+        sc.db.add(MarketPrices(item_id=item.id, status="ok", as_of=sc.ago(1)))
+        category_id, item_id = category.id, item.id
+
+    res = await client.delete(f"/api/categories/{category_id}", headers=CSRF)
+
+    assert res.status_code == 204, res.text
+    assert await _categories_by_name(client) == {}
+    async with db_session() as session:
+        assert await session.get(Items, item_id) is None
+        assert await session.scalar(select(func.count()).select_from(MarketPrices)) == 0

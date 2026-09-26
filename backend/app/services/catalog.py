@@ -18,6 +18,7 @@ from app.models import (
     Jobs,
     ListingChecks,
     Listings,
+    MarketPrices,
     PriceChecks,
     SiteCategories,
     Sites,
@@ -114,8 +115,9 @@ async def update_category(
 
 
 async def delete_category(db: AsyncSession, category_id: int) -> None:
-    """Delete a category and everything under it — its items, every user's
-    watches on them, their listings and checks. 404 unknown. Commits."""
+    """Delete a category and everything under it — its items and their market
+    stats, every user's watches on them, their listings and checks. 404
+    unknown. Commits."""
     cat = await db.get(Categories, category_id)
     if cat is None:
         raise err(404, "not_found", f"Category {category_id} does not exist")
@@ -130,6 +132,7 @@ async def delete_category(db: AsyncSession, category_id: int) -> None:
     await db.execute(delete(ListingChecks).where(ListingChecks.watch_id.in_(watch_ids)))
     await db.execute(delete(Watches).where(Watches.id.in_(watch_ids)))
     await db.execute(delete(SiteCategories).where(SiteCategories.category_id == cat.id))
+    await db.execute(delete(MarketPrices).where(MarketPrices.item_id.in_(item_ids)))
     await db.execute(delete(Items).where(Items.category_id == cat.id))
 
     await db.delete(cat)
