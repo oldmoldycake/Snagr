@@ -16,14 +16,17 @@ const MOCKS_ON = import.meta.env.VITE_USE_MOCKS === 'true'
  * an OIDC provider. Already signed-in visitors go straight to the dashboard.
  */
 export function LoginPage() {
-  const { data: user } = useSession()
+  const session = useSession()
   const { data: instance } = useInstance()
   const login = useLogin()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [searchParams] = useSearchParams()
 
-  if (user) return <Navigate to="/" replace />
+  // A failed refetch keeps the last user in `data` while AuthGuard, seeing the
+  // error, sends the visitor here: only a successful read means signed in, or
+  // the two pages redirect to each other forever.
+  if (session.isSuccess) return <Navigate to="/" replace />
 
   const errorMessage =
     login.error instanceof ApiError
