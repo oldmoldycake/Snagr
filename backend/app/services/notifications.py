@@ -53,6 +53,11 @@ MAX_ATTEMPTS = 5
 # seconds until retry n+1 after failure n: quick blip, short outage, longer
 # outage, "try again in a while"
 RETRY_BACKOFF = (30, 300, 1800, 7200)
+# Idle seconds before the dispatcher probes its link (and drains due
+# retries), which is also how long the probe may take before the link counts
+# as dead; then the reconnect pause.
+HEARTBEAT_SECONDS = 10
+RECONNECT_SECONDS = 5
 
 _EMBED_COLORS = {"target.hit": 0x22C55E, "listing.new": 0x3B82F6, "test": 0x64748B}
 
@@ -348,18 +353,27 @@ async def listen_pg() -> None:
                 await _drain()
                 while True:
                     try:
-                        await asyncio.wait_for(pending.get(), timeout=10)
+                        await asyncio.wait_for(pending.get(), timeout=HEARTBEAT_SECONDS)
                         while not pending.empty():  # coalesce a burst into one drain
                             pending.get_nowait()
                     except TimeoutError:
-                        # idle: surface a silently-dead TCP link (VPN drop) —
-                        # and this tick is what makes due retries fire
-                        await conn.execute("SELECT 1")
+                        # idle: surface a silently-dead TCP link (VPN drop),
+                        # bounded because on such a link the probe itself
+                        # hangs — and this tick is what makes due retries fire
+                        await conn.execute("SELECT 1", timeout=HEARTBEAT_SECONDS)
                     await _drain()
             finally:
-                await conn.close()
-        # SQLAlchemyError too, unlike the SSE hub: _drain() IS this task's job,
-        # so a DB loss inside it must reconnect rather than kill the loop
-        except (OSError, asyncpg.PostgresError, SQLAlchemyError) as e:
-            log.error(f"notification dispatcher lost Postgres ({e}); retrying in 5s")
-            await asyncio.sleep(5)
+                await conn.close(timeout=RECONNECT_SECONDS)
+        # a connection the server dropped raises InterfaceError, not a
+        # PostgresError; SQLAlchemyError too, unlike the SSE hub: _drain() IS
+        # this task's job, so a DB loss inside it must reconnect as well
+        except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError, SQLAlchemyError) as e:
+            log.error(
+                f"notification dispatcher lost Postgres ({e!r}); retrying in {RECONNECT_SECONDS}s"
+            )
+            await asyncio.sleep(RECONNECT_SECONDS)
+        except Exception:
+            # not a lost link but a bug — still no reason to stop everyone's
+            # notifications until a restart
+            log.exception(f"notification dispatcher failed; restarting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)

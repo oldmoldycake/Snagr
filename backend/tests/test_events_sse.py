@@ -23,6 +23,7 @@ import pytest
 from app.database import _sessionmaker
 from app.models import JobEvents, Jobs, PriceChecks, User
 from app.services import events as events_service
+from sqlalchemy import text
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -278,6 +279,13 @@ class TestHub:
         await _notify(events_service.EVENTS_CHANNEL, job_id=999, seq=1)
         await _notify(events_service.JOBS_CHANNEL, id=999)
         await _notify(events_service.EVENTS_CHANNEL, check=999)
+        assert mailbox.empty()
+
+    async def test_an_event_type_this_backend_does_not_know_is_skipped(self, mailbox):
+        # a newer agent's event: one lost frame, not a raise out of the hub
+        (job_id,) = await _seed(_job())
+        await _seed(_event(job_id, seq=1, event_type="from_a_newer_agent"))
+        await _notify(events_service.EVENTS_CHANNEL, job_id=job_id, seq=1)
         assert mailbox.empty()
 
 
@@ -571,6 +579,32 @@ class TestEndToEnd:
             assert message["event"] == "job.event"
             assert message["id"] == f"{job_id}:1"
             assert json.loads(message["data"])["message"] == "Hunting TestBay…"
+        finally:
+            listener.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await listener
+
+    async def test_the_listener_reconnects_after_postgres_drops_it(
+        self, mailbox, pg_connections, monkeypatch
+    ):
+        """A Postgres restart surfaces as InterfaceError at the next
+        heartbeat; the loop must reconnect and re-snapshot, not die."""
+        monkeypatch.setattr(events_service, "HEARTBEAT_SECONDS", 0.1)
+        monkeypatch.setattr(events_service, "RECONNECT_SECONDS", 0.1)
+        listener = asyncio.create_task(events_service.listen_pg())
+        try:
+            assert (await _next(mailbox))["event"] == "job.snapshot"
+
+            async with _sessionmaker()() as session:
+                await session.execute(
+                    text("SELECT pg_terminate_backend(:pid)"),
+                    {"pid": pg_connections[0].get_server_pid()},
+                )
+            # reconnected once the next snapshot lands
+            assert (await _next(mailbox))["event"] == "job.snapshot"
+
+            await _seed(_job())
+            assert (await _next(mailbox))["event"] == "job.started"
         finally:
             listener.cancel()
             with pytest.raises(asyncio.CancelledError):

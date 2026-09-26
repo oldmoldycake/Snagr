@@ -30,7 +30,7 @@ import pytest
 from app.config import settings
 from app.models import NotificationDeliveries, NotificationOutbox
 from app.services import notifications as notifications_service
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 DSN = os.environ["DATABASE_URL"].replace("+asyncpg", "")
 
@@ -74,6 +74,13 @@ def ntfy_server(monkeypatch):
 
 async def _next(queue: asyncio.Queue, timeout: float = 5.0):
     return await asyncio.wait_for(queue.get(), timeout)
+
+
+async def _until(condition, timeout: float = 5.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not condition():
+        assert asyncio.get_running_loop().time() < deadline, "timed out"
+        await asyncio.sleep(0.05)
 
 
 async def _read_delivery(db_session, delivery_id: int) -> NotificationDeliveries:
@@ -297,14 +304,7 @@ class TestEndToEnd:
 
         task = asyncio.create_task(notifications_service.listen_pg())
         try:
-
-            async def until(condition, timeout=5.0):
-                deadline = asyncio.get_running_loop().time() + timeout
-                while not condition():
-                    assert asyncio.get_running_loop().time() < deadline, "timed out"
-                    await asyncio.sleep(0.05)
-
-            await until(lambda: len(requests) == 1)
+            await _until(lambda: len(requests) == 1)
 
             async with db_session() as session:
                 refreshed = await session.get(NotificationOutbox, queued.id)
@@ -316,7 +316,36 @@ class TestEndToEnd:
                 )
                 await session.commit()
 
-            await until(lambda: len(requests) == 2)
+            await _until(lambda: len(requests) == 2)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    async def test_delivery_survives_postgres_dropping_the_connection(
+        self, sc, db_session, outbound, ntfy_server, pg_connections, monkeypatch
+    ):
+        """A Postgres restart surfaces as InterfaceError at the next
+        heartbeat; the loop must reconnect and keep delivering, not die."""
+        monkeypatch.setattr(notifications_service, "HEARTBEAT_SECONDS", 0.1)
+        monkeypatch.setattr(notifications_service, "RECONNECT_SECONDS", 0.1)
+        await sc.channel(kind="ntfy")
+        await sc.db.commit()
+        requests, _ = outbound
+
+        task = asyncio.create_task(notifications_service.listen_pg())
+        try:
+            await _until(lambda: len(pg_connections) == 1)
+            async with db_session() as session:
+                await session.execute(
+                    text("SELECT pg_terminate_backend(:pid)"),
+                    {"pid": pg_connections[0].get_server_pid()},
+                )
+            await _until(lambda: len(pg_connections) == 2)
+
+            await sc.outbox()
+            await sc.db.commit()
+            await _until(lambda: len(requests) == 1)
         finally:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

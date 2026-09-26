@@ -38,6 +38,7 @@ import logging
 from dataclasses import dataclass, field
 
 import asyncpg
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from app.config import settings
@@ -50,6 +51,11 @@ log = logging.getLogger(__name__)
 
 JOBS_CHANNEL = "snagr_jobs"
 EVENTS_CHANNEL = "snagr_job_events"
+
+# Idle seconds before the listener probes its link, which is also how long
+# the probe may take before the link counts as dead; then the reconnect pause.
+HEARTBEAT_SECONDS = 10
+RECONNECT_SECONDS = 5
 
 # job status -> the SSE event name the client listens for. 'pending' has no
 # entry: the POST /api/jobs response announces it instead.
@@ -214,13 +220,19 @@ async def _handle_price_check(session, check_id: int) -> None:
 async def _handle_notification(channel: str, payload: str) -> None:
     """Translate one trigger notification into per-viewer client deliveries."""
     note = json.loads(payload)
-    async with _sessionmaker()() as session:
-        if channel == JOBS_CHANNEL:
-            await _handle_job(session, note["id"])
-        elif "check" in note:
-            await _handle_price_check(session, note["check"])
-        else:
-            await _handle_job_event(session, note["job_id"], note["seq"])
+    try:
+        async with _sessionmaker()() as session:
+            if channel == JOBS_CHANNEL:
+                await _handle_job(session, note["id"])
+            elif "check" in note:
+                await _handle_price_check(session, note["check"])
+            else:
+                await _handle_job_event(session, note["job_id"], note["seq"])
+    except ValidationError as e:
+        # A row this backend can't describe — an event_type from a newer
+        # agent, say. No retry will fix it, so it costs one frame, never a
+        # reconnect and re-snapshot of every client.
+        log.error(f"Skipped a {channel} notification ({payload}) the schema refuses: {e}")
 
 
 async def listen_pg() -> None:
@@ -248,14 +260,24 @@ async def listen_pg() -> None:
                 log.info("SSE listener connected")
                 while True:
                     try:
-                        channel, payload = await asyncio.wait_for(pending.get(), timeout=10)
+                        channel, payload = await asyncio.wait_for(
+                            pending.get(), timeout=HEARTBEAT_SECONDS
+                        )
                     except TimeoutError:
-                        # idle: surface a silently-dead TCP link (VPN drop)
-                        await conn.execute("SELECT 1")
+                        # idle: surface a silently-dead TCP link (VPN drop),
+                        # bounded because on such a link the probe itself hangs
+                        await conn.execute("SELECT 1", timeout=HEARTBEAT_SECONDS)
                         continue
                     await _handle_notification(channel, payload)
             finally:
-                await conn.close()
-        except (OSError, asyncpg.PostgresError) as e:
-            log.error(f"SSE listener lost Postgres ({e}); retrying in 5s")
-            await asyncio.sleep(5)
+                await conn.close(timeout=RECONNECT_SECONDS)
+        # a connection the server dropped raises InterfaceError, not a
+        # PostgresError
+        except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError) as e:
+            log.error(f"SSE listener lost Postgres ({e!r}); retrying in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
+        except Exception:
+            # not a lost link but a bug — still no reason to end live updates
+            # for everyone until a restart
+            log.exception(f"SSE listener failed; restarting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)
