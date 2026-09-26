@@ -30,6 +30,7 @@ from datetime import UTC, datetime, timedelta
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -40,7 +41,7 @@ from app.core.cookies import (
     set_refresh_cookie,
 )
 from app.core.deps import csrf_guard, current_user, reject_bearer
-from app.core.errors import err
+from app.core.errors import ApiError, err
 from app.core.security import (
     hash_password,
     hash_refresh,
@@ -63,6 +64,12 @@ from app.services import oidc
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+# pg_advisory_xact_lock key that serializes self-signup: without it two sign-ups
+# on an empty instance both count zero users and both become admin
+_REGISTER_LOCK = 0x736E_6167_7200  # "snagr\0"
+
+_UNIQUE_VIOLATION = "23505"
+
 
 # --- helpers ----------------------------------------------------------------
 
@@ -81,6 +88,32 @@ async def _start_session(db: AsyncSession, response: Response, user: User) -> No
         )
     )
     set_refresh_cookie(response, raw)
+
+
+def _email_taken() -> ApiError:
+    """The 422 for signing up with an email that already has an account."""
+    return err(
+        422,
+        "validation_error",
+        "An account with this email already exists",
+        fields={"email": "An account with this email already exists"},
+    )
+
+
+async def _insert_user(db: AsyncSession, user: User) -> None:
+    """INSERT a new password user now, so user.id and created_at exist.
+
+    The routes check the email is free first, but a concurrent sign-up can
+    take it between that check and this INSERT; the unique index is the real
+    guard. users.email is the only unique column a new password user fills."""
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        if getattr(exc.orig, "pgcode", None) == _UNIQUE_VIOLATION:
+            raise _email_taken() from exc
+        raise
+    await db.refresh(user)  # load DB-filled columns (created_at)
 
 
 # --- SSO (OIDC) ---------------------------------------------------------------
@@ -172,6 +205,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     # the very first user can always register (and becomes admin). After that,
     # self-signup is only open while the REGISTRATION_OPEN toggle is on —
     # otherwise people join via an admin invite.
+    await db.execute(select(func.pg_advisory_xact_lock(_REGISTER_LOCK)))
     user_count = await db.scalar(select(func.count()).select_from(User))
     is_first_user = (user_count or 0) == 0
     if not is_first_user and not settings.REGISTRATION_OPEN:
@@ -180,12 +214,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         )
 
     if await db.scalar(select(User).where(User.email == body.email)):
-        raise err(
-            422,
-            "validation_error",
-            "An account with this email already exists",
-            fields={"email": "An account with this email already exists"},
-        )
+        raise _email_taken()
 
     user = User(
         email=body.email,
@@ -194,9 +223,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         is_active=True,
         email_verified=True,
     )
-    db.add(user)
-    await db.flush()  # INSERT now, so user.id exists
-    await db.refresh(user)  # load DB-filled columns (created_at)
+    await _insert_user(db, user)
     await _start_session(db, response, user)
     await db.commit()
     return UserEnvelope(user=user_out(user))
@@ -311,15 +338,21 @@ async def accept_invite(
     An invite pinned to an email overrides the submitted one. 404/410 as for
     validating the invite; 422 validation_error for an email already taken."""
     invite = await _live_invite(db, token)
+    # single-use: burn it in one statement. Concurrent accepts queue on the row
+    # lock and find used_at set once the winner commits; if the winner fails
+    # instead, its rollback un-burns the invite for the next in line.
+    burned = await db.scalar(
+        update(Invites)
+        .where(Invites.id == invite.id, Invites.used_at.is_(None))
+        .values(used_at=datetime.now(UTC))
+        .returning(Invites.id)
+    )
+    if burned is None:
+        raise err(410, "invite_expired", "This invite has expired or was already used")
     # an invite pinned to an email wins over whatever the form submitted
     email = invite.email or body.email
     if await db.scalar(select(User).where(User.email == email)):
-        raise err(
-            422,
-            "validation_error",
-            "An account with this email already exists",
-            fields={"email": "An account with this email already exists"},
-        )
+        raise _email_taken()
 
     user = User(
         email=email,
@@ -328,10 +361,7 @@ async def accept_invite(
         is_active=True,
         email_verified=True,
     )
-    db.add(user)
-    invite.used_at = datetime.now(UTC)  # single-use: burn it
-    await db.flush()
-    await db.refresh(user)
+    await _insert_user(db, user)
     await _start_session(db, response, user)
     await db.commit()
     return UserEnvelope(user=user_out(user))
