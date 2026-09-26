@@ -19,8 +19,10 @@ Two cookies do two jobs:
 Why two? The access token is short-lived so a stolen one is useless fast; the
 refresh token is revocable so logout actually works. Best of both.
 
-These paths return 401 DIRECTLY on bad creds — they must not trip the client's
-refresh-retry loop (client.ts skips retry for /api/auth/*).
+These paths return 401 DIRECTLY on bad creds. client.ts never refreshes-and-retries
+the credential routes (login, register, refresh, logout, invites), so a refused
+login is not silently replayed; /me does refresh, since a 401 there on a fresh page
+load usually just means the access cookie expired.
 """
 
 import hmac

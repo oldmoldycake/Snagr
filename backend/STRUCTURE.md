@@ -238,4 +238,4 @@ Find any `endpoints.ts` function here:
 - **Paginated** = `{data, meta:{page, per_page, total}}`; **plain list** = `{data:[...]}`.
 - **Mutations** require the `X-Snagr-Csrf` header (`csrf_guard`) — the frontend always sends it; bearer (API-token) callers are exempt.
 - **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, and deleting a category takes every user's items, watches and price history in it with it. Reads stay open to any signed-in user.
-- **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop.
+- **`/api/auth/*` returns 401 directly**; the client's refresh-retry skips the credential routes (login, register, refresh, logout, invites) so a refused login is never replayed, but refreshes on `/me`.
