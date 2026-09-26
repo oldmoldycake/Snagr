@@ -22,6 +22,7 @@ assert _test_url != _live_url, "test DB must not be the live DB"
 os.environ["DATABASE_URL"] = _test_url
 # ------------------------------------------------------------------------------
 
+import asyncpg
 import pytest
 from app import models  # noqa: F401 — registers every table on Base.metadata
 from app.database import Base, _sessionmaker
@@ -174,6 +175,23 @@ async def make_client():
 def db_session():
     """Direct DB access for seeding data the API can't create yet."""
     return _sessionmaker()
+
+
+@pytest.fixture
+def pg_connections(monkeypatch):
+    """Every raw asyncpg connection opened during the test — the LISTEN
+    tasks' included — so a test can kill one the way a Postgres restart
+    would."""
+    opened: list[asyncpg.Connection] = []
+    real_connect = asyncpg.connect  # the patch below replaces the module attr
+
+    async def connect(*args, **kwargs):
+        conn = await real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    return opened
 
 
 @pytest.fixture
