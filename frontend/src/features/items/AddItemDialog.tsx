@@ -160,7 +160,8 @@ export function AddItemDialog({
                   id="item-target"
                   type="number"
                   step="0.01"
-                  min="0"
+                  min="0.01"
+                  max="99999999.99"
                   placeholder="120.00"
                   className="pl-6 font-mono tnum"
                   value={target}

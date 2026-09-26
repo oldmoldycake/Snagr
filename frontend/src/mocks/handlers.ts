@@ -305,6 +305,32 @@ function validateTracking(
   }
 }
 
+/** The largest target watches.target_price (numeric(10, 2)) can hold, in cents. */
+const MAX_TARGET_CENTS = 9_999_999_999
+
+/**
+ * A target price → cents (null = no target), or the 422 for anything but a
+ * finite amount in whole cents from 0.01 to 99999999.99 — "NaN", "1,000",
+ * "1e9", "0" and "1.001" alike.
+ */
+function parseTarget(value: string | null | undefined): number | null | HttpResponse<DefaultBodyType> {
+  if (value == null) return null
+  const amount = value.trim() === '' ? NaN : Number(value)
+  const cents = Math.round(amount * 100)
+  if (
+    !Number.isFinite(amount) ||
+    Math.abs(amount * 100 - cents) > 1e-6 ||
+    cents < 1 ||
+    cents > MAX_TARGET_CENTS
+  ) {
+    const bounds = 'between 0.01 and 99999999.99'
+    return err(422, 'validation_error', `Target price must be an amount ${bounds}`, {
+      fields: { target_price: `Must be an amount ${bounds}, in whole cents` },
+    })
+  }
+  return cents
+}
+
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
 
 interface ChannelFields {
@@ -774,11 +800,13 @@ export const handlers = [
     }
     const tracking = validateTracking(body, category)
     if (tracking instanceof HttpResponse) return tracking
+    const target_cents = parseTarget(body.target_price)
+    if (target_cents instanceof HttpResponse) return target_cents
     const item = {
       id: newId(),
       category_id: body.category_id,
       name: body.name.trim(),
-      target_cents: body.target_price != null ? Math.round(Number(body.target_price) * 100) : null,
+      target_cents,
       criteria: tracking.criteria,
       selection_mode: tracking.selection_mode,
       max_listings: tracking.max_listings,
@@ -820,12 +848,12 @@ export const handlers = [
     const category = store.categories.find((c) => c.id === item.category_id)!
     const tracking = validateTracking(body, category, item)
     if (tracking instanceof HttpResponse) return tracking
+    const target_cents = parseTarget(body.target_price)
+    if (target_cents instanceof HttpResponse) return target_cents
     const roomBefore = item.max_listings
     const huntingBefore = item.hunt ?? true
     if (body.name !== undefined) item.name = body.name.trim()
-    if (body.target_price !== undefined) {
-      item.target_cents = body.target_price != null ? Math.round(Number(body.target_price) * 100) : null
-    }
+    if (body.target_price !== undefined) item.target_cents = target_cents
     item.criteria = tracking.criteria
     item.selection_mode = tracking.selection_mode
     item.max_listings = tracking.max_listings
@@ -884,10 +912,10 @@ export const handlers = [
     const watch = store.watches.find((w) => w.item_id === Number(params.id))
     if (!watch) return err(404, 'not_found', `Item ${params.id} does not exist`)
     const body = (await request.json()) as WatchUpdateRequest
+    const target_cents = parseTarget(body.target_price)
+    if (target_cents instanceof HttpResponse) return target_cents
     if (body.notify !== undefined) watch.notify = body.notify
-    if (body.target_price !== undefined) {
-      watch.target_cents = body.target_price != null ? Math.round(Number(body.target_price) * 100) : null
-    }
+    if (body.target_price !== undefined) watch.target_cents = target_cents
     return HttpResponse.json({ id: watch.id, notify: watch.notify, target_price: cents(watch.target_cents) })
   }),
 

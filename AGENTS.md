@@ -98,7 +98,7 @@ Invariants that hold everywhere (details in STRUCTURE.md → Conventions):
 
 ## Schema ownership
 
-The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`, a linear chain currently ending at 018). The agent (`agent/database.py`) and the vision sidecar (`vision/db.py`) each keep a **column-compatible subset** of the same ORM models — don't restructure them, and never run `Base.metadata.create_all()` from either against the live DB. Schema changes go through a new Alembic revision (and, if it adds triggers, the two conftests — see Testing model). `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema. Migration 009 needs the **pgvector** extension and prechecks `pg_extension`, failing with instructions rather than running `CREATE EXTENSION` itself (superuser-only).
+The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`, a linear chain currently ending at 019). The agent (`agent/database.py`) and the vision sidecar (`vision/db.py`) each keep a **column-compatible subset** of the same ORM models — don't restructure them, and never run `Base.metadata.create_all()` from either against the live DB. Schema changes go through a new Alembic revision (and, if it adds triggers, the two conftests — see Testing model). `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema. Migration 009 needs the **pgvector** extension and prechecks `pg_extension`, failing with instructions rather than running `CREATE EXTENSION` itself (superuser-only).
 
 ## The agent in one screen
 
