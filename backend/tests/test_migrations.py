@@ -1,10 +1,10 @@
-"""Migrations 015 to 018, up and down, against a scratch database.
+"""Migrations 015 to 019, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
 and rewrites stored token scopes, and both of those are only reversible if the
-downgrade really puts them back; 016 and 017 are data backfills, and the rows
-they write are the only thing there is to test. It builds its own database
+downgrade really puts them back; 016 and 017 are data backfills and 019 a
+cleanup, and the rows they write are the only thing there is to test. It builds its own database
 (`snagr_test_...`) rather than touching the suite's, and drops it again on the
 way out.
 """
@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import asyncpg
@@ -234,3 +235,21 @@ async def test_018_hunts_every_existing_watch_on_its_own(scratch):
         "WHERE (table_name, column_name) IN (('watches', 'hunt'), ('jobs', 'payload'))"
     )
     assert columns == 0
+
+
+async def test_019_clears_a_nan_target_and_leaves_real_ones(scratch):
+    """The API once stored "NaN" as a target; the watch keeps tracking with
+    no target instead."""
+    _alembic("upgrade", "018")
+    await _seed_listings(scratch)
+    await scratch.execute("UPDATE watches SET target_price = 'NaN'")
+    item = await scratch.fetchval("SELECT item_id FROM watches")
+    user = await scratch.fetchval("INSERT INTO users (email) VALUES ('two@test') RETURNING id")
+    await scratch.execute(
+        "INSERT INTO watches (user_id, item_id, target_price) VALUES ($1, $2, 120.00)", user, item
+    )
+
+    _alembic("upgrade", "019")
+
+    targets = await scratch.fetch("SELECT target_price FROM watches ORDER BY id")
+    assert [row["target_price"] for row in targets] == [None, Decimal("120.00")]

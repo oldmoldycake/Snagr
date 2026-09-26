@@ -130,7 +130,8 @@ def register(mcp: FastMCP) -> None:
           category: id or slug
           name: the item as a buyer would search for it, e.g. "Pokemon Emerald"
           target_price: decimal string like "120.00" the user wants to pay at
-            or below; null = just track prices, no target
+            or below, from 0.01 to 99999999.99 in whole cents; null = just
+            track prices, no target
           criteria: free text the agent judges every listing against, e.g.
             "authentic cartridge, working save battery, no reproductions"
           selection_mode: cheapest | best_match — how the tracked slots are filled

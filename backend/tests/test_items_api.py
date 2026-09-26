@@ -14,6 +14,7 @@ each request runs on its own session, so uncommitted rows are invisible.
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from app.config import settings
@@ -329,6 +330,69 @@ async def test_a_below_floor_row_reads_as_the_floor(client, db_session):
 
     detail = (await client.get(f"/api/items/{item_id}")).json()
     assert detail["recheck"]["interval_minutes"] == 5
+
+
+# --- the target price ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", ["0.01", "120", "1.5", "549.99", "99999999.99"])
+async def test_a_target_in_whole_cents_is_taken(client, db_session, target):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    created = await _create(client, category_id, target_price=target)
+
+    assert created["target_price"] == f"{Decimal(target):.2f}"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        # Decimal() takes these, and a NaN target breaks every later price comparison
+        "NaN",
+        "sNaN",
+        "Infinity",
+        "-Infinity",
+        # not numbers at all
+        "abc",
+        "",
+        "1,000",
+        # the column overflows past 99,999,999.99
+        "1e9",
+        "100000000.00",
+        "99999999999.99",
+        # a target nothing could ever be at or below
+        "0",
+        "0.00",
+        "-5",
+        # finer than a cent: the column would round it
+        "1.001",
+    ],
+)
+async def test_a_target_that_is_not_an_amount_is_refused(client, db_session, target):
+    """On all three routes that take one, before anything is written."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id, target_price="50.00"))["id"]
+    body = {"category_id": category_id, "name": "Beta", "target_price": target}
+
+    for res in (
+        await client.post("/api/items", json=body, headers=CSRF),
+        await client.patch(f"/api/items/{item_id}", json={"target_price": target}, headers=CSRF),
+        await client.patch(
+            f"/api/items/{item_id}/watch", json={"target_price": target}, headers=CSRF
+        ),
+    ):
+        assert res.status_code == 422, res.text
+        error = res.json()["error"]
+        assert error["code"] == "validation_error"
+        assert set(error["fields"]) == {"target_price"}
+
+    listed = (await client.get("/api/items")).json()
+    assert [row["name"] for row in listed["data"]] == ["Alpha"]
+    assert listed["data"][0]["target_price"] == "50.00"
 
 
 async def _pending_check_due_in(db_session, owner_id, hours, paused=False, active=True):
