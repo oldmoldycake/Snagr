@@ -56,6 +56,14 @@ async function tryRefresh(): Promise<boolean> {
   return refreshPromise
 }
 
+const NO_REFRESH = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/auth/logout',
+  '/api/auth/invites/',
+]
+
 function buildUrl(path: string, params?: RequestOptions['params']): string {
   if (!params) return path
   const search = new URLSearchParams()
@@ -95,9 +103,11 @@ async function doFetch(path: string, opts: RequestOptions): Promise<Response> {
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   let res = await doFetch(path, opts)
 
-  // /api/auth/* answers 401 directly and must not trip this loop: a failed
-  // login would otherwise refresh and silently replay itself.
-  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+  // The credential routes answer 401 directly and must not trip this loop: a
+  // failed login would otherwise refresh and silently replay itself. /me is not
+  // one of them — it is the first request of every page load, so a 401 there
+  // usually just means the short-lived access cookie expired.
+  if (res.status === 401 && !NO_REFRESH.some((prefix) => path.startsWith(prefix))) {
     const refreshed = await tryRefresh()
     if (refreshed) res = await doFetch(path, opts)
   }

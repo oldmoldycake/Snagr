@@ -92,7 +92,7 @@ Invariants that hold everywhere (details in STRUCTURE.md → Conventions):
 
 - **Prices are decimal strings** (`"549.99"`), never numbers; `null` for unknown, never `0`. **Timestamps are ISO-8601 UTC**; DB datetimes are `timezone=True`.
 - **Errors always** `raise err(status, code, message, **extra)` → `{"error": {...}}`, never FastAPI's `{"detail": ...}`. **Paginated** = `{data, meta: {page, per_page, total}}`; **plain list** = `{data: [...]}`.
-- **Mutations require the `X-Snagr-Csrf` header** (`csrf_guard`, 403 without it); bearer callers are exempt. **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop.
+- **Mutations require the `X-Snagr-Csrf` header** (`csrf_guard`, 403 without it); bearer callers are exempt. **`/api/auth/*` returns 401 directly**; the client's refresh-retry skips the credential routes (login, register, refresh, logout, invites) so a refused login is never replayed, but refreshes on `/me`.
 - **Auth** is httpOnly-cookie sessions (short-lived `snagr_access` JWT + DB-backed rotating `snagr_refresh`); JS never sees a token. **API tokens** (`Authorization: Bearer snagr_pat_…`, sha256 at rest) are the second credential: scoped `read` / `write` / `jobs`, never reach `/api/auth/me`, `/api/me/*` or `/api/admin/*` (403 `forbidden`). `MCP_ENABLED=false` switches bearer auth and `/api/mcp` off.
 - **Vision routes are gated on `settings.vision_enabled`**: unset, every mutation and the image proxy answer 503 `vision_unavailable`, the two GET lists return empty data, and `InstanceInfo.vision_enabled: false` hides every vision surface.
 
