@@ -46,8 +46,8 @@ export function ChartPanel({
 
   return (
     <Card className={cn(active.isFetching && 'opacity-60')}>
-      <CardHeader className="border-b border-hairline pb-3">
-        <div className="flex items-center gap-4">
+      <CardHeader className="flex-wrap gap-x-4 gap-y-2.5 border-b border-hairline pb-3">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
           <CardTitle>Price history</CardTitle>
           <Segmented options={TABS} value={tab} onChange={setTab} ariaLabel="Chart view" />
         </div>
