@@ -1060,6 +1060,58 @@ class TestRelease:
         assert row["status"] == "done"
 
 
+class TestDefer:
+    """Waiting out a SearXNG suspension: the slot is freed now, the job comes
+    back when the suspension should be over, and no retry budget is spent."""
+
+    def test_a_deferred_job_waits_in_the_queue_with_its_attempt_given_back(self):
+        until = NOW + timedelta(minutes=15)
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="ground", watch_id=None, site_id=None))
+            await job_queue.claim("w1", ("ground",))
+            deferred = await job_queue.defer(job_id, until)
+            return deferred, await read_job(job_id), await job_queue.claim("w1", ("ground",))
+
+        deferred, row, claimed_again = db(scenario())
+        assert deferred is True
+        assert row["status"] == "pending"
+        assert row["locked_by"] is None
+        assert row["started_at"] is None
+        assert row["run_after"] == until
+        assert row["attempts"] == 0
+        assert row["error"] is None
+        # not due yet, so the pool goes back to sleep instead of meeting the
+        # same suspension again
+        assert claimed_again is None
+
+    def test_a_suspension_that_outlasts_the_retry_budget_never_fails_the_job(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="ground", watch_id=None, site_id=None))
+            for _ in range(job_queue.JOB_MAX_ATTEMPTS + 1):
+                await job_queue.claim("w1", ("ground",))
+                await job_queue.defer(job_id, NOW - timedelta(seconds=1))
+            return await read_job(job_id)
+
+        row = db(scenario())
+        assert row["status"] == "pending"
+        assert row["attempts"] == 0
+
+    def test_a_job_the_api_cancelled_meanwhile_stays_cancelled(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(ids, kind="ground", status="cancelled", finished_at=NOW)
+            )
+            return await job_queue.defer(job_id, NOW), await read_job(job_id)
+
+        deferred, row = db(scenario())
+        assert deferred is False
+        assert row["status"] == "cancelled"
+
+
 class TestReaper:
     """A row abandoned by a SIGKILL holds its target's open-job slot forever,
     and the unique index would refuse every replacement — so nothing else

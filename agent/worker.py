@@ -1,10 +1,11 @@
 """The hunter: a daemon that claims jobs and works them.
 
-Two pools, because the two kinds of work cost different things. The check pool
+Three pools, because the kinds of work cost different things. The check pool
 re-reads listings — cheap, usually browserless, several at once, so one wedged
 page never holds up the listing behind it. The hunt pool carries the model, so
-it is narrow by default; grounding runs there too, being model work with no
-browser.
+it is narrow by default. The ground pool is model work too, with no browser,
+kept apart because it waits on SearXNG: grounding that is slow or suspended
+never stands between a watch and its next hunt.
 
 Wake-ups come from Postgres. Migration 015's trigger announces every job
 insert and status change on 'snagr_jobs'; the listener nudges every worker,
@@ -34,6 +35,7 @@ import breaker
 import jobs as job_queue
 from config import (
     CHEAP_RECHECK,
+    GROUND_CONCURRENCY,
     HUNT_CONCURRENCY,
     HUNT_ENABLED,
     JOB_HEARTBEAT_INTERVAL_SECONDS,
@@ -47,7 +49,7 @@ from database import (
     get_recheck_unit,
 )
 from llm import build_llm, flush_traces, job_trace
-from pricing import ground_item, select_grounding_work
+from pricing import SearchSuspended, ground_item, select_grounding_work
 from recheck import recheck_deterministic
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -77,16 +79,17 @@ PRUNE_EVERY_TICKS = 60
 SWEEP_EVERY_TICKS = 60
 
 CHECK_KINDS = ("recheck",)
-HUNT_KINDS = ("hunt", "ground")
+HUNT_KINDS = ("hunt",)
+GROUND_KINDS = ("ground",)
 
 
 def kinds_for(worker: str) -> tuple[str, ...]:
-    """What one pool member claims. With hunting switched off the hunt pool
-    still grounds: queued hunts wait, untouched, for the switch to come back
-    on rather than being run or lost."""
+    """What one pool member claims."""
     if "#check-" in worker:
         return CHECK_KINDS
-    return HUNT_KINDS if HUNT_ENABLED else ("ground",)
+    if "#ground-" in worker:
+        return GROUND_KINDS
+    return HUNT_KINDS
 
 
 def worker_ids() -> list[str]:
@@ -94,12 +97,17 @@ def worker_ids() -> list[str]:
 
     Recorded on every claimed row, so an abandoned job names the process that
     had it — and so shutdown can hand back exactly this process's work
-    without touching another instance's.
+    without touching another instance's. With hunting switched off there is
+    no hunt pool at all: queued hunts wait, untouched, for the switch to come
+    back on rather than being run or lost.
     """
     origin = f"{socket.gethostname()}:{os.getpid()}"
-    return [f"{origin}#check-{i}" for i in range(RECHECK_CONCURRENCY)] + [
-        f"{origin}#hunt-{i}" for i in range(HUNT_CONCURRENCY)
-    ]
+    hunts = HUNT_CONCURRENCY if HUNT_ENABLED else 0
+    return (
+        [f"{origin}#check-{i}" for i in range(RECHECK_CONCURRENCY)]
+        + [f"{origin}#hunt-{i}" for i in range(hunts)]
+        + [f"{origin}#ground-{i}" for i in range(GROUND_CONCURRENCY)]
+    )
 
 
 # --- running one job -------------------------------------------------------
@@ -244,12 +252,21 @@ async def _run_ground(job: dict) -> dict | None:
     ):
         payload = await ground_item(row["item_id"], row["item_name"], row["category_id"])
     observations = payload.get("observations") or []
+    if observations:
+        message = (
+            f"Market price for {row['item_name']}: {payload['status']} "
+            f"({len(observations)} observations, {payload['confidence']} confidence)"
+        )
+    else:
+        # the job still finishes, since nothing broke — but a run that found
+        # no price at all is the one an operator needs to hear about
+        message = f"Market price for {row['item_name']}: found no prices"
+        log.warning(f"Ground job {job['id']} for item {row['item_id']} found no prices")
     await job_queue.append_event(
         job["id"],
         "success" if payload["status"] == "ok" else "warn",
         "job_finished",
-        f"Market price for {row['item_name']}: {payload['status']} "
-        f"({len(observations)} observations, {payload['confidence']} confidence)",
+        message,
         {"item_id": row["item_id"]},
     )
     return _empty(listings_checked=len(observations), prices_found=len(observations))
@@ -268,6 +285,12 @@ async def _work_one(worker: str, job: dict) -> None:
         log.info(f"Job {job_id} was cancelled mid-flight")
         await job_queue.append_event(job_id, "warn", "job_finished", "Cancelled by you")
         await job_queue.complete(job_id, None)
+    except SearchSuspended as e:
+        # not a failure: nothing can succeed until the suspension lifts, and
+        # holding the slot while it does is what this pool exists to avoid
+        log.warning(f"Job {job_id} deferred: {e}")
+        await job_queue.append_event(job_id, "warn", "error", str(e))
+        await job_queue.defer(job_id, e.until)
     except Exception as e:
         log.error(f"{job['kind'].title()} job {job_id} failed: {e}")
         await breaker.record_outcome(job["site_id"], False, job_id=job_id, detail=str(e)[:120])
@@ -413,7 +436,8 @@ async def serve() -> None:
     ]
     tasks = [*pools, asyncio.create_task(_listen(wakes)), asyncio.create_task(_scheduler())]
     log.info(
-        f"Hunter serving — {RECHECK_CONCURRENCY} check worker(s), {HUNT_CONCURRENCY} hunt worker(s)"
+        f"Hunter serving — {RECHECK_CONCURRENCY} check, "
+        f"{HUNT_CONCURRENCY if HUNT_ENABLED else 0} hunt and {GROUND_CONCURRENCY} ground worker(s)"
     )
     _say_if_hunting_is_off()
     try:
