@@ -27,6 +27,7 @@ import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { EditItemDialog } from '@/features/items/EditItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { HuntButton } from '@/features/activity/HuntButton'
+import { useSession } from '@/features/auth/useSession'
 import { useJobs } from '@/features/activity/JobsProvider'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
@@ -62,6 +63,8 @@ export function CategoryPage() {
   const [deletingItem, setDeletingItem] = useState<ItemSummary | null>(null)
   const queryClient = useQueryClient()
   const { enqueue } = useJobs()
+  // categories are shared, so only an admin renames one or links its sites
+  const isAdmin = useSession().data?.role === 'admin'
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const category = categories.data?.data.find((c) => c.slug === slug)
@@ -149,15 +152,17 @@ export function CategoryPage() {
             <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.03em] text-ink">
               {category.name}
             </h1>
-            <Button variant="ghost" size="iconSm" aria-label="Edit category" onClick={() => setEditOpen(true)}>
-              <Pencil />
-            </Button>
+            {isAdmin ? (
+              <Button variant="ghost" size="iconSm" aria-label="Edit category" onClick={() => setEditOpen(true)}>
+                <Pencil />
+              </Button>
+            ) : null}
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {linkedSites.length === 0 ? (
               <span className="text-xs text-warn">
-                <span aria-hidden>⚠</span> No sites linked, so Snagr has nowhere to search. Edit the
-                category to link sites.
+                <span aria-hidden>⚠</span> No sites linked, so Snagr has nowhere to search.{' '}
+                {isAdmin ? 'Edit the category to link sites.' : 'Ask an admin to link sites.'}
               </span>
             ) : (
               linkedSites.map((site) => (
@@ -172,9 +177,11 @@ export function CategoryPage() {
           <HuntButton scope="category" scopeId={category.id} label="Hunt this category" size="sm" />
           {/* a category with no sites can't take new items from the UI: the hunter would have nowhere to look */}
           {linkedSites.length === 0 ? (
-            <Button variant="warn" size="sm" onClick={openEditSites}>
-              Link sites
-            </Button>
+            isAdmin ? (
+              <Button variant="warn" size="sm" onClick={openEditSites}>
+                Link sites
+              </Button>
+            ) : null
           ) : (
             <AddItemDialog categoryId={category.id} categoryName={category.name} />
           )}
@@ -233,9 +240,11 @@ export function CategoryPage() {
             } for listings.`}
             action={
               category.site_ids.length === 0 ? (
-                <Button variant="warn" size="sm" onClick={openEditSites}>
-                  Link sites
-                </Button>
+                isAdmin ? (
+                  <Button variant="warn" size="sm" onClick={openEditSites}>
+                    Link sites
+                  </Button>
+                ) : null
               ) : (
                 <AddItemDialog categoryId={category.id} categoryName={category.name} />
               )

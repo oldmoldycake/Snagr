@@ -30,8 +30,8 @@ export function ItemListingsPanel({ itemId }: { itemId: number }) {
     return (
       <p className="py-2 text-xs text-ink-3">
         {item.data?.criteria
-          ? 'No listings met your criteria yet. Snagr keeps hunting, or press Hunt now to try again.'
-          : 'No tracked listings yet. Snagr is hunting for some, or press Hunt now to search again.'}
+          ? "No listings met your criteria yet. Loosen them, or choose Hunt now from this row's menu to try again."
+          : "No tracked listings yet. Snagr is hunting for some, or choose Hunt now from this row's menu."}
       </p>
     )
   }

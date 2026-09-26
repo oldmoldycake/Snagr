@@ -131,6 +131,14 @@ async def caller_session() -> AsyncIterator[tuple[AsyncSession, User]]:
             raise ToolError(_envelope("db_unavailable", "Could not reach the database")) from e
 
 
+def require_admin(user: User) -> None:
+    """403 `forbidden` unless `user` is an admin — the tool twin of REST's
+    core.deps.require_admin. Call it inside caller_session() so the error
+    leaves as the envelope."""
+    if user.role != "admin":
+        raise err(403, "forbidden", "Admin access required")
+
+
 def build_mcp_app() -> Starlette:
     """The ASGI app main.py registers at MCP_PATH. Streamable HTTP, stateless
     (no session affinity needed under several workers) and JSON responses

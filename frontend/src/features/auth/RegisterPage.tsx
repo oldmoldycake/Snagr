@@ -25,8 +25,7 @@ export function RegisterPage() {
     <AuthLayout>
       <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">Create your account</h1>
       <p className="mt-1 text-xs text-ink-2">
-        The first account on a fresh instance becomes the admin. After that, sign-up stays open
-        while the instance allows it — otherwise new users join by invite.
+        Sign up with your email and a password of at least 8 characters.
       </p>
 
       <form

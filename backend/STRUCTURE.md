@@ -237,4 +237,5 @@ Find any `endpoints.ts` function here:
 - **Errors** always use `raise err(status, code, message, **extra)` → `{"error":{...}}`. Never FastAPI's default `{"detail":...}`.
 - **Paginated** = `{data, meta:{page, per_page, total}}`; **plain list** = `{data:[...]}`.
 - **Mutations** require the `X-Snagr-Csrf` header (`csrf_guard`) — the frontend always sends it; bearer (API-token) callers are exempt.
+- **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, and deleting a category takes every user's items, watches and price history in it with it. Reads stay open to any signed-in user.
 - **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop.

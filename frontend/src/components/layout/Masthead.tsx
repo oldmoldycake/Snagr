@@ -54,6 +54,8 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const categories = data?.data ?? []
   const navItems = useNavItems()
+  // categories are shared, so only an admin creates one
+  const isAdmin = useSession().data?.role === 'admin'
 
   return (
     <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-4">
@@ -101,15 +103,17 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
         </NavLink>
       ))}
       {/* No onNavigate here: closing the drawer would unmount this dialog before it opens. */}
-      <CreateCategoryDialog
-        variant="ghost"
-        className="mt-1 justify-start px-2.5 text-ink-3"
-        trigger={
-          <span className="inline-flex items-center gap-2">
-            <Plus className="size-3.5" /> New category
-          </span>
-        }
-      />
+      {isAdmin ? (
+        <CreateCategoryDialog
+          variant="ghost"
+          className="mt-1 justify-start px-2.5 text-ink-3"
+          trigger={
+            <span className="inline-flex items-center gap-2">
+              <Plus className="size-3.5" /> New category
+            </span>
+          }
+        />
+      ) : null}
     </nav>
   )
 }

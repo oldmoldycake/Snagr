@@ -16,7 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
 import { useJobs } from '@/features/activity/JobsProvider'
-import { useInstance } from '@/features/auth/useSession'
+import { useInstance, useSession } from '@/features/auth/useSession'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { WatchList } from '@/features/items/WatchList'
 import type { Lead, Shelf } from './shelves'
@@ -63,6 +63,8 @@ export function CategoryShelf({
   onRename: (category: Category) => void
 }) {
   const { category, items, hits, lead } = shelf
+  // categories are shared, so only an admin links their sites
+  const isAdmin = useSession().data?.role === 'admin'
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const mounted = useRef(false)
@@ -203,9 +205,11 @@ export function CategoryShelf({
         </h3>
         <div className="flex shrink-0 items-center gap-1">
           {noSites ? (
-            <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
-              Link sites
-            </Button>
+            isAdmin ? (
+              <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
+                Link sites
+              </Button>
+            ) : null
           ) : (
             <AddItemDialog
               categoryId={category.id}
@@ -247,7 +251,7 @@ export function CategoryShelf({
                 {items.length === 1 ? 'this item' : `these ${items.length} items`}.
               </span>
             </div>
-          ) : (
+          ) : isAdmin ? (
             <button
               type="button"
               aria-label={`Edit sites for ${category.name}`}
@@ -255,19 +259,18 @@ export function CategoryShelf({
               style={{ '--i': 0 } as CSSProperties}
               className="shelf-stagger group/sites mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] rounded-sm px-1.5 py-[3px] font-mono text-[11px] text-ink-2 transition-colors hover:bg-raised max-sm:ml-[26px]"
             >
-              <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
-              {siteNames.map((name) => (
-                <span
-                  key={name}
-                  className="inline-flex h-[19px] items-center rounded-[3px] border border-hairline bg-raised px-1.5"
-                >
-                  {name}
-                </span>
-              ))}
+              <SearchingSites siteNames={siteNames} />
               <span className="ml-1 text-[10px] tracking-[0.08em] text-ink-3 uppercase group-hover/sites:text-lume">
                 edit
               </span>
             </button>
+          ) : (
+            <div
+              style={{ '--i': 0 } as CSSProperties}
+              className="shelf-stagger mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] px-1.5 py-[3px] font-mono text-[11px] text-ink-2 max-sm:ml-[26px]"
+            >
+              <SearchingSites siteNames={siteNames} />
+            </div>
           )}
           <div className="border-t border-hairline">
             <WatchList items={items} drops={drops} struck={struck} showSite hideHeader fixedColumns />
@@ -313,6 +316,8 @@ function ShelfMenu({
   const { enqueue, isEnqueuing, setPanelOpen, liveHuntFor } = useJobs()
   const huntingOff = useInstance().data?.hunt_enabled === false
   const live = liveHuntFor('category', category.id)
+  // categories are shared, so only an admin edits or deletes one
+  const isAdmin = useSession().data?.role === 'admin'
   const [confirming, setConfirming] = useState(false)
   const keepRef = useRef<HTMLDivElement>(null)
   const deleteRef = useRef<HTMLDivElement>(null)
@@ -404,19 +409,23 @@ function ShelfMenu({
             )}
           </DropdownMenuItem>
         )}
-        <DropdownMenuItem onSelect={() => onEditSites(category)}>
-          <Globe /> Edit sites
-          {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
-        </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => onRename(category)}>
-          <Pencil /> Rename
-        </DropdownMenuItem>
+        {isAdmin ? (
+          <>
+            <DropdownMenuItem onSelect={() => onEditSites(category)}>
+              <Globe /> Edit sites
+              {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onRename(category)}>
+              <Pencil /> Rename
+            </DropdownMenuItem>
+          </>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => navigate(`/categories/${category.slug}`)}>
           <ArrowRight /> Open category page
           <DropdownMenuHint>/{category.slug}</DropdownMenuHint>
         </DropdownMenuItem>
-        {confirming ? (
+        {!isAdmin ? null : confirming ? (
           <div
             role="group"
             aria-label="Confirm delete"
@@ -465,6 +474,20 @@ function ShelfMenu({
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  )
+}
+
+/** The shelf's "Searching" line: the sites the hunter searches for this category. */
+function SearchingSites({ siteNames }: { siteNames: string[] }) {
+  return (
+    <>
+      <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
+      {siteNames.map((name) => (
+        <span key={name} className="inline-flex h-[19px] items-center rounded-[3px] border border-hairline bg-raised px-1.5">
+          {name}
+        </span>
+      ))}
+    </>
   )
 }
 
