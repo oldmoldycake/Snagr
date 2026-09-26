@@ -4,8 +4,11 @@ Each test starts from an empty DB (conftest truncates between tests), so
 "first user" scenarios are the default and every actor is created explicitly.
 """
 
+import asyncio
+
 from app.config import settings
 from app.models import User
+from sqlalchemy import select
 
 from tests.conftest import CSRF
 
@@ -54,6 +57,24 @@ async def test_register_duplicate_email(client, monkeypatch):
     assert "email" in res.json()["error"]["fields"]
 
 
+async def test_concurrent_first_registrations_make_one_admin(make_client, db_session):
+    first, second = await make_client(), await make_client()
+    results = await asyncio.gather(_register(first, ADMIN), _register(second, GUEST))
+    # REGISTRATION_OPEN is off by default: one bootstraps the instance, the other is refused
+    assert sorted(r.status_code for r in results) == [201, 403]
+    async with db_session() as db:
+        assert (await db.scalars(select(User.role))).all() == ["admin"]
+
+
+async def test_concurrent_duplicate_registrations(make_client, monkeypatch, db_session):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    first, second = await make_client(), await make_client()
+    results = await asyncio.gather(_register(first), _register(second))
+    assert sorted(r.status_code for r in results) == [201, 422]
+    refused = next(r for r in results if r.status_code == 422)
+    assert "email" in refused.json()["error"]["fields"]
+
+
 async def test_instance_reflects_toggle(client, monkeypatch):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", False)
     assert (await client.get("/api/instance")).json()["registration_open"] is True  # 0 users
@@ -89,6 +110,47 @@ async def test_invite_lifecycle(client, make_client):
 
     pending = await client.get("/api/admin/invites")
     assert pending.json()["data"] == []
+
+
+async def test_invite_accepted_once_under_concurrency(client, make_client, db_session):
+    await _register(client)
+    token = (await client.post("/api/admin/invites", json={}, headers=CSRF)).json()["token"]
+
+    invitees = [await make_client() for _ in range(10)]
+    results = await asyncio.gather(
+        *(
+            invitee.post(
+                f"/api/auth/invites/{token}/accept",
+                json={"email": f"guest{n}@example.com", "password": "guest-password"},
+                headers=CSRF,
+            )
+            for n, invitee in enumerate(invitees)
+        )
+    )
+    assert sorted(r.status_code for r in results) == [201] + [410] * 9
+    async with db_session() as db:
+        assert len((await db.scalars(select(User.id))).all()) == 2  # the admin + one invitee
+
+
+async def test_concurrent_invites_for_one_email(client, make_client):
+    await _register(client)
+    tokens = [
+        (await client.post("/api/admin/invites", json={}, headers=CSRF)).json()["token"]
+        for _ in range(2)
+    ]
+    invitees = [await make_client() for _ in tokens]
+    results = await asyncio.gather(
+        *(
+            invitee.post(f"/api/auth/invites/{token}/accept", json=GUEST, headers=CSRF)
+            for invitee, token in zip(invitees, tokens, strict=True)
+        )
+    )
+    assert sorted(r.status_code for r in results) == [201, 422]
+    refused = next(r for r in results if r.status_code == 422)
+    assert refused.json()["error"]["code"] == "validation_error"
+    # the losing invite was not burned: its transaction rolled back
+    pending = (await client.get("/api/admin/invites")).json()["data"]
+    assert len(pending) == 1
 
 
 async def test_invite_unknown_token_404(client):
