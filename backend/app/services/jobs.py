@@ -18,8 +18,10 @@ Callers: routers/jobs.py, routers/items.py (through services/items.py),
 mcp/tools/jobs.py and services/events.py.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 
+from pydantic import ValidationError
 from sqlalchemy import and_, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,6 +48,8 @@ from app.schemas.jobs import (
     JobsSummary,
     PausedSite,
 )
+
+log = logging.getLogger(__name__)
 
 OPEN_STATUSES = ("pending", "running")
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
@@ -274,7 +278,16 @@ async def visible_events(
         .scalars()
         .all()
     )
-    return [build_job_event(event) for event in rows]
+    events = []
+    for row in rows:
+        try:
+            events.append(build_job_event(row))
+        except ValidationError as e:
+            # A row this backend can't describe — an event_type from a newer
+            # agent, say. It costs one line of the log, as it does on the SSE
+            # stream, never the whole backfill.
+            log.error(f"Left out job_events {row.job_id}:{row.seq} the schema refuses: {e}")
+    return events
 
 
 async def summary(db: AsyncSession, viewer: User) -> JobsSummary:

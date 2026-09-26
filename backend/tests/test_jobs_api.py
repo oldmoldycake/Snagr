@@ -463,6 +463,20 @@ class TestDetail:
         body = (await client.get(f"/api/jobs/{job_id}/events?after_seq=2")).json()
         assert [e["message"] for e in body["data"]] == ["line 3"]
 
+    async def test_an_event_type_this_backend_does_not_know_is_left_out(self, client, db_session):
+        # a newer agent's event: one missing line, not a 500 for the whole log
+        user_id = await _sign_in(client)
+        async with _seed_for(db_session, user_id) as sc:
+            job = await sc.job(watch=await sc.watch(await sc.item("Alpha")), status="running")
+            await sc.job_event(job, 1)
+            await sc.job_event(job, 2, event_type="from_a_newer_agent")
+            await sc.job_event(job, 3)
+            job_id = job.id
+
+        res = await client.get(f"/api/jobs/{job_id}/events")
+        assert res.status_code == 200, res.text
+        assert [e["seq"] for e in res.json()["data"]] == [1, 3]
+
     async def test_a_check_has_no_log_to_read(self, client, db_session):
         # its whole output is the price check it wrote
         user_id = await _sign_in(client)
