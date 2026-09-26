@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.8.0](https://github.com/oldmoldycake/Snagr/compare/v0.7.0...v0.8.0) (2026-09-26)
+
+
+### Features
+
+* **frontend:** give the tracking site chips the segmented plate look ([6cbccac](https://github.com/oldmoldycake/Snagr/commit/6cbccac81e34f4bac36a6e7ac1d1534cfecc5f63))
+* **frontend:** track the active category link with one sliding lume bar ([439bc5b](https://github.com/oldmoldycake/Snagr/commit/439bc5b15d1ead116c0634265e5d1aaa1bcd9305))
+* **frontend:** track the active category link with one sliding lume bar ([44ab249](https://github.com/oldmoldycake/Snagr/commit/44ab249688f34abb801d335f093bf5b3cd699a4b))
+* **frontend:** track the checked segment with one sliding plate ([c477bfc](https://github.com/oldmoldycake/Snagr/commit/c477bfc695d4fc6f377ca495614aae1c1150a184))
+* **frontend:** track the checked segment with one sliding plate ([a541936](https://github.com/oldmoldycake/Snagr/commit/a541936f987a4276a370cb38c2bad4d262108aab))
+
+
+### Bug Fixes
+
+* **backend:** make category and site writes admin-only ([593e163](https://github.com/oldmoldycake/Snagr/commit/593e163a1145e92e5e173c3ee3f1c56ad3d7fe99))
+* **frontend:** correct five small copy bugs ([18ef947](https://github.com/oldmoldycake/Snagr/commit/18ef947ea762124732f61d80a6dc786d6d8a7c80))
+* **frontend:** show failed loads as errors with Retry, not empty or not-found states ([53ac6c5](https://github.com/oldmoldycake/Snagr/commit/53ac6c5a39d5559be220f2cc68d29094d5460b5a))
+* **frontend:** show failed loads as errors with Retry, not empty or not-found states ([62166fe](https://github.com/oldmoldycake/Snagr/commit/62166fe86e8b674c808a24c8e890ef83d5820636))
+* **frontend:** use one clear vocabulary for the app's wording ([9071c5f](https://github.com/oldmoldycake/Snagr/commit/9071c5fa6f696d9621b6fba7be8a91f905f9a598))
+* use one clear vocabulary in the app and make catalog writes admin-only ([84b41b6](https://github.com/oldmoldycake/Snagr/commit/84b41b6f5063999ece826923f480a9338411de85))
+
 ## [0.7.0](https://github.com/oldmoldycake/Snagr/compare/v0.6.1...v0.7.0) (2026-09-25)
 
 
