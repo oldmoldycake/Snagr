@@ -77,8 +77,9 @@ async def update_item(
 ):
     """Edit item and watch fields; 404 when unwatched.
 
-    A JSON null leaves a field unchanged, except recheck_interval_minutes, where
-    null means the instance default."""
+    An absent key leaves a field unchanged. A JSON null clears target_price
+    and criteria, and puts recheck_interval_minutes and site_ids back to their
+    defaults; on the other fields it changes nothing."""
     try:
         return await items_service.update_item(db, user.id, item_id, body)
     except SQLAlchemyError as e:

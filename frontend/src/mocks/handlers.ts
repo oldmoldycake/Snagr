@@ -247,8 +247,8 @@ interface TrackingFields {
 /**
  * Normalize + validate the tracking fields shared by item create/update.
  * `existing` supplies defaults on PATCH; omitted fields keep their value.
- * recheck_interval_minutes is the one field where an explicit null changes
- * something: back to the instance default.
+ * An explicit null changes criteria (cleared), recheck_interval_minutes (back
+ * to the instance default) and site_ids (every site of the category).
  * site_ids must be a subset of the category's sites; empty/full set → null.
  */
 function validateTracking(
