@@ -83,6 +83,19 @@ async def test_create_item_defaults_allow_reproductions_to_false(client, db_sess
     assert (await _create(client, category_id))["allow_reproductions"] is False
 
 
+async def test_create_item_in_an_unknown_category_is_404(client):
+    await _sign_in(client)
+
+    res = await client.post(
+        "/api/items",
+        json={"category_id": 99999, "name": "Alpha", "target_price": None},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 404, res.text
+    assert res.json()["error"]["code"] == "not_found"
+
+
 # --- PATCH /api/items/{item_id} -----------------------------------------------
 
 
@@ -349,6 +362,24 @@ async def test_an_interval_outside_the_floor_and_a_day_is_refused(client, db_ses
         assert error["fields"] == {"recheck_interval_minutes": "Must be between 5 and 1440 minutes"}
 
 
+@pytest.mark.parametrize("count", [0, 11, 10_000_000_000])
+async def test_max_listings_outside_one_to_ten_is_refused(client, db_session, count):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id))["id"]
+    body = {"category_id": category_id, "name": "Beta", "target_price": None}
+
+    for res in (
+        await client.post("/api/items", json=body | {"max_listings": count}, headers=CSRF),
+        await client.patch(f"/api/items/{item_id}", json={"max_listings": count}, headers=CSRF),
+    ):
+        assert res.status_code == 422, res.text
+        error = res.json()["error"]
+        assert error["code"] == "validation_error"
+        assert error["fields"] == {"max_listings": "Must be between 1 and 10"}
+
+
 async def test_a_below_floor_row_reads_as_the_floor(client, db_session):
     """The API refuses one, but a row written by hand is floored by the
     agent — and the item page says what the agent does."""
@@ -521,6 +552,28 @@ async def test_price_checks_carry_how_each_price_was_read(client, db_session):
     assert check["confirmed"] is True
 
 
+async def test_a_limit_below_one_reads_as_the_default(client, db_session):
+    # as the mock reads it; Postgres refuses a negative LIMIT
+    owner_id = await _sign_in(client)
+    item_id = await _seed_checks(db_session, owner_id, (1, "100.00"))
+
+    res = await client.get(f"/api/items/{item_id}/price-checks?limit=-1")
+
+    assert res.status_code == 200, res.text
+    assert len(res.json()["data"]) == 1
+
+
+async def test_a_page_below_one_reads_as_the_default(client, db_session):
+    owner_id = await _sign_in(client)
+    await _seed_checks(db_session, owner_id, (1, "100.00"))
+
+    res = await client.get("/api/items", params={"page": -1, "per_page": 0})
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (len(body["data"]), body["meta"]) == (1, {"page": 1, "per_page": 50, "total": 1})
+
+
 async def test_an_unbelieved_reading_is_still_in_the_log(client, db_session):
     # hiding an observation is its own failure: the log shows what was seen,
     # flagged as the disbelieved reading it is
@@ -651,6 +704,30 @@ async def test_a_pinned_site_subset_is_what_gets_hunted(client):
     assert [j["site_name"] for j in jobs["data"]] == ["eBay"]
 
 
+async def test_a_site_named_twice_is_pinned_once(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    ebay = catalog["site_ids"][0]
+
+    created = await _create(client, catalog["category_id"], site_ids=[ebay, ebay])
+    patched = await client.patch(
+        f"/api/items/{created['id']}", json={"site_ids": [ebay, ebay]}, headers=CSRF
+    )
+
+    assert created["site_ids"] == [ebay]
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["site_ids"] == [ebay]
+
+
+async def test_create_item_with_every_site_follows_the_category(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+
+    created = await _create(client, catalog["category_id"], site_ids=catalog["site_ids"])
+
+    assert created["site_ids"] is None
+
+
 async def test_update_item_narrows_the_sites(client):
     await _sign_in(client)
     catalog = await _catalog(client, sites=("eBay", "Mercari", "Etsy"))
@@ -716,6 +793,31 @@ async def test_a_site_outside_the_category_is_refused(client):
     # nothing in the request was applied
     detail = (await client.get(f"/api/items/{item_id}")).json()
     assert (detail["name"], detail["site_ids"]) == ("Alpha", catalog["site_ids"][:1])
+
+
+async def test_create_item_with_a_site_outside_the_category_is_refused(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    body = {"name": "Etsy", "base_url": "https://etsy.test"}
+    unlinked = (await client.post("/api/sites", json=body, headers=CSRF)).json()["id"]
+
+    for site_ids in ([catalog["site_ids"][0], unlinked], [99999]):
+        res = await client.post(
+            "/api/items",
+            json={
+                "category_id": catalog["category_id"],
+                "name": "Alpha",
+                "target_price": None,
+                "site_ids": site_ids,
+            },
+            headers=CSRF,
+        )
+
+        assert res.status_code == 422, res.text
+        error = res.json()["error"]
+        assert error["code"] == "validation_error"
+        assert error["fields"] == {"site_ids": "Must be a subset of the category's linked sites"}
+    assert (await client.get("/api/items")).json()["data"] == []
 
 
 async def test_untracking_a_listing_takes_it_out_of_the_rotation(client, db_session):

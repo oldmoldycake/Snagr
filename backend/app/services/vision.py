@@ -27,7 +27,7 @@ from app.models import (
     VisionScans,
     Watches,
 )
-from app.schemas.common import PageMeta, Paginated
+from app.schemas.common import PageMeta, Paginated, page_param
 from app.schemas.vision import (
     AuthenticityRead,
     ReferenceImage,
@@ -250,6 +250,8 @@ async def list_review_queue(
 ) -> Paginated[ReviewQueueEntry]:
     """Captured photos awaiting the viewer's review, newest first. With vision
     off this is an empty page, not an error."""
+    page = page_param(page, 1)
+    per_page = page_param(per_page, 25)
     if not settings.vision_enabled:
         return Paginated(data=[], meta=PageMeta(page=page, per_page=per_page, total=0))
 

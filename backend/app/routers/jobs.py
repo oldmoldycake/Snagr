@@ -12,13 +12,12 @@ other caller and the two must never disagree about what a viewer may see.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, current_user, require_scope
 from app.core.errors import err
 from app.database import get_db
-from app.schemas.common import DataList, Paginated
+from app.schemas.common import DataList, Paginated, page_param
 from app.schemas.jobs import Job, JobCreateRequest, JobEvent, JobListParams, JobsSummary
 from app.services import jobs as jobs_service
 
@@ -42,11 +41,8 @@ async def enqueue_jobs(
     one. 404 when the scope holds none of the caller's watches; 409
     hunting_disabled for a hunt while HUNT_ENABLED is off. API tokens need the
     `jobs` scope."""
-    try:
-        queued = await jobs_service.enqueue(db, user, body.kind, body.scope, body.scope_id)
-        return DataList(data=queued)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    queued = await jobs_service.enqueue(db, user, body.kind, body.scope, body.scope_id)
+    return DataList(data=queued)
 
 
 @router.get("", response_model=Paginated[Job])
@@ -56,10 +52,7 @@ async def list_jobs(
     db: AsyncSession = Depends(get_db),
 ):
     """The jobs the caller may see, filtered and paged."""
-    try:
-        return await jobs_service.list_jobs(db, user, filters)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await jobs_service.list_jobs(db, user, filters)
 
 
 # before /{id}: "summary" would otherwise be parsed as a job id
@@ -67,19 +60,13 @@ async def list_jobs(
 async def jobs_summary(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """The queue at a glance: running and pending counts, next check and hunt,
     paused sites."""
-    try:
-        return await jobs_service.summary(db, user)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await jobs_service.summary(db, user)
 
 
 @router.get("/{job_id}", response_model=Job)
 async def get_job(job_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """One job; a job the caller may not see 404s like a missing one."""
-    try:
-        return await jobs_service.get_job(db, job_id, user)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await jobs_service.get_job(db, job_id, user)
 
 
 @router.get("/{job_id}/events", response_model=DataList[JobEvent])
@@ -92,6 +79,7 @@ async def get_job_events(
 ):
     """A job's events after `after_seq` — the backfill for an SSE reconnect.
     422 validation_error when `limit` exceeds MAX_EVENTS."""
+    limit = page_param(limit, 200)
     if limit > jobs_service.MAX_EVENTS:
         raise err(
             422,
@@ -99,11 +87,8 @@ async def get_job_events(
             f"limit must be {jobs_service.MAX_EVENTS} or less",
             fields={"limit": f"limit must be {jobs_service.MAX_EVENTS} or less"},
         )
-    try:
-        job = await jobs_service.visible_job_or_404(db, job_id, user)
-        return DataList(data=await jobs_service.visible_events(db, job, after_seq, limit))
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    job = await jobs_service.visible_job_or_404(db, job_id, user)
+    return DataList(data=await jobs_service.visible_events(db, job, after_seq, limit))
 
 
 @router.post(
@@ -117,7 +102,4 @@ async def cancel_job(job_id: int, user=Depends(current_user), db: AsyncSession =
     404 for a job the caller may not see, 403 forbidden for one they don't own
     unless admin, 422 for a recheck, 409 job_finished once terminal. A running hunt
     stops at its next model step. API tokens need the `jobs` scope."""
-    try:
-        return await jobs_service.cancel_job(db, job_id, user)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await jobs_service.cancel_job(db, job_id, user)

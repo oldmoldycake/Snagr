@@ -9,7 +9,6 @@ from decimal import Decimal, InvalidOperation
 import httpx
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -77,7 +76,8 @@ async def update_me(
         except InvalidOperation, TypeError:
             fields[field] = "Must be between 0.50 and 1.00"
             continue
-        if not Decimal("0.50") <= value <= Decimal("1.00"):
+        # finiteness first: comparing a NaN raises
+        if not value.is_finite() or not Decimal("0.50") <= value <= Decimal("1.00"):
             fields[field] = "Must be between 0.50 and 1.00"
         else:
             thresholds[field] = value.quantize(Decimal("0.01"))
@@ -200,10 +200,7 @@ def _channel_fields(
 async def _own_channel(channel_id: int, user, db: AsyncSession) -> NotificationChannels:
     """Fetch one of the caller's channels; another user's channel 404s the
     same as a missing one (hidden ≡ nonexistent, the job-privacy rule)."""
-    try:
-        channel = await db.get(NotificationChannels, channel_id)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    channel = await db.get(NotificationChannels, channel_id)
     if channel is None or channel.user_id != user.id:
         raise err(404, "not_found", f"Channel {channel_id} does not exist")
     return channel
@@ -212,15 +209,12 @@ async def _own_channel(channel_id: int, user, db: AsyncSession) -> NotificationC
 @router.get("/channels", response_model=DataList[NotificationChannel])
 async def list_channels(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """The caller's notification channels."""
-    try:
-        result = await db.execute(
-            select(NotificationChannels)
-            .where(NotificationChannels.user_id == user.id)
-            .order_by(NotificationChannels.id)
-        )
-        return DataList(data=[channel_out(c) for c in result.scalars()])
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    result = await db.execute(
+        select(NotificationChannels)
+        .where(NotificationChannels.user_id == user.id)
+        .order_by(NotificationChannels.id)
+    )
+    return DataList(data=[channel_out(c) for c in result.scalars()])
 
 
 @router.post(
@@ -243,18 +237,15 @@ async def create_channel(
         raise err(422, "no_server", "This instance has no ntfy server configured")
     fields = _channel_fields(body.kind, body)
     secret = new_channel_secret() if body.kind == "webhook" else None
-    try:
-        channel = NotificationChannels(
-            user_id=user.id, kind=body.kind, secret=secret, enabled=body.enabled, **fields
-        )
-        db.add(channel)
-        await db.flush()
-        await db.refresh(channel)  # created_at comes back from the server default
-        await db.commit()
-        # the one response the signing secret ever rides in
-        return channel_created_out(channel, secret)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    channel = NotificationChannels(
+        user_id=user.id, kind=body.kind, secret=secret, enabled=body.enabled, **fields
+    )
+    db.add(channel)
+    await db.flush()
+    await db.refresh(channel)  # created_at comes back from the server default
+    await db.commit()
+    # the one response the signing secret ever rides in
+    return channel_created_out(channel, secret)
 
 
 @router.patch("/channels/{channel_id}", response_model=NotificationChannel)
@@ -268,15 +259,12 @@ async def update_channel(
     user's channel, like a missing one."""
     channel = await _own_channel(channel_id, user, db)
     fields = _channel_fields(channel.kind, body, existing=channel)
-    try:
-        for key, value in fields.items():
-            setattr(channel, key, value)
-        if body.enabled is not None:
-            channel.enabled = body.enabled
-        await db.commit()
-        return channel_out(channel)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    for key, value in fields.items():
+        setattr(channel, key, value)
+    if body.enabled is not None:
+        channel.enabled = body.enabled
+    await db.commit()
+    return channel_out(channel)
 
 
 @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -285,12 +273,9 @@ async def delete_channel(
 ):
     """Delete one of the caller's channels and its pending deliveries."""
     channel = await _own_channel(channel_id, user, db)
-    try:
-        # pending deliveries go with it (FK ON DELETE CASCADE)
-        await db.delete(channel)
-        await db.commit()
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    # pending deliveries go with it (FK ON DELETE CASCADE)
+    await db.delete(channel)
+    await db.commit()
     return None
 
 
@@ -314,6 +299,9 @@ async def test_channel(
 # --- API tokens ---------------------------------------------------------------
 
 TOKEN_NAME_MAX = 64
+# ten years: the UI offers a year at most, and "never" is how to ask for
+# longer. Unbounded, a large enough count overflows the date it is added to.
+TOKEN_EXPIRY_MAX_DAYS = 3650
 
 
 def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime | None]:
@@ -332,6 +320,8 @@ def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime
         fields["scopes"] = "Unknown scope"
     if body.expires_in_days is not None and body.expires_in_days < 1:
         fields["expires_in_days"] = "Must be at least 1 day"
+    elif body.expires_in_days is not None and body.expires_in_days > TOKEN_EXPIRY_MAX_DAYS:
+        fields["expires_in_days"] = f"Must be {TOKEN_EXPIRY_MAX_DAYS} days or fewer"
     if fields:
         raise err(422, "validation_error", "Check the token details", fields=fields)
     expires_at = (
@@ -345,13 +335,10 @@ def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime
 @router.get("/tokens", response_model=DataList[ApiToken])
 async def list_tokens(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """The caller's API tokens (never the raw values)."""
-    try:
-        result = await db.execute(
-            select(ApiTokens).where(ApiTokens.user_id == user.id).order_by(ApiTokens.id)
-        )
-        return DataList(data=[token_out(t) for t in result.scalars()])
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    result = await db.execute(
+        select(ApiTokens).where(ApiTokens.user_id == user.id).order_by(ApiTokens.id)
+    )
+    return DataList(data=[token_out(t) for t in result.scalars()])
 
 
 @router.post("/tokens", response_model=ApiTokenCreated, status_code=status.HTTP_201_CREATED)
@@ -361,18 +348,15 @@ async def create_token(
     """Mint an API token; the raw value is returned only here."""
     name, scopes, expires_at = _token_fields(body)
     raw, token_hash = new_api_token()
-    try:
-        token = ApiTokens(
-            user_id=user.id, name=name, token_hash=token_hash, scopes=scopes, expires_at=expires_at
-        )
-        db.add(token)
-        await db.flush()
-        await db.refresh(token)  # created_at comes back from the server default
-        await db.commit()
-        # the one response the raw token ever rides in
-        return token_created_out(token, raw)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    token = ApiTokens(
+        user_id=user.id, name=name, token_hash=token_hash, scopes=scopes, expires_at=expires_at
+    )
+    db.add(token)
+    await db.flush()
+    await db.refresh(token)  # created_at comes back from the server default
+    await db.commit()
+    # the one response the raw token ever rides in
+    return token_created_out(token, raw)
 
 
 @router.delete("/tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -381,16 +365,10 @@ async def revoke_token(
 ):
     """Delete one of the caller's API tokens; another user's token 404s like a
     missing one."""
-    try:
-        token = await db.get(ApiTokens, token_id)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    token = await db.get(ApiTokens, token_id)
     # another user's token 404s the same as a missing one (hidden ≡ nonexistent)
     if token is None or token.user_id != user.id:
         raise err(404, "not_found", f"Token {token_id} does not exist")
-    try:
-        await db.delete(token)
-        await db.commit()
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    await db.delete(token)
+    await db.commit()
     return None

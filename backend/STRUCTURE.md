@@ -22,7 +22,7 @@ backend/
 │   ├── database.py        # async engine + session factory + get_db() dependency
 │   ├── models.py          # ALL ORM models (owns the schema; mirrors agent/database.py + new tables)
 │   ├── core/
-│   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handler  ← raise err(404, ...)
+│   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handlers (ApiError, database errors)  ← raise err(404, ...)
 │   │   ├── security.py     # password hashing (argon2) + JWT/refresh/API-token minting + webhook secret & HMAC signing (no DB, no FastAPI)
 │   │   ├── cookies.py      # the two auth cookie names + set/clear helpers (httpOnly, SameSite=Lax, Path=/)
 │   │   └── deps.py         # FastAPI deps: current_user (cookie OR bearer), reject_bearer, require_scope, require_admin, csrf_guard
@@ -240,6 +240,7 @@ Find any `endpoints.ts` function here:
 - **Prices** are decimal strings (`"549.99"`), never numbers. `null` for unknown, never `0`.
 - **Timestamps** are ISO-8601 UTC strings.
 - **Errors** always use `raise err(status, code, message, **extra)` → `{"error":{...}}`. Never FastAPI's default `{"detail":...}`.
+- **Database errors need no wrapping** in a route: `core/errors.db_error_handler` answers a value a column can't hold (SQLSTATE class 22 — an id past int4, a negative LIMIT) with 422 `validation_error`, a tripped constraint with 409 `conflict`, and only a lost connection with 503 `db_unavailable`; anything else stays a 500. The MCP tools go through the same `db_error`. Paging params below 1 read as their default, as the mock's `intParam` reads them (`schemas.common.page_param`).
 - **Paginated** = `{data, meta:{page, per_page, total}}`; **plain list** = `{data:[...]}`.
 - **Mutations** require the `X-Snagr-Csrf` header (`csrf_guard`) — the frontend always sends it; bearer (API-token) callers are exempt.
 - **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, deleting a category takes every user's items, watches and price history in it with it, and deleting a site takes every listing found on it and that listing's price history. Reads stay open to any signed-in user.

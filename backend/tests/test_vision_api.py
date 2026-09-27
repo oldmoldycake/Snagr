@@ -520,7 +520,7 @@ async def test_threshold_update_and_bounds(client):
     assert res.json()["vision_auto_reject_fake"] == "0.75"
     assert (await client.get("/api/auth/me")).json()["vision_auto_reject_fake"] == "0.75"
 
-    for bad in ("0.49", "1.01", "abc"):
+    for bad in ("0.49", "1.01", "abc", "NaN", "sNaN", "Infinity"):
         res = await client.patch("/api/me", json={"vision_auto_promote_real": bad}, headers=CSRF)
         assert res.status_code == 422, bad
         body = res.json()["error"]

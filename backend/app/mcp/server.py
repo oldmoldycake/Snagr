@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.applications import Starlette
 
 from app.config import settings
-from app.core.errors import ApiError, err
+from app.core.errors import ApiError, db_error, err
 from app.database import _sessionmaker
 from app.models import User
 from app.services.tokens import authenticate_token
@@ -128,7 +128,10 @@ async def caller_session() -> AsyncIterator[tuple[AsyncSession, User]]:
         except ApiError as e:
             raise ToolError(_envelope(e.code, e.message, **e.extra)) from e
         except SQLAlchemyError as e:
-            raise ToolError(_envelope("db_unavailable", "Could not reach the database")) from e
+            api_error = db_error(e)
+            if api_error is None:
+                raise
+            raise ToolError(_envelope(api_error.code, api_error.message)) from e
 
 
 def require_admin(user: User) -> None:

@@ -98,6 +98,8 @@ async def test_create_field_validation(client):
         ({"name": "ok"}, "scopes"),
         ({"name": "ok", "scopes": ["admin"]}, "scopes"),
         ({"name": "ok", "scopes": ["read"], "expires_in_days": 0}, "expires_in_days"),
+        # far enough out to overflow the date it is added to
+        ({"name": "ok", "scopes": ["read"], "expires_in_days": 3_000_000}, "expires_in_days"),
     ]
     for body, field in cases:
         res = await client.post("/api/me/tokens", json=body, headers=CSRF)

@@ -371,6 +371,17 @@ class TestList:
 
         assert [j["item_name"] for j in await _jobs(client, item_id=wanted)] == ["Alpha"]
 
+    async def test_a_page_below_one_reads_as_the_default(self, client, db_session):
+        # as the mock reads it; Postgres refuses the negative OFFSET it makes
+        user_id = await _sign_in(client)
+        async with _seed_for(db_session, user_id) as sc:
+            await sc.job(watch=await sc.watch(await sc.item("Alpha")))
+
+        res = await client.get("/api/jobs", params={"page": -1, "per_page": 0})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert (len(body["data"]), body["meta"]) == (1, {"page": 1, "per_page": 20, "total": 1})
+
 
 # --- GET /api/jobs/summary ------------------------------------------------------
 
@@ -552,6 +563,17 @@ class TestDetail:
         res = await client.get(f"/api/jobs/{job_id}/events?limit=501")
         assert res.status_code == 422
         assert res.json()["error"]["code"] == "validation_error"
+
+    async def test_a_limit_below_one_reads_as_the_default(self, client, db_session):
+        user_id = await _sign_in(client)
+        async with _seed_for(db_session, user_id) as sc:
+            job = await sc.job(watch=await sc.watch(await sc.item("Alpha")), status="running")
+            await sc.job_event(job, 1)
+            job_id = job.id
+
+        res = await client.get(f"/api/jobs/{job_id}/events?limit=-1")
+        assert res.status_code == 200, res.text
+        assert [e["seq"] for e in res.json()["data"]] == [1]
 
 
 # --- POST /api/jobs/{id}/cancel -------------------------------------------------
