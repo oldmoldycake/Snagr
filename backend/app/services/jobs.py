@@ -305,7 +305,16 @@ async def summary(db: AsyncSession, viewer: User) -> JobsSummary:
         return (await db.execute(stmt)).scalar_one()
 
     async def soonest(*clauses) -> str | None:
-        stmt = select(func.min(Jobs.run_after)).where(mine).where(Jobs.status == "pending")
+        # The hunter doesn't claim a paused site's jobs, so they come due when
+        # the pause lifts, not at run_after; GREATEST skips an unpaused site's NULL.
+        paused = and_(Sites.id == Jobs.site_id, Sites.paused_until > func.now())
+        stmt = (
+            select(func.min(func.greatest(Jobs.run_after, Sites.paused_until)))
+            .select_from(Jobs)
+            .outerjoin(Sites, paused)
+            .where(mine)
+            .where(Jobs.status == "pending")
+        )
         for clause in clauses:
             stmt = stmt.where(clause)
         due = (await db.execute(stmt)).scalar_one()

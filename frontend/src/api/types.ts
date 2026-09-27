@@ -637,7 +637,9 @@ export interface JobsSummary {
   hunts_running: number
   checks_running: number
   checks_pending: number
+  /** when the soonest pending check can run — a paused site's jobs wait for the pause to lift */
   next_check_at: string | null
+  /** the same for hunts and grounding */
   next_hunt_at: string | null
   hunts_today: number
   listings_watched: number

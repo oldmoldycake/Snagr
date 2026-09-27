@@ -1455,6 +1455,13 @@ export const handlers = [
     const pendingHunts = mine.filter(
       (j) => j.status === 'pending' && (j.kind === 'hunt' || j.kind === 'ground'),
     )
+    // the hunter doesn't claim a paused site's jobs, so they come due when the pause lifts
+    const dueAt = (j: MockJob) => {
+      const pausedUntil = store.sites.find((s) => s.id === j.site_id)?.paused_until
+      return pausedUntil != null && pausedUntil > Date.now()
+        ? Math.max(j.run_after, pausedUntil)
+        : j.run_after
+    }
     const midnight = new Date()
     midnight.setHours(0, 0, 0, 0)
     const finishedHunts = hunts
@@ -1469,10 +1476,10 @@ export const handlers = [
       checks_running: checks.filter((j) => j.status === 'running').length,
       checks_pending: pendingChecks.length,
       next_check_at: pendingChecks.length
-        ? new Date(Math.min(...pendingChecks.map((j) => j.run_after))).toISOString()
+        ? new Date(Math.min(...pendingChecks.map(dueAt))).toISOString()
         : null,
       next_hunt_at: pendingHunts.length
-        ? new Date(Math.min(...pendingHunts.map((j) => j.run_after))).toISOString()
+        ? new Date(Math.min(...pendingHunts.map(dueAt))).toISOString()
         : null,
       hunts_today: finishedHunts.filter((j) => j.finished_at! >= midnight.getTime()).length,
       listings_watched: watched,

@@ -93,13 +93,16 @@ export function tickFormatterFor(range: TimeRange): (ts: number) => string {
  * How long until something happens, the way the Activity page says it:
  * under a minute `in 0:42`, under an hour `in 12m`, under a day `in 2h` or
  * `in 4h 12m`, and beyond that the clock time — a countdown in days is a
- * date, not a countdown.
+ * date, not a countdown. A time that passed within the last minute is `now`
+ * (the hunter wakes every 30 s); one further back is `overdue`, since
+ * whatever was due didn't start when it should have.
  */
 export function countdown(iso: string | null | undefined): string {
   if (!iso) return '—'
   const then = new Date(iso).getTime()
   if (!Number.isFinite(then)) return '—'
   const secs = Math.round((then - Date.now()) / 1000)
+  if (secs < -60) return 'overdue'
   if (secs <= 0) return 'now'
   if (secs < 60) return `in 0:${String(secs).padStart(2, '0')}`
   const mins = Math.floor(secs / 60)
