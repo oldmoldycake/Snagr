@@ -47,6 +47,9 @@ export function AddItemDialog({
   const [target, setTarget] = useState('')
   const [tracking, setTracking] = useState<TrackingValue>(DEFAULT_TRACKING)
   const nameRef = useRef<HTMLInputElement>(null)
+  // create.isPending disables the button a render after the click, and the
+  // second click of a double-click lands before it: this is set at once
+  const submitting = useRef(false)
   const queryClient = useQueryClient()
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories, enabled: open })
@@ -67,6 +70,9 @@ export function AddItemDialog({
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
       setOpen(false)
       onAdded?.(item)
+    },
+    onSettled: () => {
+      submitting.current = false
     },
   })
 
@@ -119,6 +125,8 @@ export function AddItemDialog({
               nameRef.current?.focus()
               return
             }
+            if (submitting.current) return
+            submitting.current = true
             create.mutate()
           }}
         >

@@ -340,6 +340,17 @@ function parseTarget(value: string | null | undefined): number | null | HttpResp
   return cents
 }
 
+/** The category's item by this name, trimmed and ignoring case — how the backend matches them. */
+function trackedName(categoryId: number, name: string) {
+  const key = name.trim().toLowerCase()
+  return store.items.find((i) => i.category_id === categoryId && i.name.toLowerCase() === key)
+}
+
+function alreadyTracked() {
+  const message = 'You already track an item with this name'
+  return err(422, 'duplicate', message, { fields: { name: message } })
+}
+
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
 
 interface ChannelFields {
@@ -807,6 +818,9 @@ export const handlers = [
     if (!category) {
       return err(404, 'not_found', `Category ${body.category_id} does not exist`)
     }
+    // every mock item is one the demo user tracks, so a name already in the
+    // category (ignoring case) is always theirs: the backend's 422 duplicate
+    if (trackedName(body.category_id, body.name)) return alreadyTracked()
     const tracking = validateTracking(body, category)
     if (tracking instanceof HttpResponse) return tracking
     const target_cents = parseTarget(body.target_price)
@@ -858,6 +872,13 @@ export const handlers = [
     const item = store.items.find((i) => i.id === Number(params.id))
     if (!item) return err(404, 'not_found', `Item ${params.id} does not exist`)
     const body = (await request.json()) as ItemUpdateRequest
+    if (body.name !== undefined) {
+      if (!body.name.trim()) {
+        return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
+      }
+      const clash = trackedName(item.category_id, body.name)
+      if (clash && clash.id !== item.id) return alreadyTracked()
+    }
     const category = store.categories.find((c) => c.id === item.category_id)!
     const tracking = validateTracking(body, category, item)
     if (tracking instanceof HttpResponse) return tracking

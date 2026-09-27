@@ -16,7 +16,7 @@ import httpx2
 import pytest
 from app.config import settings
 from app.main import app, mcp_app
-from app.models import User
+from app.models import Items, User
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -544,6 +544,28 @@ async def test_item_writes(client, db_session):
         assert (await _error(agent, "create_item", category="nope", name="x"))[
             "code"
         ] == "not_found"
+
+
+async def test_renaming_a_shared_item_answers_under_its_new_id(client, db_session):
+    """Someone else watches Alpha, so the rename moves this user's watch to a
+    new item — and the notify switch passed alongside lands on that watch."""
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with db_session() as session:
+        sc = Scenario(session)
+        (await session.get(User, user_id)).role = "user"
+        await sc.watch(await session.get(Items, seed["alpha"]), user=await sc.other_user())
+        await sc.commit()
+
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        renamed = await _ok(
+            agent, "update_item", item=seed["alpha"], name="Alpha Mk II", notify=False
+        )
+
+        assert renamed["id"] != seed["alpha"]
+        assert (renamed["name"], renamed["watch"]["notify"]) == ("Alpha Mk II", False)
+        assert [listing["id"] for listing in renamed["listings"]] == [seed["live"]]
+        assert (await _error(agent, "get_item", item=seed["alpha"]))["code"] == "not_found"
 
 
 async def test_the_check_interval_over_mcp(client, db_session):

@@ -159,7 +159,7 @@ export const createItem = (body: ItemCreateRequest) =>
 /** One watched item with its listings and what the hunter does next; 404 when unwatched. */
 export const getItem = (id: number) => api<ItemDetail>(`/api/items/${id}`)
 
-/** Edit an item's and the caller's watch fields; only sent fields change. */
+/** Edit an item's and the caller's watch fields; only sent fields change. A rename can answer under a new id. */
 export const updateItem = (id: number, body: ItemUpdateRequest) =>
   api<ItemDetail>(`/api/items/${id}`, { method: 'PATCH', body })
 
