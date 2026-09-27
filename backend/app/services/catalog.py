@@ -9,9 +9,10 @@ import re
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import err
+from app.core.errors import ApiError, err
 from app.models import (
     Categories,
     Items,
@@ -38,9 +39,10 @@ async def checked_name(
     exclude_id: int | None = None,
 ) -> str:
     """The name trimmed, or 422: validation_error when blank, duplicate when
-    another row of `model` has it already, ignoring case — the unique index
-    on lower(name) would refuse it anyway, as a 503. Create and rename both
-    come through here, so a rename can't do what a create may not.
+    another row of `model` has it already, ignoring case. Create and rename
+    both come through here, so a rename can't do what a create may not. The
+    check reads before the write, so a concurrent request can still take the
+    name in between; flush_name answers that with the same 422.
 
     Site names ignoring case matter beyond tidiness: the MCP tools address a
     site by name, and two sites answering to one leave every agent with an
@@ -53,10 +55,36 @@ async def checked_name(
     if exclude_id is not None:
         clash = clash.where(model.id != exclude_id)
     if await db.scalar(clash) is not None:
-        noun = "category" if model is Categories else "site"
-        message = f"A {noun} with this name already exists"
-        raise err(422, "duplicate", message, fields={"name": message})
+        raise _duplicate_name(model)
     return name
+
+
+def _duplicate_name(model: type[Categories] | type[Sites]) -> ApiError:
+    """The 422 for a name another row of `model` already has."""
+    noun = "category" if model is Categories else "site"
+    message = f"A {noun} with this name already exists"
+    return err(422, "duplicate", message, fields={"name": message})
+
+
+# the unique indexes that hold a name: categories.name's own constraint and
+# the lower(name) ones. categories_slug_key is not here — a slug clash is not
+# the caller's name being taken.
+_NAME_CONSTRAINTS = {"categories_name_key", "uq_categories_name", "uq_sites_name"}
+
+
+async def flush_name(db: AsyncSession, model: type[Categories] | type[Sites]) -> None:
+    """Flush the pending write, turning a name the unique index refuses into
+    checked_name's 422 duplicate: two concurrent requests can both pass that
+    read before either writes, and the later one otherwise surfaces as a raw
+    IntegrityError (a 503)."""
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # asyncpg's own error, which names the index, is the DBAPI error's cause
+        constraint = getattr(exc.orig.__cause__, "constraint_name", None)
+        if constraint in _NAME_CONSTRAINTS:
+            raise _duplicate_name(model) from exc
+        raise
 
 
 # --- categories -------------------------------------------------------------
@@ -131,7 +159,7 @@ async def create_category(db: AsyncSession, name: str) -> Category:
     name = await checked_name(db, Categories, name)
     cat = Categories(name=name, slug=await unique_slug(db, name))
     db.add(cat)
-    await db.flush()
+    await flush_name(db, Categories)
     await db.refresh(cat)
     await db.commit()
 
@@ -153,6 +181,7 @@ async def update_category(
     if name is not None:
         cat.name = await checked_name(db, Categories, name, exclude_id=cat.id)
 
+    await flush_name(db, Categories)
     await db.commit()
     return await build_category(db, cat, user_id)
 
@@ -277,7 +306,7 @@ async def create_site(db: AsyncSession, name: str, base_url: str) -> Site:
 
     site = Sites(name=name, base_url=base_url)
     db.add(site)
-    await db.flush()
+    await flush_name(db, Sites)
     await db.refresh(site)
     await db.commit()
     # a brand-new site has no listings/categories/checks — empty lookups
@@ -316,6 +345,8 @@ async def update_site(
             message = "Base URL is required"
             raise err(422, "validation_error", message, fields={"base_url": message})
         site.base_url = base_url
+    # before clear_pause's UPDATE, whose autoflush would write the name outside it
+    await flush_name(db, Sites)
     if clear_pause:
         site.paused_until = None
         site.paused_reason = None

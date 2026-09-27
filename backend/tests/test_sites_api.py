@@ -16,7 +16,16 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import pytest
-from app.models import ListingChecks, Listings, PriceChecks, SiteCategories, User, WatchSites
+from app.models import (
+    ListingChecks,
+    Listings,
+    PriceChecks,
+    SiteCategories,
+    Sites,
+    User,
+    WatchSites,
+)
+from app.services import catalog
 from sqlalchemy import func, select
 
 from tests.conftest import CSRF
@@ -413,6 +422,65 @@ async def test_update_site_rejects_another_sites_name(client, db_session):
     assert error["code"] == "duplicate"
     assert error["fields"] == {"name": "A site with this name already exists"}
     assert set(await _sites_by_name(client)) == {"Ebay", "TestBay"}
+
+
+def _lose_the_name_race(monkeypatch, db_session, rival: str):
+    """Let checked_name pass, then commit a site named `rival` from another
+    session before the write: what a concurrent request that won looks like."""
+    real = catalog.checked_name
+
+    async def racing(db, model, name, exclude_id=None):
+        checked = await real(db, model, name, exclude_id)
+        async with db_session() as session:
+            session.add(Sites(name=rival, base_url="https://rival.test"))
+            await session.commit()
+        return checked
+
+    monkeypatch.setattr(catalog, "checked_name", racing)
+
+
+@pytest.mark.parametrize("rival", ["Glassbay", "GLASSBAY"])
+async def test_create_site_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    """The name check reads before the INSERT, so a concurrent create can take
+    the name in between; the lower(name) index refuses the later one, and that
+    is the same 422 duplicate, not a 503."""
+    await _sign_in(client)
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.post(
+        "/api/sites", json={"name": "Glassbay", "base_url": "https://glass.test"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["message"] == "A site with this name already exists"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+
+
+@pytest.mark.parametrize("rival", ["Glassbay", "GLASSBAY"])
+@pytest.mark.parametrize("extra", [{}, {"paused_until": None}])
+async def test_update_site_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival, extra
+):
+    """Lifting a pause in the same PATCH runs an UPDATE whose autoflush would
+    write the new name before the duplicate check on the flush could see it."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.patch(
+        f"/api/sites/{site_id}", json={"name": "Glassbay", **extra}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+    assert set(await _sites_by_name(client)) == {rival, "TestBay"}
 
 
 @pytest.mark.parametrize(

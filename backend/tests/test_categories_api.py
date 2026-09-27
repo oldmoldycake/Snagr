@@ -20,7 +20,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 from app.config import settings
-from app.models import Items, MarketPrices, SiteCategories, User
+from app.models import Categories, Items, MarketPrices, SiteCategories, User
+from app.services import catalog
 from sqlalchemy import func, select
 
 from tests.conftest import CSRF
@@ -301,6 +302,60 @@ async def test_rename_category_rejects_another_categorys_name(client, db_session
     assert error["code"] == "duplicate"
     assert error["fields"] == {"name": "A category with this name already exists"}
     assert set(await _categories_by_name(client)) == {"Homelab", "Cameras"}
+
+
+def _lose_the_name_race(monkeypatch, db_session, rival: str):
+    """Let checked_name pass, then commit a category named `rival` from another
+    session before the write: what a concurrent request that won looks like."""
+    real = catalog.checked_name
+
+    async def racing(db, model, name, exclude_id=None):
+        checked = await real(db, model, name, exclude_id)
+        async with db_session() as session:
+            session.add(Categories(name=rival, slug="rival"))
+            await session.commit()
+        return checked
+
+    monkeypatch.setattr(catalog, "checked_name", racing)
+
+
+@pytest.mark.parametrize("rival", ["Lenses", "LENSES"])
+async def test_create_category_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    """The name check reads before the INSERT, so a concurrent create can take
+    the name in between; the unique index (the exact name, or lower(name))
+    refuses the later one, and that is the same 422 duplicate, not a 503."""
+    await _sign_in(client)
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.post("/api/categories", json={"name": "Lenses"}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["message"] == "A category with this name already exists"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+
+
+@pytest.mark.parametrize("rival", ["Lenses", "LENSES"])
+async def test_rename_category_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "Lenses"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+    assert set(await _categories_by_name(client)) == {rival, "Cameras"}
 
 
 # --- the write routes answer with the same counts ------------------------------
