@@ -50,8 +50,9 @@ def register(mcp: FastMCP) -> None:
         """Rename a category and/or replace the set of sites it is searched on —
         one call for what the REST API splits in two. `category` is an id or
         slug; `site_ids` are ids or names and REPLACE the current set (an empty
-        list unlinks every site). Arguments you leave out are left alone.
-        Admins only (`forbidden` otherwise)."""
+        list unlinks every site). A new name follows create_category's rules;
+        the slug stays. Arguments you leave out are left alone. Admins only
+        (`forbidden` otherwise)."""
         async with caller_session() as (db, user):
             require_admin(user)
             cat = await resolve_category(db, category)
@@ -78,7 +79,8 @@ def register(mcp: FastMCP) -> None:
     async def create_site(name: str, base_url: str) -> Site:
         """Add a marketplace the agent can search, e.g. name "eBay",
         base_url "https://www.ebay.com". Both are trimmed and one trailing
-        slash is dropped; blanks are a `validation_error`. Link it to
+        slash is dropped; blanks are a `validation_error` and a name another
+        site has (case-insensitive) is a `duplicate`. Link it to
         categories with update_category — an unlinked site is never searched.
         Admins only (`forbidden` otherwise)."""
         async with caller_session() as (db, user):
@@ -97,10 +99,10 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
     async def delete_site(site: Ref) -> str:
-        """Delete a site (id or name). A site that still has listings or is
-        linked to a category can't be deleted yet — unlink it first with
-        update_category and let its listings go. No undo. Admins only
-        (`forbidden` otherwise)."""
+        """Delete a site (id or name). It is unlinked from every category,
+        dropped from every watch that pinned it, and every listing found on it
+        is deleted with its price history, for every user. No undo. Admins
+        only (`forbidden` otherwise)."""
         async with caller_session() as (db, user):
             require_admin(user)
             resolved = await resolve_site(db, site)

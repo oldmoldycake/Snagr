@@ -79,6 +79,10 @@ class Sites(Base):
     paused_reason: Mapped[str | None] = mapped_column(Text)  # + api
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # agents address a site by name, so two answering to one (however
+    # capitalised) would leave that name ambiguous for everyone
+    __table_args__ = (Index("uq_sites_name", text("lower(name)"), unique=True),)
+
 
 class Categories(Base):
     """Item category (e.g. video games, cards); links items to the sites that
@@ -92,6 +96,8 @@ class Categories(Base):
     condition_tiers: Mapped[list | None] = mapped_column(JSONB)
     price_sources: Mapped[list | None] = mapped_column(JSONB)
     pinned_sources: Mapped[list | None] = mapped_column(JSONB)
+
+    __table_args__ = (Index("uq_categories_name", text("lower(name)"), unique=True),)
 
 
 class SiteCategories(Base):

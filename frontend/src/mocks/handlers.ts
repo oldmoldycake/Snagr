@@ -106,11 +106,41 @@ function intParam(request: StrictRequest<DefaultBodyType>, name: string, fallbac
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
 }
 
-const slugify = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+/**
+ * A new category's slug, never "" (a name of only emoji or symbols has no
+ * letters to keep) and never one another category holds: "C++" after "C"
+ * gets "c-2".
+ */
+function uniqueSlug(name: string) {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'category'
+  let slug = base
+  for (let n = 2; store.categories.some((c) => c.slug === slug); n++) slug = `${base}-${n}`
+  return slug
+}
+
+/**
+ * The backend's name rules for categories and sites, shared by create and
+ * rename: trimmed, required, and unique ignoring case. The trimmed name, or
+ * the 422 to answer with.
+ */
+function checkedName(
+  rows: { id: number; name: string }[],
+  noun: 'category' | 'site',
+  name: string,
+  exceptId?: number,
+): string | HttpResponse<DefaultBodyType> {
+  const trimmed = name.trim()
+  if (!trimmed) return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
+  if (rows.some((r) => r.id !== exceptId && r.name.toLowerCase() === trimmed.toLowerCase())) {
+    const message = `A ${noun} with this name already exists`
+    return err(422, 'duplicate', message, { fields: { name: message } })
+  }
+  return trimmed
+}
 
 /** Simulated network latency so loading states are visible. */
 const wait = () => new Promise((r) => setTimeout(r, 120 + Math.random() * 180))
@@ -664,14 +694,9 @@ export const handlers = [
   http.post('/api/categories', async ({ request }) => {
     requireAdmin()
     const body = (await request.json()) as CategoryCreateRequest
-    const name = body.name?.trim()
-    if (!name) return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
-    if (store.categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
-      return err(422, 'duplicate', 'A category with this name already exists', {
-        fields: { name: 'A category with this name already exists' },
-      })
-    }
-    const category = { id: newId(), name, slug: slugify(name), site_ids: [] }
+    const name = checkedName(store.categories, 'category', body.name ?? '')
+    if (name instanceof HttpResponse) return name
+    const category = { id: newId(), name, slug: uniqueSlug(name), site_ids: [] }
     store.categories.push(category)
     return HttpResponse.json(toCategory(category), { status: 201 })
   }),
@@ -683,7 +708,11 @@ export const handlers = [
     const body = (await request.json()) as CategoryUpdateRequest
     // the slug is set once at creation and survives every rename, so links and
     // bookmarks to /categories/<slug> keep working
-    if (body.name) category.name = body.name.trim()
+    if (body.name != null) {
+      const name = checkedName(store.categories, 'category', body.name, category.id)
+      if (name instanceof HttpResponse) return name
+      category.name = name
+    }
     return HttpResponse.json(toCategory(category))
   }),
 
@@ -725,9 +754,11 @@ export const handlers = [
     if (!body.name?.trim() || !body.base_url?.trim()) {
       return err(422, 'validation_error', 'Name and base URL are required')
     }
+    const name = checkedName(store.sites, 'site', body.name)
+    if (name instanceof HttpResponse) return name
     const site = {
       id: newId(),
-      name: body.name.trim(),
+      name,
       base_url: body.base_url.trim().replace(/\/$/, ''),
       paused_until: null,
       paused_reason: null,
@@ -749,8 +780,19 @@ export const handlers = [
         fields: { paused_until: 'only null is accepted; the hunter sets pauses' },
       })
     }
-    if (body.name) site.name = body.name.trim()
-    if (body.base_url) site.base_url = body.base_url.trim().replace(/\/$/, '')
+    // "" is "leave it"; what trims to nothing is a blank, not a no-op
+    if (body.name) {
+      const name = checkedName(store.sites, 'site', body.name, site.id)
+      if (name instanceof HttpResponse) return name
+      site.name = name
+    }
+    if (body.base_url) {
+      const baseUrl = body.base_url.trim().replace(/\/$/, '')
+      if (!baseUrl) {
+        return err(422, 'validation_error', 'Base URL is required', { fields: { base_url: 'Base URL is required' } })
+      }
+      site.base_url = baseUrl
+    }
     if ('paused_until' in body) {
       site.paused_until = null
       site.paused_reason = null
@@ -771,9 +813,16 @@ export const handlers = [
     for (const category of store.categories) {
       category.site_ids = category.site_ids.filter((sid) => sid !== id)
     }
-    for (const listing of store.listings) {
-      if (listing.site_id === id) listing.active = false
+    // an item left pinning no site follows its category again, the site_ids rule
+    for (const item of store.items) {
+      if (item.site_ids == null) continue
+      const pinned = item.site_ids.filter((sid) => sid !== id)
+      item.site_ids = pinned.length > 0 ? pinned : null
     }
+    // a listing can't outlive its site, so it goes with its price history
+    const listingIds = new Set(store.listings.filter((l) => l.site_id === id).map((l) => l.id))
+    store.listings = store.listings.filter((l) => !listingIds.has(l.id))
+    store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
     return new HttpResponse(null, { status: 204 })
   }),
 

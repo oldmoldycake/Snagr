@@ -20,7 +20,8 @@ from contextlib import asynccontextmanager
 
 import pytest
 from app.config import settings
-from app.models import Items, MarketPrices, SiteCategories, User
+from app.models import Categories, Items, MarketPrices, SiteCategories, User
+from app.services import catalog
 from sqlalchemy import func, select
 
 from tests.conftest import CSRF
@@ -216,6 +217,207 @@ async def test_create_category_rejects_a_duplicate_name(client, db_session, name
     assert error["code"] == "duplicate"
     assert error["message"] == "A category with this name already exists"
     assert error["fields"] == {"name": "A category with this name already exists"}
+
+
+@pytest.mark.parametrize(
+    ("names", "slugs"),
+    [
+        (["🧪", "★★"], ["category", "category-2"]),
+        (["C", "C++", "C#"], ["c", "c-2", "c-3"]),
+    ],
+)
+async def test_create_category_always_gets_a_slug_of_its_own(client, names, slugs):
+    """A name with no letters or digits once made the slug "" (its link went
+    to /categories/, and the next such name 503'd on the unique slug), and
+    "C++" collided with "C" the same way."""
+    await _sign_in(client)
+
+    made = []
+    for name in names:
+        res = await client.post("/api/categories", json={"name": name}, headers=CSRF)
+        assert res.status_code == 201, res.text
+        made.append(res.json()["slug"])
+
+    assert made == slugs
+
+
+@pytest.mark.parametrize("rivals", [1, 2])
+async def test_create_category_that_loses_the_slug_race_takes_the_next_one(
+    client, db_session, monkeypatch, rivals
+):
+    """unique_slug reads before the INSERT, so a concurrent create whose name
+    slugs the same ("C++" beside "C") can take the slug in between. That is
+    no fault of the caller's: the create reads again and takes the next free
+    slug instead of answering 503 — however many times it loses."""
+    await _sign_in(client)
+    real = catalog.unique_slug
+    lost = 0
+
+    async def racing(db, name):
+        nonlocal lost
+        slug = await real(db, name)
+        if lost < rivals:
+            lost += 1
+            async with db_session() as session:
+                session.add(Categories(name=f"C{'+' * lost}", slug=slug))
+                await session.commit()
+        return slug
+
+    monkeypatch.setattr(catalog, "unique_slug", racing)
+
+    res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
+
+    assert res.status_code == 201, res.text
+    assert res.json()["slug"] == f"c-{rivals + 1}"
+    assert {c["name"]: c["slug"] for c in (await _categories_by_name(client)).values()} == {
+        "C": f"c-{rivals + 1}",
+        "C+": "c",
+        **({"C++": "c-2"} if rivals == 2 else {}),
+    }
+
+
+async def test_create_category_that_keeps_losing_the_slug_race_gives_up(
+    client, db_session, monkeypatch
+):
+    """The rereads are bounded: a create that loses every one fails loudly
+    rather than looping, and leaves nothing of itself behind."""
+    await _sign_in(client)
+    real = catalog.unique_slug
+    lost = 0
+
+    async def always_taken(db, name):
+        nonlocal lost
+        slug = await real(db, name)
+        lost += 1
+        async with db_session() as session:
+            session.add(Categories(name=f"Rival {lost}", slug=slug))
+            await session.commit()
+        return slug
+
+    monkeypatch.setattr(catalog, "unique_slug", always_taken)
+
+    res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
+
+    assert res.status_code == 503, res.text
+    assert lost == catalog._SLUG_ATTEMPTS
+    assert "C" not in await _categories_by_name(client)
+
+
+# --- PATCH /api/categories/{id} -----------------------------------------------
+
+
+async def test_rename_category_trims_and_keeps_the_slug(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "  Film cameras  "}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    assert (res.json()["name"], res.json()["slug"]) == ("Film cameras", "cameras")
+
+
+async def test_rename_category_may_change_only_the_case(client, db_session):
+    """The duplicate check must not count the category being renamed."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "CAMERAS"}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "CAMERAS"
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_rename_category_rejects_a_blank_name(client, db_session, name):
+    """Create's rules, not a laxer set: a rename used to store "   "."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(f"/api/categories/{category_id}", json={"name": name}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert error["fields"] == {"name": "Name is required"}
+    assert "Cameras" in await _categories_by_name(client)
+
+
+async def test_rename_category_rejects_another_categorys_name(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.category("Homelab")
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": " homelab "}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+    assert set(await _categories_by_name(client)) == {"Homelab", "Cameras"}
+
+
+def _lose_the_name_race(monkeypatch, db_session, rival: str):
+    """Let checked_name pass, then commit a category named `rival` from another
+    session before the write: what a concurrent request that won looks like."""
+    real = catalog.checked_name
+
+    async def racing(db, model, name, exclude_id=None):
+        checked = await real(db, model, name, exclude_id)
+        async with db_session() as session:
+            session.add(Categories(name=rival, slug="rival"))
+            await session.commit()
+        return checked
+
+    monkeypatch.setattr(catalog, "checked_name", racing)
+
+
+@pytest.mark.parametrize("rival", ["Lenses", "LENSES"])
+async def test_create_category_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    """The name check reads before the INSERT, so a concurrent create can take
+    the name in between; the unique index (the exact name, or lower(name))
+    refuses the later one, and that is the same 422 duplicate, not a 503."""
+    await _sign_in(client)
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.post("/api/categories", json={"name": "Lenses"}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["message"] == "A category with this name already exists"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+
+
+@pytest.mark.parametrize("rival", ["Lenses", "LENSES"])
+async def test_rename_category_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "Lenses"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+    assert set(await _categories_by_name(client)) == {rival, "Cameras"}
 
 
 # --- the write routes answer with the same counts ------------------------------

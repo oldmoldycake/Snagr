@@ -67,7 +67,7 @@ backend/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–020 (linear chain); the backend owns the canonical schema
+├── migrations/            # Alembic revisions 001–021 (linear chain); the backend owns the canonical schema
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -242,5 +242,5 @@ Find any `endpoints.ts` function here:
 - **Errors** always use `raise err(status, code, message, **extra)` → `{"error":{...}}`. Never FastAPI's default `{"detail":...}`.
 - **Paginated** = `{data, meta:{page, per_page, total}}`; **plain list** = `{data:[...]}`.
 - **Mutations** require the `X-Snagr-Csrf` header (`csrf_guard`) — the frontend always sends it; bearer (API-token) callers are exempt.
-- **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, and deleting a category takes every user's items, watches and price history in it with it. Reads stay open to any signed-in user.
+- **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, deleting a category takes every user's items, watches and price history in it with it, and deleting a site takes every listing found on it and that listing's price history. Reads stay open to any signed-in user.
 - **`/api/auth/*` returns 401 directly**; the client's refresh-retry skips the credential routes (login, register, refresh, logout, invites) so a refused login is never replayed, but refreshes on `/me`.

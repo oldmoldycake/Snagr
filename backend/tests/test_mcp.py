@@ -443,11 +443,16 @@ async def test_catalog_writes(client):
 
         site = await _ok(agent, "create_site", name="eBay", base_url="https://ebay.com/")
         assert site["base_url"] == "https://ebay.com"  # one trailing slash dropped, like REST
+        # a second "ebay" would leave every call naming the site ambiguous
+        dup = await _error(agent, "create_site", name="EBAY", base_url="https://ebay.co.uk")
+        assert dup["code"] == "duplicate"
 
         linked = await _ok(
             agent, "update_category", category="cameras", name="Film cameras", site_ids=["ebay"]
         )
         assert linked["name"] == "Film cameras"
+        blank = await _error(agent, "update_category", category="cameras", name="   ")
+        assert blank["code"] == "validation_error"
         assert linked["site_ids"] == [site["id"]]
         (listed,) = await _ok(agent, "list_sites")
         assert listed["category_ids"] == [cat["id"]]

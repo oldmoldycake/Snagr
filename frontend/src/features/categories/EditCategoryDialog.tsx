@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, Trash2 } from 'lucide-react'
 import { deleteCategory, setCategorySites, updateCategory } from '@/api/endpoints'
+import { ApiError } from '@/api/client'
 import type { Category } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
@@ -54,6 +55,9 @@ export function EditCategoryDialog({
     },
   })
 
+  // a blank or taken name is refused with the reason on `fields.name`
+  const nameError = save.error instanceof ApiError ? (save.error.fields?.name ?? save.error.message) : null
+
   const remove = useMutation({
     mutationFn: () => deleteCategory(category.id),
     onSuccess: async () => {
@@ -77,6 +81,11 @@ export function EditCategoryDialog({
           <div>
             <Label htmlFor="edit-category-name">Name</Label>
             <Input id="edit-category-name" value={name} onChange={(e) => setName(e.target.value)} />
+            {nameError ? (
+              <p role="alert" className="mt-1.5 text-xs text-rise">
+                {nameError}
+              </p>
+            ) : null}
           </div>
 
           <SitePicker selected={siteIds} onChange={setSiteIds} />

@@ -1,9 +1,9 @@
-"""Migrations 015 to 020, up and down, against a scratch database.
+"""Migrations 015 to 021, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
 and rewrites stored token scopes, and both of those are only reversible if the
-downgrade really puts them back; 016 and 017 are data backfills and 019 and 020
+downgrade really puts them back; 016 and 017 are data backfills and 019 to 021
 cleanups, and the rows they write are the only thing there is to test. It builds its own database
 (`snagr_test_...`) rather than touching the suite's, and drops it again on the
 way out.
@@ -322,3 +322,53 @@ async def test_020_folds_duplicate_items_into_the_oldest(scratch):
 
     _alembic("downgrade", "019")
     assert not await _table(scratch, "uq_items_category_name")
+
+
+async def test_021_renames_blank_and_duplicate_catalog_names(scratch):
+    """Nothing is merged: a blank or duplicate category or site keeps its row
+    under a name an admin can see and fix, and an empty slug gets one."""
+    _alembic("upgrade", "020")
+
+    async def add(table, name, **extra):
+        columns = ", ".join(["name", *extra])
+        values = ", ".join(f"${n}" for n in range(1, len(extra) + 2))
+        return await scratch.fetchval(
+            f"INSERT INTO {table} ({columns}) VALUES ({values}) RETURNING id",
+            name,
+            *extra.values(),
+        )
+
+    homelab = await add("categories", "Homelab", slug="homelab")
+    recased = await add("categories", " homelab ", slug="homelab-2")
+    emoji = await add("categories", "🧪", slug="")
+    blank = await add("categories", "   ", slug="blank")
+    ebay = await add("sites", "Ebay", base_url="https://ebay.test")
+    shouty = await add("sites", "EBAY", base_url="https://ebay.test/uk")
+    unnamed = await add("sites", "", base_url="https://unnamed.test")
+
+    _alembic("upgrade", "021")
+
+    categories = {
+        row["id"]: tuple(row[1:])
+        for row in await scratch.fetch("SELECT id, name, slug FROM categories")
+    }
+    assert categories == {
+        homelab: ("Homelab", "homelab"),
+        recased: (f"homelab (duplicate {recased})", "homelab-2"),
+        emoji: ("🧪", f"category-{emoji}"),
+        blank: (f"Untitled category {blank}", "blank"),
+    }
+    sites = dict(await scratch.fetch("SELECT id, name FROM sites"))
+    assert sites == {
+        ebay: "Ebay",
+        shouty: f"EBAY (duplicate {shouty})",
+        unnamed: f"Untitled site {unnamed}",
+    }
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await add("categories", "HOMELAB", slug="homelab-3")
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await add("sites", "ebay", base_url="https://ebay.test/de")
+
+    _alembic("downgrade", "020")
+    assert not await _table(scratch, "uq_categories_name")
+    assert not await _table(scratch, "uq_sites_name")
