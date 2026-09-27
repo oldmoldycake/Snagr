@@ -25,6 +25,7 @@ os.environ["DATABASE_URL"] = _test_url
 import asyncpg
 import pytest
 from app import models  # noqa: F401 — registers every table on Base.metadata
+from app.core import ratelimit
 from app.database import Base, _sessionmaker
 from app.main import app
 from httpx import ASGITransport, AsyncClient
@@ -146,6 +147,15 @@ async def _clean_tables():
     yield
     async with _engine().begin() as conn:
         await conn.execute(text(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture(autouse=True)
+def _forget_sign_in_attempts():
+    """The sign-in limits count in process memory, and every test signs in
+    from the same address: each starts with a clean count."""
+    yield
+    ratelimit.by_address.clear()
+    ratelimit.by_account.clear()
 
 
 @pytest.fixture

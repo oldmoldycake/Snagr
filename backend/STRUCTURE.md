@@ -23,7 +23,8 @@ backend/
 │   ├── models.py          # ALL ORM models (owns the schema; mirrors agent/database.py + new tables)
 │   ├── core/
 │   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handlers (ApiError, database errors)  ← raise err(404, ...)
-│   │   ├── security.py     # password hashing (argon2) + JWT/refresh/API-token minting + webhook secret & HMAC signing (no DB, no FastAPI)
+│   │   ├── security.py     # password rules + hashing (argon2, on a thread pool) + JWT/refresh/API-token minting + webhook secret & HMAC signing (no DB, no FastAPI)
+│   │   ├── ratelimit.py    # sign-in attempt limits per client address and per account (in-process) → 429 rate_limited
 │   │   ├── cookies.py      # the two auth cookie names + set/clear helpers (httpOnly, SameSite=Lax, Path=/)
 │   │   └── deps.py         # FastAPI deps: current_user (cookie OR bearer), reject_bearer, require_scope, require_admin, csrf_guard
 │   ├── schemas/           # Pydantic models — one file per contract section, mirror types.ts
@@ -90,7 +91,7 @@ JSON in/out. **core** holds cross-cutting concerns (errors, auth, security).
 | `services/` | multi-step logic (item mapping, aggregation, the job queue, SSE) | knowing about HTTP/FastAPI |
 | `schemas/` | the exact request/response shapes (mirror `types.ts`) + the `*_out()` serializers that map a row to its shape | business logic, DB access |
 | `models.py` | ORM tables (the schema) | request shapes |
-| `core/` | error envelope, auth deps, hashing/tokens | domain logic |
+| `core/` | error envelope, auth deps, hashing/tokens, sign-in limits | domain logic |
 | `config.py` | reading env | anything else |
 
 **Rule of thumb:** a thin CRUD route (the admin user list, `routers/admin.py`)
@@ -245,3 +246,4 @@ Find any `endpoints.ts` function here:
 - **Mutations** require the `X-Snagr-Csrf` header (`csrf_guard`) — the frontend always sends it; bearer (API-token) callers are exempt.
 - **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, deleting a category takes every user's items, watches and price history in it with it, and deleting a site takes every listing found on it and that listing's price history. Reads stay open to any signed-in user.
 - **`/api/auth/*` returns 401 directly**; the client's refresh-retry skips the credential routes (login, register, refresh, logout, invites) so a refused login is never replayed, but refreshes on `/me`.
+- **Passwords never touch the event loop.** `hash_password` / `verify_password` are async and run argon2 on `core/security`'s thread pool; login checks an unknown email against a stand-in hash, so the response time doesn't say which emails exist, and hands its DB connection back before verifying. A new password (register, invite accept, password change) is 8+ characters or 422 `validation_error`. Login and the password change's current-password check count against `core/ratelimit` (per client address and per account; 429 `rate_limited`, right password or not).

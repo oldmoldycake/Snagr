@@ -5,11 +5,14 @@ Each test starts from an empty DB (conftest truncates between tests), so
 """
 
 import asyncio
+import threading
 from datetime import timedelta
 
 from app.config import settings
+from app.core import ratelimit
 from app.core.security import hash_refresh
 from app.models import Sessions, User
+from argon2 import PasswordHasher
 from sqlalchemy import select, update
 
 from tests.conftest import CSRF
@@ -302,6 +305,157 @@ async def test_me_update_email(client):
     # ntfy_topic left the contract with the channels rework — a stale client
     # still sending it is ignored, not an error
     assert "ntfy_topic" not in res.json()
+
+
+# --- password rules ----------------------------------------------------------------
+
+
+async def test_register_refuses_a_short_password(client):
+    for password in ("", "7-chars"):
+        res = await _register(client, {"email": ADMIN["email"], "password": password})
+        assert res.status_code == 422
+        assert res.json()["error"]["code"] == "validation_error"
+        assert "password" in res.json()["error"]["fields"]
+    assert (await _register(client)).status_code == 201
+
+
+async def test_invite_accept_refuses_a_short_password(client, make_client):
+    await _register(client)
+    token = (await client.post("/api/admin/invites", json={}, headers=CSRF)).json()["token"]
+    invitee = await make_client()
+
+    res = await invitee.post(
+        f"/api/auth/invites/{token}/accept",
+        json={"email": GUEST["email"], "password": "short"},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "password" in res.json()["error"]["fields"]
+    # the refused form did not burn the invite
+    accepted = await invitee.post(f"/api/auth/invites/{token}/accept", json=GUEST, headers=CSRF)
+    assert accepted.status_code == 201
+
+
+async def test_password_change_refuses_a_short_password(client, make_client):
+    await _register(client)
+    res = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": ""},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "new_password" in res.json()["error"]["fields"]
+    fresh = await make_client()
+    assert (await fresh.post("/api/auth/login", json=ADMIN, headers=CSRF)).status_code == 200
+
+
+# --- password checks ---------------------------------------------------------------
+
+
+async def test_password_checks_leave_the_event_loop_free(client, monkeypatch):
+    await _register(client)
+    started, finish = threading.Event(), threading.Event()
+    finished_in_time = []
+    real_verify = PasswordHasher.verify
+
+    def held_verify(self, hash, password):
+        started.set()
+        finished_in_time.append(finish.wait(timeout=5))
+        return real_verify(self, hash, password)
+
+    monkeypatch.setattr(PasswordHasher, "verify", held_verify)
+    login = asyncio.create_task(client.post("/api/auth/login", json=ADMIN, headers=CSRF))
+    assert await asyncio.to_thread(started.wait, 5)
+    # a login is mid-check, and other requests are still answered
+    assert (await client.get("/api/instance")).status_code == 200
+    finish.set()
+    assert (await login).status_code == 200
+    assert finished_in_time == [True]
+
+
+async def test_unknown_email_costs_a_full_password_check(client, monkeypatch):
+    await _register(client)
+    checked = []
+    real_verify = PasswordHasher.verify
+
+    def counted_verify(self, hash, password):
+        checked.append(hash)
+        return real_verify(self, hash, password)
+
+    monkeypatch.setattr(PasswordHasher, "verify", counted_verify)
+    res = await client.post(
+        "/api/auth/login",
+        json={"email": "nobody@example.com", "password": ADMIN["password"]},
+        headers=CSRF,
+    )
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "invalid_credentials"
+    assert len(checked) == 1
+
+
+# --- sign-in limits ----------------------------------------------------------------
+
+
+async def test_login_locks_an_account_after_too_many_attempts(client, make_client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    monkeypatch.setattr(ratelimit, "by_account", ratelimit.AttemptLimit(limit=3))
+    await _register(client)
+    await _register(await make_client(), GUEST)
+
+    browser = await make_client()
+    wrong = {"email": ADMIN["email"], "password": "not-the-password"}
+    for _ in range(3):
+        res = await browser.post("/api/auth/login", json=wrong, headers=CSRF)
+        assert res.status_code == 401
+    # refused even with the right password, and whatever the email's case
+    for creds in (ADMIN, {**ADMIN, "email": ADMIN["email"].upper()}):
+        res = await browser.post("/api/auth/login", json=creds, headers=CSRF)
+        assert res.status_code == 429
+        assert res.json()["error"]["code"] == "rate_limited"
+    # another account signs in from the same address
+    assert (await browser.post("/api/auth/login", json=GUEST, headers=CSRF)).status_code == 200
+
+
+async def test_login_limits_an_address_across_accounts(client, make_client, monkeypatch):
+    monkeypatch.setattr(ratelimit, "by_address", ratelimit.AttemptLimit(limit=3))
+    await _register(client)
+
+    browser = await make_client()
+    for n in range(3):
+        res = await browser.post(
+            "/api/auth/login",
+            json={"email": f"guess{n}@example.com", "password": "not-the-password"},
+            headers=CSRF,
+        )
+        assert res.status_code == 401
+    res = await browser.post("/api/auth/login", json=ADMIN, headers=CSRF)
+    assert res.status_code == 429
+    assert res.json()["error"]["code"] == "rate_limited"
+
+
+async def test_password_change_attempts_count_against_the_account(client, make_client, monkeypatch):
+    monkeypatch.setattr(ratelimit, "by_account", ratelimit.AttemptLimit(limit=3))
+    await _register(client)
+
+    for _ in range(3):
+        res = await client.post(
+            "/api/me/password",
+            json={"current_password": "not-the-password", "new_password": "new-password-1"},
+            headers=CSRF,
+        )
+        assert res.status_code == 422
+    res = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": "new-password-1"},
+        headers=CSRF,
+    )
+    assert res.status_code == 429
+    assert res.json()["error"]["code"] == "rate_limited"
+    # the same account can't be guessed at through the login form instead
+    browser = await make_client()
+    assert (await browser.post("/api/auth/login", json=ADMIN, headers=CSRF)).status_code == 429
 
 
 # --- admin ----------------------------------------------------------------------

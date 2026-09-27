@@ -12,12 +12,14 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core import ratelimit
 from app.core.deps import csrf_guard, current_user, reject_bearer
 from app.core.errors import err
 from app.core.security import (
     hash_password,
     new_api_token,
     new_channel_secret,
+    password_error,
     verify_password,
 )
 from app.database import get_db
@@ -115,7 +117,9 @@ async def change_password(
     revoked one by one from the tokens list.
 
     422 invalid_password for a wrong current password, or for an SSO account,
-    which has none."""
+    which has none; 422 validation_error for a new password under 8
+    characters; 429 rate_limited once the account has made too many sign-in
+    attempts — the current password is one (core/ratelimit.py)."""
     if user.password_hash is None:  # SSO-provisioned account — no password to change
         raise err(
             422,
@@ -123,14 +127,20 @@ async def change_password(
             "This account signs in with SSO",
             fields={"current_password": "This account signs in with SSO"},
         )
-    if not verify_password(body.current_password, user.password_hash):
+    if problem := password_error(body.new_password):
+        raise err(422, "validation_error", problem, fields={"new_password": problem})
+    account = user.email.lower()
+    if wait := ratelimit.by_account.retry_after(account):
+        raise ratelimit.rate_limited(wait)
+    ratelimit.by_account.record(account)
+    if not await verify_password(body.current_password, user.password_hash):
         raise err(
             422,
             "invalid_password",
             "Current password is incorrect",
             fields={"current_password": "Current password is incorrect"},
         )
-    user.password_hash = hash_password(body.new_password)
+    user.password_hash = await hash_password(body.new_password)
     await db.execute(
         update(Sessions)
         .where(
