@@ -241,6 +241,68 @@ async def test_create_category_always_gets_a_slug_of_its_own(client, names, slug
     assert made == slugs
 
 
+@pytest.mark.parametrize("rivals", [1, 2])
+async def test_create_category_that_loses_the_slug_race_takes_the_next_one(
+    client, db_session, monkeypatch, rivals
+):
+    """unique_slug reads before the INSERT, so a concurrent create whose name
+    slugs the same ("C++" beside "C") can take the slug in between. That is
+    no fault of the caller's: the create reads again and takes the next free
+    slug instead of answering 503 — however many times it loses."""
+    await _sign_in(client)
+    real = catalog.unique_slug
+    lost = 0
+
+    async def racing(db, name):
+        nonlocal lost
+        slug = await real(db, name)
+        if lost < rivals:
+            lost += 1
+            async with db_session() as session:
+                session.add(Categories(name=f"C{'+' * lost}", slug=slug))
+                await session.commit()
+        return slug
+
+    monkeypatch.setattr(catalog, "unique_slug", racing)
+
+    res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
+
+    assert res.status_code == 201, res.text
+    assert res.json()["slug"] == f"c-{rivals + 1}"
+    assert {c["name"]: c["slug"] for c in (await _categories_by_name(client)).values()} == {
+        "C": f"c-{rivals + 1}",
+        "C+": "c",
+        **({"C++": "c-2"} if rivals == 2 else {}),
+    }
+
+
+async def test_create_category_that_keeps_losing_the_slug_race_gives_up(
+    client, db_session, monkeypatch
+):
+    """The rereads are bounded: a create that loses every one fails loudly
+    rather than looping, and leaves nothing of itself behind."""
+    await _sign_in(client)
+    real = catalog.unique_slug
+    lost = 0
+
+    async def always_taken(db, name):
+        nonlocal lost
+        slug = await real(db, name)
+        lost += 1
+        async with db_session() as session:
+            session.add(Categories(name=f"Rival {lost}", slug=slug))
+            await session.commit()
+        return slug
+
+    monkeypatch.setattr(catalog, "unique_slug", always_taken)
+
+    res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
+
+    assert res.status_code == 503, res.text
+    assert lost == catalog._SLUG_ATTEMPTS
+    assert "C" not in await _categories_by_name(client)
+
+
 # --- PATCH /api/categories/{id} -----------------------------------------------
 
 

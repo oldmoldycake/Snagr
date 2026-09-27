@@ -80,14 +80,23 @@ async def flush_name(db: AsyncSession, model: type[Categories] | type[Sites]) ->
     try:
         await db.flush()
     except IntegrityError as exc:
-        # asyncpg's own error, which names the index, is the DBAPI error's cause
-        constraint = getattr(exc.orig.__cause__, "constraint_name", None)
-        if constraint in _NAME_CONSTRAINTS:
+        if _constraint_name(exc) in _NAME_CONSTRAINTS:
             raise _duplicate_name(model) from exc
         raise
 
 
+def _constraint_name(exc: IntegrityError) -> str | None:
+    """The index or constraint a write violated. asyncpg's own error, which
+    names it, is the DBAPI error's cause."""
+    return getattr(exc.orig.__cause__, "constraint_name", None)
+
+
 # --- categories -------------------------------------------------------------
+
+# a create reads for a free slug, then loses it to a concurrent create only if
+# that one's name slugs the same and commits in between; a few rereads settle
+# it, and a run of losses past that is something to look at, not to hide
+_SLUG_ATTEMPTS = 5
 
 
 async def unique_slug(db: AsyncSession, name: str) -> str:
@@ -157,9 +166,19 @@ async def create_category(db: AsyncSession, name: str) -> Category:
     422 duplicate — mock parity, including the `fields` the form renders.
     Commits."""
     name = await checked_name(db, Categories, name)
-    cat = Categories(name=name, slug=await unique_slug(db, name))
-    db.add(cat)
-    await flush_name(db, Categories)
+    for attempt in range(_SLUG_ATTEMPTS):
+        cat = Categories(name=name, slug=await unique_slug(db, name))
+        try:
+            # a savepoint, so a lost slug rolls back only this INSERT
+            async with db.begin_nested():
+                db.add(cat)
+                await flush_name(db, Categories)
+            break
+        except IntegrityError as exc:
+            # a concurrent create whose name slugs the same ("C++" beside "C")
+            # took this slug after unique_slug read it: read again for the next
+            if _constraint_name(exc) != "categories_slug_key" or attempt == _SLUG_ATTEMPTS - 1:
+                raise
     await db.refresh(cat)
     await db.commit()
 
