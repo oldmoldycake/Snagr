@@ -75,13 +75,17 @@ async def update_item(
     user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Edit item and watch fields; 404 when unwatched.
+    """Edit item and watch fields; 404 when unwatched. Renaming an item others
+    watch too moves the caller's watch to an item of that name, so the detail
+    can answer under a new id.
 
     An absent key leaves a field unchanged. A JSON null clears target_price
     and criteria, and puts recheck_interval_minutes and site_ids back to their
     defaults; on the other fields it changes nothing."""
     try:
-        return await items_service.update_item(db, user.id, item_id, body)
+        return await items_service.update_item(
+            db, user.id, item_id, body, is_admin=user.role == "admin"
+        )
     except SQLAlchemyError as e:
         raise err(503, "db_unavailable", "Could not reach the database") from e
 

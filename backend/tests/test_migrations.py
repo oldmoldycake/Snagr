@@ -1,10 +1,10 @@
-"""Migrations 015 to 019, up and down, against a scratch database.
+"""Migrations 015 to 020, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
 and rewrites stored token scopes, and both of those are only reversible if the
-downgrade really puts them back; 016 and 017 are data backfills and 019 a
-cleanup, and the rows they write are the only thing there is to test. It builds its own database
+downgrade really puts them back; 016 and 017 are data backfills and 019 and 020
+cleanups, and the rows they write are the only thing there is to test. It builds its own database
 (`snagr_test_...`) rather than touching the suite's, and drops it again on the
 way out.
 """
@@ -253,3 +253,72 @@ async def test_019_clears_a_nan_target_and_leaves_real_ones(scratch):
 
     targets = await scratch.fetch("SELECT target_price FROM watches ORDER BY id")
     assert [row["target_price"] for row in targets] == [None, Decimal("120.00")]
+
+
+async def test_020_folds_duplicate_items_into_the_oldest(scratch):
+    """Two users on two "Dbl Click" items end up on one; a user on both (a
+    double-clicked Add) keeps the second under a name that says what it is."""
+    _alembic("upgrade", "019")
+    listings = await _seed_listings(scratch)
+    first, category = (await scratch.fetch("SELECT id, category_id FROM items"))[0]
+    owner = await scratch.fetchval("SELECT user_id FROM watches")
+    stranger = await scratch.fetchval("INSERT INTO users (email) VALUES ('two@test') RETURNING id")
+
+    async def item(name):
+        return await scratch.fetchval(
+            "INSERT INTO items (category_id, name) VALUES ($1, $2) RETURNING id", category, name
+        )
+
+    async def watch(user, item):
+        return await scratch.fetchval(
+            "INSERT INTO watches (user_id, item_id) VALUES ($1, $2) RETURNING id", user, item
+        )
+
+    # the owner watches "Emerald" (first) and its double; the stranger only
+    # a lower-case copy, with its own listing and check
+    double = await item("Emerald")
+    await watch(owner, double)
+    copy = await item(" emerald ")
+    theirs = await watch(stranger, copy)
+    site = await scratch.fetchval("SELECT id FROM sites")
+    listing = await scratch.fetchval(
+        "INSERT INTO listings (watch_id, item_id, site_id, url) "
+        "VALUES ($1, $2, $3, 'https://gamebay.test/theirs') RETURNING id",
+        theirs,
+        copy,
+        site,
+    )
+    job = await scratch.fetchval(
+        "INSERT INTO jobs (kind, watch_id, item_id, site_id, listing_id) "
+        "VALUES ('recheck', $1, $2, $3, $4) RETURNING id",
+        theirs,
+        copy,
+        site,
+        listing,
+    )
+    blank = await item("  ")
+
+    _alembic("upgrade", "020")
+
+    assert await scratch.fetchval("SELECT item_id FROM watches WHERE id = $1", theirs) == first
+    assert await scratch.fetchval("SELECT item_id FROM listings WHERE id = $1", listing) == first
+    assert await scratch.fetchval("SELECT item_id FROM jobs WHERE id = $1", job) == first
+    # the owner's own listings never moved
+    moved = await scratch.fetchval(
+        "SELECT count(*) FROM listings WHERE id = ANY($1::int[]) AND item_id <> $2",
+        list(listings.values()),
+        first,
+    )
+    assert moved == 0
+    names = dict(await scratch.fetch("SELECT id, name FROM items"))
+    assert names == {
+        first: "Emerald",
+        double: f"Emerald (duplicate {double})",
+        copy: f"emerald (duplicate {copy})",
+        blank: f"Untitled item {blank}",
+    }
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await item("EMERALD")
+
+    _alembic("downgrade", "019")
+    assert not await _table(scratch, "uq_items_category_name")

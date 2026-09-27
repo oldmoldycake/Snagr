@@ -291,7 +291,11 @@ export interface ItemDetail extends Omit<ItemSummary, 'hunt'> {
   recheck: RecheckFacts
 }
 
-/** POST /api/items body: finds or creates the item and adds the caller's watch. */
+/**
+ * POST /api/items body: finds or creates the item and adds the caller's watch.
+ * Items are matched by name, trimmed and ignoring case: a blank name is 422
+ * validation_error, one the caller already tracks in the category 422 duplicate.
+ */
 export interface ItemCreateRequest {
   category_id: number
   name: string
@@ -315,6 +319,13 @@ export interface ItemCreateRequest {
 
 /** PATCH /api/items/{id} body; omitted fields are left unchanged. */
 export interface ItemUpdateRequest {
+  /**
+   * Trimmed; blank is 422 validation_error. The item is shared, so unless the
+   * caller is its only watcher or an admin, a new name moves the caller's watch
+   * to the category's item of that name — the response then has another id.
+   * A name the caller already tracks is 422 duplicate; recasing a shared item
+   * is 403 forbidden for anyone but an admin.
+   */
   name?: string
   /** null clears the target */
   target_price?: string | null

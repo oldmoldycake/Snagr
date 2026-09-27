@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { updateItem } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
-import type { ItemSummary } from '@/api/types'
+import type { ItemDetail, ItemSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -25,10 +25,13 @@ export function EditItemDialog({
   item,
   open,
   onOpenChange,
+  onSaved,
 }: {
   item: ItemSummary
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** a rename of an item others watch too moves the watch, so `saved.id` can differ from `item.id` */
+  onSaved?: (saved: ItemDetail) => void
 }) {
   const [name, setName] = useState(item.name)
   const [target, setTarget] = useState(item.target_price ?? '')
@@ -49,9 +52,10 @@ export function EditItemDialog({
         target_price: String(target).trim() ? Number(target).toFixed(2) : null,
         ...trackingPayload(tracking),
       }),
-    onSuccess: () => {
+    onSuccess: (saved) => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)
+      onSaved?.(saved)
     },
   })
 

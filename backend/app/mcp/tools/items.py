@@ -122,7 +122,8 @@ def register(mcp: FastMCP) -> None:
         site_ids: list[Ref] | None = None,
     ) -> ItemSummary:
         """Start watching an item. If the shared catalog already has an item of
-        that name in the category this joins it; otherwise the item is created.
+        that name in the category (ignoring case) this joins it; otherwise the
+        item is created. A `duplicate` error means the user already watches it.
         Hunts of its sites are queued right away, unless hunt is false or the
         operator has switched hunting off.
 
@@ -181,7 +182,12 @@ def register(mcp: FastMCP) -> None:
         site_ids (the site subset can't be changed yet) — plus `notify`:
         whether hitting the target should push a notification. Only the
         arguments you pass change; the rest stay as they are. Pass
-        recheck_interval_minutes="default" to go back to the instance default."""
+        recheck_interval_minutes="default" to go back to the instance default.
+
+        The name belongs to the shared catalog. If other users watch this item
+        too (and you're not admin), renaming moves only this user's watch, with
+        its listings, to the category's item of the new name, so the returned
+        item has a different id: use that id from then on."""
         async with caller_session() as (db, user):
             # null already means "unchanged" here, so clearing the interval
             # needs a word of its own; the REST PATCH says it with null
@@ -209,12 +215,15 @@ def register(mcp: FastMCP) -> None:
                 **{field: value for field, value in passed.items() if value is not None},
                 **interval,
             )
-            detail = await items_service.update_item(db, user.id, item, body)
+            detail = await items_service.update_item(
+                db, user.id, item, body, is_admin=user.role == "admin"
+            )
             if notify is not None:
+                # detail.id, not item: a rename can have moved the watch
                 await items_service.update_watch(
-                    db, user.id, item, WatchUpdateRequest(notify=notify)
+                    db, user.id, detail.id, WatchUpdateRequest(notify=notify)
                 )
-                detail = await items_service.get_item_detail(db, user.id, item)
+                detail = await items_service.get_item_detail(db, user.id, detail.id)
             return detail
 
     @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)

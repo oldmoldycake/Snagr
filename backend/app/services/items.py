@@ -15,19 +15,23 @@ Writes: create_item, update_item, delete_item, update_watch, update_listing.
 
 from decimal import Decimal, InvalidOperation
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.core.errors import err
+from app.core.errors import ApiError, err
 from app.models import (
     Categories,
     Items,
+    Jobs,
     ListingChecks,
     Listings,
     PriceChecks,
     SiteCategories,
     Sites,
+    VisionScans,
     Watches,
     WatchSites,
 )
@@ -55,6 +59,8 @@ MAX_RECHECK_INTERVAL_MINUTES = 1440
 # The largest amount watches.target_price (Numeric(10, 2)) can hold; one more
 # cent overflows the column and reaches the caller as a 503.
 MAX_TARGET_PRICE = Decimal("99999999.99")
+
+_UNIQUE_VIOLATION = "23505"
 
 # --- serializers --------------------------------------------------------------
 
@@ -437,9 +443,79 @@ def _parse_target(value: str | None) -> Decimal | None:
     return target
 
 
+def _item_name(name: str) -> str:
+    """The name trimmed, or 422 when nothing is left of it."""
+    name = name.strip()
+    if not name:
+        raise err(422, "validation_error", "Name is required", fields={"name": "Name is required"})
+    return name
+
+
+def _already_watched() -> ApiError:
+    """422 duplicate: the caller watches an item by this name already —
+    shaped like a duplicate category, so the form shows it on the name."""
+    message = "You already track an item with this name"
+    return err(422, "duplicate", message, fields={"name": message})
+
+
+async def _item_named(db: AsyncSession, category_id: int, name: str) -> Items | None:
+    """The category's item by this name, matched as uq_items_category_name
+    matches: without regard to case."""
+    stmt = select(Items).where(
+        Items.category_id == category_id, func.lower(Items.name) == func.lower(name)
+    )
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+async def _find_or_create_item(db: AsyncSession, category_id: int, name: str) -> Items:
+    """The category's item by this name, created when there is none.
+
+    ON CONFLICT DO NOTHING and then a read, rather than a read and then an
+    INSERT: two requests adding the same name at once must both land on one
+    row, not make two, which is what then made the name impossible to add."""
+    await db.execute(
+        insert(Items)
+        .values(category_id=category_id, name=name)
+        .on_conflict_do_nothing(index_elements=[Items.category_id, func.lower(Items.name)])
+    )
+    item = await _item_named(db, category_id, name)
+    assert item is not None  # just inserted, or the row the insert ran into
+    return item
+
+
+async def _add_watch(db: AsyncSession, watch: Watches) -> None:
+    """INSERT the watch now; 422 duplicate when the caller already watches
+    its item. uq_item_user is the guard rather than a read first, because a
+    second submit of the same form can land between the read and the INSERT."""
+    db.add(watch)
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        if getattr(exc.orig, "pgcode", None) == _UNIQUE_VIOLATION:
+            raise _already_watched() from exc
+        raise
+
+
+async def _move_watch(db: AsyncSession, watch: Watches, item: Items, *, user_id: int) -> None:
+    """Point the watch, and everything of it that names its item, at another
+    item: the caller's listings, their jobs (a hunt reads the name it searches
+    through the job) and their vision scans. The item it leaves keeps its other
+    watchers, its vision library and its market price."""
+    await db.execute(update(Listings).where(Listings.watch_id == watch.id).values(item_id=item.id))
+    await db.execute(update(Jobs).where(Jobs.watch_id == watch.id).values(item_id=item.id))
+    await db.execute(
+        update(VisionScans).where(VisionScans.watch_id == watch.id).values(item_id=item.id)
+    )
+    watch.item_id = item.id
+    # a name the hunter has never looked for needs its own market price
+    await jobs_service.enqueue_ground(db, item.id, user_id=user_id)
+
+
 async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -> ItemSummary:
-    """Find-or-create the shared items row, create the caller's watch, insert
-    the watch_sites subset. Commits.
+    """Find-or-create the shared items row (by name, trimmed and without regard
+    to case), create the caller's watch, insert the watch_sites subset.
+    Commits. 422 for a blank name, and 422 duplicate when the caller already
+    watches an item by that name in the category.
 
     The contract's 404 for an unknown category and the 422s (selection_mode,
     max_listings 1-10, site_ids ⊆ the category's sites) are not enforced yet —
@@ -447,16 +523,10 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     recheck_interval_minutes range (the floor to 1440) and the target price
     are enforced.
     """
+    name = _item_name(body.name)
     _check_interval(body.recheck_interval_minutes)
     target_price = _parse_target(body.target_price)
-    stmt = select(Items).where(Items.name == body.name).where(Items.category_id == body.category_id)
-    item = (await db.execute(stmt)).scalar_one_or_none()
-
-    if item is None:
-        item = Items(name=body.name, category_id=body.category_id)
-        db.add(item)
-        await db.flush()
-        await db.refresh(item)
+    item = await _find_or_create_item(db, body.category_id, name)
 
     watch = Watches(
         user_id=user_id,
@@ -469,8 +539,7 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
         recheck_interval_minutes=body.recheck_interval_minutes,
         hunt=body.hunt,
     )
-    db.add(watch)
-    await db.flush()
+    await _add_watch(db, watch)
     await db.refresh(watch)
 
     for site_id in body.site_ids or []:
@@ -495,15 +564,58 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     return await build_item_summary(watch, item, category, db)
 
 
+async def _rename(
+    db: AsyncSession, watch: Watches, item: Items, name: str, *, user_id: int, is_admin: bool
+) -> Items:
+    """Give the caller's watch an item by this name; returns the item it ends
+    up on.
+
+    The items row is shared, and the hunter searches for its name, so a rename
+    in place is for the item's only watcher, or an admin. Anyone else moves
+    their own watch instead: onto the category's item by that name, created
+    if there is none, so the other watchers keep theirs as it was. A name
+    another item already has always moves the watch there — 422 duplicate if
+    the caller watches that one already. A change of case alone has nowhere
+    to move to, so on a shared item only an admin may make it."""
+    if name == item.name:
+        return item
+    owns_name = (
+        is_admin
+        or await db.scalar(select(func.count(Watches.id)).where(Watches.item_id == item.id)) == 1
+    )
+    named = await _item_named(db, item.category_id, name)
+    if named is None and owns_name:
+        item.name = name
+        return item
+    if named is item:
+        if not owns_name:
+            raise err(
+                403,
+                "forbidden",
+                "Others track this item too; only an admin can change how its name is written",
+            )
+        item.name = name
+        return item
+    if named is not None and await db.scalar(
+        select(Watches.id).where(Watches.user_id == user_id, Watches.item_id == named.id)
+    ):
+        raise _already_watched()
+    target = await _find_or_create_item(db, item.category_id, name)
+    await _move_watch(db, watch, target, user_id=user_id)
+    return target
+
+
 async def update_item(
-    db: AsyncSession, user_id: int, item_id: int, body: ItemUpdateRequest
+    db: AsyncSession, user_id: int, item_id: int, body: ItemUpdateRequest, *, is_admin: bool
 ) -> ItemDetail:
     """Write item fields to items and watch fields to the caller's watch;
-    404 when unwatched, 422 for site_ids outside the category's sites. Only
-    the keys sent change. A sent null clears target_price and criteria, puts
-    recheck_interval_minutes back to the instance default and site_ids back
-    to every site of the category; on the other fields it changes nothing.
-    Commits."""
+    404 when unwatched, 422 for site_ids outside the category's sites or a
+    blank name. Only the keys sent change. A sent null clears target_price
+    and criteria, puts recheck_interval_minutes back to the instance default
+    and site_ids back to every site of the category; on the other fields it
+    changes nothing. A new name may move the watch to another item (see
+    _rename), so the detail can come back under a different id. Commits."""
+    name = _item_name(body.name) if body.name is not None else None
     _check_interval(body.recheck_interval_minutes)
     target_price = _parse_target(body.target_price)
     stmt = (
@@ -537,8 +649,8 @@ async def update_item(
             )
 
     room_before, hunting_before = watch.max_listings, watch.hunt
-    if body.name is not None:
-        item.name = body.name
+    if name is not None:
+        item = await _rename(db, watch, item, name, user_id=user_id, is_admin=is_admin)
     if "target_price" in sent:
         watch.target_price = target_price
     if "criteria" in sent:

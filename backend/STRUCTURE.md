@@ -67,7 +67,7 @@ backend/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–019 (linear chain); the backend owns the canonical schema
+├── migrations/            # Alembic revisions 001–020 (linear chain); the backend owns the canonical schema
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -129,6 +129,10 @@ Find any `endpoints.ts` function here:
    `watches` row (target_price, criteria, selection_mode, max_listings,
    allow_reproductions, recheck_interval_minutes, hunt, notify) + `watch_sites` (the `site_ids` subset). Handled in
    `services/items.py`. `GET /api/items` lists *the user's watches*, not the catalog.
+   A name is unique per category ignoring case (`uq_items_category_name`), and
+   renaming an item other people watch moves only the caller's watch (with its
+   listings, jobs and scans) to the item of the new name — unless the caller
+   is an admin — so a PATCH can answer under a different id.
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
    `spark`, `pct_change_range`, `item_count`, `listing_count`, `last_checked_at`, the

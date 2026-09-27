@@ -388,6 +388,9 @@ export function ItemDetailPage() {
         item={{ ...detail, hunt: detail.hunt.enabled }}
         open={editOpen}
         onOpenChange={setEditOpen}
+        onSaved={(saved) => {
+          if (saved.id !== detail.id) navigate(`/items/${saved.id}`, { replace: true })
+        }}
       />
     </div>
   )

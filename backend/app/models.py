@@ -116,6 +116,12 @@ class Items(Base):
     guide_pages: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # one catalog entry per name in a category, however it is capitalised:
+    # adding a name that exists finds that item rather than making a second
+    __table_args__ = (
+        Index("uq_items_category_name", "category_id", text("lower(name)"), unique=True),
+    )
+
 
 class Listings(Base):
     """Watch-scoped: match_score/match_summary are judged against the owning

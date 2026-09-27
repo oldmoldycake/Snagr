@@ -13,13 +13,15 @@ Seeding here goes through `db_session` and COMMITS, like test_sites_api.py:
 each request runs on its own session, so uncommitted rows are invisible.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 from app.config import settings
-from app.models import Jobs, Listings, SiteCategories, User
+from app.models import Items, Jobs, Listings, SiteCategories, User, Watches
+from sqlalchemy import func, select
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -1045,3 +1047,199 @@ async def test_the_facts_say_how_long_the_hunter_is_backing_off(client, db_sessi
 
     assert hunt["backoff_minutes"] == 60
     assert datetime.fromisoformat(hunt["next_at"]) < now + timedelta(minutes=61)
+
+
+# --- item names -----------------------------------------------------------------
+#
+# The items row is shared by every watcher and the hunter searches for its
+# name, so one watcher's rename must not change what another is hunting.
+
+
+async def _shared_item(db_session, owner_id, *, role="user", name="Alpha"):
+    """An item the caller and a stranger both watch, the caller's with a
+    listing and a pending check; the caller's role set to `role`. Returns
+    (item id, stranger's watch id, caller's listing id, check job id)."""
+    async with _seed_for(db_session, owner_id) as sc:
+        (await sc.user()).role = role
+        item = await sc.item(name)
+        theirs = await sc.watch(item, user=await sc.other_user())
+        mine = await sc.watch(item)
+        listing = await sc.listing(mine, item)
+        job = await sc.job("recheck", mine, status="pending", listing_id=listing.id)
+    return item.id, theirs.id, listing.id, job.id
+
+
+async def test_a_name_is_trimmed(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    created = await _create(client, category_id, name="  Alpha \n")
+    assert created["name"] == "Alpha"
+
+    res = await client.patch(f"/api/items/{created['id']}", json={"name": " Beta "}, headers=CSRF)
+    assert res.json()["name"] == "Beta"
+
+
+async def test_a_blank_name_is_refused(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    created = await _create(client, category_id)
+
+    res = await client.post(
+        "/api/items",
+        json={"category_id": category_id, "name": "   ", "target_price": None},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "name" in res.json()["error"]["fields"]
+
+    res = await client.patch(f"/api/items/{created['id']}", json={"name": " "}, headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert (await client.get(f"/api/items/{created['id']}")).json()["name"] == "Alpha"
+
+
+async def test_adding_a_name_someone_watches_joins_their_item(client, db_session):
+    """Without regard to case: "switch oled" is the same thing to hunt."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item("Switch OLED")
+        await sc.watch(item, user=await sc.other_user())
+
+    created = await _create(client, item.category_id, name="switch oled")
+
+    assert created["id"] == item.id
+    assert created["name"] == "Switch OLED"
+
+
+async def test_adding_a_name_you_already_track_is_a_duplicate(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    await _create(client, category_id, name="Dbl Click")
+
+    res = await client.post(
+        "/api/items",
+        json={"category_id": category_id, "name": "DBL CLICK", "target_price": None},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "duplicate"
+    assert "name" in res.json()["error"]["fields"]
+
+
+async def test_a_double_submitted_add_makes_one_item(client, db_session):
+    """Both requests read "no such item" before either inserts: the second
+    must land on the first's row, not make another, and then find the watch
+    taken."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    body = {"category_id": category_id, "name": "Dbl Click", "target_price": None}
+
+    results = await asyncio.gather(
+        *(client.post("/api/items", json=body, headers=CSRF) for _ in range(2))
+    )
+
+    assert sorted(r.status_code for r in results) == [201, 422]
+    async with db_session() as session:
+        assert await session.scalar(select(func.count(Items.id))) == 1
+    # and the name can still be added — by anyone, onto that one item
+    listed = (await client.get("/api/items")).json()["data"]
+    assert [row["name"] for row in listed] == ["Dbl Click"]
+
+
+async def test_renaming_an_item_others_watch_moves_only_your_watch(client, db_session):
+    owner_id = await _sign_in(client)
+    item_id, their_watch, listing_id, job_id = await _shared_item(db_session, owner_id)
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    renamed = res.json()
+    assert renamed["id"] != item_id
+    assert renamed["name"] == "Renamed"
+    assert [listing["id"] for listing in renamed["listings"]] == [listing_id]
+    async with db_session() as session:
+        assert (await session.get(Items, item_id)).name == "Alpha"
+        assert (await session.get(Watches, their_watch)).item_id == item_id
+        # the queued check hunts, and reads, under the watch's new item
+        assert (await session.get(Jobs, job_id)).item_id == renamed["id"]
+        assert (await session.get(Listings, listing_id)).item_id == renamed["id"]
+        grounds = await session.scalars(select(Jobs.item_id).where(Jobs.kind == "ground"))
+        assert list(grounds) == [renamed["id"]]
+    assert (await client.get(f"/api/items/{item_id}")).status_code == 404
+
+
+async def test_the_only_watcher_renames_in_place(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        (await sc.user()).role = "user"
+        item = await sc.item()
+        await sc.watch(item)
+
+    res = await client.patch(f"/api/items/{item.id}", json={"name": "Beta"}, headers=CSRF)
+
+    assert res.json()["id"] == item.id
+    assert res.json()["name"] == "Beta"
+
+
+async def test_an_admin_renames_a_shared_item_in_place(client, db_session):
+    """An admin curates the catalog: the rename is everyone's."""
+    owner_id = await _sign_in(client)
+    item_id, their_watch, _, _ = await _shared_item(db_session, owner_id, role="admin")
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.json()["id"] == item_id
+    async with db_session() as session:
+        assert (await session.get(Items, item_id)).name == "Renamed"
+        assert (await session.get(Watches, their_watch)).item_id == item_id
+
+
+@pytest.mark.parametrize("role", ["user", "admin"])
+async def test_renaming_onto_another_items_name_moves_there(client, db_session, role):
+    """Even the only watcher, even an admin: two items of one name is what
+    made the name impossible to add."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        (await sc.user()).role = role
+        mine = await sc.item("Alpha")
+        await sc.watch(mine)
+        theirs = await sc.item("Beta")
+        await sc.watch(theirs, user=await sc.other_user())
+
+    res = await client.patch(f"/api/items/{mine.id}", json={"name": "beta"}, headers=CSRF)
+
+    assert res.json()["id"] == theirs.id
+    assert res.json()["name"] == "Beta"
+
+
+async def test_renaming_onto_a_name_you_track_is_a_duplicate(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        alpha = await sc.item("Alpha")
+        await sc.watch(alpha)
+        await sc.watch(await sc.item("Beta"))
+
+    res = await client.patch(f"/api/items/{alpha.id}", json={"name": "BETA"}, headers=CSRF)
+
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "duplicate"
+    assert (await client.get(f"/api/items/{alpha.id}")).json()["name"] == "Alpha"
+
+
+async def test_recasing_a_shared_item_is_for_an_admin(client, db_session):
+    """There is no other item to move to: "ALPHA" is this one."""
+    owner_id = await _sign_in(client)
+    item_id, _, _, _ = await _shared_item(db_session, owner_id)
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "ALPHA"}, headers=CSRF)
+
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "forbidden"
+    assert (await client.get(f"/api/items/{item_id}")).json()["name"] == "Alpha"
