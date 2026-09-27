@@ -99,6 +99,9 @@ async def update_me(
                 fields={"email": "An account with this email already exists"},
             )
         user.email = body.email
+        # nobody confirmed the new address; unverified keeps SSO from linking
+        # its real owner's IdP identity to this account (services/oidc.py)
+        user.email_verified = False
     for field, value in thresholds.items():
         setattr(user, field, value)
     await db.commit()

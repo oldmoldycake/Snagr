@@ -250,7 +250,9 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         password_hash=await hash_password(body.password),
         role="admin" if is_first_user else "user",
         is_active=True,
-        email_verified=True,
+        # a typed-in address is unconfirmed, so SSO won't link to it
+        # (services/oidc.py) — except the first user's: they own the instance
+        email_verified=is_first_user,
     )
     await _insert_user(db, user)
     await _start_session(db, response, user)
@@ -433,7 +435,9 @@ async def accept_invite(
         password_hash=await hash_password(body.password),
         role=invite.role,
         is_active=True,
-        email_verified=True,
+        # the admin vouched for a pinned email; one typed into the form is
+        # unconfirmed, so SSO won't link to it (services/oidc.py)
+        email_verified=invite.email is not None,
     )
     await _insert_user(db, user)
     await _start_session(db, response, user)
