@@ -259,6 +259,7 @@ Snagr is built to live on a trusted LAN behind your own reverse proxy:
 
 - The web app is the only thing meant to be exposed; put HTTPS in front of it and set `COOKIE_SECURE=true`.
 - Auth tokens live in httpOnly cookies (JS never sees them); mutations require a CSRF header.
+- Sign-in attempts are limited per account and per client address (429 after too many; counted in the backend's memory). Behind a reverse proxy, set uvicorn's `FORWARDED_ALLOW_IPS` to the proxy's address or subnet, or every visitor shares one address limit (see `backend/.env.example`).
 - Agents and scripts use **API tokens** instead (Settings → MCP & API): a `snagr_pat_…` bearer credential, stored hashed, scoped to read / write / jobs, and never able to touch the account that owns it. Set `MCP_ENABLED=false` to turn that whole surface off.
 - The Playwright MCP, vision sidecar, and MinIO are **LAN-internal and unauthenticated by design** — bind them to trusted interfaces only. The same goes for the SearXNG instance the agent queries. (The dev compose stack publishes the backend on `:8000` and the sidecar on `:8100` so host-run dev servers can reach them; drop those mappings, or bind them to `127.0.0.1`, for anything long-lived.)
 

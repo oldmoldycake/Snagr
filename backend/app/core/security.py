@@ -1,5 +1,6 @@
-"""Password hashing + token minting. Pure functions — no DB, no FastAPI — so
-you can unit-test every one of these in a python shell.
+"""Password hashing + token minting. No DB, no FastAPI — so you can unit-test
+every one of these in a python shell (the password pair is async: argon2 runs
+on a thread pool, off the event loop).
 
 Auth model:
   - access:  short-lived JWT (HS256, ACCESS_TTL_MIN) in the `snagr_access` cookie
@@ -9,9 +10,12 @@ Both cookies set httponly, samesite=lax, secure=settings.cookie_secure by the
 auth router.
 """
 
+import asyncio
 import hashlib
 import hmac
+import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -27,15 +31,52 @@ _ALGO = "HS256"
 
 # --- passwords --------------------------------------------------------------
 
+# the frontend's minLength on every new-password input; the server holds the
+# same line, since a script never sees that form
+MIN_PASSWORD_LENGTH = 8
 
-def hash_password(plain: str) -> str:
+# argon2 is slow on purpose (tens of ms of CPU and 64 MiB per call), so it
+# never runs on the event loop, where one hash stalls every other request.
+# Each hash already spreads over `parallelism` threads of its own, so a worker
+# per that many CPUs keeps them all busy; more would only fight over the cores
+# (the event loop's included), each holding its 64 MiB.
+_argon2_pool = ThreadPoolExecutor(
+    max_workers=max(1, (os.process_cpu_count() or 1) // _ph.parallelism),
+    thread_name_prefix="argon2",
+)
+
+# what an email with no password is checked against, so a login for an
+# unknown account costs what a wrong password costs and the response time
+# doesn't tell which emails exist
+_NO_PASSWORD_HASH = _ph.hash(secrets.token_urlsafe(16))
+
+
+def password_error(plain: str) -> str | None:
+    """Why `plain` can't be a new password, or None when it can."""
+    if len(plain) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+    return None
+
+
+async def hash_password(plain: str) -> str:
     """Argon2 hash to store in users.password_hash."""
-    return _ph.hash(plain)
+    return await asyncio.get_running_loop().run_in_executor(_argon2_pool, _ph.hash, plain)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    """True if `plain` matches the stored hash; False on any mismatch/bad hash."""
+async def verify_password(plain: str, hashed: str | None) -> bool:
+    """True if `plain` matches the stored hash; False on any mismatch/bad hash.
+
+    A None hash (no such user, or an SSO-only account) is still worked
+    through in full and is always False."""
+    return await asyncio.get_running_loop().run_in_executor(_argon2_pool, _verify, plain, hashed)
+
+
+def _verify(plain: str, hashed: str | None) -> bool:
+    """The blocking half of verify_password, run on the argon2 pool."""
     try:
+        if hashed is None:
+            _ph.verify(_NO_PASSWORD_HASH, plain)
+            return False
         return _ph.verify(hashed, plain)
     except VerifyMismatchError, InvalidHashError:
         return False

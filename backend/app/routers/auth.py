@@ -43,6 +43,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core import ratelimit
 from app.core.cookies import (
     REFRESH_COOKIE,
     clear_auth_cookies,
@@ -56,6 +57,7 @@ from app.core.security import (
     hash_refresh,
     make_access_jwt,
     new_refresh_token,
+    password_error,
     verify_password,
 )
 from app.database import get_db
@@ -107,6 +109,12 @@ async def _start_session(
         )
     )
     set_refresh_cookie(response, raw)
+
+
+def _check_new_password(plain: str) -> None:
+    """422 validation_error for a password too weak to sign up with."""
+    if problem := password_error(plain):
+        raise err(422, "validation_error", problem, fields={"password": problem})
 
 
 def _email_taken() -> ApiError:
@@ -220,7 +228,8 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     """Self-signup; the first user ever becomes admin. Starts a session.
 
     403 registration_closed once someone exists and REGISTRATION_OPEN is off —
-    people then join by invite. 422 validation_error for an email already taken."""
+    people then join by invite. 422 validation_error for an email already taken
+    or a password under 8 characters."""
     # the very first user can always register (and becomes admin). After that,
     # self-signup is only open while the REGISTRATION_OPEN toggle is on —
     # otherwise people join via an admin invite.
@@ -231,13 +240,14 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         raise err(
             403, "registration_closed", "Registration is closed — ask your admin for an invite"
         )
+    _check_new_password(body.password)
 
     if await db.scalar(select(User).where(User.email == body.email)):
         raise _email_taken()
 
     user = User(
         email=body.email,
-        password_hash=hash_password(body.password),
+        password_hash=await hash_password(body.password),
         role="admin" if is_first_user else "user",
         is_active=True,
         email_verified=True,
@@ -249,19 +259,33 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
 
 
 @router.post("/login", response_model=UserEnvelope, dependencies=[Depends(csrf_guard)])
-async def login(body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)
+):
     """Check email and password and start a session.
 
     401 invalid_credentials for an unknown email and a wrong password alike;
-    403 forbidden for a deactivated account."""
-    user = await db.scalar(select(User).where(User.email == body.email))
-    # same generic error whether the email is unknown or the password is wrong —
-    # never tell an attacker which half they got right.
-    if (
-        user is None
-        or user.password_hash is None
-        or not verify_password(body.password, user.password_hash)
+    403 forbidden for a deactivated account; 429 rate_limited once the client
+    address or the account has made too many attempts (core/ratelimit.py)."""
+    address = request.client.host if request.client else ""
+    account = body.email.lower()
+    if wait := max(
+        ratelimit.by_address.retry_after(address), ratelimit.by_account.retry_after(account)
     ):
+        raise ratelimit.rate_limited(wait)
+    ratelimit.by_address.record(address)
+    ratelimit.by_account.record(account)
+
+    user = await db.scalar(select(User).where(User.email == body.email))
+    # hand the connection back while argon2 works: a queue of logins holding
+    # the whole pool would stall every other request as surely as hashing on
+    # the event loop did
+    await db.commit()
+    # same generic error whether the email is unknown or the password is wrong —
+    # never tell an attacker which half they got right, not even by how long
+    # the answer took: an unknown email is checked against a stand-in hash.
+    password_ok = await verify_password(body.password, user.password_hash if user else None)
+    if user is None or not password_ok:
         raise err(401, "invalid_credentials", "Email or password is incorrect")
     if not user.is_active:
         raise err(403, "forbidden", "This account is disabled")
@@ -384,8 +408,10 @@ async def accept_invite(
     """Create an account from an invite and start a session.
 
     An invite pinned to an email overrides the submitted one. 404/410 as for
-    validating the invite; 422 validation_error for an email already taken."""
+    validating the invite; 422 validation_error for an email already taken or a
+    password under 8 characters."""
     invite = await _live_invite(db, token)
+    _check_new_password(body.password)
     # single-use: burn it in one statement. Concurrent accepts queue on the row
     # lock and find used_at set once the winner commits; if the winner fails
     # instead, its rollback un-burns the invite for the next in line.
@@ -404,7 +430,7 @@ async def accept_invite(
 
     user = User(
         email=email,
-        password_hash=hash_password(body.password),
+        password_hash=await hash_password(body.password),
         role=invite.role,
         is_active=True,
         email_verified=True,

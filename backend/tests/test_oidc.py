@@ -63,7 +63,8 @@ async def test_resolve_matches_by_sub(db_session):
 
 
 async def test_resolve_marries_verified_email(db_session):
-    uid = await _seed_user(db_session, "sso@example.com", password_hash=hash_password("pw12345678"))
+    password_hash = await hash_password("pw12345678")
+    uid = await _seed_user(db_session, "sso@example.com", password_hash=password_hash)
     async with db_session() as s:
         user = await oidc.resolve_oidc_user(s, CLAIMS)
         await s.commit()
@@ -73,7 +74,8 @@ async def test_resolve_marries_verified_email(db_session):
 
 
 async def test_resolve_marries_case_variant_email(db_session):
-    uid = await _seed_user(db_session, "sso@example.com", password_hash=hash_password("pw12345678"))
+    password_hash = await hash_password("pw12345678")
+    uid = await _seed_user(db_session, "sso@example.com", password_hash=password_hash)
     async with db_session() as s:
         user = await oidc.resolve_oidc_user(s, {**CLAIMS, "email": "SSO@Example.COM"})
         await s.commit()

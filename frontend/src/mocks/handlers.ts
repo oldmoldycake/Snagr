@@ -142,6 +142,37 @@ function checkedName(
   return trimmed
 }
 
+const MIN_PASSWORD_LENGTH = 8
+
+/** The backend's rule for a new password; the 422 to answer with, or null when it passes. */
+function weakPassword(password: string, field: 'password' | 'new_password') {
+  if (password.length >= MIN_PASSWORD_LENGTH) return null
+  const message = `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
+  return err(422, 'validation_error', message, { fields: { [field]: message } })
+}
+
+const SIGN_IN_LIMIT = 10
+const SIGN_IN_WINDOW = 15 * MINUTE
+const signInAttempts = new Map<string, number[]>()
+
+/**
+ * The backend's per-account sign-in limit: an attempt counts when it starts,
+ * and an account with SIGN_IN_LIMIT of them in the window is refused, right
+ * password or not. Counts this attempt, or returns the 429 without counting.
+ * (The backend also limits each client address, which the mock has no notion of.)
+ */
+function signInAttempt(email: string) {
+  const now = Date.now()
+  const key = email.toLowerCase()
+  const recent = (signInAttempts.get(key) ?? []).filter((at) => at > now - SIGN_IN_WINDOW)
+  if (recent.length >= SIGN_IN_LIMIT) {
+    const minutes = Math.ceil((recent[0] + SIGN_IN_WINDOW - now) / MINUTE)
+    return err(429, 'rate_limited', `Too many sign-in attempts — try again in ${minutes} minute${minutes === 1 ? '' : 's'}`)
+  }
+  signInAttempts.set(key, [...recent, now])
+  return null
+}
+
 /** Simulated network latency so loading states are visible. */
 const wait = () => new Promise((r) => setTimeout(r, 120 + Math.random() * 180))
 
@@ -457,6 +488,8 @@ export const handlers = [
   http.post('/api/auth/login', async ({ request }) => {
     await wait()
     const body = (await request.json()) as LoginRequest
+    const limited = signInAttempt(body.email)
+    if (limited) return limited
     const user = store.users.find((u) => u.email === body.email && u.password === body.password)
     if (!user || !user.is_active) {
       return err(401, 'invalid_credentials', 'Email or password is incorrect')
@@ -471,6 +504,8 @@ export const handlers = [
       return err(403, 'registration_closed', 'Registration is closed — ask your admin for an invite')
     }
     const body = (await request.json()) as LoginRequest
+    const weak = weakPassword(body.password, 'password')
+    if (weak) return weak
     const user = {
       id: newId(),
       email: body.email,
@@ -518,6 +553,8 @@ export const handlers = [
       return err(410, 'invite_expired', 'This invite has expired or was already used')
     }
     const body = (await request.json()) as InviteAcceptRequest
+    const weak = weakPassword(body.password, 'password')
+    if (weak) return weak
     const user = {
       id: newId(),
       email: invite.email ?? body.email,
@@ -561,6 +598,10 @@ export const handlers = [
   http.post('/api/me/password', async ({ request }) => {
     const user = requireUser()
     const body = (await request.json()) as PasswordChangeRequest
+    const weak = weakPassword(body.new_password, 'new_password')
+    if (weak) return weak
+    const limited = signInAttempt(user.email)
+    if (limited) return limited
     if (user.password !== body.current_password) {
       return err(422, 'invalid_password', 'Current password is incorrect', {
         fields: { current_password: 'Current password is incorrect' },
