@@ -90,8 +90,20 @@ class TestEnqueue:
         assert sorted(j["site_name"] for j in queued) == ["Mercari", "eBay"]
         assert {j["kind"] for j in queued} == {"hunt"}
         assert {j["reason"] for j in queued} == {"user"}
-        assert {j["priority"] for j in queued} == {100}
+        assert sorted(j["priority"] for j in queued) == [90, 100]
         assert queued[0]["label"].startswith("Game Boy Color × ")
+
+    async def test_one_site_asked_for_gets_the_whole_head_start(self, client):
+        """A watch's later sites start a step back only among the sites asked
+        for — hunting one site is asking for that one first."""
+        await _sign_in(client)
+        await _watched_item(client, sites=("eBay", "Mercari"))
+
+        for hunt in await _jobs(client, kind="hunt"):
+            body = {"kind": "hunt", "scope": "site", "scope_id": hunt["site_id"]}
+            res = await client.post("/api/jobs", json=body, headers=CSRF)
+            assert res.status_code == 202, res.text
+            assert [j["priority"] for j in res.json()["data"]] == [100]
 
     async def test_asking_twice_brings_the_same_job_forward(self, client, db_session):
         """The open-job index is the design: a double-click cannot queue two
@@ -391,6 +403,51 @@ class TestSummary:
         assert summary["hunts_today"] == 1
         assert summary["last_hunt"]["status"] == "done"
         assert datetime.fromisoformat(summary["next_check_at"]) > datetime.now(UTC)
+
+    async def test_a_paused_sites_jobs_come_due_when_the_pause_lifts(self, client, db_session):
+        """The hunter doesn't claim a paused site's jobs, so counting down to
+        their run_after would count down to a time that has already passed."""
+        user_id = await _sign_in(client)
+        now = datetime.now(UTC)
+        lifts = now + timedelta(hours=1)
+        async with _seed_for(db_session, user_id) as sc:
+            item = await sc.item("Alpha")
+            watch = await sc.watch(item)
+            paused = await sc.site("Paused")
+            paused.paused_until = lifts
+            running = await sc.site("Running")
+            listing = await sc.listing(watch, item, site=paused)
+            later = await sc.listing(watch, item, site=running, tag="later")
+            for site, listing_id, due in (
+                (paused, listing.id, now - timedelta(minutes=30)),
+                (running, later.id, now + timedelta(hours=2)),
+            ):
+                await sc.job(
+                    kind="recheck",
+                    watch=watch,
+                    status="pending",
+                    site_id=site.id,
+                    listing_id=listing_id,
+                    run_after=due,
+                )
+            await sc.job(watch=watch, status="pending", site_id=paused.id, run_after=now)
+
+        summary = (await client.get("/api/jobs/summary")).json()
+        assert datetime.fromisoformat(summary["next_check_at"]) == lifts
+        assert datetime.fromisoformat(summary["next_hunt_at"]) == lifts
+
+    async def test_a_lifted_pause_no_longer_holds_a_job_back(self, client, db_session):
+        user_id = await _sign_in(client)
+        due = datetime.now(UTC) - timedelta(minutes=5)
+        async with _seed_for(db_session, user_id) as sc:
+            item = await sc.item("Alpha")
+            watch = await sc.watch(item)
+            site = await sc.site("Lifted")
+            site.paused_until = datetime.now(UTC) - timedelta(minutes=1)
+            await sc.job(watch=watch, status="pending", site_id=site.id, run_after=due)
+
+        summary = (await client.get("/api/jobs/summary")).json()
+        assert datetime.fromisoformat(summary["next_hunt_at"]) == due
 
     async def test_a_paused_site_is_everyones_news(self, client, make_client, monkeypatch, sc):
         """Sites are shared, so the banner shows to every viewer — unlike a

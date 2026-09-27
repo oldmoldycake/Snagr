@@ -78,8 +78,11 @@ across all of it deciding what is believed and which sites are read at all.
 ## How a job flows
 
 1. **Claim.** `jobs.claim` is one `UPDATE … WHERE id = (SELECT … FOR UPDATE OF j
-   SKIP LOCKED LIMIT 1) RETURNING …`: highest `priority` first (a user's "hunt
-   now" is 100), then oldest `run_after`, then oldest id. The subquery
+   SKIP LOCKED LIMIT 1) RETURNING …`: oldest `run_after` first, with `priority`
+   counted as a head start in minutes (a user's "hunt now" is 100, so it goes
+   ahead of anything less than 100 minutes overdue — and never ahead of
+   anything more, which is what keeps a burst of new items from starving the
+   backoff hunts), then oldest id. The subquery
    `LEFT JOIN`s `sites` and **skips any job whose site is paused** — that is the
    circuit breaker's whole enforcement. The claim stamps `running`, `locked_by`,
    `heartbeat_at`, `started_at` and spends an attempt.

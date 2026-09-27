@@ -210,10 +210,11 @@ Find any `endpoints.ts` function here:
    `ItemDetail.recheck.interval_minutes`. Both settings live in `backend/.env`
    *and* the agent's env with the same values (the `VISION_SIDECAR_URL`
    precedent): the backend needs the default for `InstanceInfo` and the floor
-   for the 422. On `PATCH /api/items/{id}` this is the one field where an
-   explicit null means something (back to the default — `model_fields_set`
-   tells it from an absent key), and a shorter interval pulls the watch's
-   pending checks forward in the same transaction.
+   for the 422. On `PATCH /api/items/{id}` an explicit null sends it back to
+   the default (`model_fields_set` tells it from an absent key, as it does
+   for the other nullable fields: `target_price`, `criteria`, `site_ids`),
+   and a shorter interval pulls the watch's pending checks forward in the
+   same transaction.
 
 5. **Vision visibility splits three ways, enforced in three places.**
    An item's reference *library* is communal — every watcher of the item reads

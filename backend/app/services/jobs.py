@@ -56,8 +56,12 @@ TERMINAL_STATUSES = ("done", "failed", "cancelled")
 KINDS = ("hunt", "recheck", "ground")
 REQUESTABLE_KINDS = ("hunt", "recheck")
 SCOPES = ("global", "category", "site", "item")
-# what a person asked for goes to the front of the queue
+# what a person asked for goes to the front of the queue: the hunter reads a
+# priority as minutes of head start (agent/jobs.py::claim)
 USER_PRIORITY = 100
+# ...and each further site of one watch starts a little further back, so a
+# batch of new items has every item's first site hunted before anyone's second
+SITE_STAGGER = 10
 
 MAX_PER_PAGE = 100
 MAX_EVENTS = 500
@@ -301,7 +305,16 @@ async def summary(db: AsyncSession, viewer: User) -> JobsSummary:
         return (await db.execute(stmt)).scalar_one()
 
     async def soonest(*clauses) -> str | None:
-        stmt = select(func.min(Jobs.run_after)).where(mine).where(Jobs.status == "pending")
+        # The hunter doesn't claim a paused site's jobs, so they come due when
+        # the pause lifts, not at run_after; GREATEST skips an unpaused site's NULL.
+        paused = and_(Sites.id == Jobs.site_id, Sites.paused_until > func.now())
+        stmt = (
+            select(func.min(func.greatest(Jobs.run_after, Sites.paused_until)))
+            .select_from(Jobs)
+            .outerjoin(Sites, paused)
+            .where(mine)
+            .where(Jobs.status == "pending")
+        )
         for clause in clauses:
             stmt = stmt.where(clause)
         due = (await db.execute(stmt)).scalar_one()
@@ -496,15 +509,31 @@ async def _hunts(
         # listings. The flag records that on the job; the hunter itself decides
         # by counting the watch's slots when the hunt runs.
         payload = {"swap": True} if await open_slots(db, watch) <= 0 else None
-        for site_id in await watch_sites(db, watch):
-            if scope == "site" and site_id != scope_id:
-                continue
+        sites = [
+            site_id
+            for site_id in await watch_sites(db, watch)
+            if scope != "site" or site_id == scope_id
+        ]
+        for index, site_id in enumerate(sites):
             job = await enqueue_hunt(
-                db, watch, site_id, user_id=user_id, reason="user", payload=payload
+                db,
+                watch,
+                site_id,
+                user_id=user_id,
+                reason="user",
+                priority=_site_priority(index),
+                payload=payload,
             )
             if job is not None:
                 queued.append(job)
     return queued
+
+
+def _site_priority(index: int) -> int:
+    """The head start a person's hunt of a watch's index-th site gets —
+    USER_PRIORITY for the first, SITE_STAGGER less for each after it, never
+    below a background job's."""
+    return max(USER_PRIORITY - index * SITE_STAGGER, 0)
 
 
 async def enqueue_hunt(
@@ -618,8 +647,10 @@ async def enqueue_hunts_for_watch(
     """Every site a new watch will be searched on, queued at once — what makes
     a just-added item start hunting in seconds rather than on some tick."""
     queued = []
-    for site_id in await watch_sites(db, watch):
-        job = await enqueue_hunt(db, watch, site_id, user_id=user_id, reason=reason)
+    for index, site_id in enumerate(await watch_sites(db, watch)):
+        job = await enqueue_hunt(
+            db, watch, site_id, user_id=user_id, reason=reason, priority=_site_priority(index)
+        )
         if job is not None:
             queued.append(job)
     return queued

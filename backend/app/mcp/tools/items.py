@@ -194,14 +194,19 @@ def register(mcp: FastMCP) -> None:
                     else recheck_interval_minutes
                 }
             )
+            passed = {
+                "name": name,
+                "target_price": target_price,
+                "criteria": criteria,
+                "selection_mode": selection_mode,
+                "max_listings": max_listings,
+                "allow_reproductions": allow_reproductions,
+                "hunt": hunt,
+            }
+            # only what was passed is set on the request: a key set to None
+            # there would clear the target or the criteria
             body = ItemUpdateRequest(
-                name=name,
-                target_price=target_price,
-                criteria=criteria,
-                selection_mode=selection_mode,
-                max_listings=max_listings,
-                allow_reproductions=allow_reproductions,
-                hunt=hunt,
+                **{field: value for field, value in passed.items() if value is not None},
                 **interval,
             )
             detail = await items_service.update_item(db, user.id, item, body)

@@ -4,9 +4,10 @@ allow_reproductions is the one tracking field the mock validated and then
 dropped, so nothing pinned it end to end on either side (the mock now applies
 it in POST and PATCH like its siblings). These tests hold the backend to the
 same contract: it is written on create, changed on PATCH, and a JSON null or
-an absent key leaves it alone — the "only non-null fields change" rule every
-other field on ItemUpdateRequest follows. recheck_interval_minutes is the one
-exception: a null is how the form says "back to the instance default".
+an absent key leaves it alone. The optional fields are the exception: on
+target_price, criteria, recheck_interval_minutes and site_ids a null is how the
+edit form says "none" or "back to the default", so only an absent key leaves
+them alone.
 
 Seeding here goes through `db_session` and COMMITS, like test_sites_api.py:
 each request runs on its own session, so uncommitted rows are invisible.
@@ -113,6 +114,34 @@ async def test_update_item_leaves_allow_reproductions_alone(client, db_session, 
 
     assert res.status_code == 200, res.text
     assert res.json()["allow_reproductions"] is True
+
+
+async def test_a_null_target_and_criteria_clear_them(client, db_session):
+    """The edit form sends null for a blank target or criteria field."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id, target_price="5.00", criteria="boxed"))["id"]
+
+    res = await client.patch(
+        f"/api/items/{item_id}", json={"target_price": None, "criteria": None}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+    assert (detail["target_price"], detail["criteria"]) == (None, None)
+
+
+async def test_an_absent_target_and_criteria_are_left_alone(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id, target_price="5.00", criteria="boxed"))["id"]
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert (res.json()["target_price"], res.json()["criteria"]) == ("5.00", "boxed")
 
 
 # --- the hunting switch --------------------------------------------------------
@@ -598,6 +627,9 @@ async def test_a_new_watch_is_hunting_before_the_request_returns(client):
     hunts = [j for j in jobs if j["kind"] == "hunt"]
     assert sorted(j["site_name"] for j in hunts) == ["Mercari", "eBay"]
     assert {j["reason"] for j in hunts} == {"created"}
+    # the first site at the front, the next a step back, so a batch of new
+    # items gets every item's first site hunted before anyone's second
+    assert sorted(j["priority"] for j in hunts) == [90, 100]
     # and the market stats its prompts read from
     assert [j["kind"] for j in jobs if j["kind"] == "ground"] == ["ground"]
 
@@ -615,6 +647,73 @@ async def test_a_pinned_site_subset_is_what_gets_hunted(client):
 
     jobs = (await client.get("/api/jobs", params={"item_id": item["id"], "kind": "hunt"})).json()
     assert [j["site_name"] for j in jobs["data"]] == ["eBay"]
+
+
+async def test_update_item_narrows_the_sites(client):
+    await _sign_in(client)
+    catalog = await _catalog(client, sites=("eBay", "Mercari", "Etsy"))
+    item_id = (await _create(client, catalog["category_id"]))["id"]
+    ebay, mercari, _ = catalog["site_ids"]
+
+    res = await client.patch(
+        f"/api/items/{item_id}", json={"site_ids": [ebay, mercari]}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+    assert sorted(detail["site_ids"]) == [ebay, mercari]
+
+
+@pytest.mark.parametrize("sites", ["none", "empty", "all"])
+async def test_update_item_widens_the_sites_back_to_the_category(client, sites):
+    """null, none ticked and every one ticked all mean "the category's
+    sites" — stored as no subset, so a site linked later is searched too."""
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    item_id = (await _create(client, catalog["category_id"], site_ids=catalog["site_ids"][:1]))[
+        "id"
+    ]
+    site_ids = {"none": None, "empty": [], "all": catalog["site_ids"]}[sites]
+
+    res = await client.patch(f"/api/items/{item_id}", json={"site_ids": site_ids}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert (await client.get(f"/api/items/{item_id}")).json()["site_ids"] is None
+
+
+async def test_an_absent_site_ids_is_left_alone(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    pinned = catalog["site_ids"][:1]
+    item_id = (await _create(client, catalog["category_id"], site_ids=pinned))["id"]
+
+    await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert (await client.get(f"/api/items/{item_id}")).json()["site_ids"] == pinned
+
+
+async def test_a_site_outside_the_category_is_refused(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    item_id = (await _create(client, catalog["category_id"], site_ids=catalog["site_ids"][:1]))[
+        "id"
+    ]
+    body = {"name": "Etsy", "base_url": "https://etsy.test"}
+    unlinked = (await client.post("/api/sites", json=body, headers=CSRF)).json()["id"]
+
+    res = await client.patch(
+        f"/api/items/{item_id}",
+        json={"site_ids": [catalog["site_ids"][1], unlinked], "name": "Renamed"},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert error["fields"] == {"site_ids": "Must be a subset of the category's linked sites"}
+    # nothing in the request was applied
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+    assert (detail["name"], detail["site_ids"]) == ("Alpha", catalog["site_ids"][:1])
 
 
 async def test_untracking_a_listing_takes_it_out_of_the_rotation(client, db_session):

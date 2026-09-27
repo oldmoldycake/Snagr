@@ -26,6 +26,7 @@ from app.models import (
     ListingChecks,
     Listings,
     PriceChecks,
+    SiteCategories,
     Sites,
     Watches,
     WatchSites,
@@ -498,10 +499,11 @@ async def update_item(
     db: AsyncSession, user_id: int, item_id: int, body: ItemUpdateRequest
 ) -> ItemDetail:
     """Write item fields to items and watch fields to the caller's watch;
-    404 when unwatched. Only fields that are not null change (a JSON null
-    can't clear anything) — except recheck_interval_minutes, where a sent
-    null means "back to the instance default"; site_ids is accepted but not
-    applied yet. Commits."""
+    404 when unwatched, 422 for site_ids outside the category's sites. Only
+    the keys sent change. A sent null clears target_price and criteria, puts
+    recheck_interval_minutes back to the instance default and site_ids back
+    to every site of the category; on the other fields it changes nothing.
+    Commits."""
     _check_interval(body.recheck_interval_minutes)
     target_price = _parse_target(body.target_price)
     stmt = (
@@ -516,12 +518,30 @@ async def update_item(
         raise err(404, "not_found", f"Item {item_id} does not exist")
 
     item, watch, category = row
+    sent = body.model_fields_set
+    if "site_ids" in sent:
+        linked = set(
+            (
+                await db.execute(
+                    select(SiteCategories.site_id).where(SiteCategories.category_id == category.id)
+                )
+            ).scalars()
+        )
+        pinned = set(body.site_ids or [])
+        if not pinned <= linked:
+            raise err(
+                422,
+                "validation_error",
+                "site_ids must be a subset of the category's sites",
+                fields={"site_ids": "Must be a subset of the category's linked sites"},
+            )
+
     room_before, hunting_before = watch.max_listings, watch.hunt
     if body.name is not None:
         item.name = body.name
-    if target_price is not None:
+    if "target_price" in sent:
         watch.target_price = target_price
-    if body.criteria is not None:
+    if "criteria" in sent:
         watch.criteria = body.criteria
     if body.selection_mode is not None:
         watch.selection_mode = body.selection_mode
@@ -529,9 +549,17 @@ async def update_item(
         watch.max_listings = body.max_listings
     if body.allow_reproductions is not None:
         watch.allow_reproductions = body.allow_reproductions
-    if "recheck_interval_minutes" in body.model_fields_set:
+    if "recheck_interval_minutes" in sent:
         watch.recheck_interval_minutes = body.recheck_interval_minutes
         await jobs_service.pull_rechecks_forward(db, watch)
+    if "site_ids" in sent:
+        await db.execute(delete(WatchSites).where(WatchSites.watch_id == watch.id))
+        # none, or every one, is no subset at all: the watch keeps no rows and
+        # follows its category, sites linked later included. A hunt already
+        # queued for a dropped site is left to the agent, which re-checks the
+        # pair when it claims the job.
+        if pinned != linked:
+            db.add_all(WatchSites(watch_id=watch.id, site_id=site_id) for site_id in pinned)
     if body.hunt is not None:
         if watch.hunt and not body.hunt:
             await jobs_service.cancel_waiting_hunts(db, watch)

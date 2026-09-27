@@ -143,6 +143,15 @@ function newJob(kind: MockJob['kind'], over: Partial<MockJob> = {}): MockJob {
 }
 
 /**
+ * The head start a person's hunt of a watch's index-th site gets: 100 for the
+ * first, 10 less for each after it, so a batch of new items has every item's
+ * first site hunted before anyone's second.
+ */
+function sitePriority(index: number): number {
+  return Math.max(100 - index * 10, 0)
+}
+
+/**
  * At most one open hunt per (watch, site) — the partial unique index, in mock
  * form. A pending one is bumped to now with its backoff forgotten, a running
  * one is handed back untouched, and a watch with no open slot gets nothing at
@@ -238,8 +247,8 @@ interface TrackingFields {
 /**
  * Normalize + validate the tracking fields shared by item create/update.
  * `existing` supplies defaults on PATCH; omitted fields keep their value.
- * recheck_interval_minutes is the one field where an explicit null changes
- * something: back to the instance default.
+ * An explicit null changes criteria (cleared), recheck_interval_minutes (back
+ * to the instance default) and site_ids (every site of the category).
  * site_ids must be a subset of the category's sites; empty/full set → null.
  */
 function validateTracking(
@@ -824,8 +833,12 @@ export const handlers = [
     // (for the watch, or for the instance) queues no hunt: creating it is not
     // a press of Hunt now.
     if (tracking.hunt && HUNT_ENABLED) {
-      for (const siteId of tracking.site_ids ?? category.site_ids) {
-        enqueueHunt(watch.id, item.id, siteId, { user_id: user.id, reason: 'created', priority: 100 })
+      for (const [index, siteId] of (tracking.site_ids ?? category.site_ids).entries()) {
+        enqueueHunt(watch.id, item.id, siteId, {
+          user_id: user.id,
+          reason: 'created',
+          priority: sitePriority(index),
+        })
       }
     }
     store.jobs.push(newJob('ground', { item_id: item.id, user_id: user.id, reason: 'created' }))
@@ -1378,11 +1391,11 @@ export const handlers = [
         // a full watch still gets a person's hunt: a swap hunt, for something
         // better than its weakest listing
         const full = activeListings(item.id).length >= item.max_listings
-        for (const siteId of sites) {
+        for (const [index, siteId] of sites.entries()) {
           const job = enqueueHunt(watch.id, watch.item_id, siteId, {
             user_id: user.id,
             reason: 'user',
-            priority: 100,
+            priority: sitePriority(index),
             payload: full ? { swap: true } : null,
           })
           if (job) queued.push(job)
@@ -1442,6 +1455,13 @@ export const handlers = [
     const pendingHunts = mine.filter(
       (j) => j.status === 'pending' && (j.kind === 'hunt' || j.kind === 'ground'),
     )
+    // the hunter doesn't claim a paused site's jobs, so they come due when the pause lifts
+    const dueAt = (j: MockJob) => {
+      const pausedUntil = store.sites.find((s) => s.id === j.site_id)?.paused_until
+      return pausedUntil != null && pausedUntil > Date.now()
+        ? Math.max(j.run_after, pausedUntil)
+        : j.run_after
+    }
     const midnight = new Date()
     midnight.setHours(0, 0, 0, 0)
     const finishedHunts = hunts
@@ -1456,10 +1476,10 @@ export const handlers = [
       checks_running: checks.filter((j) => j.status === 'running').length,
       checks_pending: pendingChecks.length,
       next_check_at: pendingChecks.length
-        ? new Date(Math.min(...pendingChecks.map((j) => j.run_after))).toISOString()
+        ? new Date(Math.min(...pendingChecks.map(dueAt))).toISOString()
         : null,
       next_hunt_at: pendingHunts.length
-        ? new Date(Math.min(...pendingHunts.map((j) => j.run_after))).toISOString()
+        ? new Date(Math.min(...pendingHunts.map(dueAt))).toISOString()
         : null,
       hunts_today: finishedHunts.filter((j) => j.finished_at! >= midnight.getTime()).length,
       listings_watched: watched,

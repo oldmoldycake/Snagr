@@ -316,16 +316,18 @@ export interface ItemCreateRequest {
 /** PATCH /api/items/{id} body; omitted fields are left unchanged. */
 export interface ItemUpdateRequest {
   name?: string
+  /** null clears the target */
   target_price?: string | null
+  /** null clears the criteria */
   criteria?: string | null
   selection_mode?: SelectionMode
   max_listings?: number
   allow_reproductions?: boolean
-  /** the one field where null changes something: back to the instance default;
-   *  omitted = unchanged. Same 422s as create */
+  /** null = back to the instance default. Same 422s as create */
   recheck_interval_minutes?: number | null
   /** false drops the hunts the hunter queued for itself; a pending "hunt now" still runs */
   hunt?: boolean
+  /** null = every site of the category. Same subset rule and 422 as create */
   site_ids?: number[] | null
 }
 
@@ -637,7 +639,9 @@ export interface JobsSummary {
   hunts_running: number
   checks_running: number
   checks_pending: number
+  /** when the soonest pending check can run — a paused site's jobs wait for the pause to lift */
   next_check_at: string | null
+  /** the same for hunts and grounding */
   next_hunt_at: string | null
   hunts_today: number
   listings_watched: number

@@ -528,6 +528,9 @@ async def test_item_writes(client, db_session):
         assert updated["criteria"] == "boxed, working meter"
         assert updated["watch"]["notify"] is False
         assert updated["name"] == "Leica M6"  # untouched
+        # an argument left out stays as it is, the target and criteria included
+        renamed = await _ok(agent, "update_item", item=created["id"], name="Leica M6 TTL")
+        assert (renamed["target_price"], renamed["criteria"]) == ("1400.00", "boxed, working meter")
 
         paused = await _ok(agent, "update_listing", listing_id=seed["live"], active=False)
         assert paused["active"] is False
