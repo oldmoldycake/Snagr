@@ -80,8 +80,8 @@ async def update_site(
 async def delete_site(
     site_id: int, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
-    """Delete a site; 404 for an unknown site. One that listings still reference
-    fails the foreign key and answers 503 db_unavailable."""
+    """Delete a site and its listings, category links and watch pins; 404 for
+    an unknown site."""
     try:
         await catalog_service.delete_site(db, site_id)
         return None

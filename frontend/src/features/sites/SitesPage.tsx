@@ -148,6 +148,8 @@ export function SitesPage() {
     },
   })
 
+  // a failed fetch never reaches the server, so it has no ApiError message
+  const removeError = remove.error instanceof ApiError ? remove.error.message : remove.error ? 'Snagr could not delete that site' : null
   const categoryName = (id: number) => categories.data?.data.find((c) => c.id === id)?.name ?? '…'
   const rows = sites.data?.data ?? []
 
@@ -277,7 +279,13 @@ export function SitesPage() {
                                 <Pencil /> Edit
                               </DropdownMenuItem>
                               <DropdownMenuSeparator />
-                              <DropdownMenuItem tone="danger" onSelect={() => setDeleting(site)}>
+                              <DropdownMenuItem
+                                tone="danger"
+                                onSelect={() => {
+                                  remove.reset()
+                                  setDeleting(site)
+                                }}
+                              >
                                 <Trash2 /> Delete
                               </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -302,13 +310,14 @@ export function SitesPage() {
         title="Delete site"
         description={
           deleting
-            ? deleting.listing_count > 0
-              ? `${deleting.name} will be removed and its ${deleting.listing_count} listing${deleting.listing_count === 1 ? '' : 's'} deactivated.`
-              : `${deleting.name} will be removed.`
+            ? `${deleting.name} will be removed from every category and item. Every listing found on it${
+                deleting.listing_count > 0 ? `, including the ${deleting.listing_count} being tracked,` : ''
+              } is deleted with its price history, for every user. This can't be undone.`
             : ''
         }
         confirmLabel="Delete site"
         pending={remove.isPending}
+        error={removeError}
         onConfirm={() => {
           if (deleting) remove.mutate(deleting)
         }}

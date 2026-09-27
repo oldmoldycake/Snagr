@@ -336,11 +336,28 @@ async def update_site(
 
 
 async def delete_site(db: AsyncSession, site_id: int) -> None:
-    """Delete a site; 404 unknown. A site with listings still referencing it
-    fails the FK and surfaces as the caller's database error. Commits."""
+    """Delete a site and everything that points at it — its category links,
+    every watch's pin on it, its listings and their checks, the hunter's
+    skip-log for it. Jobs on it go by their own ON DELETE CASCADE. 404
+    unknown. Commits.
+
+    A listing can't outlive its site (listings.site_id is a plain FK), so the
+    site's listings are deleted with their price history, not deactivated —
+    the same trade delete_category makes. A watch whose only pin was this
+    site is left with none, which means it follows its category's sites
+    (the rule update_item applies to an emptied subset).
+    """
     site = await db.get(Sites, site_id)
     if site is None:
         raise err(404, "not_found", f"Site {site_id} does not exist")
+
+    listing_ids = select(Listings.id).where(Listings.site_id == site_id)
+
+    await db.execute(delete(PriceChecks).where(PriceChecks.listing_id.in_(listing_ids)))
+    await db.execute(delete(Listings).where(Listings.site_id == site_id))
+    await db.execute(delete(ListingChecks).where(ListingChecks.site_id == site_id))
+    await db.execute(delete(WatchSites).where(WatchSites.site_id == site_id))
+    await db.execute(delete(SiteCategories).where(SiteCategories.site_id == site_id))
 
     await db.delete(site)
     await db.commit()

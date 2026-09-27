@@ -16,7 +16,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import pytest
-from app.models import SiteCategories, User
+from app.models import ListingChecks, Listings, PriceChecks, SiteCategories, User, WatchSites
+from sqlalchemy import func, select
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -435,25 +436,64 @@ async def test_update_site_rejects_a_field_left_blank_by_trimming(client, db_ses
 # --- DELETE /api/sites/{site_id} ----------------------------------------------
 
 
-async def test_delete_a_site_that_still_has_listings_is_db_unavailable(client, db_session):
-    """listings.site_id has no ON DELETE, so this trips the FK and comes back
-    as the DB error every other route reports: 503 db_unavailable.
-
-    The mock has no oracle for it — its store deactivates the listings and
-    always answers 204 — so the code is pinned to the eleven sibling handlers
-    instead. Whatever it is, it is not a `validation_error`: nothing about the
-    request was malformed.
-    """
+async def test_delete_a_site_linked_to_a_category_and_pinned_by_a_watch(client, db_session):
+    """Neither site_categories nor watch_sites has ON DELETE, so the delete
+    unlinks the site itself — the mock's 204 — rather than trip the FK. The
+    other site keeps its link and its pin."""
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:
-        item, watch = await sc.tracked()
-        await sc.listing(watch, item)
-        site_id = (await sc.site()).id
+        site, other = await sc.site(), await sc.site("OtherMart")
+        category = await sc.category()
+        sc.db.add_all(SiteCategories(site_id=s.id, category_id=category.id) for s in (site, other))
+        _, watch = await sc.tracked()
+        sc.db.add_all(WatchSites(watch_id=watch.id, site_id=s.id) for s in (site, other))
+        site_id, other_id, watch_id, category_id = site.id, other.id, watch.id, category.id
 
     res = await client.delete(f"/api/sites/{site_id}", headers=CSRF)
 
-    assert res.status_code == 503, res.text
-    assert res.json()["error"]["code"] == "db_unavailable"
+    assert res.status_code == 204, res.text
+    sites = await _sites_by_name(client)
+    assert list(sites) == ["OtherMart"]
+    assert sites["OtherMart"]["category_ids"] == [category_id]
+    async with db_session() as session:
+        pins = select(WatchSites.site_id).where(WatchSites.watch_id == watch_id)
+        assert (await session.scalars(pins)).all() == [other_id]
+
+
+async def test_delete_a_site_deletes_its_listings_and_their_checks(client, db_session):
+    """The mock deactivates a deleted site's listings, but listings.site_id
+    has no ON DELETE and a listing can't outlive its site — so every listing
+    found on it goes, active or not, with its price history and the hunter's
+    skip-log for the site. A listing on another site is untouched."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site, other = await sc.site(), await sc.site("OtherMart")
+        item, watch = await sc.tracked()
+        await sc.checks(await sc.listing(watch, item, tag="a"), (2, "100.00"))
+        await sc.checks(await sc.listing(watch, item, tag="b", active=False), (3, "90.00"))
+        kept = await sc.listing(watch, item, tag="c", site=other)
+        await sc.checks(kept, (1, "110.00"))
+        sc.db.add(ListingChecks(watch_id=watch.id, site_id=site.id, url="https://x", reason="poor"))
+        site_id, kept_id = site.id, kept.id
+
+    res = await client.delete(f"/api/sites/{site_id}", headers=CSRF)
+
+    assert res.status_code == 204, res.text
+    assert list(await _sites_by_name(client)) == ["OtherMart"]
+    async with db_session() as session:
+        assert (await session.scalars(select(Listings.id))).all() == [kept_id]
+        checks = await session.scalars(select(PriceChecks.listing_id))
+        assert checks.all() == [kept_id]
+        assert await session.scalar(select(func.count()).select_from(ListingChecks)) == 0
+
+
+async def test_delete_an_unknown_site_is_not_found(client):
+    await _sign_in(client)
+
+    res = await client.delete("/api/sites/999999", headers=CSRF)
+
+    assert res.status_code == 404, res.text
+    assert res.json()["error"]["code"] == "not_found"
 
 
 # --- writes are admin-only ------------------------------------------------------

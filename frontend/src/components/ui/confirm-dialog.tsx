@@ -2,6 +2,7 @@ import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -18,6 +19,7 @@ export function ConfirmDialog({
   confirmLabel = 'Delete',
   onConfirm,
   pending,
+  error,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -26,6 +28,8 @@ export function ConfirmDialog({
   confirmLabel?: string
   onConfirm: () => void
   pending?: boolean
+  /** Why the last confirm failed; the dialog stays open showing it. */
+  error?: string | null
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -34,6 +38,13 @@ export function ConfirmDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
+        {error ? (
+          <DialogBody>
+            <p role="alert" className="text-xs text-rise">
+              {error}
+            </p>
+          </DialogBody>
+        ) : null}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel

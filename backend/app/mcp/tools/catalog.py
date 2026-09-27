@@ -99,10 +99,10 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
     async def delete_site(site: Ref) -> str:
-        """Delete a site (id or name). A site that still has listings or is
-        linked to a category can't be deleted yet — unlink it first with
-        update_category and let its listings go. No undo. Admins only
-        (`forbidden` otherwise)."""
+        """Delete a site (id or name). It is unlinked from every category,
+        dropped from every watch that pinned it, and every listing found on it
+        is deleted with its price history, for every user. No undo. Admins
+        only (`forbidden` otherwise)."""
         async with caller_session() as (db, user):
             require_admin(user)
             resolved = await resolve_site(db, site)

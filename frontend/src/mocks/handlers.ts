@@ -813,9 +813,16 @@ export const handlers = [
     for (const category of store.categories) {
       category.site_ids = category.site_ids.filter((sid) => sid !== id)
     }
-    for (const listing of store.listings) {
-      if (listing.site_id === id) listing.active = false
+    // an item left pinning no site follows its category again, the site_ids rule
+    for (const item of store.items) {
+      if (item.site_ids == null) continue
+      const pinned = item.site_ids.filter((sid) => sid !== id)
+      item.site_ids = pinned.length > 0 ? pinned : null
     }
+    // a listing can't outlive its site, so it goes with its price history
+    const listingIds = new Set(store.listings.filter((l) => l.site_id === id).map((l) => l.id))
+    store.listings = store.listings.filter((l) => !listingIds.has(l.id))
+    store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
     return new HttpResponse(null, { status: 204 })
   }),
 
