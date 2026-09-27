@@ -291,6 +291,24 @@ async def test_create_site_rejects_blank_fields(client, overrides):
     assert res.json()["error"]["code"] == "validation_error"
 
 
+@pytest.mark.parametrize("name", ["TestBay", " TESTBAY "])
+async def test_create_site_rejects_a_duplicate_name(client, db_session, name):
+    """Case-insensitive, on the trimmed name: the MCP tools address a site by
+    name, and a second "TestBay" would make that name ambiguous for everyone."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.site()
+
+    res = await client.post(
+        "/api/sites", json={"name": name, "base_url": "https://other.test"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+
+
 # --- PATCH /api/sites/{site_id} -----------------------------------------------
 
 
@@ -367,6 +385,51 @@ async def test_update_site_ignores_empty_strings(client, db_session):
 
     assert res.status_code == 200, res.text
     assert res.json()["name"] == "TestBay"
+
+
+async def test_update_site_may_change_only_the_case(client, db_session):
+    """The duplicate check must not count the site being renamed."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json={"name": "TESTBAY"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "TESTBAY"
+
+
+async def test_update_site_rejects_another_sites_name(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.site("Ebay")
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json={"name": "EBAY"}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+    assert set(await _sites_by_name(client)) == {"Ebay", "TestBay"}
+
+
+@pytest.mark.parametrize(
+    ("body", "field"), [({"name": "   "}, "name"), ({"base_url": " / "}, "base_url")]
+)
+async def test_update_site_rejects_a_field_left_blank_by_trimming(client, db_session, body, field):
+    """ "" is "leave it", but "   " isn't — it used to be stored trimmed, as ""."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json=body, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert set(error["fields"]) == {field}
+    assert (await _sites_by_name(client))["TestBay"]["base_url"] == "https://example.test"
 
 
 # --- DELETE /api/sites/{site_id} ----------------------------------------------

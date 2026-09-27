@@ -8,7 +8,7 @@ last_checked_at are computed at query time (house pattern #2), never stored.
 import re
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import err
@@ -28,7 +28,59 @@ from app.models import (
 from app.schemas.catalog import Category, Site
 from app.services.aggregates import count_snagged_watches
 
+# --- names ------------------------------------------------------------------
+
+
+async def checked_name(
+    db: AsyncSession,
+    model: type[Categories] | type[Sites],
+    name: str,
+    exclude_id: int | None = None,
+) -> str:
+    """The name trimmed, or 422: validation_error when blank, duplicate when
+    another row of `model` has it already, ignoring case — the unique index
+    on lower(name) would refuse it anyway, as a 503. Create and rename both
+    come through here, so a rename can't do what a create may not.
+
+    Site names ignoring case matter beyond tidiness: the MCP tools address a
+    site by name, and two sites answering to one leave every agent with an
+    ambiguous reference."""
+    name = name.strip()
+    if not name:
+        raise err(422, "validation_error", "Name is required", fields={"name": "Name is required"})
+
+    clash = select(model.id).where(func.lower(model.name) == name.lower())
+    if exclude_id is not None:
+        clash = clash.where(model.id != exclude_id)
+    if await db.scalar(clash) is not None:
+        noun = "category" if model is Categories else "site"
+        message = f"A {noun} with this name already exists"
+        raise err(422, "duplicate", message, fields={"name": message})
+    return name
+
+
 # --- categories -------------------------------------------------------------
+
+
+async def unique_slug(db: AsyncSession, name: str) -> str:
+    """A slug for a new category: the name's letters and digits joined by
+    hyphens, "category" when it has none (an emoji or "++" name would
+    otherwise get "" and a /categories/ link that goes nowhere), and -2, -3…
+    appended when another category holds it — "C" and "C++" both make "c"."""
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "category"
+    taken = set(
+        (
+            await db.scalars(
+                select(Categories.slug).where(
+                    or_(Categories.slug == base, Categories.slug.like(f"{base}-%"))
+                )
+            )
+        ).all()
+    )
+    slug, n = base, 2
+    while slug in taken:
+        slug, n = f"{base}-{n}", n + 1
+    return slug
 
 
 async def build_category(db: AsyncSession, cat: Categories, user_id: int) -> Category:
@@ -72,23 +124,12 @@ async def list_categories(db: AsyncSession, user_id: int) -> list[Category]:
 
 
 async def create_category(db: AsyncSession, name: str) -> Category:
-    """A new category with a generated slug; the name is trimmed, then a blank
-    one is 422 validation_error and a duplicate (case-insensitive) is 422
-    duplicate — mock parity, including the `fields` the form renders. Commits."""
-    name = name.strip()
-    if not name:
-        raise err(422, "validation_error", "Name is required", fields={"name": "Name is required"})
-
-    if await db.scalar(select(Categories).where(func.lower(Categories.name) == name.lower())):
-        raise err(
-            422,
-            "duplicate",
-            "A category with this name already exists",
-            fields={"name": "A category with this name already exists"},
-        )
-
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-    cat = Categories(name=name, slug=slug)
+    """A new category with a generated, unique slug; the name is trimmed, then
+    a blank one is 422 validation_error and a duplicate (case-insensitive) is
+    422 duplicate — mock parity, including the `fields` the form renders.
+    Commits."""
+    name = await checked_name(db, Categories, name)
+    cat = Categories(name=name, slug=await unique_slug(db, name))
     db.add(cat)
     await db.flush()
     await db.refresh(cat)
@@ -102,13 +143,15 @@ async def create_category(db: AsyncSession, name: str) -> Category:
 async def update_category(
     db: AsyncSession, category_id: int, name: str | None, user_id: int
 ) -> Category:
-    """Rename (the slug stays); 404 unknown. Commits."""
+    """Rename (the slug stays, so links to the category keep working); 404
+    unknown, then the name is held to create's rules — trimmed, 422
+    validation_error blank, 422 duplicate taken by another category. Commits."""
     cat = await db.get(Categories, category_id)
     if cat is None:
         raise err(404, "not_found", f"Category {category_id} does not exist")
 
     if name is not None:
-        cat.name = name
+        cat.name = await checked_name(db, Categories, name, exclude_id=cat.id)
 
     await db.commit()
     return await build_category(db, cat, user_id)
@@ -224,11 +267,13 @@ async def list_sites(db: AsyncSession) -> list[Site]:
 
 async def create_site(db: AsyncSession, name: str, base_url: str) -> Site:
     """A new site; both fields are trimmed and base_url loses one trailing
-    slash (mock parity), then blanks are 422. Commits."""
+    slash (mock parity), then blanks are 422 validation_error and a name
+    another site has (case-insensitive) is 422 duplicate. Commits."""
     name = name.strip()
     base_url = base_url.strip().removesuffix("/")
     if not name or not base_url:
         raise err(422, "validation_error", "Name and base URL are required")
+    name = await checked_name(db, Sites, name)
 
     site = Sites(name=name, base_url=base_url)
     db.add(site)
@@ -249,7 +294,8 @@ async def update_site(
 ) -> Site:
     """Edit a site; 404 unknown. Falsy fields are skipped (an empty string
     is "leave it"), values are trimmed, base_url loses one trailing slash —
-    mock parity. Commits.
+    mock parity. What's left blank after trimming is 422 validation_error,
+    and a name another site has (case-insensitive) is 422 duplicate. Commits.
 
     clear_pause is the manual lift of a circuit-breaker pause: it clears the
     error count too, because leaving it at the threshold would trip the
@@ -263,9 +309,13 @@ async def update_site(
         raise err(404, "not_found", f"Site {site_id} does not exist")
 
     if name:
-        site.name = name.strip()
+        site.name = await checked_name(db, Sites, name, exclude_id=site.id)
     if base_url:
-        site.base_url = base_url.strip().removesuffix("/")
+        base_url = base_url.strip().removesuffix("/")
+        if not base_url:
+            message = "Base URL is required"
+            raise err(422, "validation_error", message, fields={"base_url": message})
+        site.base_url = base_url
     if clear_pause:
         site.paused_until = None
         site.paused_reason = None

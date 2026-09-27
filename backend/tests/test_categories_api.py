@@ -218,6 +218,91 @@ async def test_create_category_rejects_a_duplicate_name(client, db_session, name
     assert error["fields"] == {"name": "A category with this name already exists"}
 
 
+@pytest.mark.parametrize(
+    ("names", "slugs"),
+    [
+        (["🧪", "★★"], ["category", "category-2"]),
+        (["C", "C++", "C#"], ["c", "c-2", "c-3"]),
+    ],
+)
+async def test_create_category_always_gets_a_slug_of_its_own(client, names, slugs):
+    """A name with no letters or digits once made the slug "" (its link went
+    to /categories/, and the next such name 503'd on the unique slug), and
+    "C++" collided with "C" the same way."""
+    await _sign_in(client)
+
+    made = []
+    for name in names:
+        res = await client.post("/api/categories", json={"name": name}, headers=CSRF)
+        assert res.status_code == 201, res.text
+        made.append(res.json()["slug"])
+
+    assert made == slugs
+
+
+# --- PATCH /api/categories/{id} -----------------------------------------------
+
+
+async def test_rename_category_trims_and_keeps_the_slug(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "  Film cameras  "}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    assert (res.json()["name"], res.json()["slug"]) == ("Film cameras", "cameras")
+
+
+async def test_rename_category_may_change_only_the_case(client, db_session):
+    """The duplicate check must not count the category being renamed."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "CAMERAS"}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "CAMERAS"
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_rename_category_rejects_a_blank_name(client, db_session, name):
+    """Create's rules, not a laxer set: a rename used to store "   "."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(f"/api/categories/{category_id}", json={"name": name}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert error["fields"] == {"name": "Name is required"}
+    assert "Cameras" in await _categories_by_name(client)
+
+
+async def test_rename_category_rejects_another_categorys_name(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.category("Homelab")
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": " homelab "}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+    assert set(await _categories_by_name(client)) == {"Homelab", "Cameras"}
+
+
 # --- the write routes answer with the same counts ------------------------------
 
 
