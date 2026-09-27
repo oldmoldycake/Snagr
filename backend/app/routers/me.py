@@ -7,8 +7,8 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Request, status
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -21,7 +21,7 @@ from app.core.security import (
     verify_password,
 )
 from app.database import get_db
-from app.models import ApiTokens, NotificationChannels
+from app.models import ApiTokens, NotificationChannels, Sessions
 from app.models import User as UserModel
 from app.schemas.auth import MeUpdateRequest, PasswordChangeRequest, User, user_out
 from app.schemas.common import DataList
@@ -105,9 +105,14 @@ async def update_me(
 
 @router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
-    body: PasswordChangeRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+    body: PasswordChangeRequest,
+    request: Request,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Change the caller's password.
+    """Change the caller's password and sign out every other session; the one
+    making the change stays signed in. API tokens are untouched — they are
+    revoked one by one from the tokens list.
 
     422 invalid_password for a wrong current password, or for an SSO account,
     which has none."""
@@ -126,6 +131,15 @@ async def change_password(
             fields={"current_password": "Current password is incorrect"},
         )
     user.password_hash = hash_password(body.new_password)
+    await db.execute(
+        update(Sessions)
+        .where(
+            Sessions.user_id == user.id,
+            Sessions.family_id != request.state.session_family,
+            Sessions.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )
     await db.commit()
 
 

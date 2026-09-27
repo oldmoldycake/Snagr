@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import secrets
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import jwt
 from argon2 import PasswordHasher
@@ -43,12 +44,14 @@ def verify_password(plain: str, hashed: str) -> bool:
 # --- access token (JWT) -----------------------------------------------------
 
 
-def make_access_jwt(user_id: int, role: str) -> str:
-    """Short-lived signed token for the snagr_access cookie."""
+def make_access_jwt(user_id: int, role: str, family_id: UUID) -> str:
+    """Short-lived signed token for the snagr_access cookie. `sid` names the
+    sign-in (sessions.family_id) it was issued to."""
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "role": role,
+        "sid": str(family_id),
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TTL_MIN),
     }

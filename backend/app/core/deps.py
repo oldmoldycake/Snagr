@@ -19,8 +19,11 @@ method `write`, and the job routes additionally ask for `jobs`. The whole
 bearer surface is off when the operator sets MCP_ENABLED=false.
 """
 
+from uuid import UUID
+
 import jwt
 from fastapi import Depends, Request
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -28,7 +31,7 @@ from app.core.cookies import ACCESS_COOKIE
 from app.core.errors import err
 from app.core.security import decode_access_jwt
 from app.database import get_db
-from app.models import User
+from app.models import Sessions, User
 from app.services.tokens import authenticate_token
 
 _READ_METHODS = frozenset({"GET", "HEAD"})
@@ -73,15 +76,32 @@ async def current_user(request: Request, db: AsyncSession = Depends(get_db)) -> 
     token = request.cookies.get(ACCESS_COOKIE)
     if not token:
         raise err(401, "unauthenticated", "Not signed in")
-    # verify the signature + expiry (no DB hit — it's all inside the token)
+    # verify the signature + expiry
     try:
         claims = decode_access_jwt(token)
     except jwt.InvalidTokenError:  # bad signature OR expired
         raise err(401, "unauthenticated", "Session expired") from None
+    if "sid" not in claims:  # minted before tokens named their sign-in; refresh mints one
+        raise err(401, "unauthenticated", "Session expired")
+    family_id = UUID(claims["sid"])
     # load the actual user row (so a deactivated user is rejected immediately)
     user = await db.get(User, int(claims["sub"]))
     if user is None or not user.is_active:
         raise err(401, "unauthenticated", "Not signed in")
+    # the signature alone would outlive a logout or a password change by up to
+    # ACCESS_TTL_MIN; the sign-in must still hold an unrevoked refresh token
+    live = await db.scalar(
+        select(Sessions.id)
+        .where(
+            Sessions.family_id == family_id,
+            Sessions.user_id == user.id,
+            Sessions.revoked_at.is_(None),
+        )
+        .limit(1)
+    )
+    if live is None:
+        raise err(401, "unauthenticated", "Session expired")
+    request.state.session_family = family_id  # change_password keeps this sign-in
     return user
 
 
