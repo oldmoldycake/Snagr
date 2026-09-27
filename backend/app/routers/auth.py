@@ -9,15 +9,21 @@ THE WHOLE LOGIN FLOW, in one file. Read it top-to-bottom once and it'll click:
   logout    revoke the refresh token + delete both cookies
 
 Two cookies do two jobs:
-  - snagr_access  : a signed JWT that says "I am user 7, role admin", expires in
-                    15 min. Stateless — we trust it because of the signature, no
-                    DB lookup needed to validate it.
+  - snagr_access  : a signed JWT that says "I am user 7, role admin, sign-in X",
+                    expires in 15 min. Honoured only while sign-in X still has an
+                    unrevoked row in `sessions` (deps.current_user checks).
   - snagr_refresh : a random string, good for 30 days, whose hash we store in the
                     `sessions` table. It can ONLY do one thing: get you a new
                     access token. Because it's in the DB we can revoke it (logout).
 
 Why two? The access token is short-lived so a stolen one is useless fast; the
 refresh token is revocable so logout actually works. Best of both.
+
+A sign-in is a token family (sessions.family_id): every refresh token rotated
+out of one login shares it. Revoking a family ends that sign-in everywhere —
+a password change does it to every other sign-in, and presenting a refresh
+token that was already rotated away does it to its own (someone else has a
+copy).
 
 These paths return 401 DIRECTLY on bad creds. client.ts never refreshes-and-retries
 the credential routes (login, register, refresh, logout, invites), so a refused
@@ -28,6 +34,7 @@ load usually just means the access cookie expired.
 import hmac
 import logging
 from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import RedirectResponse
@@ -72,19 +79,29 @@ _REGISTER_LOCK = 0x736E_6167_7200  # "snagr\0"
 
 _UNIQUE_VIOLATION = "23505"
 
+# how long a rotated-away refresh token is refused without revoking its family.
+# Two tabs that wake together both refresh with the same cookie; the loser is
+# the same browser, not a thief, and its next request carries the new cookie.
+_REUSE_GRACE = timedelta(seconds=10)
+
 
 # --- helpers ----------------------------------------------------------------
 
 
-async def _start_session(db: AsyncSession, response: Response, user: User) -> None:
+async def _start_session(
+    db: AsyncSession, response: Response, user: User, family_id: UUID | None = None
+) -> None:
     """Mint a fresh access+refresh pair for `user` and put both on the response.
-    Called by register, login, and refresh — the one place cookies are issued."""
-    set_access_cookie(response, make_access_jwt(user.id, user.role))
+    Called by register, login, and refresh — the one place cookies are issued.
+    Refresh passes the sign-in it is continuing; everyone else starts a new one."""
+    family_id = family_id or uuid4()
+    set_access_cookie(response, make_access_jwt(user.id, user.role, family_id))
     # refresh token: keep only the hash server-side; the raw value goes in the cookie
     raw, digest = new_refresh_token()
     db.add(
         Sessions(
             user_id=user.id,
+            family_id=family_id,
             refresh_hash=digest,
             expires_at=datetime.now(UTC) + timedelta(days=settings.REFRESH_TTL_DAYS),
         )
@@ -276,25 +293,54 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
     """Swap a live refresh cookie for a new access+refresh pair, burning the old one.
 
     401 unauthenticated when the refresh cookie is missing, revoked, expired, or
-    belongs to a deactivated user."""
+    belongs to a deactivated user. Presenting a token that was already rotated
+    away also signs its whole family out."""
     # the frontend calls this automatically when a request 401s on an expired access token
     raw = request.cookies.get(REFRESH_COOKIE)
     if not raw:
         raise err(401, "unauthenticated", "Refresh token missing")
 
-    session = await db.scalar(select(Sessions).where(Sessions.refresh_hash == hash_refresh(raw)))
+    # ROTATE: burn the old refresh token and issue a brand-new pair, in one
+    # statement — concurrent refreshes with the same cookie queue on the row
+    # lock and only the first finds it unrevoked, so one token mints one pair
+    digest = hash_refresh(raw)
     now = datetime.now(UTC)
-    if session is None or session.revoked_at is not None or session.expires_at < now:
+    burned = (
+        await db.execute(
+            update(Sessions)
+            .where(
+                Sessions.refresh_hash == digest,
+                Sessions.revoked_at.is_(None),
+                Sessions.expires_at >= now,
+            )
+            .values(revoked_at=now)
+            .returning(Sessions.user_id, Sessions.family_id)
+        )
+    ).one_or_none()
+    if burned is None:
+        await _revoke_reused_family(db, digest, now)
         raise err(401, "unauthenticated", "Refresh token expired")
 
-    user = await db.get(User, session.user_id)
+    user = await db.get(User, burned.user_id)
     if user is None or not user.is_active:
         raise err(401, "unauthenticated", "Not signed in")
 
-    # ROTATE: burn the old refresh token and issue a brand-new pair. A refresh
-    # token is single-use, so a stolen one stops working the moment you use yours.
-    session.revoked_at = now
-    await _start_session(db, response, user)
+    await _start_session(db, response, user, burned.family_id)
+    await db.commit()
+
+
+async def _revoke_reused_family(db: AsyncSession, digest: str, now: datetime) -> None:
+    """A refresh token is single-use, so one presented again after it was
+    revoked is a copy: whoever rotated it first may be the thief. Neither can
+    be told apart, so the whole sign-in ends and the owner logs in again."""
+    session = await db.scalar(select(Sessions).where(Sessions.refresh_hash == digest))
+    if session is None or session.revoked_at is None or now - session.revoked_at < _REUSE_GRACE:
+        return
+    await db.execute(
+        update(Sessions)
+        .where(Sessions.family_id == session.family_id, Sessions.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
     await db.commit()
 
 

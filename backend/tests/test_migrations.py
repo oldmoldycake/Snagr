@@ -1,12 +1,12 @@
-"""Migrations 015 to 021, up and down, against a scratch database.
+"""Migrations 015 to 022, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
 and rewrites stored token scopes, and both of those are only reversible if the
-downgrade really puts them back; 016 and 017 are data backfills and 019 to 021
-cleanups, and the rows they write are the only thing there is to test. It builds its own database
-(`snagr_test_...`) rather than touching the suite's, and drops it again on the
-way out.
+downgrade really puts them back; 016, 017 and 022 are data backfills and 019 to
+021 cleanups, and the rows they write are the only thing there is to test. It
+builds its own database (`snagr_test_...`) rather than touching the suite's,
+and drops it again on the way out.
 """
 
 import os
@@ -372,3 +372,26 @@ async def test_021_renames_blank_and_duplicate_catalog_names(scratch):
     _alembic("downgrade", "020")
     assert not await _table(scratch, "uq_categories_name")
     assert not await _table(scratch, "uq_sites_name")
+
+
+async def test_022_puts_every_existing_session_in_a_family_of_its_own(scratch):
+    _alembic("upgrade", "021")
+    user = await scratch.fetchval("SELECT id FROM users LIMIT 1")
+    for digest in ("first", "second"):
+        await scratch.execute(
+            "INSERT INTO sessions (user_id, refresh_hash, expires_at) "
+            "VALUES ($1, $2, now() + interval '1 day')",
+            user,
+            digest,
+        )
+
+    _alembic("upgrade", "022")
+
+    families = await scratch.fetch("SELECT family_id FROM sessions")  # NOT NULL, so all filled
+    assert len({row["family_id"] for row in families}) == 2
+
+    _alembic("downgrade", "021")
+    columns = await scratch.fetch(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'sessions'"
+    )
+    assert "family_id" not in {row["column_name"] for row in columns}

@@ -5,10 +5,12 @@ Each test starts from an empty DB (conftest truncates between tests), so
 """
 
 import asyncio
+from datetime import timedelta
 
 from app.config import settings
-from app.models import User
-from sqlalchemy import select
+from app.core.security import hash_refresh
+from app.models import Sessions, User
+from sqlalchemy import select, update
 
 from tests.conftest import CSRF
 
@@ -82,6 +84,61 @@ async def test_instance_reflects_toggle(client, monkeypatch):
     assert (await client.get("/api/instance")).json()["registration_open"] is False
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
     assert (await client.get("/api/instance")).json()["registration_open"] is True
+
+
+# --- sessions ------------------------------------------------------------------
+
+
+async def test_logout_ends_the_access_token_too(client, make_client):
+    await _register(client)
+    # a copy of the access cookie, as if it had leaked before the logout
+    copy = await make_client()
+    copy.cookies.set("snagr_access", client.cookies["snagr_access"])
+    assert (await copy.get("/api/auth/me")).status_code == 200
+
+    assert (await client.post("/api/auth/logout", headers=CSRF)).status_code == 204
+    assert (await copy.get("/api/auth/me")).status_code == 401
+
+
+async def test_concurrent_refreshes_mint_one_session(client, db_session):
+    await _register(client)
+    results = await asyncio.gather(
+        client.post("/api/auth/refresh", headers=CSRF),
+        client.post("/api/auth/refresh", headers=CSRF),
+    )
+    assert sorted(r.status_code for r in results) == [204, 401]
+    async with db_session() as db:
+        live = await db.scalars(select(Sessions.id).where(Sessions.revoked_at.is_(None)))
+        assert len(live.all()) == 1
+    # a race between two tabs of one browser is not a theft: the winner's
+    # session survives the loser's refused token
+    assert (await client.get("/api/auth/me")).status_code == 200
+
+
+async def test_reused_refresh_token_signs_out_its_family(client, make_client, db_session):
+    await _register(client)
+    stolen = client.cookies["snagr_refresh"]
+    thief = await make_client()
+    thief.cookies.set("snagr_refresh", stolen)
+    assert (await thief.post("/api/auth/refresh", headers=CSRF)).status_code == 204
+    assert (await thief.get("/api/auth/me")).status_code == 200
+    # a login elsewhere is a different sign-in, and outlives the reuse
+    elsewhere = await make_client()
+    await elsewhere.post("/api/auth/login", json=ADMIN, headers=CSRF)
+
+    async with db_session() as db:  # past the grace a racing tab gets
+        await db.execute(
+            update(Sessions)
+            .where(Sessions.refresh_hash == hash_refresh(stolen))
+            .values(revoked_at=Sessions.revoked_at - timedelta(minutes=1))
+        )
+        await db.commit()
+    # the owner comes back with the token the thief already rotated
+    assert (await client.post("/api/auth/refresh", headers=CSRF)).status_code == 401
+
+    assert (await thief.get("/api/auth/me")).status_code == 401
+    assert (await thief.post("/api/auth/refresh", headers=CSRF)).status_code == 401
+    assert (await elsewhere.get("/api/auth/me")).status_code == 200
 
 
 # --- invites -------------------------------------------------------------------
@@ -213,6 +270,28 @@ async def test_password_change(client, make_client):
         headers=CSRF,
     )
     assert new.status_code == 200
+
+
+async def test_password_change_signs_out_every_other_session(client, make_client):
+    await _register(client)
+    other = await make_client()
+    await other.post("/api/auth/login", json=ADMIN, headers=CSRF)
+    assert (await other.get("/api/auth/me")).status_code == 200
+
+    res = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": "new-password-1"},
+        headers=CSRF,
+    )
+    assert res.status_code == 204
+
+    # the other browser is out at once — its unexpired access token included
+    assert (await other.get("/api/auth/me")).status_code == 401
+    assert (await other.post("/api/auth/refresh", headers=CSRF)).status_code == 401
+    # the browser that made the change stays signed in, and can still refresh
+    assert (await client.get("/api/auth/me")).status_code == 200
+    assert (await client.post("/api/auth/refresh", headers=CSRF)).status_code == 204
+    assert (await client.get("/api/auth/me")).status_code == 200
 
 
 async def test_me_update_email(client):

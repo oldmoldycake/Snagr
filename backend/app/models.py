@@ -8,6 +8,7 @@ Columns added on top of the agent's schema are marked  # + api.
 """
 
 from datetime import datetime
+from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Numeric,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -295,12 +297,18 @@ class Invites(Base):
 
 class Sessions(Base):
     """+ api. Refresh-token store; the raw token lives only in the httpOnly
-    cookie, we persist its sha256. Rotated on every /api/auth/refresh."""
+    cookie, we persist its sha256. Rotated on every /api/auth/refresh.
+
+    `family_id` is the sign-in a row belongs to: every token rotated out of
+    one login shares it, and so does the access JWT (its `sid` claim). An
+    access JWT is honoured only while its family still has an unrevoked row,
+    so revoking a family signs that browser out at once."""
 
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    family_id: Mapped[UUID] = mapped_column(Uuid, index=True)
     refresh_hash: Mapped[str] = mapped_column(Text, unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
