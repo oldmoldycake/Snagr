@@ -39,7 +39,7 @@ from app.models import (
     Watches,
     WatchSites,
 )
-from app.schemas.common import PageMeta, Paginated
+from app.schemas.common import PageMeta, Paginated, page_param
 from app.schemas.items import HuntFacts, RecheckFacts
 from app.schemas.jobs import (
     Job,
@@ -220,8 +220,8 @@ async def list_jobs(db: AsyncSession, viewer: User, filters: JobListParams) -> P
     is a queue and reads forwards, by when each is due; everything else is
     history and reads backwards.
     """
-    page = filters.page or 1
-    per_page = min(filters.per_page or 20, MAX_PER_PAGE)
+    page = page_param(filters.page, 1)
+    per_page = min(page_param(filters.per_page, 20), MAX_PER_PAGE)
 
     stmt = _named().where(visible(viewer))
     kinds = _csv(filters.kind)

@@ -852,7 +852,7 @@ export interface ApiTokenCreateRequest {
   name: string
   /** non-empty subset of the known scopes; 422 with fields.scopes otherwise */
   scopes: ApiTokenScope[]
-  /** omit/null = never expires; 422 with fields.expires_in_days below 1 */
+  /** omit/null = never expires; 422 with fields.expires_in_days outside 1–3650 */
   expires_in_days?: number | null
 }
 

@@ -145,7 +145,7 @@ export const createSite = (body: SiteCreateRequest) =>
 export const updateSite = (id: number, body: SiteUpdateRequest) =>
   api<Site>(`/api/sites/${id}`, { method: 'PATCH', body })
 
-/** Delete a site (admin only); one that listings still reference fails with 503 db_unavailable. */
+/** Delete a site (admin only), with its listings, category links and watch pins. */
 export const deleteSite = (id: number) => api<void>(`/api/sites/${id}`, { method: 'DELETE' })
 
 /** The caller's watched items, filtered and paged, each with its price rollup. */

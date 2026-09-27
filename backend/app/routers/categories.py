@@ -7,11 +7,9 @@ item_count / snagged_count / site_ids are computed at query time
 """
 
 from fastapi import APIRouter, Depends, status
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, current_user, require_admin
-from app.core.errors import err
 from app.database import get_db
 from app.schemas.catalog import (
     Category,
@@ -28,10 +26,7 @@ router = APIRouter(prefix="/api/categories", tags=["categories"])
 @router.get("", response_model=DataList[Category])
 async def list_categories(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """Every category, with counts read through the caller's watches."""
-    try:
-        return DataList(data=await catalog_service.list_categories(db, user.id))
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return DataList(data=await catalog_service.list_categories(db, user.id))
 
 
 @router.post(
@@ -45,10 +40,7 @@ async def create_category(
 ):
     """Create a category; 422 validation_error for a blank name, 422 duplicate
     for one that already exists (case-insensitive)."""
-    try:
-        return await catalog_service.create_category(db, body.name)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await catalog_service.create_category(db, body.name)
 
 
 @router.patch("/{category_id}", response_model=Category, dependencies=[Depends(csrf_guard)])
@@ -59,10 +51,7 @@ async def update_category(
     db: AsyncSession = Depends(get_db),
 ):
     """Rename a category (the slug stays); 404 for an unknown category."""
-    try:
-        return await catalog_service.update_category(db, category_id, body.name, user.id)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await catalog_service.update_category(db, category_id, body.name, user.id)
 
 
 @router.delete(
@@ -73,11 +62,8 @@ async def delete_category(
 ):
     """Delete a category and everything under it — its items and every user's
     watches, listings and price checks on them. 404 for an unknown category."""
-    try:
-        await catalog_service.delete_category(db, category_id)
-        return None
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    await catalog_service.delete_category(db, category_id)
+    return None
 
 
 @router.put("/{category_id}/sites", response_model=Category, dependencies=[Depends(csrf_guard)])

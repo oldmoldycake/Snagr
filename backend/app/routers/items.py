@@ -8,11 +8,9 @@ layer over it. prefix is /api because the router spans both trees.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, current_user
-from app.core.errors import err
 from app.database import get_db
 from app.schemas.common import DataList, Paginated
 from app.schemas.items import (
@@ -39,10 +37,7 @@ async def list_items(
     db: AsyncSession = Depends(get_db),
 ):
     """The caller's watches as items, filtered, searched and paged."""
-    try:
-        return await items_service.list_items(db, user.id, filters)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await items_service.list_items(db, user.id, filters)
 
 
 @router.post(
@@ -56,10 +51,7 @@ async def create_item(
 ):
     """Watch an item: find-or-create the shared item, then create the caller's
     watch and its site subset."""
-    try:
-        return await items_service.create_item(db, user.id, body)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await items_service.create_item(db, user.id, body)
 
 
 @router.get("/items/{item_id}", response_model=ItemDetail)
@@ -82,12 +74,9 @@ async def update_item(
     An absent key leaves a field unchanged. A JSON null clears target_price
     and criteria, and puts recheck_interval_minutes and site_ids back to their
     defaults; on the other fields it changes nothing."""
-    try:
-        return await items_service.update_item(
-            db, user.id, item_id, body, is_admin=user.role == "admin"
-        )
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await items_service.update_item(
+        db, user.id, item_id, body, is_admin=user.role == "admin"
+    )
 
 
 @router.delete(
@@ -96,10 +85,7 @@ async def update_item(
 async def delete_item(item_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """Stop watching an item, removing the caller's listings and checks; the shared
     item stays for other watchers. 404 when unwatched."""
-    try:
-        await items_service.delete_item(db, user.id, item_id)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    await items_service.delete_item(db, user.id, item_id)
 
 
 @router.patch("/items/{item_id}/watch", response_model=Watch, dependencies=[Depends(csrf_guard)])
@@ -110,10 +96,7 @@ async def update_watch(
     db: AsyncSession = Depends(get_db),
 ):
     """Set the watch's notify flag or target price; 404 when unwatched."""
-    try:
-        return await items_service.update_watch(db, user.id, item_id, body)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await items_service.update_watch(db, user.id, item_id, body)
 
 
 @router.patch("/listings/{listing_id}", response_model=Listing, dependencies=[Depends(csrf_guard)])
@@ -125,10 +108,7 @@ async def update_listing(
 ):
     """Stop or resume tracking one of the caller's listings; another user's
     listing 404s like a missing one."""
-    try:
-        return await items_service.update_listing(db, user.id, listing_id, body.active)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await items_service.update_listing(db, user.id, listing_id, body.active)
 
 
 @router.get("/items/{item_id}/price-checks", response_model=DataList[PriceCheck])
@@ -137,7 +117,4 @@ async def list_price_checks(
 ):
     """Recent raw price checks across the caller's listings of an item, newest
     first — unconfirmed readings included. An unwatched item is an empty list."""
-    try:
-        return DataList(data=await items_service.list_price_checks(db, user.id, item_id, limit))
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return DataList(data=await items_service.list_price_checks(db, user.id, item_id, limit))

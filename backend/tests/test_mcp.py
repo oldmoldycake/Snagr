@@ -646,6 +646,15 @@ async def test_a_target_that_is_not_an_amount_is_a_tool_error(client, db_session
                 assert set(error["fields"]) == {"target_price"}
 
 
+async def test_a_value_out_of_range_is_a_tool_error_not_an_outage(client):
+    """An id past what the column holds is the caller's mistake, not a
+    database that can't be reached; a page below one reads as the first."""
+    await _sign_in(client)
+    async with _agent(await _token(client)) as agent:
+        assert (await _error(agent, "get_item", item=2**31))["code"] == "validation_error"
+        assert (await _ok(agent, "list_jobs", page=-1))["meta"]["page"] == 1
+
+
 async def test_the_hunting_switch_over_mcp(client, db_session):
     """The allow_reproductions pattern: set on create, changed on update, and
     left alone when the argument is left out."""

@@ -656,6 +656,8 @@ export const handlers = [
     else if (scopes.some((s) => !TOKEN_SCOPES.includes(s))) fields.scopes = 'Unknown scope'
     if (body.expires_in_days != null && body.expires_in_days < 1) {
       fields.expires_in_days = 'Must be at least 1 day'
+    } else if (body.expires_in_days != null && body.expires_in_days > 3650) {
+      fields.expires_in_days = 'Must be 3650 days or fewer'
     }
     if (Object.keys(fields).length > 0) {
       return err(422, 'validation_error', 'Check the token details', { fields })

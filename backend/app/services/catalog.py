@@ -76,7 +76,7 @@ async def flush_name(db: AsyncSession, model: type[Categories] | type[Sites]) ->
     """Flush the pending write, turning a name the unique index refuses into
     checked_name's 422 duplicate: two concurrent requests can both pass that
     read before either writes, and the later one otherwise surfaces as a raw
-    IntegrityError (a 503)."""
+    IntegrityError (a 409)."""
     try:
         await db.flush()
     except IntegrityError as exc:
@@ -239,7 +239,10 @@ async def set_category_sites(
     if cat is None:
         raise err(404, "not_found", f"Category {category_id} does not exist")
 
-    valid_ids = (await db.execute(select(Sites.id).where(Sites.id.in_(site_ids)))).scalars().all()
+    # read every id and match here, not `WHERE id IN (...)`: an id past what
+    # the column holds is unknown too, and asyncpg refuses to send it
+    known = set((await db.execute(select(Sites.id))).scalars())
+    valid_ids = known.intersection(site_ids)
 
     await db.execute(delete(SiteCategories).where(SiteCategories.category_id == category_id))
     for site_id in valid_ids:

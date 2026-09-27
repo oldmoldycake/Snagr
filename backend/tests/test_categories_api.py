@@ -298,7 +298,8 @@ async def test_create_category_that_keeps_losing_the_slug_race_gives_up(
 
     res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
 
-    assert res.status_code == 503, res.text
+    assert res.status_code == 409, res.text
+    assert res.json()["error"]["code"] == "conflict"
     assert lost == catalog._SLUG_ATTEMPTS
     assert "C" not in await _categories_by_name(client)
 
@@ -443,6 +444,22 @@ async def test_write_routes_return_the_callers_snagged_count(client, db_session)
     )
     assert sites.status_code == 200, sites.text
     assert sites.json()["snagged_count"] == 1
+
+
+async def test_set_sites_drops_unknown_ids_even_past_what_an_id_can_be(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+        site_id = (await sc.site()).id
+
+    res = await client.put(
+        f"/api/categories/{category_id}/sites",
+        json={"site_ids": [site_id, site_id, 99999, 2**31]},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["site_ids"] == [site_id]
 
 
 # --- writes are admin-only ------------------------------------------------------

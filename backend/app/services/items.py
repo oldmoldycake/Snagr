@@ -35,7 +35,7 @@ from app.models import (
     Watches,
     WatchSites,
 )
-from app.schemas.common import PageMeta, Paginated
+from app.schemas.common import PageMeta, Paginated, page_param
 from app.schemas.items import (
     ItemCreateRequest,
     ItemDetail,
@@ -56,8 +56,11 @@ from app.services.vision import authenticity_for_listings
 # A day: past it a price stops being tracked in any sense the item page means.
 MAX_RECHECK_INTERVAL_MINUTES = 1440
 
+# The most listings one watch tracks at once — the item form's range.
+MAX_LISTINGS = 10
+
 # The largest amount watches.target_price (Numeric(10, 2)) can hold; one more
-# cent overflows the column and reaches the caller as a 503.
+# cent overflows the column.
 MAX_TARGET_PRICE = Decimal("99999999.99")
 
 _UNIQUE_VIOLATION = "23505"
@@ -215,8 +218,8 @@ async def list_items(
     db: AsyncSession, user_id: int, filters: ItemListParams
 ) -> Paginated[ItemSummary]:
     """The caller's watches as ItemSummary rows, filtered, searched and paged."""
-    page = filters.page or 1
-    per_page = filters.per_page or 50
+    page = page_param(filters.page, 1)
+    per_page = page_param(filters.per_page, 50)
 
     stmt = (
         select(Watches, Items, Categories)
@@ -304,6 +307,8 @@ async def list_listings(
     """Every listing across the caller's watches, newest first — the one read
     REST has no route for (the UI only shows listings inside an item).
     `active=None` includes sold/ended listings."""
+    page = page_param(page, 1)
+    per_page = page_param(per_page, 25)
     stmt = (
         select(Listings, Sites.name.label("site_name"), Items.name.label("item_name"))
         .join(Sites, Sites.id == Listings.site_id)
@@ -373,7 +378,7 @@ async def list_price_checks(
         .where(Listings.item_id == item_id)
         .where(Watches.user_id == user_id)
         .order_by(PriceChecks.checked_at.desc())
-        .limit(limit)
+        .limit(page_param(limit, 50))
     )
 
     # .all(), NOT .scalars().all() — this is a multi-column select
@@ -411,6 +416,40 @@ def _check_interval(minutes: int | None) -> None:
             f"Check interval must be {bounds}",
             fields={"recheck_interval_minutes": f"Must be {bounds}"},
         )
+
+
+def _check_max_listings(max_listings: int | None) -> None:
+    """422 unless null (unchanged) or between 1 and MAX_LISTINGS."""
+    if max_listings is not None and not 1 <= max_listings <= MAX_LISTINGS:
+        bounds = f"between 1 and {MAX_LISTINGS}"
+        raise err(
+            422,
+            "validation_error",
+            f"Max listings must be {bounds}",
+            fields={"max_listings": f"Must be {bounds}"},
+        )
+
+
+async def _pinned_sites(db: AsyncSession, category_id: int, site_ids: list[int] | None) -> set[int]:
+    """The watch_sites rows these site_ids come to; 422 unless each is one of
+    the category's linked sites. None, none or every one is no subset at all:
+    no rows, and the watch follows its category, sites linked later included."""
+    linked = set(
+        (
+            await db.execute(
+                select(SiteCategories.site_id).where(SiteCategories.category_id == category_id)
+            )
+        ).scalars()
+    )
+    pinned = set(site_ids or [])
+    if not pinned <= linked:
+        raise err(
+            422,
+            "validation_error",
+            "site_ids must be a subset of the category's sites",
+            fields={"site_ids": "Must be a subset of the category's linked sites"},
+        )
+    return set() if pinned == linked else pinned
 
 
 def _parse_target(value: str | None) -> Decimal | None:
@@ -514,19 +553,21 @@ async def _move_watch(db: AsyncSession, watch: Watches, item: Items, *, user_id:
 async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -> ItemSummary:
     """Find-or-create the shared items row (by name, trimmed and without regard
     to case), create the caller's watch, insert the watch_sites subset.
-    Commits. 422 for a blank name, and 422 duplicate when the caller already
-    watches an item by that name in the category.
-
-    The contract's 404 for an unknown category and the 422s (selection_mode,
-    max_listings 1-10, site_ids ⊆ the category's sites) are not enforced yet —
-    an unknown category surfaces as the FK violation's 503. The
-    recheck_interval_minutes range (the floor to 1440) and the target price
-    are enforced.
+    Commits. 404 for an unknown category; 422 for a blank name, max_listings
+    outside 1-10, a recheck interval outside the floor to 1440, a target price
+    that is no amount in cents, or site_ids outside the category's sites; and
+    422 duplicate when the caller already watches an item by that name in the
+    category.
     """
     name = _item_name(body.name)
+    _check_max_listings(body.max_listings)
     _check_interval(body.recheck_interval_minutes)
     target_price = _parse_target(body.target_price)
-    item = await _find_or_create_item(db, body.category_id, name)
+    category = await db.get(Categories, body.category_id)
+    if category is None:
+        raise err(404, "not_found", f"Category {body.category_id} does not exist")
+    pinned = await _pinned_sites(db, category.id, body.site_ids)
+    item = await _find_or_create_item(db, category.id, name)
 
     watch = Watches(
         user_id=user_id,
@@ -541,12 +582,7 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     )
     await _add_watch(db, watch)
     await db.refresh(watch)
-
-    for site_id in body.site_ids or []:
-        watch_sites = WatchSites(watch_id=watch.id, site_id=site_id)
-        db.add(watch_sites)
-        await db.flush()
-        await db.refresh(watch_sites)
+    db.add_all(WatchSites(watch_id=watch.id, site_id=site_id) for site_id in pinned)
 
     # The hunter starts on this watch in the same transaction that creates it:
     # a hunt per site it will search, plus the market-price grounding the hunt
@@ -559,8 +595,6 @@ async def create_item(db: AsyncSession, user_id: int, body: ItemCreateRequest) -
     await jobs_service.enqueue_ground(db, item.id, user_id=user_id)
 
     await db.commit()
-
-    category = await db.get(Categories, item.category_id)
     return await build_item_summary(watch, item, category, db)
 
 
@@ -609,13 +643,15 @@ async def update_item(
     db: AsyncSession, user_id: int, item_id: int, body: ItemUpdateRequest, *, is_admin: bool
 ) -> ItemDetail:
     """Write item fields to items and watch fields to the caller's watch;
-    404 when unwatched, 422 for site_ids outside the category's sites or a
-    blank name. Only the keys sent change. A sent null clears target_price
-    and criteria, puts recheck_interval_minutes back to the instance default
-    and site_ids back to every site of the category; on the other fields it
-    changes nothing. A new name may move the watch to another item (see
-    _rename), so the detail can come back under a different id. Commits."""
+    404 when unwatched, 422 for site_ids outside the category's sites,
+    max_listings outside 1-10 or a blank name. Only the keys sent change. A
+    sent null clears target_price and criteria, puts recheck_interval_minutes
+    back to the instance default and site_ids back to every site of the
+    category; on the other fields it changes nothing. A new name may move the
+    watch to another item (see _rename), so the detail can come back under a
+    different id. Commits."""
     name = _item_name(body.name) if body.name is not None else None
+    _check_max_listings(body.max_listings)
     _check_interval(body.recheck_interval_minutes)
     target_price = _parse_target(body.target_price)
     stmt = (
@@ -632,21 +668,7 @@ async def update_item(
     item, watch, category = row
     sent = body.model_fields_set
     if "site_ids" in sent:
-        linked = set(
-            (
-                await db.execute(
-                    select(SiteCategories.site_id).where(SiteCategories.category_id == category.id)
-                )
-            ).scalars()
-        )
-        pinned = set(body.site_ids or [])
-        if not pinned <= linked:
-            raise err(
-                422,
-                "validation_error",
-                "site_ids must be a subset of the category's sites",
-                fields={"site_ids": "Must be a subset of the category's linked sites"},
-            )
+        pinned = await _pinned_sites(db, category.id, body.site_ids)
 
     room_before, hunting_before = watch.max_listings, watch.hunt
     if name is not None:
@@ -666,12 +688,9 @@ async def update_item(
         await jobs_service.pull_rechecks_forward(db, watch)
     if "site_ids" in sent:
         await db.execute(delete(WatchSites).where(WatchSites.watch_id == watch.id))
-        # none, or every one, is no subset at all: the watch keeps no rows and
-        # follows its category, sites linked later included. A hunt already
-        # queued for a dropped site is left to the agent, which re-checks the
-        # pair when it claims the job.
-        if pinned != linked:
-            db.add_all(WatchSites(watch_id=watch.id, site_id=site_id) for site_id in pinned)
+        # a hunt already queued for a dropped site is left to the agent, which
+        # re-checks the pair when it claims the job
+        db.add_all(WatchSites(watch_id=watch.id, site_id=site_id) for site_id in pinned)
     if body.hunt is not None:
         if watch.hunt and not body.hunt:
             await jobs_service.cancel_waiting_hunts(db, watch)

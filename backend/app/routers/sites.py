@@ -9,7 +9,6 @@ the only thing this API can do with a pause is lift it.
 """
 
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, current_user, require_admin
@@ -25,10 +24,7 @@ router = APIRouter(prefix="/api/sites", tags=["sites"])
 @router.get("", response_model=DataList[Site])
 async def list_sites(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """Every site, with computed counts and any breaker pause."""
-    try:
-        return DataList(data=await catalog_service.list_sites(db))
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return DataList(data=await catalog_service.list_sites(db))
 
 
 @router.post(
@@ -38,10 +34,7 @@ async def create_site(
     body: SiteCreateRequest, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """Add a site; 422 validation_error when the name or base URL is blank."""
-    try:
-        return await catalog_service.create_site(db, body.name, body.base_url)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await catalog_service.create_site(db, body.name, body.base_url)
 
 
 @router.patch("/{site_id}", response_model=Site, dependencies=[Depends(csrf_guard)])
@@ -66,12 +59,9 @@ async def update_site(
             "only null is accepted; the hunter sets pauses",
             fields={"paused_until": "only null is accepted; the hunter sets pauses"},
         )
-    try:
-        return await catalog_service.update_site(
-            db, site_id, body.name, body.base_url, clear_pause=clear_pause
-        )
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    return await catalog_service.update_site(
+        db, site_id, body.name, body.base_url, clear_pause=clear_pause
+    )
 
 
 @router.delete(
@@ -82,8 +72,5 @@ async def delete_site(
 ):
     """Delete a site and its listings, category links and watch pins; 404 for
     an unknown site."""
-    try:
-        await catalog_service.delete_site(db, site_id)
-        return None
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    await catalog_service.delete_site(db, site_id)
+    return None
