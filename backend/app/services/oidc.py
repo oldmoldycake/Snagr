@@ -165,7 +165,8 @@ async def validate_id_token(id_token: str, nonce: str) -> dict:
 async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     """ID-token claims -> local User. Sub-first, marry-by-verified-email
     second, auto-create third (spec decision: Authentik is the access gate).
-    Raises OidcError for inactive users or unusable claims. Caller commits."""
+    Raises OidcError for inactive users, unusable claims, or an email held by
+    an account that can't be married. Caller commits."""
     sub = claims.get("sub")
     if not sub:
         raise OidcError("ID token has no sub")
@@ -185,11 +186,17 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     # 1. the stable link — survives email changes at the IdP
     user = await db.scalar(select(User).where(User.oidc_sub == sub))
 
-    # 2. the marriage: claim an existing local account, once. Only a VERIFIED
-    #    email may do this — an unverified one could hijack someone's account.
+    # 2. the marriage: claim an existing local account, once. Both sides must
+    #    vouch for the email: the IdP's claim, and the account's own flag — a
+    #    user can type any address into signup or their profile, and marrying
+    #    on that would hand the real owner's first SSO login to them. An
+    #    account already married to another sub is never re-pointed.
     if user is None and email_ok:
-        user = await db.scalar(select(User).where(User.email == email))
-        if user is not None:
+        holder = await db.scalar(select(User).where(User.email == email))
+        if holder is not None:
+            if not holder.email_verified or holder.oidc_sub is not None:
+                raise OidcError(f"account {holder.id} holds this email but can't be linked")
+            user = holder
             user.oidc_sub = sub
 
     # 3. unknown at the IdP-approved door -> provision a fresh account
