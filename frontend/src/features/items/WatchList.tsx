@@ -243,7 +243,8 @@ export function WatchList({
                   )}
                 >
                   {struckFrom ? (
-                    <s className="block font-mono text-[11px] font-normal text-ink-3 sm:mr-1.5 sm:inline">
+                    // stacked, never inline: side by side the two prices overrun the fixed-width Best column
+                    <s className="block font-mono text-[11px] leading-tight font-normal text-ink-3">
                       {formatMoney(struckFrom.old_price, item.currency)}
                     </s>
                   ) : null}
