@@ -170,6 +170,7 @@ def wire(monkeypatch, **overrides):
     ):
         monkeypatch.setattr(worker.job_queue, name, overrides.get(name, fake))
     monkeypatch.setattr(worker.breaker, "record_outcome", record_outcome)
+    monkeypatch.setattr(worker, "backoff", worker.Backoff())
 
     @asynccontextmanager
     async def open_session():
@@ -395,13 +396,29 @@ class TestTerminalWrites:
         assert stats["listings_checked"] == 1
         assert seen["failed"] == []
 
-    def test_a_failing_job_is_retried_and_counted_against_its_site(self, monkeypatch):
-        seen = wire(monkeypatch, hunt_raises=RuntimeError("challenge page"))
+    def test_a_site_that_gave_up_no_page_is_retried_and_counted_against_it(self, monkeypatch):
+        seen = wire(monkeypatch, hunt_raises=agent.SiteUnreadable("every browser call failed"))
         asyncio.run(worker._work_one("w1", job("hunt")))
-        assert seen["failed"] == [(1, "challenge page")]
+        assert seen["failed"] == [(1, "every browser call failed")]
         assert seen["completed"] == []
-        assert (1, False) in seen["outcomes"]
+        assert seen["outcomes"] == [(1, False)]
         assert any(event_type == "error" for _, _, event_type, _ in seen["events"])
+        assert worker.backoff.until is None
+
+    def test_the_hunters_own_failure_is_retried_but_blames_no_site(self, monkeypatch):
+        # an LLM key the provider refuses fails every site's hunt the same way;
+        # counting it would pause every marketplace for the length of the outage
+        seen = wire(monkeypatch, hunt_raises=RuntimeError("401 invalid x-api-key"))
+        asyncio.run(worker._work_one("w1", job("hunt")))
+        assert seen["failed"] == [(1, "401 invalid x-api-key")]
+        assert seen["outcomes"] == []
+        assert worker.backoff.until is not None
+
+    def test_a_failed_grounding_never_reaches_the_breaker(self, monkeypatch):
+        seen = wire(monkeypatch, ground_raises=OSError("connection refused"))
+        asyncio.run(worker._work_one("w1", job("ground", site_id=None, listing_id=None)))
+        assert seen["failed"] == [(1, "connection refused")]
+        assert seen["outcomes"] == []
 
     def test_a_suspended_search_hands_the_job_back_instead_of_holding_its_slot(self, monkeypatch):
         until = datetime(2026, 9, 26, 16, 31, tzinfo=UTC)
@@ -436,6 +453,25 @@ class TestTerminalWrites:
         seen = wire(monkeypatch)
         asyncio.run(worker._work_one("w1", job()))
         assert seen["events"] == []
+
+
+class TestBackoff:
+    def test_each_failure_in_a_row_doubles_the_hold_up_to_the_cap(self, monkeypatch):
+        monkeypatch.setattr(worker, "INFRA_BACKOFF_SECONDS", 30)
+        monkeypatch.setattr(worker, "INFRA_BACKOFF_CAP_SECONDS", 100)
+        hold = worker.Backoff()
+        waits = []
+        for _ in range(4):
+            hold.failed(RuntimeError("down"))
+            waits.append(round((hold.until - datetime.now(UTC)).total_seconds()))
+        assert waits == [30, 60, 100, 100]
+
+    def test_a_finished_job_lifts_the_hold(self):
+        hold = worker.Backoff()
+        hold.failed(RuntimeError("down"))
+        hold.cleared()
+        assert hold.failures == 0
+        assert hold.until is None
 
 
 class TestHeartbeat:
@@ -516,6 +552,7 @@ class TestPool:
 
         seen = wire(monkeypatch, queue=queue)
         monkeypatch.setattr(worker, "recheck_deterministic", sometimes_explodes)
+        monkeypatch.setattr(worker, "INFRA_BACKOFF_SECONDS", 0.01)
 
         async def scenario():
             wake = asyncio.Event()
@@ -526,6 +563,34 @@ class TestPool:
         asyncio.run(scenario())
         assert seen["failed"] == [(1, "the page timed out")]
         assert [job_id for job_id, _ in seen["completed"]] == [2]
+
+    def test_a_pool_holds_off_after_a_failure_no_site_is_to_blame_for(self, monkeypatch):
+        queue = [job(job_id=1, kind="hunt"), job(job_id=2, kind="hunt")]
+        calls = {"n": 0}
+
+        async def provider_down_once(agent_, job_id, row, browser):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("429 quota exceeded")
+            return {"listings_checked": 1, "prices_found": 1, "new_listings": 0, "errors": 0}
+
+        seen = wire(monkeypatch, queue=queue)
+        monkeypatch.setattr(worker, "run_hunt_job", provider_down_once)
+        monkeypatch.setattr(worker, "INFRA_BACKOFF_SECONDS", 0.1)
+
+        async def scenario():
+            wake = asyncio.Event()
+            task = asyncio.create_task(worker._pool("hunt-0", ("hunt",), wake))
+            await asyncio.sleep(0.05)
+            held = list(seen["completed"])
+            await asyncio.sleep(0.15)
+            task.cancel()
+            return held
+
+        held = asyncio.run(scenario())
+        assert held == []
+        assert [job_id for job_id, _ in seen["completed"]] == [2]
+        assert worker.backoff.until is None
 
     def test_each_pool_claims_only_its_own_kinds(self, monkeypatch):
         seen = wire(monkeypatch, queue=[])
@@ -693,7 +758,7 @@ class TestBrowserFailureDetection:
         return ToolMessage(content="page", name="browser_navigate", tool_call_id="2")
 
     def test_all_browser_calls_failing_raises(self):
-        with pytest.raises(RuntimeError, match="every browser call failed"):
+        with pytest.raises(agent.SiteUnreadable, match="every browser call failed"):
             agent._require_browser_success([self.browser_error(), AIMessage(content="sorry")])
 
     def test_a_partial_browser_failure_is_normal_browsing(self):
