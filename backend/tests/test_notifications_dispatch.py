@@ -288,6 +288,22 @@ class TestDeliver:
         assert (delivery.status, delivery.attempts) == ("pending", 1)
         assert "no ntfy server" in delivery.last_error
 
+    async def test_an_internal_url_saved_before_the_guard_is_never_fetched(
+        self, sc, db_session, outbound
+    ):
+        outbox = await sc.outbox()
+        channel = await sc.channel(kind="webhook", url="http://vision:8100/rescore")
+        delivery = NotificationDeliveries(outbox_id=outbox.id, channel_id=channel.id)
+        sc.db.add(delivery)
+        await sc.db.commit()
+        requests, _ = outbound
+
+        assert await notifications_service._deliver_one() is True
+        assert requests == []
+        delivery = await _read_delivery(db_session, delivery.id)
+        assert (delivery.status, delivery.attempts) == ("pending", 1)
+        assert "not a public hostname" in delivery.last_error
+
 
 class TestEndToEnd:
     async def test_queued_and_fresh_events_both_deliver(

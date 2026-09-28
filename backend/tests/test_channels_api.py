@@ -15,7 +15,7 @@ its own session.
 import httpx
 import pytest
 from app.config import settings
-from app.models import NotificationDeliveries
+from app.models import NotificationChannels, NotificationDeliveries
 from app.services import notifications as notifications_service
 from sqlalchemy import select
 
@@ -188,6 +188,44 @@ async def test_empty_and_full_event_sets_normalize_to_null(client):
     assert subset.json()["events"] == ["target.hit"]
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://vision:8100/rescore",
+        "http://minio:9000/snagr",
+        "http://localhost:8000/api/items",
+        "http://nas.local/hook",
+        "http://127.0.0.1/",
+        "http://127.1/",
+        "http://2130706433/",
+        "http://10.0.0.5/hook",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[::1",
+        "https://example.com:99999/hook",
+        "https://user:pass@example.com/hook",
+    ],
+)
+async def test_webhook_urls_must_be_public(client, url):
+    await _sign_in(client)
+    res = await _create(client, kind="webhook", name="x", url=url)
+    assert res.status_code == 422, url
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert "url" in error["fields"]
+
+
+@pytest.mark.parametrize("topic", ["a/../v1/account", "has space", "a?b=c", "x" * 65])
+async def test_ntfy_topics_are_a_single_path_segment(client, ntfy_server, topic):
+    await _sign_in(client)
+    res = await _create(client, kind="ntfy", name="x", topic=topic)
+    assert res.status_code == 422, topic
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert "topic" in error["fields"]
+
+
 # --- update + delete ----------------------------------------------------------
 
 
@@ -212,6 +250,21 @@ async def test_patch_updates_and_keeps_kind(client):
         ["listing.new"],
         "discord",
     )
+
+
+async def test_patch_cannot_point_a_channel_inward(client):
+    await _sign_in(client)
+    created = (
+        await _create(client, kind="webhook", name="x", url="https://example.com/hook")
+    ).json()
+
+    res = await client.patch(
+        f"/api/me/channels/{created['id']}", json={"url": "http://minio:9000/"}, headers=CSRF
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    (channel,) = (await client.get("/api/me/channels")).json()["data"]
+    assert channel["url"] == "https://example.com/hook"
 
 
 async def test_another_users_channel_is_hidden(client, make_client, monkeypatch, ntfy_server):
@@ -305,3 +358,35 @@ async def test_ntfy_test_without_a_server_is_no_server(client, ntfy_server, monk
     res = await client.post(f"/api/me/channels/{channel['id']}/test", headers=CSRF)
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "no_server"
+
+
+async def _saved_before_the_guard(db_session, user_id, url):
+    """A webhook channel written straight to the DB, as rows from before the
+    URL guard existed were — the API would refuse to create it."""
+    async with db_session() as session:
+        channel = NotificationChannels(
+            user_id=user_id, kind="webhook", name="old", url=url, secret="s", enabled=True
+        )
+        session.add(channel)
+        await session.commit()
+        return channel.id
+
+
+async def test_testing_an_internal_url_sends_nothing(client, db_session, outbound):
+    user_id = await _sign_in(client)
+    channel_id = await _saved_before_the_guard(db_session, user_id, "http://169.254.169.254/")
+
+    res = await client.post(f"/api/me/channels/{channel_id}/test", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert outbound == []
+
+
+async def test_a_url_httpx_cannot_parse_is_not_a_500(client, db_session, outbound):
+    user_id = await _sign_in(client)
+    channel_id = await _saved_before_the_guard(db_session, user_id, "https://example.com/a\x01b")
+
+    res = await client.post(f"/api/me/channels/{channel_id}/test", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert outbound == []

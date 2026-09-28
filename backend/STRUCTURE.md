@@ -62,7 +62,7 @@ backend/
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY) — job.* frames + listing.checked
 │       ├── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
-│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
+│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders + the channel-destination guard (public URLs only, safe ntfy topics)
 │       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header

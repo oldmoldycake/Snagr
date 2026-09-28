@@ -413,6 +413,44 @@ function alreadyTracked() {
 }
 
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
+const NTFY_TOPIC = /^[A-Za-z0-9_-]{1,64}$/
+
+/**
+ * Why a channel URL isn't a public address, or null — an approximation of
+ * the backend's notifications.public_url (which checks every reserved range
+ * via Python's ipaddress): container names, local names, credentials, and
+ * the common private IPv4/IPv6 literals.
+ */
+function privateUrlProblem(raw: string): string | null {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return 'not a valid URL'
+  }
+  if (url.username || url.password) return 'a URL carrying credentials is not accepted'
+  const host = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (host.startsWith('[')) {
+    return /^\[(::1?|::ffff:.*|f[c-d].*|fe[89ab].*)\]$/.test(host) ? `${host} is a private or reserved address` : null
+  }
+  // URL() normalizes the shorthand IPv4 spellings ("127.1") to dotted quads
+  const quad = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host)
+  if (quad) {
+    const [a, b] = [Number(quad[1]), Number(quad[2])]
+    const reserved =
+      [0, 10, 127].includes(a) ||
+      a >= 224 ||
+      (a === 100 && b >= 64 && b < 128) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b < 32) ||
+      (a === 192 && b === 168)
+    return reserved ? `${host} is a private or reserved address` : null
+  }
+  if (!host.includes('.') || host === 'localhost' || /\.(localhost|internal|local|home\.arpa)$/.test(host)) {
+    return `${host} is not a public hostname`
+  }
+  return null
+}
 
 interface ChannelFields {
   name: string
@@ -444,6 +482,11 @@ function validateChannel(
     if (!topic) {
       return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
     }
+    if (!NTFY_TOPIC.test(topic)) {
+      return err(422, 'validation_error', 'Not a valid ntfy topic', {
+        fields: { topic: 'Use 1-64 letters, digits, - or _' },
+      })
+    }
   } else {
     topic = null
     if (!url || !/^https?:\/\//.test(url)) {
@@ -452,6 +495,12 @@ function validateChannel(
     if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
       return err(422, 'validation_error', 'Not a Discord webhook URL', {
         fields: { url: 'Must be a Discord incoming-webhook URL' },
+      })
+    }
+    const problem = privateUrlProblem(url)
+    if (problem) {
+      return err(422, 'validation_error', 'Notifications can only be sent to a public address', {
+        fields: { url: problem },
       })
     }
   }

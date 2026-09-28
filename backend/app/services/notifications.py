@@ -30,9 +30,13 @@ exact path a real event takes.
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
+import re
+import socket
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import asyncpg
 import httpx
@@ -58,6 +62,8 @@ RETRY_BACKOFF = (30, 300, 1800, 7200)
 # as dead; then the reconnect pause.
 HEARTBEAT_SECONDS = 10
 RECONNECT_SECONDS = 5
+# pasted into the ntfy server's path, so nothing that could climb out of it
+NTFY_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 _EMBED_COLORS = {"target.hit": 0x22C55E, "listing.new": 0x3B82F6, "test": 0x64748B}
 
@@ -161,6 +167,80 @@ def _webhook_body(outbox_id: int, event: str, payload: dict, occurred_at: str) -
     return json.dumps(envelope, separators=(",", ":")).encode()
 
 
+# --- where a channel may point ------------------------------------------------
+
+
+class RefusedDestination(ValueError):
+    """A channel whose URL or topic the guard below refuses — raised at send
+    time too, so a row saved before the guard existed can't slip past it."""
+
+
+def public_url(url: str) -> str | None:
+    """Why notifications may not be sent to this URL, or None when they may.
+
+    Any user can create a channel, and the backend posts to it from inside
+    the deployment's network, so a channel URL must look like the public
+    web: http(s), no credentials, and a host that is not a bare container
+    name (`vision`, `minio`), not localhost or an .internal/.local name, and
+    not a literal address in a private, loopback, link-local or otherwise
+    reserved range (`169.254.169.254`). The agent's validation.public_url
+    rule, plus the shorthand IPv4 spellings ("127.1", "0x7f.1") that
+    ipaddress refuses but the resolver accepts.
+
+    No DNS is resolved: a public name that resolves inward is not caught here.
+    Every sender below passes follow_redirects=False, or a public URL
+    answering 302 to an internal one would walk straight past this check.
+    """
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        parsed.port  # noqa: B018 — raises on a malformed or out-of-range port
+    except ValueError:  # an unclosed "[", say
+        return "not a valid URL"
+    if parsed.scheme not in ("http", "https") or not host:
+        return "only http(s) URLs with a hostname are accepted"
+    if parsed.username or parsed.password:
+        return "a URL carrying credentials is not accepted"
+
+    host = host.rstrip(".")
+    literal = _address(host)
+    if literal is not None:
+        return None if literal.is_global else f"{host} is a private or reserved address"
+    if "." not in host:
+        return f"{host} is not a public hostname"
+    if host == "localhost" or host.endswith((".localhost", ".internal", ".local", ".home.arpa")):
+        return f"{host} is not a public hostname"
+    return None
+
+
+def ntfy_topic_error(topic: str) -> str | None:
+    """Why this ntfy topic is refused, or None when it is fine."""
+    if not NTFY_TOPIC.fullmatch(topic):
+        return "Use 1-64 letters, digits, - or _"
+    return None
+
+
+def _address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The host as a literal IP, or None when it is a name."""
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
+
+
+def _check_destination(channel: NotificationChannels) -> None:
+    if channel.kind == "ntfy":
+        refused = ntfy_topic_error(channel.topic or "")
+    else:
+        refused = public_url(channel.url or "")
+    if refused:
+        raise RefusedDestination(refused)
+
+
 # --- per-kind sending ---------------------------------------------------------
 
 
@@ -168,7 +248,7 @@ async def _send_ntfy(channel: NotificationChannels, event: str, payload: dict) -
     if not settings.NTFY_SERVER_URL:
         raise RuntimeError("this instance has no ntfy server configured")
     body, headers = _ntfy_message(event, payload)
-    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS, follow_redirects=False) as client:
         resp = await client.post(
             f"{settings.NTFY_SERVER_URL.rstrip('/')}/{channel.topic}",
             content=body,
@@ -180,7 +260,7 @@ async def _send_ntfy(channel: NotificationChannels, event: str, payload: dict) -
 async def _send_discord(
     channel: NotificationChannels, event: str, payload: dict, occurred_at: str
 ) -> None:
-    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS, follow_redirects=False) as client:
         resp = await client.post(channel.url, json=_discord_payload(event, payload, occurred_at))
         if resp.status_code == 429:
             raise _RetryAfter(float(resp.headers.get("Retry-After") or 0), "Discord rate limit")
@@ -204,7 +284,7 @@ async def _send_webhook(
         "X-Snagr-Timestamp": timestamp,
         "X-Snagr-Signature": sign_webhook(channel.secret, timestamp, body),
     }
-    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS, follow_redirects=False) as client:
         resp = await client.post(channel.url, content=body, headers=headers)
         resp.raise_for_status()
 
@@ -218,6 +298,7 @@ async def _send(
     delivery_id: str,
 ) -> None:
     """Deliver one message to one channel; raises on any failure."""
+    _check_destination(channel)
     if channel.kind == "ntfy":
         await _send_ntfy(channel, event, payload)
     elif channel.kind == "discord":
@@ -229,7 +310,8 @@ async def _send(
 async def send_test(channel: NotificationChannels) -> None:
     """One synthetic message through the real adapter for this channel's kind.
     Raises exactly like a real send — the router maps RuntimeError (no ntfy
-    server) to 422 no_server and httpx errors to 502 channel_failed."""
+    server) to 422 no_server, RefusedDestination to 422 validation_error and
+    httpx errors to 502 channel_failed."""
     await _send(channel, 0, "test", {}, datetime.now(UTC).isoformat(), "test")
 
 
