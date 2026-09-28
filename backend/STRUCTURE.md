@@ -173,7 +173,10 @@ Find any `endpoints.ts` function here:
    to one watch, so seeing the job is seeing its events. `listing.checked` frames
    are gated by listing ownership instead, which is the same person. Reconnects
    never infer gaps from seq arithmetic; the client refetches each visible
-   backfill on every snapshot and the filtered response is authoritative. This is
+   backfill on every snapshot and the filtered response is authoritative. An open
+   stream is re-authorised every `REAUTH_SECONDS` (account active, same role,
+   sign-in or API token still live) and closed when it fails, so deactivating,
+   demoting or signing out a user ends their stream within a minute. This is
    **peer privacy only**: the instance operator can always read the DB.
 
    **The queue's own rules live half here and half in the agent** (the agent's
