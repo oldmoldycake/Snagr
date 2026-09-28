@@ -12,9 +12,10 @@
  * in this tab and never fetched — there is no endpoint for "the last fifty
  * checks", because 2,400 rows a day is a heartbeat, not history.
  *
- * Reconnect contract: the server sends `job.snapshot` on every (re)connect; we
- * refetch GET /api/jobs/:id/events?after_seq=<highest seq held> per live job
- * and merge by seq. Never infer missed events from seq arithmetic — last_seq
+ * Reconnect contract: a stream the browser gave up on is reopened after a
+ * session refresh (liveStream.ts). The server sends `job.snapshot` on every
+ * (re)connect; we refetch GET /api/jobs/:id/events?after_seq=<highest seq
+ * held> per live job and merge by seq. Never infer missed events from seq arithmetic — last_seq
  * is the job's global write cursor.
  */
 
@@ -32,6 +33,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { enqueueJobs, getJobEvents } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
+import { openLiveStream, type Connection } from './liveStream'
 import type {
   Job,
   JobCreateRequest,
@@ -40,8 +42,6 @@ import type {
   JobSnapshotData,
   ListingChecked,
 } from '@/api/types'
-
-type Connection = 'live' | 'reconnecting'
 
 /** The tail is what this tab has seen, not what happened — 50 lines is about
  *  a screenful and a half at the terminal's line height. */
@@ -97,64 +97,61 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const source = new EventSource('/api/events')
-
-    source.onopen = () => setConnection('live')
-    source.onerror = () => setConnection('reconnecting')
-
-    source.addEventListener('job.snapshot', (e: MessageEvent) => {
-      const { jobs } = JSON.parse(e.data) as JobSnapshotData
-      const running = jobs.filter((job) => job.status === 'running')
-      setLive(running)
-      // always backfill: the filtered response is authoritative, and
-      // comparing last_seq would tell us nothing we could act on
-      for (const job of running) {
-        const held = eventsRef.current.get(job.id) ?? []
-        const after = held.length > 0 ? held[held.length - 1].seq : 0
-        void getJobEvents(job.id, after)
-          .then((res) => mergeEvents(job.id, res.data))
-          // recovered by the next snapshot; the SSE reconnect is the retry loop
-          .catch(() => {})
-      }
-    })
-
-    const onLifecycle = (e: MessageEvent) => {
-      const { job } = JSON.parse(e.data) as { job: Job }
-      setLive((prev) => {
-        const rest = prev.filter((j) => j.id !== job.id)
-        return job.status === 'running' ? [...rest, job] : rest
+    const listen = (source: EventSource) => {
+      source.addEventListener('job.snapshot', (e: MessageEvent) => {
+        const { jobs } = JSON.parse(e.data) as JobSnapshotData
+        const running = jobs.filter((job) => job.status === 'running')
+        setLive(running)
+        // always backfill: the filtered response is authoritative, and
+        // comparing last_seq would tell us nothing we could act on
+        for (const job of running) {
+          const held = eventsRef.current.get(job.id) ?? []
+          const after = held.length > 0 ? held[held.length - 1].seq : 0
+          void getJobEvents(job.id, after)
+            .then((res) => mergeEvents(job.id, res.data))
+            // recovered by the next snapshot; the SSE reconnect is the retry loop
+            .catch(() => {})
+        }
       })
-      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
-      if (job.status !== 'running') {
-        // a finished hunt may have saved listings and prices anywhere in its
-        // watch — cheap to refetch, and the alternative is a stale page
-        void queryClient.invalidateQueries({ queryKey: ['items'] })
-        void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-        void queryClient.invalidateQueries({ queryKey: ['categories'] })
-      }
-    }
-    source.addEventListener('job.started', onLifecycle)
-    source.addEventListener('job.finished', onLifecycle)
-    source.addEventListener('job.failed', onLifecycle)
 
-    source.addEventListener('job.event', (e: MessageEvent) => {
-      const event = JSON.parse(e.data) as JobEvent
-      mergeEvents(event.job_id, [event])
-      // the breaker tripping changes what the whole page says next
-      if (event.event_type === 'site_paused') {
+      const onLifecycle = (e: MessageEvent) => {
+        const { job } = JSON.parse(e.data) as { job: Job }
+        setLive((prev) => {
+          const rest = prev.filter((j) => j.id !== job.id)
+          return job.status === 'running' ? [...rest, job] : rest
+        })
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+        if (job.status !== 'running') {
+          // a finished hunt may have saved listings and prices anywhere in its
+          // watch — cheap to refetch, and the alternative is a stale page
+          void queryClient.invalidateQueries({ queryKey: ['items'] })
+          void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+          void queryClient.invalidateQueries({ queryKey: ['categories'] })
+        }
+      }
+      source.addEventListener('job.started', onLifecycle)
+      source.addEventListener('job.finished', onLifecycle)
+      source.addEventListener('job.failed', onLifecycle)
+
+      source.addEventListener('job.event', (e: MessageEvent) => {
+        const event = JSON.parse(e.data) as JobEvent
+        mergeEvents(event.job_id, [event])
+        // the breaker tripping changes what the whole page says next
+        if (event.event_type === 'site_paused') {
+          void queryClient.invalidateQueries({ queryKey: ['jobs', 'summary'] })
+          void queryClient.invalidateQueries({ queryKey: ['sites'] })
+        }
+      })
+
+      source.addEventListener('listing.checked', (e: MessageEvent) => {
+        const check = JSON.parse(e.data) as ListingChecked
+        setChecks((prev) => [...prev, check].slice(-CHECK_TAIL))
         void queryClient.invalidateQueries({ queryKey: ['jobs', 'summary'] })
-        void queryClient.invalidateQueries({ queryKey: ['sites'] })
-      }
-    })
+        void queryClient.invalidateQueries({ queryKey: ['items', 'detail', check.item_id] })
+      })
+    }
 
-    source.addEventListener('listing.checked', (e: MessageEvent) => {
-      const check = JSON.parse(e.data) as ListingChecked
-      setChecks((prev) => [...prev, check].slice(-CHECK_TAIL))
-      void queryClient.invalidateQueries({ queryKey: ['jobs', 'summary'] })
-      void queryClient.invalidateQueries({ queryKey: ['items', 'detail', check.item_id] })
-    })
-
-    return () => source.close()
+    return openLiveStream('/api/events', listen, setConnection)
   }, [mergeEvents, queryClient])
 
   const enqueueMutation = useMutation({

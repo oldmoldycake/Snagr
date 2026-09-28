@@ -42,7 +42,8 @@ export interface RequestOptions {
  */
 let refreshPromise: Promise<boolean> | null = null
 
-async function tryRefresh(): Promise<boolean> {
+/** Rotate the session cookies; true when the server issued fresh ones. */
+export async function tryRefresh(): Promise<boolean> {
   refreshPromise ??= fetch('/api/auth/refresh', {
     method: 'POST',
     credentials: 'same-origin',
