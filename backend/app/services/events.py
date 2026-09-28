@@ -21,6 +21,12 @@ identity, and each frame is gated by the same predicate the REST surface uses
 looked up fresh per notification: a few tiny indexed queries per event at
 household scale, and no cache invalidation coupled to watch mutations.
 
+A stream outlives the request that authenticated it, so the router re-runs
+still_authorized() for each client every REAUTH_SECONDS and closes the ones
+that fail: deactivating, demoting or logging out a user (or revoking their
+token) ends their open streams within that window, not at their next
+reconnect. The client's EventSource then reconnects and gets the honest 401.
+
 Notifications carry ids only; rows are re-read here. NOTIFY delivers on
 commit, so an announcement can never outrun what's readable.
 
@@ -36,6 +42,8 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from uuid import UUID
 
 import asyncpg
 from pydantic import ValidationError
@@ -43,7 +51,18 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.database import _sessionmaker
-from app.models import Items, JobEvents, Jobs, Listings, PriceChecks, Sites, User, Watches
+from app.models import (
+    ApiTokens,
+    Items,
+    JobEvents,
+    Jobs,
+    Listings,
+    PriceChecks,
+    Sessions,
+    Sites,
+    User,
+    Watches,
+)
 from app.schemas.jobs import JobEnvelope, JobSnapshotData, ListingChecked
 from app.services.jobs import build_job_event, live_jobs, named_job, sees_job
 
@@ -56,6 +75,10 @@ EVENTS_CHANNEL = "snagr_job_events"
 # the probe may take before the link counts as dead; then the reconnect pause.
 HEARTBEAT_SECONDS = 10
 RECONNECT_SECONDS = 5
+
+# How often an open stream re-checks that its viewer is still allowed to be
+# there; the longest a revoked credential keeps receiving frames.
+REAUTH_SECONDS = 60
 
 # job status -> the SSE event name the client listens for. 'pending' has no
 # entry: the POST /api/jobs response announces it instead.
@@ -76,19 +99,28 @@ _NARRATED_KINDS = ("hunt", "ground")
 class _Client:
     """One connected /api/events viewer: their queue plus the identity every
     per-viewer filter keys on. eq=False keeps identity hashing — two tabs of
-    the same user are two clients."""
+    the same user are two clients.
+
+    Exactly one of family_id (cookie sign-in) or token_id (API token) names the
+    credential the stream opened with, so still_authorized() can re-check it."""
 
     user_id: int
     is_admin: bool
+    family_id: UUID | None = None
+    token_id: int | None = None
     queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=1000))
 
 
 _clients: set[_Client] = set()
 
 
-def register_client(user: User) -> _Client:
+def register_client(
+    user: User, family_id: UUID | None = None, token_id: int | None = None
+) -> _Client:
     """Add a connected /api/events viewer; returns their client handle."""
-    client = _Client(user_id=user.id, is_admin=user.role == "admin")
+    client = _Client(
+        user_id=user.id, is_admin=user.role == "admin", family_id=family_id, token_id=token_id
+    )
     _clients.add(client)
     return client
 
@@ -96,6 +128,36 @@ def register_client(user: User) -> _Client:
 def unregister_client(client: _Client) -> None:
     """Forget a viewer whose stream closed; a no-op if it is already gone."""
     _clients.discard(client)
+
+
+async def still_authorized(client: _Client) -> bool:
+    """Whether this stream's viewer may still hold it open: the account is
+    active with the role the stream was filtered for, and the sign-in or API
+    token it opened with is still live. The same conditions
+    core/deps.current_user applies to a fresh request."""
+    async with _sessionmaker()() as session:
+        user = await session.get(User, client.user_id)
+        if user is None or not user.is_active or (user.role == "admin") != client.is_admin:
+            return False
+        if client.family_id is not None:
+            return (
+                await session.scalar(
+                    select(Sessions.id)
+                    .where(
+                        Sessions.family_id == client.family_id,
+                        Sessions.user_id == client.user_id,
+                        Sessions.revoked_at.is_(None),
+                    )
+                    .limit(1)
+                )
+                is not None
+            )
+        if client.token_id is not None:
+            token = await session.get(ApiTokens, client.token_id)
+            return token is not None and (
+                token.expires_at is None or token.expires_at > datetime.now(UTC)
+            )
+        return True
 
 
 def _put(client: _Client, message: dict) -> None:

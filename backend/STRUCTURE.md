@@ -62,7 +62,7 @@ backend/
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY) — job.* frames + listing.checked
 │       ├── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
-│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
+│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders + the channel-destination guard (public URLs only, safe ntfy topics)
 │       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
@@ -173,7 +173,10 @@ Find any `endpoints.ts` function here:
    to one watch, so seeing the job is seeing its events. `listing.checked` frames
    are gated by listing ownership instead, which is the same person. Reconnects
    never infer gaps from seq arithmetic; the client refetches each visible
-   backfill on every snapshot and the filtered response is authoritative. This is
+   backfill on every snapshot and the filtered response is authoritative. An open
+   stream is re-authorised every `REAUTH_SECONDS` (account active, same role,
+   sign-in or API token still live) and closed when it fails, so deactivating,
+   demoting or signing out a user ends their stream within a minute. This is
    **peer privacy only**: the instance operator can always read the DB.
 
    **The queue's own rules live half here and half in the agent** (the agent's
