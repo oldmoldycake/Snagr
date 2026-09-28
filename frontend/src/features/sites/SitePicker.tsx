@@ -47,6 +47,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
 
   const create = useMutation({
     mutationFn: createSite,
+    meta: { inlineError: true },
     onSuccess: (site) => {
       // show the row now rather than after the refetch, so it can take focus
       queryClient.setQueryData<{ data: Site[] }>(qk.sites, (old) =>

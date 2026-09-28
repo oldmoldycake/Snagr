@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { isNotFound } from '@/api/client'
+import { ApiError, isNotFound } from '@/api/client'
 import { deleteItem, getItem, listPriceChecks, listSites, updateWatch } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, PriceCheck } from '@/api/types'
@@ -112,6 +112,7 @@ export function ItemDetailPage() {
 
   const remove = useMutation({
     mutationFn: () => deleteItem(itemId),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
@@ -370,13 +371,17 @@ export function ItemDetailPage() {
 
       <ConfirmDialog
         open={deleteOpen}
-        onOpenChange={setDeleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open)
+          if (!open) remove.reset()
+        }}
         title="Remove item"
         description={`Remove “${detail.name}” from your items? Your listings and price history for it are deleted${
           instance?.vision_enabled ? ', along with the listing photos saved for it. Its reference photos stay' : ''
         }. Anyone else tracking it keeps theirs.`}
         confirmLabel="Remove item"
         pending={remove.isPending}
+        error={remove.error instanceof ApiError ? remove.error.message : null}
         onConfirm={() => remove.mutate()}
       />
 

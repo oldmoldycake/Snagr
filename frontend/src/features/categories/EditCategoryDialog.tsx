@@ -47,6 +47,7 @@ export function EditCategoryDialog({
       // new name: a rename keeps the original slug, so the derived URL 404s.
       return (await setCategorySites(category.id, siteIds)).slug
     },
+    meta: { inlineError: true },
     onSuccess: async (slug) => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       onOpenChange(false)

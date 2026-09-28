@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
 import { Pencil } from 'lucide-react'
+import { ApiError } from '@/api/client'
 import {
   deleteItem,
   getCategoryPriceChange,
@@ -104,6 +105,7 @@ export function CategoryPage() {
 
   const removeItem = useMutation({
     mutationFn: (item: ItemSummary) => deleteItem(item.id),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
@@ -308,7 +310,9 @@ export function CategoryPage() {
       <ConfirmDialog
         open={deletingItem != null}
         onOpenChange={(open) => {
-          if (!open) setDeletingItem(null)
+          if (open) return
+          setDeletingItem(null)
+          removeItem.reset()
         }}
         title="Remove item"
         description={
@@ -318,6 +322,7 @@ export function CategoryPage() {
         }
         confirmLabel="Remove item"
         pending={removeItem.isPending}
+        error={removeItem.error instanceof ApiError ? removeItem.error.message : null}
         onConfirm={() => {
           if (deletingItem) removeItem.mutate(deletingItem)
         }}

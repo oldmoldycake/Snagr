@@ -26,6 +26,7 @@ export function useLogin() {
   const navigate = useNavigate()
   return useMutation({
     mutationFn: login,
+    meta: { inlineError: true },
     onSuccess: ({ user }) => {
       queryClient.setQueryData(qk.session, user)
       navigate('/', { replace: true })
@@ -39,6 +40,7 @@ export function useRegister() {
   const navigate = useNavigate()
   return useMutation({
     mutationFn: register,
+    meta: { inlineError: true },
     onSuccess: ({ user }) => {
       queryClient.setQueryData(qk.session, user)
       navigate('/', { replace: true })

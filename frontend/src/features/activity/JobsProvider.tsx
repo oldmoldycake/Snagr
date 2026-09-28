@@ -30,9 +30,7 @@ import {
   type ReactNode,
 } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
 import { enqueueJobs, getJobEvents } from '@/api/endpoints'
-import { ApiError } from '@/api/client'
 import { openLiveStream, type Connection } from './liveStream'
 import type {
   Job,
@@ -157,11 +155,6 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const enqueueMutation = useMutation({
     mutationFn: enqueueJobs,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['jobs'] }),
-    onError: (error) => {
-      toast.error(
-        error instanceof ApiError ? error.message : 'Snagr could not start that',
-      )
-    },
   })
 
   const liveHuntFor = useCallback(

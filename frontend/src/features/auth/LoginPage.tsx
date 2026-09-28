@@ -31,11 +31,9 @@ export function LoginPage() {
   const errorMessage =
     login.error instanceof ApiError
       ? login.error.message
-      : login.error
-        ? 'Something went wrong — try again'
-        : searchParams.get('error') === 'sso_failed'
-          ? 'SSO sign-in failed — try again or use your password'
-          : null
+      : searchParams.get('error') === 'sso_failed'
+        ? 'SSO sign-in failed — try again or use your password'
+        : null
 
   return (
     <AuthLayout>

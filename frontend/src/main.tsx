@@ -1,9 +1,10 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { RouterProvider } from 'react-router-dom'
-import { Toaster } from 'sonner'
+import { Toaster, toast } from 'sonner'
+import { ApiError } from '@/api/client'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { router } from '@/router'
 
@@ -19,7 +20,30 @@ async function enableMocking(): Promise<void> {
   console.info('[snagr] Mock API enabled — sign in with demo@snagr.dev / snagr')
 }
 
+declare module '@tanstack/react-query' {
+  interface Register {
+    mutationMeta: {
+      /**
+       * The component renders an ApiError's message itself (a form's alert, a
+       * confirm dialog's error), so only a request that never reached Snagr toasts.
+       */
+      inlineError?: boolean
+    }
+  }
+}
+
 const queryClient = new QueryClient({
+  // A failed save always says so: a toast, unless the component shows the
+  // server's reason in place. Nothing a user clicks fails silently.
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      if (error instanceof ApiError) {
+        if (!mutation.meta?.inlineError) toast.error(error.message)
+      } else {
+        toast.error("Couldn't reach Snagr — check your connection and try again")
+      }
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 30_000,

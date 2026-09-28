@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, Loader2, Plus, Trash2, UserX, UserCheck } from 'lucide-react'
 import { toast } from 'sonner'
+import { ApiError } from '@/api/client'
 import { createInvite, deleteUser, listInvites, listUsers, revokeInvite, updateUser } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { AdminUser, Invite } from '@/api/types'
@@ -155,6 +156,7 @@ export function AdminUsersPage() {
 
   const removeUser = useMutation({
     mutationFn: (id: number) => deleteUser(id),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: qk.adminUsers })
       setDeleting(null)
@@ -310,7 +312,9 @@ export function AdminUsersPage() {
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {
-          if (!open) setDeleting(null)
+          if (open) return
+          setDeleting(null)
+          removeUser.reset()
         }}
         title="Delete user"
         description={
@@ -320,6 +324,7 @@ export function AdminUsersPage() {
         }
         confirmLabel="Delete user"
         pending={removeUser.isPending}
+        error={removeUser.error instanceof ApiError ? removeUser.error.message : null}
         onConfirm={() => {
           if (deleting) removeUser.mutate(deleting.id)
         }}

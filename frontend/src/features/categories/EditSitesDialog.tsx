@@ -36,6 +36,7 @@ export function EditSitesDialog({
 
   const save = useMutation({
     mutationFn: () => setCategorySites(category.id, siteIds),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
