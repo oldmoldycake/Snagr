@@ -54,6 +54,7 @@ function SiteDialog({
       site
         ? updateSite(site.id, { name: name.trim(), base_url: baseUrl.trim() })
         : createSite({ name: name.trim(), base_url: baseUrl.trim() }),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       onOpenChange(false)
@@ -140,6 +141,7 @@ export function SitesPage() {
 
   const remove = useMutation({
     mutationFn: (site: Site) => deleteSite(site.id),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
@@ -148,8 +150,7 @@ export function SitesPage() {
     },
   })
 
-  // a failed fetch never reaches the server, so it has no ApiError message
-  const removeError = remove.error instanceof ApiError ? remove.error.message : remove.error ? 'Snagr could not delete that site' : null
+  const removeError = remove.error instanceof ApiError ? remove.error.message : null
   const categoryName = (id: number) => categories.data?.data.find((c) => c.id === id)?.name ?? '…'
   const rows = sites.data?.data ?? []
 

@@ -65,6 +65,7 @@ export function AddItemDialog({
         target_price: target.trim() ? Number(target).toFixed(2) : null,
         ...trackingPayload(tracking),
       }),
+    meta: { inlineError: true },
     onSuccess: (item) => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })

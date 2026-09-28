@@ -65,6 +65,7 @@ export function CreateCategoryDialog({
       }
       return setCategorySites(category.id, siteIds)
     },
+    meta: { inlineError: true },
     onSuccess: (category) => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       setOpen(false)

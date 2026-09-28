@@ -73,6 +73,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
         topic: kind === 'ntfy' ? topic.trim() || suggestedTopic : undefined,
         events: events === 'all' ? null : [events],
       }),
+    meta: { inlineError: true },
     onSuccess: (channel) => {
       void queryClient.invalidateQueries({ queryKey: qk.channels })
       if (channel.secret != null) {
@@ -149,6 +150,11 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             }}
           >
             <DialogBody className="space-y-3">
+              {createError && !createError.fields ? (
+                <p role="alert" className="text-xs text-rise">
+                  {createError.message}
+                </p>
+              ) : null}
               <div>
                 <Label>Kind</Label>
                 <Segmented options={kindOptions} value={kind} onChange={setKind} ariaLabel="Channel kind" />
@@ -251,12 +257,11 @@ export function ChannelsCard() {
   const test = useMutation({
     mutationFn: (id: number) => testChannel(id),
     onSuccess: () => toast.success('Test notification sent'),
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not send the test notification'),
   })
 
   const remove = useMutation({
     mutationFn: (id: number) => deleteChannel(id),
+    meta: { inlineError: true },
     onSuccess: () => {
       setDeleting(null)
       void queryClient.invalidateQueries({ queryKey: qk.channels })
@@ -340,10 +345,15 @@ export function ChannelsCard() {
       <NewChannelDialog open={adding} onOpenChange={setAdding} />
       <ConfirmDialog
         open={deleting != null}
-        onOpenChange={(o) => (o ? null : setDeleting(null))}
+        onOpenChange={(o) => {
+          if (o) return
+          setDeleting(null)
+          remove.reset()
+        }}
         title={`Delete ${deleting?.name ?? 'channel'}?`}
         description="Notifications stop going here immediately. A webhook's signing secret cannot be recovered."
         pending={remove.isPending}
+        error={remove.error instanceof ApiError ? remove.error.message : null}
         onConfirm={() => (deleting ? remove.mutate(deleting.id) : null)}
       />
     </Card>

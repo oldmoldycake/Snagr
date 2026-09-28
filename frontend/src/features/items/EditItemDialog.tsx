@@ -52,6 +52,7 @@ export function EditItemDialog({
         target_price: String(target).trim() ? Number(target).toFixed(2) : null,
         ...trackingPayload(tracking),
       }),
+    meta: { inlineError: true },
     onSuccess: (saved) => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)

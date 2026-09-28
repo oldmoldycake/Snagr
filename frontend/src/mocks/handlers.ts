@@ -1768,6 +1768,10 @@ export const handlers = [
     const admin = requireAdmin()
     const id = Number(params.id)
     if (id === admin.id) return err(422, 'cannot_delete_self', 'You cannot delete your own account')
+    if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
+    if (store.watches.some((w) => w.user_id === id)) {
+      return err(409, 'user_has_items', 'This user still has tracked items — deactivate the account instead')
+    }
     store.users = store.users.filter((u) => u.id !== id)
     return new HttpResponse(null, { status: 204 })
   }),

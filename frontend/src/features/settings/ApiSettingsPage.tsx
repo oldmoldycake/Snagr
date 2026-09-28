@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, KeyRound, Loader2, Plug, Plus, Trash2 } from 'lucide-react'
-import { toast } from 'sonner'
 import { createToken, listTokens, revokeToken } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
@@ -204,6 +203,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         scopes: ACCESS_SCOPES[access],
         expires_in_days: expiry === 'never' ? null : Number(expiry),
       }),
+    meta: { inlineError: true },
     onSuccess: (token) => {
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
       setCreated(token.token)
@@ -261,6 +261,11 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             }}
           >
             <DialogBody className="space-y-3">
+              {createError && !createError.fields ? (
+                <p role="alert" className="text-xs text-rise">
+                  {createError.message}
+                </p>
+              ) : null}
               <div>
                 <Label htmlFor="token-name">Name</Label>
                 <Input
@@ -330,7 +335,6 @@ export function ApiSettingsPage() {
       setRevoking(null)
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
     },
-    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not revoke the token'),
   })
 
   return (

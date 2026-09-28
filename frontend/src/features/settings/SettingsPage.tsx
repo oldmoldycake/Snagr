@@ -39,6 +39,7 @@ export function SettingsPage() {
 
   const password = useMutation({
     mutationFn: () => changePassword({ current_password: currentPassword, new_password: newPassword }),
+    meta: { inlineError: true },
     onSuccess: () => {
       setCurrentPassword('')
       setNewPassword('')
@@ -53,6 +54,7 @@ export function SettingsPage() {
         vision_auto_promote_real: Number(promoteReal).toFixed(2),
         vision_auto_promote_fake: Number(promoteFake).toFixed(2),
       }),
+    meta: { inlineError: true },
     onSuccess: (updated) => {
       queryClient.setQueryData(qk.session, updated)
       setRejectFake(updated.vision_auto_reject_fake)
@@ -63,8 +65,8 @@ export function SettingsPage() {
   })
 
   const passwordError = password.error instanceof ApiError ? password.error.message : null
-  const thresholdFields =
-    saveThresholds.error instanceof ApiError ? (saveThresholds.error.fields ?? {}) : {}
+  const thresholdError = saveThresholds.error instanceof ApiError ? saveThresholds.error : null
+  const thresholdFields = thresholdError?.fields ?? {}
   const thresholdsDirty =
     rejectFake !== user?.vision_auto_reject_fake ||
     promoteReal !== user?.vision_auto_promote_real ||
@@ -181,6 +183,11 @@ export function SettingsPage() {
                 </div>
               ))}
             </div>
+            {thresholdError && !thresholdError.fields ? (
+              <p role="alert" className="text-xs text-rise">
+                {thresholdError.message}
+              </p>
+            ) : null}
             <Button
               disabled={saveThresholds.isPending || !thresholdsDirty}
               onClick={() => saveThresholds.mutate()}

@@ -4,7 +4,6 @@ import { Link } from 'react-router-dom'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { confirmReviewEntry, discardReviewEntry, listReviewQueue } from '@/api/endpoints'
-import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
 import type { LlmAuthenticityRead, ReferenceLabel, ReviewQueueEntry } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
@@ -42,15 +41,11 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
       toast.success(`Added to ${entry.item_name}'s ${label} references`)
       void queryClient.invalidateQueries({ queryKey: ['items'] })
     },
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not confirm the photo'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['vision'] }),
   })
 
   const discard = useMutation({
     mutationFn: () => discardReviewEntry(entry.id),
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not discard the photo'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['vision'] }),
   })
 
