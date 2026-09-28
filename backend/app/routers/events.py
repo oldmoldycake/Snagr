@@ -15,8 +15,9 @@ the listing.checked frame. Backed by services/events.py (Postgres
 LISTEN/NOTIFY hub); the frame list above is the whole wire contract.
 nginx.conf already disables buffering + extends timeouts for this path. Auth
 rides the access cookie — EventSource can't send headers, which is why auth is
-cookies in the first place; an expired cookie 401s the reconnect and the
-client shows "reconnecting" until any refreshed request restores it.
+cookies in the first place; an expired cookie 401s the reconnect, which ends
+the browser's EventSource for good, so the client refreshes the session and
+opens a new one itself (features/activity/liveStream.ts).
 """
 
 import asyncio
