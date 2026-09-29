@@ -209,7 +209,12 @@ across all of it deciding what is believed and which sites are read at all.
    `SITE_BREAKER_ERRORS` (5) consecutive failed reads pause the site for
    `SITE_BREAKER_MINUTES` (60), doubling per trip up to `SITE_BREAKER_CAP_MINUTES`
    (1440); any successful read resets the count, and a disbelieved price still
-   counts as an answer. Paused means invisible: the claim skips the site's jobs
+   counts as an answer. Only failures the site is to blame for count — a unit
+   whose reads all errored, or `agent.SiteUnreadable` (every browser call
+   failed). Any other exception (model provider auth or quota, MCP down, a DB
+   blip) is the hunter's own: it blames no site, and `worker.Backoff` holds
+   every pool off 30 s, doubling per consecutive one to 15 min, until a job
+   finishes. Paused means invisible: the claim skips the site's jobs
    and its pending jobs are pushed out to the moment the pause lifts
    (`reason='paused'`, a user's own request keeps `'user'`). The trip writes a
    `warn` `site_paused` event on the job that caused it. `PATCH /api/sites/{id}`

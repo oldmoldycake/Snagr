@@ -98,6 +98,12 @@ class Cancelled(Exception):
     """The job was cancelled while its unit was running."""
 
 
+class SiteUnreadable(RuntimeError):
+    """The site is to blame for this unit failing: the browser reached it and
+    could not get a page out of it. The only exception the circuit breaker
+    counts — anything else a unit raises is the hunter's own trouble."""
+
+
 def agent_config(
     kind: str, unit: UnitContext, *, user_id: int, site_name: str, category: str
 ) -> dict:
@@ -283,7 +289,7 @@ def _require_browser_success(messages: list) -> None:
         m for m in messages if isinstance(m, ToolMessage) and (m.name or "").startswith("browser_")
     ]
     if results and all(m.status == "error" for m in results):
-        raise RuntimeError(f"every browser call failed: {results[0].content}")
+        raise SiteUnreadable(f"every browser call failed: {results[0].content}")
 
 
 async def _stream(agent, prompt: str, config: dict, job_id: int | None) -> list:
@@ -315,7 +321,7 @@ async def recheck_listing(agent, row, browser, job_id=None) -> dict:
     Reached only when the deterministic ladder could not read the page
     (agent/recheck.py). Afterwards a locator is learned from whatever the model
     confirmed, so the next check of this listing does not need a model at all.
-    Raises on failure — the worker counts it.
+    Raises on failure; only SiteUnreadable counts against the site.
 
     Returns:
       The unit's tally plus the tokens it spent, the same shape a hunt

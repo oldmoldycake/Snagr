@@ -28,7 +28,7 @@ import json
 import logging
 import os
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import breaker
@@ -55,6 +55,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent import Cancelled as JobCancelled
 from agent import (
+    SiteUnreadable,
     bounded,
     build_hunt_agent,
     build_recheck_agent,
@@ -77,6 +78,14 @@ PRUNE_EVERY_TICKS = 60
 # is plenty; it also runs on the first pass, so a hunter that was down picks
 # every dropped pair back up the moment it starts.
 SWEEP_EVERY_TICKS = 60
+
+# A failure no site is to blame for — the model provider refusing the key or
+# out of quota, the Playwright MCP gone, the database dropping — fails the
+# next job the same way whatever site it is on. So the whole process holds off
+# instead: this long after the first, doubling per consecutive one up to the
+# cap, and any job that finishes clears it.
+INFRA_BACKOFF_SECONDS = 30
+INFRA_BACKOFF_CAP_SECONDS = 900
 
 CHECK_KINDS = ("recheck",)
 HUNT_KINDS = ("hunt",)
@@ -108,6 +117,47 @@ def worker_ids() -> list[str]:
         + [f"{origin}#hunt-{i}" for i in range(hunts)]
         + [f"{origin}#ground-{i}" for i in range(GROUND_CONCURRENCY)]
     )
+
+
+# --- the hunter's own failures ---------------------------------------------
+
+
+class Backoff:
+    """The process-wide hold after failures the breaker must not hear about.
+
+    Shared by every pool, because the outage is: a model provider that
+    refuses a hunt refuses the recheck fallback too, and a database that is
+    gone is gone for everyone. In memory on purpose — a restart that forgets
+    costs one failed job.
+    """
+
+    failures: int = 0
+    until: datetime | None = None
+
+    def failed(self, error: Exception) -> None:
+        """Start a hold after one more failure in a row, doubling each time."""
+        self.failures += 1
+        seconds = min(INFRA_BACKOFF_SECONDS * 2 ** (self.failures - 1), INFRA_BACKOFF_CAP_SECONDS)
+        self.until = datetime.now(UTC) + timedelta(seconds=seconds)
+        log.warning(
+            f"Holding off for {seconds}s after {self.failures} failure(s) no site "
+            f"is to blame for: {error}"
+        )
+
+    def cleared(self) -> None:
+        """A job finished: whatever was down is back."""
+        if self.failures:
+            log.info(f"A job finished; clearing {self.failures} failure(s)")
+        self.failures = 0
+        self.until = None
+
+    async def wait(self) -> None:
+        """Sleep out the current hold, if there is one."""
+        if self.until is not None:
+            await asyncio.sleep(max((self.until - datetime.now(UTC)).total_seconds(), 0))
+
+
+backoff = Backoff()
 
 
 # --- running one job -------------------------------------------------------
@@ -293,10 +343,14 @@ async def _work_one(worker: str, job: dict) -> None:
         await job_queue.defer(job_id, e.until)
     except Exception as e:
         log.error(f"{job['kind'].title()} job {job_id} failed: {e}")
-        await breaker.record_outcome(job["site_id"], False, job_id=job_id, detail=str(e)[:120])
+        if isinstance(e, SiteUnreadable):
+            await breaker.record_outcome(job["site_id"], False, job_id=job_id, detail=str(e)[:120])
+        else:
+            backoff.failed(e)
         await job_queue.append_event(job_id, "error", "error", str(e)[:500])
         await job_queue.fail_or_retry(job_id, str(e))
     else:
+        backoff.cleared()
         if job["kind"] == "hunt":
             await job_queue.append_event(
                 job_id,
@@ -318,8 +372,10 @@ async def _pool(worker: str, kinds: tuple[str, ...], wake: asyncio.Event) -> Non
     """
     while True:
         wake.clear()
+        await backoff.wait()
         while (job := await job_queue.claim(worker, kinds)) is not None:
             await _work_one(worker, job)
+            await backoff.wait()
         await wake.wait()
 
 
@@ -464,5 +520,6 @@ async def once() -> None:
         for worker in workers:
             while (job := await job_queue.claim(worker, kinds_for(worker))) is not None:
                 await _work_one(worker, job)
+                await backoff.wait()
     finally:
         await job_queue.release_all(workers)
