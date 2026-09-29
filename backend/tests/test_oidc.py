@@ -113,12 +113,21 @@ async def test_resolve_never_repoints_a_married_account(db_session):
 
 
 async def test_resolve_autocreates_unknown_user(db_session):
+    await _seed_user(db_session, "someone@else.com")
     async with db_session() as s:
         user = await oidc.resolve_oidc_user(s, CLAIMS)
         await s.commit()
     assert user.role == "user"
     assert user.oidc_sub == "authentik-sub-1"
     assert user.password_hash is None
+
+
+async def test_resolve_makes_the_first_user_admin(db_session):
+    # an SSO-only instance still gets an owner: registration closes behind them
+    async with db_session() as s:
+        user = await oidc.resolve_oidc_user(s, CLAIMS)
+        await s.commit()
+    assert user.role == "admin"
 
 
 async def test_resolve_rejects_inactive_user(db_session):

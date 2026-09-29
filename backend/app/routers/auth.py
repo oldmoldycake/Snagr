@@ -53,6 +53,7 @@ from app.core.cookies import (
 from app.core.deps import csrf_guard, current_user, reject_bearer
 from app.core.errors import ApiError, err
 from app.core.security import (
+    FIRST_USER_LOCK,
     hash_password,
     hash_refresh,
     make_access_jwt,
@@ -74,10 +75,6 @@ from app.schemas.auth import User as UserSchema
 from app.services import oidc
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-# pg_advisory_xact_lock key that serializes self-signup: without it two sign-ups
-# on an empty instance both count zero users and both become admin
-_REGISTER_LOCK = 0x736E_6167_7200  # "snagr\0"
 
 _UNIQUE_VIOLATION = "23505"
 
@@ -233,7 +230,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     # the very first user can always register (and becomes admin). After that,
     # self-signup is only open while the REGISTRATION_OPEN toggle is on —
     # otherwise people join via an admin invite.
-    await db.execute(select(func.pg_advisory_xact_lock(_REGISTER_LOCK)))
+    await db.execute(select(func.pg_advisory_xact_lock(FIRST_USER_LOCK)))
     user_count = await db.scalar(select(func.count()).select_from(User))
     is_first_user = (user_count or 0) == 0
     if not is_first_user and not settings.REGISTRATION_OPEN:
