@@ -230,7 +230,8 @@ async def list_items(
     if filters.category_id is not None:
         stmt = stmt.where(Items.category_id == filters.category_id)
     if filters.search:
-        stmt = stmt.where(Items.name.ilike(f"%{filters.search}%"))
+        # autoescape: a "_" or "%" in the search is a character to find, not a wildcard
+        stmt = stmt.where(Items.name.icontains(filters.search, autoescape=True))
     if filters.site_id is not None:
         # only items with an active tracked listing on this site
         stmt = stmt.where(
