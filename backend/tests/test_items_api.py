@@ -574,6 +574,23 @@ async def test_a_page_below_one_reads_as_the_default(client, db_session):
     assert (len(body["data"]), body["meta"]) == (1, {"page": 1, "per_page": 50, "total": 1})
 
 
+@pytest.mark.parametrize("search", ["_", "%", "\\"])
+async def test_search_matches_like_wildcards_literally(client, db_session, search):
+    # as the mock's substring match reads it: "_" is an underscore, not any character
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category = await sc.category()
+        for name in ("Leica M6", "Leica_M6", "Leica 50%", "Leica\\M6"):
+            await sc.watch(item=await sc.item(name=name, category=category))
+
+    res = await client.get("/api/items", params={"search": search})
+
+    assert res.status_code == 200, res.text
+    assert [i["name"] for i in res.json()["data"]] == [
+        {"_": "Leica_M6", "%": "Leica 50%", "\\": "Leica\\M6"}[search]
+    ]
+
+
 async def test_an_unbelieved_reading_is_still_in_the_log(client, db_session):
     # hiding an observation is its own failure: the log shows what was seen,
     # flagged as the disbelieved reading it is

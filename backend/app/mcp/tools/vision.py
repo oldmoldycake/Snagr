@@ -4,7 +4,7 @@ and the mutations answer `vision_unavailable` if called anyway."""
 
 from fastmcp import FastMCP
 
-from app.mcp.server import DESTRUCTIVE, READ_ONLY, WRITE, caller_session
+from app.mcp.server import DESTRUCTIVE, READ, READ_ONLY, WRITE, caller_session
 from app.schemas.common import Paginated
 from app.schemas.vision import (
     ReferenceImage,
@@ -18,7 +18,7 @@ from app.services import vision as vision_service
 def register(mcp: FastMCP) -> None:
     """Define the vision tools on the shared server."""
 
-    @mcp.tool(annotations=READ_ONLY, tags={"vision"})
+    @mcp.tool(auth=READ, annotations=READ_ONLY, tags={"vision"})
     async def list_review_queue(
         item: int | None = None, page: int = 1, per_page: int = 25
     ) -> Paginated[ReviewQueueEntry]:
@@ -28,7 +28,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await vision_service.list_review_queue(db, user, item, page, per_page)
 
-    @mcp.tool(annotations=READ_ONLY, tags={"vision"})
+    @mcp.tool(auth=READ, annotations=READ_ONLY, tags={"vision"})
     async def list_references(item: int) -> list[ReferenceImage]:
         """An item's reference library: the confirmed real and fake photos its
         listings are compared against, newest first, with label, variant tag

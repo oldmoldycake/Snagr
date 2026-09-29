@@ -7,7 +7,7 @@ price history in that category with it."""
 from fastmcp import FastMCP
 
 from app.mcp.refs import Ref, resolve_category, resolve_site
-from app.mcp.server import DESTRUCTIVE, READ_ONLY, WRITE, caller_session, require_admin
+from app.mcp.server import DESTRUCTIVE, READ, READ_ONLY, WRITE, caller_session, require_admin
 from app.schemas.catalog import Category, Site
 from app.services import catalog as catalog_service
 from app.services.catalog import build_category
@@ -16,7 +16,7 @@ from app.services.catalog import build_category
 def register(mcp: FastMCP) -> None:
     """Define the catalog tools on the shared server."""
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_categories() -> list[Category]:
         """Every category (video games, trading cards, …) with its slug, the
         ids of the sites linked to it, how many items it holds, and how many of
@@ -25,7 +25,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await catalog_service.list_categories(db, user.id)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_sites() -> list[Site]:
         """Every marketplace the agent can search, with its base URL, the
         categories it is linked to, its active listing count, and when a

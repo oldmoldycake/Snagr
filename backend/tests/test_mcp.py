@@ -29,9 +29,9 @@ MCP_URL = "http://test/api/mcp"
 ACCEPT = {"Accept": "application/json, text/event-stream"}
 LIST_TOOLS = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
 
+# no scope gate: every token sees these
+ORIENTATION_TOOLS = {"get_instance", "whoami"}
 READ_TOOLS = {
-    "get_instance",
-    "whoami",
     "list_categories",
     "list_sites",
     "list_items",
@@ -195,20 +195,25 @@ async def test_tool_list_follows_scopes_and_the_vision_setting(client, monkeypat
     read = await _token(client)
     write = await _token(client, scopes=("read", "write"))
     jobs = await _token(client, scopes=("read", "jobs"))
+    jobs_only = await _token(client, scopes=("jobs",))
     full = await _token(client, scopes=("read", "write", "jobs"))
 
     async def names(token):
         async with _agent(token) as agent:
-            return {t.name for t in await agent.list_tools()}
+            return {t.name for t in await agent.list_tools()} - ORIENTATION_TOOLS
 
-    # a scope you lack hides its tools entirely — nothing to be tempted by
+    # a scope you lack hides its tools entirely — nothing to be tempted by.
+    # The gates match REST's: reads need read, and the job tools need write
+    # as well as jobs, as POST /api/jobs does
     assert await names(read) == READ_TOOLS
     assert await names(write) == READ_TOOLS | WRITE_TOOLS
-    assert await names(jobs) == READ_TOOLS | JOB_TOOLS
+    assert await names(jobs) == READ_TOOLS
+    assert await names(jobs_only) == set()
     assert await names(full) == READ_TOOLS | WRITE_TOOLS | JOB_TOOLS
 
     monkeypatch.setattr(settings, "VISION_SIDECAR_URL", "http://vision.test")
     assert await names(read) == READ_TOOLS | VISION_TOOLS
+    assert await names(jobs_only) == set()
     assert (
         await names(full)
         == READ_TOOLS | WRITE_TOOLS | JOB_TOOLS | VISION_TOOLS | VISION_WRITE_TOOLS
@@ -223,12 +228,38 @@ async def test_hidden_tools_are_not_callable(client):
         assert "create_category" in res.content[0].text
 
 
+async def test_scope_gates_match_rest(client):
+    """A token REST refuses with 403 insufficient_scope can't do the same
+    thing over MCP either."""
+    await _sign_in(client)
+    item = await _watched_item(client)
+    jobs_only = await _token(client, scopes=("jobs",))
+    no_write = await _token(client, scopes=("read", "jobs"))
+
+    rest = await client.get("/api/items", headers={"Authorization": f"Bearer {jobs_only}"})
+    assert rest.status_code == 403
+    assert rest.json()["error"]["code"] == "insufficient_scope"
+    async with _agent(jobs_only) as agent:
+        res = await agent.call_tool("list_items", {}, raise_on_error=False)
+        assert res.is_error
+
+    body = {"kind": "hunt", "scope": "item", "scope_id": item["id"]}
+    headers = {"Authorization": f"Bearer {no_write}"}
+    rest = await client.post("/api/jobs", json=body, headers=headers)
+    assert rest.status_code == 403
+    assert rest.json()["error"]["code"] == "insufficient_scope"
+    async with _agent(no_write) as agent:
+        args = {"kind": "hunt", "scope": "item", "target": item["id"]}
+        assert (await agent.call_tool("enqueue_jobs", args, raise_on_error=False)).is_error
+        assert (await agent.call_tool("cancel_job", {"job_id": 1}, raise_on_error=False)).is_error
+
+
 async def test_annotations_say_what_a_tool_does(client):
     await _sign_in(client)
     async with _agent(await _token(client, scopes=("read", "write", "jobs"))) as agent:
         for tool in await agent.list_tools():
             hints = tool.annotations
-            if tool.name in READ_TOOLS:
+            if tool.name in ORIENTATION_TOOLS | READ_TOOLS:
                 assert hints.read_only_hint is True, tool.name
             elif tool.name.startswith("delete_"):
                 assert hints.destructive_hint is True, tool.name
@@ -680,7 +711,7 @@ async def test_a_hunt_while_hunting_is_off_is_a_tool_error(client, monkeypatch):
     await _sign_in(client)
     item = await _watched_item(client)
     monkeypatch.setattr(settings, "HUNT_ENABLED", False)
-    async with _agent(await _token(client, scopes=("read", "jobs"))) as agent:
+    async with _agent(await _token(client, scopes=("read", "write", "jobs"))) as agent:
         error = await _error(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
         assert error["code"] == "hunting_disabled"
         assert (await _ok(agent, "get_instance"))["hunt_enabled"] is False
@@ -689,7 +720,7 @@ async def test_a_hunt_while_hunting_is_off_is_a_tool_error(client, monkeypatch):
 async def test_job_tools_need_the_jobs_scope(client):
     await _sign_in(client)
     item = await _watched_item(client)
-    runner = await _token(client, scopes=("read", "jobs"))
+    runner = await _token(client, scopes=("read", "write", "jobs"))
     async with _agent(runner) as agent:
         queued = await _ok(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
         assert [j["status"] for j in queued] == ["pending"]

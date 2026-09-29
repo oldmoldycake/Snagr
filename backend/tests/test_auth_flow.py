@@ -477,6 +477,24 @@ async def test_admin_cannot_delete_self(client):
     assert res.json()["error"]["code"] == "cannot_delete_self"
 
 
+async def test_admin_cannot_remove_the_last_admin(client, make_client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    me = (await _register(client)).json()["user"]
+    for change in ({"role": "user"}, {"is_active": False}):
+        res = await client.patch(f"/api/admin/users/{me['id']}", json=change, headers=CSRF)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "last_admin"
+    assert (await client.get("/api/auth/me")).json()["role"] == "admin"
+
+    # with a second active admin, the first may step down
+    plain = await make_client()
+    guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
+    res = await client.patch(f"/api/admin/users/{guest_id}", json={"role": "admin"}, headers=CSRF)
+    assert res.status_code == 200
+    res = await client.patch(f"/api/admin/users/{me['id']}", json={"role": "user"}, headers=CSRF)
+    assert res.status_code == 200 and res.json()["role"] == "user"
+
+
 async def test_admin_deactivate_locks_out(client, make_client, monkeypatch):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
     await _register(client)

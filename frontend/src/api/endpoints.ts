@@ -258,7 +258,10 @@ export const cancelJob = (id: number) => api<Job>(`/api/jobs/${id}/cancel`, { me
 /** Every user on the instance (admin only). */
 export const listUsers = () => api<{ data: AdminUser[] }>('/api/admin/users')
 
-/** Activate or deactivate a user, or change their role (admin only). */
+/**
+ * Activate or deactivate a user, or change their role (admin only); 409 last_admin
+ * for a change that would leave no active admin.
+ */
 export const updateUser = (id: number, body: AdminUserUpdateRequest) =>
   api<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body })
 

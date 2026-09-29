@@ -19,10 +19,11 @@ from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.security import FIRST_USER_LOCK
 from app.models import User
 
 
@@ -199,11 +200,21 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
             user = holder
             user.oidc_sub = sub
 
-    # 3. unknown at the IdP-approved door -> provision a fresh account
+    # 3. unknown at the IdP-approved door -> provision a fresh account. The
+    #    first account on the instance owns it, as with password signup —
+    #    otherwise an SSO-only instance would never have an admin.
     if user is None:
         if not email_ok:
             raise OidcError("IdP did not supply a verified email")
-        user = User(email=email, email_verified=True, role="user", is_active=True, oidc_sub=sub)
+        await db.execute(select(func.pg_advisory_xact_lock(FIRST_USER_LOCK)))
+        is_first_user = not await db.scalar(select(func.count()).select_from(User))
+        user = User(
+            email=email,
+            email_verified=True,
+            role="admin" if is_first_user else "user",
+            is_active=True,
+            oidc_sub=sub,
+        )
         db.add(user)
         await db.flush()  # assign user.id for _start_session
 

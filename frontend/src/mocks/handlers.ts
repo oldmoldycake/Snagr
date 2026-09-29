@@ -1759,6 +1759,13 @@ export const handlers = [
     const user = store.users.find((u) => u.id === Number(params.id))
     if (!user) return err(404, 'not_found', `User ${params.id} does not exist`)
     const body = (await request.json()) as AdminUserUpdateRequest
+    const losesAdmin =
+      user.role === 'admin' &&
+      user.is_active &&
+      ((body.role !== undefined && body.role !== 'admin') || body.is_active === false)
+    if (losesAdmin && !store.users.some((u) => u.id !== user.id && u.role === 'admin' && u.is_active)) {
+      return err(409, 'last_admin', 'This is the only active admin — make someone else an admin first')
+    }
     if (body.is_active !== undefined) user.is_active = body.is_active
     if (body.role !== undefined) user.role = body.role
     return HttpResponse.json(toAdminUser(user))
