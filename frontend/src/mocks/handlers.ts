@@ -151,6 +151,17 @@ function weakPassword(password: string, field: 'password' | 'new_password') {
   return err(422, 'validation_error', message, { fields: { [field]: message } })
 }
 
+/**
+ * The backend's email-taken 422, or null when no other account holds the
+ * address. Addresses are stored lowercased and matched regardless of case.
+ */
+function emailTaken(email: string, exceptId?: number) {
+  const key = email.toLowerCase()
+  if (!store.users.some((u) => u.id !== exceptId && u.email.toLowerCase() === key)) return null
+  const message = 'An account with this email already exists'
+  return err(422, 'validation_error', message, { fields: { email: message } })
+}
+
 const SIGN_IN_LIMIT = 10
 const SIGN_IN_WINDOW = 15 * MINUTE
 const signInAttempts = new Map<string, number[]>()
@@ -539,7 +550,8 @@ export const handlers = [
     const body = (await request.json()) as LoginRequest
     const limited = signInAttempt(body.email)
     if (limited) return limited
-    const user = store.users.find((u) => u.email === body.email && u.password === body.password)
+    const email = body.email.toLowerCase()
+    const user = store.users.find((u) => u.email.toLowerCase() === email && u.password === body.password)
     if (!user || !user.is_active) {
       return err(401, 'invalid_credentials', 'Email or password is incorrect')
     }
@@ -557,7 +569,7 @@ export const handlers = [
     if (weak) return weak
     const user = {
       id: newId(),
-      email: body.email,
+      email: body.email.toLowerCase(),
       password: body.password,
       role: 'admin' as const,
       is_active: true,
@@ -604,9 +616,13 @@ export const handlers = [
     const body = (await request.json()) as InviteAcceptRequest
     const weak = weakPassword(body.password, 'password')
     if (weak) return weak
+    // an invite pinned to an email wins over whatever the form submitted
+    const email = (invite.email ?? body.email).toLowerCase()
+    const taken = emailTaken(email)
+    if (taken) return taken
     const user = {
       id: newId(),
-      email: invite.email ?? body.email,
+      email,
       password: body.password,
       role: 'user' as const,
       is_active: true,
@@ -637,7 +653,11 @@ export const handlers = [
     if (Object.keys(fields).length > 0) {
       return err(422, 'validation_error', 'Thresholds must be between 0.50 and 1.00', { fields })
     }
-    if (body.email !== undefined) user.email = body.email
+    if (body.email !== undefined && body.email.toLowerCase() !== user.email.toLowerCase()) {
+      const taken = emailTaken(body.email, user.id)
+      if (taken) return taken
+      user.email = body.email.toLowerCase()
+    }
     for (const field of thresholds) {
       if (body[field] !== undefined) user[field] = Number(body[field]).toFixed(2)
     }
@@ -1797,7 +1817,7 @@ export const handlers = [
     const invite = {
       id: newId(),
       token: crypto.randomUUID().replace(/-/g, ''),
-      email: body.email?.trim() || null,
+      email: body.email?.trim().toLowerCase() || null,
       expires_at: Date.now() + 7 * DAY,
       accepted_at: null,
       created_at: Date.now(),
