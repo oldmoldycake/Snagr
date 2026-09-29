@@ -138,7 +138,8 @@ async def test_price_history_skips_unpriced_checks(sc):
 
 
 async def test_price_history_downsamples_to_points(sc):
-    # 10 checks thinned to 5 walks the list at stride 2 -> indices 0,2,4,6,8.
+    # 10 checks thinned to 5 walks the list evenly, both ends included ->
+    # indices 0,2,4,6,9.
     item, watch = await sc.tracked()
     listing = await sc.listing(watch, item)
     await sc.checks(listing, *[(20 - 2 * i, str(100 - i) + ".00") for i in range(10)])
@@ -150,8 +151,49 @@ async def test_price_history_downsamples_to_points(sc):
         "98.00",
         "96.00",
         "94.00",
-        "92.00",
+        "91.00",
     ]
+
+
+async def test_price_history_downsampling_ends_on_the_latest_check(sc):
+    # Regression: a fractional stride from the oldest check skipped the newest,
+    # so the line ended on a stale price.
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, *[(20 - i, "5999.99") for i in range(10)], (1, "6299.99"))
+
+    series = await price_history(sc.db, sc.user_id, item.id, "30d", 3)
+
+    assert len(series[0].points) == 3
+    assert series[0].points[-1].price == "6299.99"
+
+
+async def test_price_history_downsampling_keeps_the_extremes(sc):
+    # The low and the high sit between stride positions; thinning must not
+    # hide how far the price swung.
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    prices = ["100.00"] * 20
+    prices[5] = "40.00"
+    prices[13] = "180.00"
+    await sc.checks(listing, *[(25 - i, price) for i, price in enumerate(prices)])
+
+    series = await price_history(sc.db, sc.user_id, item.id, "30d", 5)
+
+    kept = [p.price for p in series[0].points]
+    assert len(kept) == 5
+    assert "40.00" in kept
+    assert "180.00" in kept
+
+
+async def test_price_history_single_point_is_the_latest_check(sc):
+    item, watch = await sc.tracked()
+    listing = await sc.listing(watch, item)
+    await sc.checks(listing, (10, "100.00"), (5, "50.00"), (1, "75.00"))
+
+    series = await price_history(sc.db, sc.user_id, item.id, "30d", 1)
+
+    assert [p.price for p in series[0].points] == ["75.00"]
 
 
 async def test_price_history_keeps_everything_under_the_cap(sc):
