@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import logging
 import signal
+import sys
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,9 +34,10 @@ def _supervised(job) -> None:
     """
     Run one coroutine to completion, treating SIGTERM and SIGINT as "stop":
     the task unwinds through every `finally`, which is where the pools return
-    what they were holding. Failures are logged, never raised — under compose
-    this process is the hunter, and it should come back rather than die on a
-    bad pass.
+    what they were holding. A failure is logged and ends the process with
+    status 1, so a supervisor that restarts on failure (systemd's
+    Restart=on-failure, compose's on-failure) brings the hunter back and a
+    cron run that failed says so.
     """
 
     async def main() -> None:
@@ -51,6 +53,7 @@ def _supervised(job) -> None:
         log.warning("Stopped by signal")
     except Exception as e:
         log.error(f"Hunter stopped: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -123,6 +123,11 @@ across all of it deciding what is believed and which sites are read at all.
 6. **Shutdown.** `main._supervised` turns SIGTERM/SIGINT into task
    cancellation; `serve`'s `finally` cancels the pools and hands everything this
    process holds back to `pending` in one statement (`jobs.release_all`).
+   A pool that loses the database (in a claim, or in a job's terminal write)
+   logs, waits `POOL_RETRY_SECONDS` and claims again; a job whose terminal
+   write was lost stays `running` for the reaper. Anything else that ends a
+   pool ends `serve`, and `_supervised` exits 1, so a supervisor that restarts
+   on failure brings the hunter back.
 7. **Housekeeping.** `worker._scheduler` runs `housekeeping` every 60 s:
    `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` goes
    through `fail_or_retry`) and `queue_grounding` every pass; `jobs.sweep` and

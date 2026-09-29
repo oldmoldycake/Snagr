@@ -73,6 +73,8 @@ TICK_SECONDS = 30
 # Housekeeping: the reaper has to run faster than a stale job matters, the
 # retention sweep does not.
 SCHEDULER_INTERVAL_SECONDS = 60
+# how long a pool waits after losing the database before it tries to claim again
+POOL_RETRY_SECONDS = 5
 PRUNE_EVERY_TICKS = 60
 # The sweep is a safety net under the hunt chain, not its engine, so hourly
 # is plenty; it also runs on the first pass, so a hunter that was down picks
@@ -369,13 +371,23 @@ async def _pool(worker: str, kinds: tuple[str, ...], wake: asyncio.Event) -> Non
     Clearing the flag before claiming is what makes a missed wake impossible
     to sleep through for long: a NOTIFY that lands between the clear and the
     last empty claim is lost, and the 30-second tick picks it up.
+
+    Losing the database — in a claim, or in the writes that end a job — must
+    not end the pool: a pool that dies stops that worker for good while the
+    process looks healthy. A job whose terminal write failed stays `running`
+    and stops beating, so the reaper takes it back.
     """
     while True:
         wake.clear()
-        await backoff.wait()
-        while (job := await job_queue.claim(worker, kinds)) is not None:
-            await _work_one(worker, job)
+        try:
             await backoff.wait()
+            while (job := await job_queue.claim(worker, kinds)) is not None:
+                await _work_one(worker, job)
+                await backoff.wait()
+        except (SQLAlchemyError, OSError) as e:
+            log.error(f"Worker {worker} lost the database ({e}); retrying in {POOL_RETRY_SECONDS}s")
+            await asyncio.sleep(POOL_RETRY_SECONDS)
+            continue
         await wake.wait()
 
 

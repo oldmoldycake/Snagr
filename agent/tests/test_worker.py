@@ -564,6 +564,61 @@ class TestPool:
         assert seen["failed"] == [(1, "the page timed out")]
         assert [job_id for job_id, _ in seen["completed"]] == [2]
 
+    def test_losing_the_database_mid_claim_never_takes_the_pool_down(self, monkeypatch):
+        queue = [job(job_id=1)]
+        claims = {"n": 0}
+
+        async def flaky_claim(worker_id, kinds):
+            claims["n"] += 1
+            if claims["n"] == 1:
+                raise ConnectionError("connection was closed in the middle of operation")
+            return queue.pop(0) if queue else None
+
+        seen = wire(monkeypatch, claim=flaky_claim)
+        monkeypatch.setattr(worker, "POOL_RETRY_SECONDS", 0.01)
+
+        async def scenario():
+            wake = asyncio.Event()
+            task = asyncio.create_task(worker._pool("check-0", ("recheck",), wake))
+            await asyncio.sleep(0.05)
+            alive = not task.done()
+            task.cancel()
+            return alive
+
+        assert asyncio.run(scenario())
+        assert [job_id for job_id, _ in seen["completed"]] == [1]
+
+    def test_losing_the_database_while_failing_a_job_never_takes_the_pool_down(self, monkeypatch):
+        # the job whose terminal write was lost stays running for the reaper;
+        # the pool carries on with the next one
+        queue = [job(job_id=1), job(job_id=2)]
+        calls = {"n": 0}
+
+        async def explodes_once(browser, row):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("the page timed out")
+            return FakeOutcome(True)
+
+        async def db_gone(job_id, error):
+            raise ConnectionError("connection was closed in the middle of operation")
+
+        seen = wire(monkeypatch, queue=queue, fail_or_retry=db_gone)
+        monkeypatch.setattr(worker, "recheck_deterministic", explodes_once)
+        monkeypatch.setattr(worker, "INFRA_BACKOFF_SECONDS", 0.01)
+        monkeypatch.setattr(worker, "POOL_RETRY_SECONDS", 0.01)
+
+        async def scenario():
+            wake = asyncio.Event()
+            task = asyncio.create_task(worker._pool("check-0", ("recheck",), wake))
+            await asyncio.sleep(0.1)
+            alive = not task.done()
+            task.cancel()
+            return alive
+
+        assert asyncio.run(scenario())
+        assert [job_id for job_id, _ in seen["completed"]] == [2]
+
     def test_a_pool_holds_off_after_a_failure_no_site_is_to_blame_for(self, monkeypatch):
         queue = [job(job_id=1, kind="hunt"), job(job_id=2, kind="hunt")]
         calls = {"n": 0}
