@@ -23,7 +23,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from statistics import median
 from urllib.parse import urlparse
 
@@ -46,7 +46,7 @@ from database import (
 )
 from llm import build_llm, callbacks
 from prompt import generate_condition_tiers_prompt, generate_price_extraction_prompt
-from validation import public_url
+from validation import parse_price, public_url
 
 log = logging.getLogger(__name__)
 
@@ -349,9 +349,16 @@ async def extract_observations(
 
     for raw in raw_observations:
         try:
-            price = Decimal(str(raw["price"]).replace(",", ""))
+            stated = raw["price"]
             source_url = raw["source_url"]
-        except KeyError, TypeError, InvalidOperation:
+        except KeyError, TypeError:
+            dropped += 1
+            continue
+
+        # parse_price reads digits and ignores a sign, so a negative is refused
+        # here before "-5" can become 5.
+        price = parse_price(stated)
+        if str(stated).lstrip().startswith("-") or price is None or not price > 0:
             dropped += 1
             continue
 

@@ -190,6 +190,44 @@ class TestGroundingCallsAreTraced:
         assert llm.configs == [{"callbacks": ["handler"], "run_name": "condition-tiers"}]
 
 
+def extracted_prices(monkeypatch, reply):
+    """The prices extract_observations keeps from a raw model reply."""
+    monkeypatch.setattr(pricing, "build_llm", lambda: FakeLLM(reply))
+    observations = asyncio.run(
+        pricing.extract_observations("Pokemon Emerald", {"https://a.test": "$100"}, ["loose"])
+    )
+    return [o.price for o in observations]
+
+
+class TestExtractedPrices:
+    """The model's prices are JSON from outside this system, parsed the way a
+    page's price is and refused unless they are a positive amount."""
+
+    @pytest.mark.parametrize(
+        "price, expected",
+        [
+            ('"12,99"', "12.99"),
+            ('"1.234,56"', "1234.56"),
+            ('"1,234.56"', "1234.56"),
+            ('"$226"', "226"),
+            ("59.99", "59.99"),
+        ],
+    )
+    def test_separators_are_read_by_position(self, monkeypatch, price, expected):
+        reply = f'{{"observations": [{{"price": {price}, "source_url": "https://a.test"}}]}}'
+
+        assert extracted_prices(monkeypatch, reply) == [Decimal(expected)]
+
+    @pytest.mark.parametrize("price", ['"NaN"', "NaN", "1e999", '"Infinity"', "-5", '"-5"', "0"])
+    def test_a_price_that_is_not_a_positive_amount_is_dropped(self, monkeypatch, price):
+        reply = (
+            f'{{"observations": [{{"price": {price}, "source_url": "https://a.test"}},'
+            f' {{"price": "100", "source_url": "https://a.test"}}]}}'
+        )
+
+        assert extracted_prices(monkeypatch, reply) == [Decimal("100")]
+
+
 SUSPENDED = {"results": [], "unresponsive_engines": [["google", "Suspended: too many requests"]]}
 RESULTS = {"results": [{"url": "https://guide.example/emerald", "content": "Loose $226"}]}
 
