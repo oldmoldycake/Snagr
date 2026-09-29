@@ -5,7 +5,7 @@ from typing import Literal
 from fastmcp import FastMCP
 
 from app.mcp.refs import Ref, resolve_category, resolve_site
-from app.mcp.server import DESTRUCTIVE, READ_ONLY, WRITE, caller_session
+from app.mcp.server import DESTRUCTIVE, READ, READ_ONLY, WRITE, caller_session
 from app.schemas.common import Paginated, TimeRange
 from app.schemas.items import (
     ItemCreateRequest,
@@ -26,7 +26,7 @@ from app.services import items as items_service
 def register(mcp: FastMCP) -> None:
     """Define the item tools on the shared server."""
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_items(
         category: Ref | None = None,
         site: Ref | None = None,
@@ -61,7 +61,7 @@ def register(mcp: FastMCP) -> None:
             )
             return await items_service.list_items(db, user.id, filters)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_item(item: int) -> ItemDetail:
         """One watched item in full: everything list_items shows plus every
         listing the agent tracks for it — URL, title, latest price, stock and
@@ -70,7 +70,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await items_service.get_item_detail(db, user.id, item)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_listings(
         item: int | None = None,
         site: Ref | None = None,
@@ -99,7 +99,7 @@ def register(mcp: FastMCP) -> None:
                 per_page=per_page,
             )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_price_checks(item: int, limit: int = 50) -> list[PriceCheck]:
         """The raw observations behind an item's prices: each time the agent
         looked at one of its listings — price, currency, in stock, and the
