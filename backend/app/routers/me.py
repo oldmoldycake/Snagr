@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -90,8 +90,15 @@ async def update_me(
 
     # PATCH semantics: only touch fields the client actually sent — that's what
     # model_fields_set tracks.
-    if "email" in body.model_fields_set and body.email is not None and body.email != user.email:
-        if await db.scalar(select(UserModel).where(UserModel.email == body.email)):
+    if (
+        "email" in body.model_fields_set
+        and body.email is not None
+        and body.email != user.email.lower()
+    ):
+        taken = select(UserModel).where(
+            func.lower(UserModel.email) == body.email, UserModel.id != user.id
+        )
+        if await db.scalar(taken):
             raise err(
                 422,
                 "validation_error",

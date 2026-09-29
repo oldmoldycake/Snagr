@@ -177,8 +177,7 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
             # .normalized alone only case-folds the domain (email-validator
             # preserves local-part case per RFC); lower() the whole address
             # too so a same-mailbox claim always marries regardless of how
-            # the IdP cased it. Still a plain `==` lookup below, not a SQL-side
-            # case-insensitive compare.
+            # the IdP cased it.
             email = validate_email(email, check_deliverability=False).normalized.lower()
         except EmailNotValidError:
             email = None
@@ -193,7 +192,7 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     #    on that would hand the real owner's first SSO login to them. An
     #    account already married to another sub is never re-pointed.
     if user is None and email_ok:
-        holder = await db.scalar(select(User).where(User.email == email))
+        holder = await db.scalar(select(User).where(func.lower(User.email) == email))
         if holder is not None:
             if not holder.email_verified or holder.oidc_sub is not None:
                 raise OidcError(f"account {holder.id} holds this email but can't be linked")
