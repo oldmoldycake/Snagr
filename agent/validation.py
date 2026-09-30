@@ -49,7 +49,15 @@ MAX_PRICE = Decimal(10) ** 8
 # How close a second read must be to an unconfirmed one to corroborate it.
 CORROBORATION = Decimal("0.01")
 
-_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+# Grouping by space, no-break space, narrow no-break space or apostrophe
+# ("1 299,00 €", "CHF 1'299.00") only counts in strict groups of three, so
+# "12 30" stays two numbers rather than becoming 1230 \u2014 and a last group must
+# end the digits, so "1 2341234" is not read as "1 234" plus a stray "1234".
+_GROUPING = " \u00a0\u202f'\u2019"
+_NUMBER = re.compile(rf"\d{{1,3}}(?:[{_GROUPING}]\d{{3}})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*")
+# A minus sign ahead of the number, past any currency code or symbol ("-$10",
+# "−10 €", "-EUR 10", "-kr 10"); a hyphen inside a word ("X-100") is not a sign.
+_NEGATIVE = re.compile(r"(?<!\w)[-\u2212]\s*(?:(?i:[A-Z]{2,3})\s*)?[^\w\s]?\s*\d")
 
 # Currency codes a marketplace page might state next to a price. A closed set
 # on purpose: scanning visible text for any three capitals finds "ADD" in
@@ -97,7 +105,8 @@ def parse_price(raw: object) -> Decimal | None:
     happens to sit next to one — so it parses to None rather than to whichever
     number came first. Separators are read by position: with both present the
     rightmost is the decimal point, and a lone comma with one or two digits
-    behind it is a decimal comma.
+    behind it is a decimal comma. A negative is not a price, so a minus
+    sign makes the whole text None rather than reading "-$10" as 10.
 
     Args:
       raw: Text, or a number JSON-LD stated directly. None and objects are
@@ -113,18 +122,23 @@ def parse_price(raw: object) -> Decimal | None:
         raw = repr(raw)
     if not isinstance(raw, str):
         return None
+    if _NEGATIVE.search(raw):
+        return None
 
     values = set()
     last = None
     for token in _NUMBER.findall(raw):
         try:
-            last = Decimal(_normalise(token))
+            last = Decimal(_normalise(token.translate(_UNGROUP)))
         except InvalidOperation:
             return None
         values.add(last)
     if len(values) != 1:
         return None
     return last
+
+
+_UNGROUP = str.maketrans("", "", _GROUPING)
 
 
 def _normalise(token: str) -> str:

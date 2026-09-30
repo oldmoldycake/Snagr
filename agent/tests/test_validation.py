@@ -57,6 +57,13 @@ class TestParsePrice:
             ("1.234,56 €", "1234.56"),
             ("14,50 €", "14.50"),
             ("1.234", "1.234"),
+            ("1 299,00 €", "1299.00"),
+            ("1\u00a0299,00\u00a0€", "1299.00"),
+            ("1\u202f299,00\u202f€", "1299.00"),
+            ("CHF 1'299.00", "1299.00"),
+            ("CHF 1\u2019299.00", "1299.00"),
+            ("12 345 678,90 €", "12345678.90"),
+            ("Model X-100 for $100", "100"),
         ],
     )
     def test_a_stated_price_parses(self, raw, expected):
@@ -72,6 +79,17 @@ class TestParsePrice:
             "$10.00 to $20.00",  # a range is not a price
             "12 bids $30.00",  # the page fragment beside one
             "Free shipping over $50, was $80",
+            "12 30",  # a space groups only in threes
+            "1 2341234 €",
+            "-$10",  # a negative is not a price
+            "-10.00",
+            "\u221210 €",
+            "- EUR 10",
+            "-eur 10",
+            "-kr 10",
+            "US $-10",
+            -5,
+            -5.0,
             "",
             "no price here",
             None,
