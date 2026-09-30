@@ -286,6 +286,25 @@ class TestUrlAllowed:
     def test_a_multi_part_suffix_still_compares_the_registrable_domain(self):
         assert url_allowed("https://www.ebay.co.uk/itm/1", "https://ebay.co.uk") is None
 
+    @pytest.mark.parametrize(
+        ("url", "site"),
+        [
+            ("https://evil.com.ar/itm/1", "https://www.mercadolibre.com.ar"),
+            ("https://evil.com.my/itm/1", "https://www.lazada.com.my"),
+            ("https://evil.co.in/itm/1", "https://www.flipkart.co.in"),
+            ("https://evil.myshopify.com/products/1", "https://shop.myshopify.com"),
+        ],
+    )
+    def test_a_multi_part_suffix_never_widens_to_the_whole_suffix(self, url, site):
+        # without the Public Suffix List a guessed registrable domain can be
+        # the suffix itself; anchoring on the site's own host cannot
+        assert url_allowed(url, site) is not None
+
+    def test_a_subdomain_of_a_www_base_is_allowed(self):
+        site = "https://www.mercadolibre.com.ar"
+
+        assert url_allowed("https://articulo.mercadolibre.com.ar/MLA-1", site) is None
+
     def test_another_marketplace_is_refused(self):
         assert url_allowed("https://www.mercari.com/us/item/1", SITE) is not None
 

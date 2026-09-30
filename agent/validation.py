@@ -82,26 +82,6 @@ CURRENCY_CODES = frozenset(
         "AED",
     }
 )
-# Registrable-domain suffixes that are two labels deep. The full Public
-# Suffix List is a dependency and a monthly update; this covers the
-# marketplaces Snagr tracks, and a miss is conservative — an unlisted
-# multi-part suffix makes the guard compare MORE of the host, never less.
-_TWO_LABEL_SUFFIXES = frozenset(
-    {
-        "co.uk",
-        "org.uk",
-        "me.uk",
-        "co.jp",
-        "co.nz",
-        "co.za",
-        "com.au",
-        "com.br",
-        "com.mx",
-        "com.sg",
-        "com.hk",
-        "com.tr",
-    }
-)
 
 
 def parse_price(raw: object) -> Decimal | None:
@@ -345,12 +325,16 @@ def url_allowed(url: str, site_base_url: str | None) -> str | None:
 
     A listing URL is not a one-off read: it is stored and navigated to on
     every recheck from now on, so accepting one the page chose is accepting a
-    standing request. On top of public_url's network rule, the host must sit
-    inside the site's own registrable domain — which is the rule that makes
-    `http://vision:8100/rescore` unreachable no matter what it resolves to,
-    which also rejects a genuine redirect to a sister domain (ebay.com ->
-    ebay.co.uk). That loss is accepted; it is the same rule that closes the
-    SSRF.
+    standing request. On top of public_url's network rule, the host must be
+    the site's own host or a subdomain of it (a leading "www." on the base URL
+    is dropped, so www.ebay.com also allows m.ebay.com) — which is the rule
+    that makes `http://vision:8100/rescore` unreachable no matter what it
+    resolves to. It anchors on the host rather than a guessed registrable
+    domain because a guess without the Public Suffix List gets suffixes like
+    com.ar or myshopify.com wrong, and a wrong guess widens the rule to a
+    whole country. It also rejects a genuine redirect to a sister domain
+    (ebay.com -> ebay.co.uk) or a sibling subdomain; that loss is accepted,
+    as it is the same rule that closes the SSRF.
 
     Args:
       url: The URL to judge.
@@ -369,7 +353,7 @@ def url_allowed(url: str, site_base_url: str | None) -> str | None:
     if not site_host:
         return "the site has no base URL to check this against"
     host = (urlparse(url).hostname or "").lower().rstrip(".")
-    domain = _registrable(site_host)
+    domain = site_host.removeprefix("www.")
     if host != domain and not host.endswith("." + domain):
         return f"{host} is not part of {domain}"
     return None
@@ -381,15 +365,6 @@ def _address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
         return ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return None
-
-
-def _registrable(host: str) -> str:
-    """The registrable domain of a hostname — what a listing URL must be
-    inside. "www.ebay.com" and "ebay.com" both give "ebay.com"."""
-    labels = host.split(".")
-    if len(labels) > 2 and ".".join(labels[-2:]) in _TWO_LABEL_SUFFIXES:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
 
 
 def clip_text(value: str | None, limit: int) -> str | None:
