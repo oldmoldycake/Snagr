@@ -355,10 +355,8 @@ async def extract_observations(
             dropped += 1
             continue
 
-        # parse_price reads digits and ignores a sign, so a negative is refused
-        # here before "-5" can become 5.
         price = parse_price(stated)
-        if str(stated).lstrip().startswith("-") or price is None or not price > 0:
+        if price is None or not price > 0:
             dropped += 1
             continue
 
