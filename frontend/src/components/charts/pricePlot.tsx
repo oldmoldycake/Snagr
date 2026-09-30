@@ -136,9 +136,26 @@ export function timeTicks(
   })
 }
 
+/**
+ * The labeled step for a price span: 1-2-5 dollars, then 1-2.5-5 per decade,
+ * always the smallest that leaves at most five majors. Worked out from the
+ * span's magnitude rather than a fixed ladder, so a huge target (the column
+ * allows $99,999,999.99) can't turn the ruler into tens of thousands of lines.
+ */
 function majorStepFor(span: number): number {
-  const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
-  return steps.find((s) => span / s <= 5) ?? 10_000
+  const decade = Math.max(1, 10 ** Math.floor(Math.log10(span / 5)))
+  const mantissas = decade === 1 ? [1, 2, 5, 10] : [1, 2.5, 5, 10]
+  return (mantissas.find((m) => span / (m * decade) <= 5) ?? 10) * decade
+}
+
+/** Ruler ticks for the y domain: minors every fifth of a major step. */
+export function priceTicks(yMin: number, yMax: number): { v: number; major: boolean }[] {
+  const minor = majorStepFor(yMax - yMin) / 5
+  const ticks: { v: number; major: boolean }[] = []
+  for (let k = Math.ceil(yMin / minor); k * minor <= yMax + 1e-9; k++) {
+    ticks.push({ v: k * minor, major: k % 5 === 0 && k * minor > yMin })
+  }
+  return ticks
 }
 
 /**
@@ -164,11 +181,7 @@ export function PlotFrame({
   beamX: number | null
 }) {
   const { l, r, t, b } = plot.box
-  const minor = majorStepFor(yMax - yMin) / 5
-  const ticks: { v: number; major: boolean }[] = []
-  for (let k = Math.ceil(yMin / minor); k * minor <= yMax + 1e-9; k++) {
-    ticks.push({ v: k * minor, major: k % 5 === 0 && k * minor > yMin })
-  }
+  const ticks = priceTicks(yMin, yMax)
   const yTarget = target != null ? plot.y(target) : null
 
   return (
