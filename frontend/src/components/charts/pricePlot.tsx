@@ -136,9 +136,37 @@ export function timeTicks(
   })
 }
 
+/**
+ * The labeled step for a price span: 1-2-5 dollars, then 1-2.5-5 per decade,
+ * always the smallest that leaves at most five majors. Worked out from the
+ * span's magnitude rather than a fixed ladder, so a huge target (the column
+ * allows $99,999,999.99) can't turn the ruler into tens of thousands of lines.
+ */
 function majorStepFor(span: number): number {
-  const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
-  return steps.find((s) => span / s <= 5) ?? 10_000
+  const decade = Math.max(1, 10 ** Math.floor(Math.log10(span / 5)))
+  const mantissas = decade === 1 ? [1, 2, 5, 10] : [1, 2.5, 5, 10]
+  return (mantissas.find((m) => span / (m * decade) <= 5) ?? 10) * decade
+}
+
+/**
+ * Ruler ticks for the y domain: minors every fifth of a major step, majors
+ * labeled. Past $100k the labels go compact ($250k, $25M), in one unit for
+ * the whole axis and with the step's precision: a full `$100000000` is wider
+ * than the left margin and clips.
+ */
+export function priceTicks(yMin: number, yMax: number): { v: number; label: string | null }[] {
+  const major = majorStepFor(yMax - yMin)
+  const minor = major / 5
+  const [unit, suffix] = yMax < 100_000 ? [1, ''] : yMax < 1_000_000 ? [1000, 'k'] : [1_000_000, 'M']
+  const perUnit = major / unit
+  const decimals = [0, 1, 2, 3].find((d) => Number.isInteger(+(perUnit * 10 ** d).toFixed(6))) ?? 3
+  const ticks: { v: number; label: string | null }[] = []
+  for (let k = Math.ceil(yMin / minor); k * minor <= yMax + 1e-9; k++) {
+    const v = k * minor
+    const amount = unit === 1 ? `${+v.toFixed(2)}` : (v / unit).toFixed(decimals)
+    ticks.push({ v, label: k % 5 === 0 && v > yMin ? `$${amount}${suffix}` : null })
+  }
+  return ticks
 }
 
 /**
@@ -164,24 +192,20 @@ export function PlotFrame({
   beamX: number | null
 }) {
   const { l, r, t, b } = plot.box
-  const minor = majorStepFor(yMax - yMin) / 5
-  const ticks: { v: number; major: boolean }[] = []
-  for (let k = Math.ceil(yMin / minor); k * minor <= yMax + 1e-9; k++) {
-    ticks.push({ v: k * minor, major: k % 5 === 0 && k * minor > yMin })
-  }
+  const ticks = priceTicks(yMin, yMax)
   const yTarget = target != null ? plot.y(target) : null
 
   return (
     <g>
       <rect x={l} y={t} width={r - l} height={b - t} fill={chart.well} stroke={chart.hairline} rx={4} />
       <line x1={l} y1={t} x2={l} y2={b} stroke={chart.hairlineStrong} />
-      {ticks.map(({ v, major }) => (
+      {ticks.map(({ v, label }) => (
         <g key={v}>
-          {major ? <line x1={l} y1={plot.y(v)} x2={r} y2={plot.y(v)} stroke={chart.hairline} /> : null}
-          <line x1={l - (major ? 8 : 4)} y1={plot.y(v)} x2={l} y2={plot.y(v)} stroke={chart.hairlineStrong} />
-          {major ? (
+          {label != null ? <line x1={l} y1={plot.y(v)} x2={r} y2={plot.y(v)} stroke={chart.hairline} /> : null}
+          <line x1={l - (label != null ? 8 : 4)} y1={plot.y(v)} x2={l} y2={plot.y(v)} stroke={chart.hairlineStrong} />
+          {label != null ? (
             <text x={l - 12} y={plot.y(v) + 3} textAnchor="end" fill={chart.inkMuted} {...TICK_FONT}>
-              {`$${+v.toFixed(2)}`}
+              {label}
             </text>
           ) : null}
         </g>

@@ -22,6 +22,13 @@ const TARGET_LABEL_CLEARANCE_PCT = 7
 const CHAR_PX = 6
 /** Matches the ±9px dot→label offset in Track. */
 const LABEL_GAP_PX = 9
+/** Room kept between two labels on one line; also absorbs ⌖, which Plex Mono lacks and a fallback font draws wider. */
+export const LABEL_CLEARANCE_PX = 8
+
+/** Estimated width of a label in the rails' 10px mono type. */
+export function labelPx(label: string): number {
+  return label.length * CHAR_PX
+}
 
 /** Build the rail for the board's unfolded rows; null when none of them has a price. */
 export function makeRail(
@@ -113,4 +120,30 @@ export function labelFlipsLeft(
   if (nowPct + labelPct > 100) return true
   const crossesTarget = targetPct != null && nowPct < targetPct && nowPct + labelPct > targetPct
   return crossesTarget && nowPct - labelPct >= 0
+}
+
+/**
+ * The axis strip's top line: the ⌖ label centres on its notch unless that
+ * would spill out of the column, then pins to the edge it would cross. The
+ * drift caption keeps the left end unless ⌖ covers it (a target pricier than
+ * every listing sits there), then moves to the right end, or drops out when
+ * the two can't share the line. Before the rail is measured, ⌖ right-anchors
+ * past `fallbackRightPct` and the caption stays put.
+ */
+export function axisLabels(
+  targetPct: number,
+  targetLabel: string,
+  caption: string,
+  railPx: number,
+  fallbackRightPct: number,
+): { target: 'left' | 'center' | 'right'; caption: 'left' | 'right' | null } {
+  if (railPx <= 0) return { target: targetPct > fallbackRightPct ? 'right' : 'center', caption: 'left' }
+  const width = labelPx(targetLabel)
+  const at = (targetPct / 100) * railPx
+  const target = at - width / 2 < 0 ? 'left' : at + width / 2 > railPx ? 'right' : 'center'
+  const start = target === 'left' ? 0 : target === 'right' ? railPx - width : at - width / 2
+  const captionPx = labelPx(caption) + LABEL_CLEARANCE_PX
+  if (start >= captionPx) return { target, caption: 'left' }
+  if (start + width + captionPx <= railPx) return { target, caption: 'right' }
+  return { target, caption: null }
 }

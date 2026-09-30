@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Listing } from '@/api/types'
-import { labelFlipsLeft, labeledTicks, makeRail } from './rail'
+import { axisLabels, labelFlipsLeft, labeledTicks, makeRail } from './rail'
 
 // Item 3's 30 active listings on 2026-09-21 (target $20.00) — the board that
 // packed thirteen $6–$10 rows into 6% of a linear rail.
@@ -104,5 +104,36 @@ describe('labelFlipsLeft', () => {
   it('uses the fallback before the rail is measured', () => {
     expect(labelFlipsLeft(80, 50, '$6.00', 0, 78)).toBe(true)
     expect(labelFlipsLeft(70, 50, '$6.00', 0, 78)).toBe(false)
+  })
+})
+
+describe('axisLabels', () => {
+  it('centres ⌖ on its notch in open space', () => {
+    expect(axisLabels(50, '⌖ $20.00', 'drift 30d', 330, 82)).toEqual({ target: 'center', caption: 'left' })
+  })
+
+  it('pins ⌖ to the right edge rather than spill past it', () => {
+    expect(axisLabels(98, '⌖ $20.00', 'drift 30d', 330, 82)).toEqual({ target: 'right', caption: 'left' })
+  })
+
+  it('pins a target pricier than every listing to the left and moves the caption right', () => {
+    const rail = makeRail(rows(ITEM_3), none, 9_999_999_999)!
+    expect(axisLabels(rail.targetPct!, '⌖ $99,999,999.99', 'drift 30d', 330, 82)).toEqual({
+      target: 'left',
+      caption: 'right',
+    })
+  })
+
+  it('moves the caption when a centred ⌖ still covers it', () => {
+    expect(axisLabels(15, '⌖ $650.00', 'drift 30d', 330, 82)).toEqual({ target: 'center', caption: 'right' })
+  })
+
+  it('drops the caption when the line cannot hold both', () => {
+    expect(axisLabels(4, '⌖ $99,999,999.99', 'drift 30d', 150, 82)).toEqual({ target: 'left', caption: null })
+  })
+
+  it('uses the fallback before the rail is measured', () => {
+    expect(axisLabels(90, '⌖ $20.00', 'drift 30d', 0, 82)).toEqual({ target: 'right', caption: 'left' })
+    expect(axisLabels(2, '⌖ $20.00', 'drift 30d', 0, 82)).toEqual({ target: 'center', caption: 'left' })
   })
 })
