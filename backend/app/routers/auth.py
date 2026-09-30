@@ -239,7 +239,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         )
     _check_new_password(body.password)
 
-    if await db.scalar(select(User).where(User.email == body.email)):
+    if await db.scalar(select(User).where(func.lower(User.email) == body.email)):
         raise _email_taken()
 
     user = User(
@@ -267,7 +267,7 @@ async def login(
     403 forbidden for a deactivated account; 429 rate_limited once the client
     address or the account has made too many attempts (core/ratelimit.py)."""
     address = request.client.host if request.client else ""
-    account = body.email.lower()
+    account = body.email
     if wait := max(
         ratelimit.by_address.retry_after(address), ratelimit.by_account.retry_after(account)
     ):
@@ -275,7 +275,7 @@ async def login(
     ratelimit.by_address.record(address)
     ratelimit.by_account.record(account)
 
-    user = await db.scalar(select(User).where(User.email == body.email))
+    user = await db.scalar(select(User).where(func.lower(User.email) == body.email))
     # hand the connection back while argon2 works: a queue of logins holding
     # the whole pool would stall every other request as surely as hashing on
     # the event loop did
@@ -423,8 +423,8 @@ async def accept_invite(
     if burned is None:
         raise err(410, "invite_expired", "This invite has expired or was already used")
     # an invite pinned to an email wins over whatever the form submitted
-    email = invite.email or body.email
-    if await db.scalar(select(User).where(User.email == email)):
+    email = (invite.email or body.email).lower()
+    if await db.scalar(select(User).where(func.lower(User.email) == email)):
         raise _email_taken()
 
     user = User(

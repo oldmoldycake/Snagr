@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from app.config import settings
 from app.core import ratelimit
-from app.core.security import hash_refresh
+from app.core.security import hash_password, hash_refresh
 from app.models import Sessions, User
 from argon2 import PasswordHasher
 from sqlalchemy import select, update
@@ -60,6 +60,42 @@ async def test_register_duplicate_email(client, monkeypatch):
     res = await _register(client, {"email": ADMIN["email"], "password": "whatever123"})
     assert res.status_code == 422
     assert "email" in res.json()["error"]["fields"]
+
+
+async def test_register_lowercases_the_email(client, make_client):
+    res = await _register(client, {"email": "Alice@Example.COM", "password": "hunter2hunter2"})
+    assert res.status_code == 201
+    assert res.json()["user"]["email"] == "alice@example.com"
+    other = await make_client()
+    login = await other.post(
+        "/api/auth/login",
+        json={"email": "alice@example.com", "password": "hunter2hunter2"},
+        headers=CSRF,
+    )
+    assert login.status_code == 200
+
+
+async def test_register_refuses_a_case_variant_of_a_taken_email(client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    res = await _register(client, {"email": "ADMIN@example.com", "password": "whatever123"})
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "email" in res.json()["error"]["fields"]
+
+
+async def test_login_finds_a_mixed_case_account(client, db_session):
+    # an account stored before addresses were lowercased on the way in
+    async with db_session() as s:
+        s.add(User(email="Legacy@Example.com", password_hash=await hash_password("pw-pw-pw-pw")))
+        await s.commit()
+    res = await client.post(
+        "/api/auth/login",
+        json={"email": "legacy@EXAMPLE.com", "password": "pw-pw-pw-pw"},
+        headers=CSRF,
+    )
+    assert res.status_code == 200
+    assert res.json()["user"]["email"] == "Legacy@Example.com"
 
 
 async def test_concurrent_first_registrations_make_one_admin(make_client, db_session):
@@ -235,6 +271,30 @@ async def test_invite_pinned_email_wins(client, make_client):
     assert res.json()["user"]["email"] == "pinned@example.com"
 
 
+async def test_invite_accept_refuses_a_case_variant_of_a_taken_email(client, make_client):
+    await _register(client, {"email": "racer0@example.com", "password": "hunter2hunter2"})
+    created = await client.post("/api/admin/invites", json={}, headers=CSRF)
+    token = created.json()["token"]
+
+    invitee = await make_client()
+    res = await invitee.post(
+        f"/api/auth/invites/{token}/accept",
+        json={"email": "RACER0@example.com", "password": "pw-pw-pw-pw"},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "email" in res.json()["error"]["fields"]
+
+
+async def test_invite_pinned_email_is_lowercased(client, make_client):
+    await _register(client)
+    created = await client.post(
+        "/api/admin/invites", json={"email": "Pinned@Example.com"}, headers=CSRF
+    )
+    assert created.json()["email"] == "pinned@example.com"
+
+
 async def test_invite_revoke(client):
     await _register(client)
     created = await client.post("/api/admin/invites", json={}, headers=CSRF)
@@ -305,6 +365,33 @@ async def test_me_update_email(client):
     # ntfy_topic left the contract with the channels rework — a stale client
     # still sending it is ignored, not an error
     assert "ntfy_topic" not in res.json()
+
+
+async def test_me_update_email_refuses_a_case_variant_of_a_taken_email(
+    client, make_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    guest = await make_client()
+    await _register(guest, GUEST)
+    res = await guest.patch("/api/me", json={"email": "Admin@Example.com"}, headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "email" in res.json()["error"]["fields"]
+
+
+async def test_me_update_resaving_a_mixed_case_email_keeps_it(client, db_session):
+    await _register(client)
+    # an address stored before they were lowercased on the way in
+    async with db_session() as s:
+        await s.execute(update(User).values(email="Admin@Example.com"))
+        await s.commit()
+    res = await client.patch("/api/me", json={"email": "admin@example.com"}, headers=CSRF)
+    assert res.status_code == 200
+    async with db_session() as s:
+        user = await s.scalar(select(User))
+    assert user.email == "Admin@Example.com"
+    assert user.email_verified  # re-saving your own address doesn't unconfirm it
 
 
 # --- password rules ----------------------------------------------------------------

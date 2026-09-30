@@ -84,6 +84,14 @@ async def test_resolve_marries_case_variant_email(db_session):
         assert (await s.get(User, uid)).oidc_sub == "authentik-sub-1"  # married
 
 
+async def test_resolve_marries_a_mixed_case_account(db_session):
+    # an account stored before addresses were lowercased on the way in
+    uid = await _seed_user(db_session, "SSO@Example.com")
+    async with db_session() as s:
+        user = await oidc.resolve_oidc_user(s, CLAIMS)
+    assert user.id == uid
+
+
 async def test_resolve_refuses_unverified_email(db_session):
     uid = await _seed_user(db_session, "sso@example.com")
     async with db_session() as s:
