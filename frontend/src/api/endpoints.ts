@@ -88,7 +88,7 @@ export const changePassword = (body: PasswordChangeRequest) =>
 /** The caller's notification channels. */
 export const listChannels = () => api<{ data: NotificationChannel[] }>('/api/me/channels')
 
-/** Add a notification channel; a webhook's signing secret comes back only in this response. */
+/** Add a notification channel (409 channel_limit past ten); a webhook's signing secret comes back only in this response. */
 export const createChannel = (body: NotificationChannelCreateRequest) =>
   api<NotificationChannelCreated>('/api/me/channels', { method: 'POST', body })
 

@@ -425,6 +425,8 @@ function alreadyTracked() {
 
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
 const NTFY_TOPIC = /^[A-Za-z0-9_-]{1,64}$/
+// every channel is another send per event, so one user can't queue unbounded work
+const MAX_CHANNELS = 10
 
 /**
  * Why a channel URL isn't a public address, or null — an approximation of
@@ -696,6 +698,9 @@ export const handlers = [
     }
     // mock-parity gap: the mock instance always has a ntfy server, so the 422
     // no_server branch (ntfy kind while NTFY_SERVER_URL is unset) is backend-only
+    if (store.notificationChannels.filter((c) => c.user_id === user.id).length >= MAX_CHANNELS) {
+      return err(409, 'channel_limit', `You can have at most ${MAX_CHANNELS} notification channels`)
+    }
     const fields = validateChannel(body.kind, body)
     if (fields instanceof HttpResponse) return fields
     const secret = body.kind === 'webhook' ? crypto.randomUUID().replace(/-/g, '') : null

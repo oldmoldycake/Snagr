@@ -16,6 +16,7 @@ import httpx
 import pytest
 from app.config import settings
 from app.models import NotificationChannels, NotificationDeliveries
+from app.routers.me import MAX_CHANNELS
 from app.services import notifications as notifications_service
 from sqlalchemy import select
 
@@ -162,6 +163,18 @@ async def test_create_field_validation(client, ntfy_server):
         assert res.status_code == 422, (body, res.text)
         assert res.json()["error"]["code"] == "validation_error"
         assert field in res.json()["error"]["fields"], body
+
+
+async def test_channels_stop_at_the_limit(client):
+    await _sign_in(client)
+    for n in range(MAX_CHANNELS):
+        res = await _create(client, kind="webhook", name=f"hook {n}", url="https://example.com/h")
+        assert res.status_code == 201, res.text
+
+    res = await _create(client, kind="webhook", name="one more", url="https://example.com/h")
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "channel_limit"
+    assert len((await client.get("/api/me/channels")).json()["data"]) == MAX_CHANNELS
 
 
 async def test_empty_and_full_event_sets_normalize_to_null(client):
