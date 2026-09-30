@@ -233,12 +233,13 @@ across all of it deciding what is believed and which sites are read at all.
    A disbelieved model read is recorded with `confirmed = false`, never
    notifies, and stays out of every aggregate for good; the *next* read landing
    within 1% of it is the one believed. A disbelieved locator read is thrown
-   away and the model re-reads the page. `url_allowed` keeps a URL inside the
-   site's registrable domain and off the private network, for storing a URL
-   *and* for every navigation: the model is given a `browser_navigate` wrapper
-   (`guarded_navigate`), and code execution, file upload and tab control are
-   withheld (`BLOCKED_BROWSER_TOOLS`). `clip_text` caps model-typed text before
-   it reaches a later prompt or a notification body.
+   away and the model re-reads the page. `url_allowed` keeps a URL on the
+   site's own host (or a subdomain of it) and off the private network, for
+   storing a URL *and* for every navigation: the model is given a
+   `browser_navigate` wrapper (`guarded_navigate`), and code execution, file
+   upload and tab control are withheld (`BLOCKED_BROWSER_TOOLS`). `clip_text`
+   caps model-typed text before it reaches a later prompt or a notification
+   body.
 
 7. **One writer owns the observation** (`observations.record_price_check`).
    The model's `save_price_check`, `save_listing` with a price, and the
