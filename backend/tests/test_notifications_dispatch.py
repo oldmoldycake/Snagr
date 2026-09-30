@@ -182,6 +182,26 @@ class TestDeliver:
         assert (delivery.status, delivery.attempts) == ("delivered", 1)
         assert delivery.delivered_at is not None
 
+    async def test_ntfy_click_percent_encodes_a_non_ascii_listing_url(
+        self, sc, db_session, outbound, ntfy_server
+    ):
+        # httpx refuses a non-ASCII header value, which would burn every attempt
+        outbox = await sc.outbox()
+        outbox.payload = {
+            **outbox.payload,
+            "listing_url": "https://testbay.example/listing/café 1?q=über#größe",
+        }
+        channel = await sc.channel(kind="ntfy")
+        sc.db.add(NotificationDeliveries(outbox_id=outbox.id, channel_id=channel.id))
+        await sc.db.commit()
+        requests, _ = outbound
+
+        assert await notifications_service._deliver_one() is True
+        (request,) = requests
+        assert request.headers["Click"] == (
+            "https://testbay.example/listing/caf%C3%A9%201?q=%C3%BCber#gr%C3%B6%C3%9Fe"
+        )
+
     async def test_webhook_envelope_is_signed_and_versioned(self, sc, db_session, outbound):
         outbox_id, _, delivery_id = await _seed_delivery(sc, kind="webhook")
         requests, _ = outbound
