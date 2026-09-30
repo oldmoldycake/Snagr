@@ -71,11 +71,11 @@ export const getMe = () => api<User>('/api/auth/me')
 
 /** Check an invite link before showing the signup form; 404 unknown, 410 used or expired. */
 export const validateInvite = (token: string) =>
-  api<InviteValidation>(`/api/auth/invites/${token}`)
+  api<InviteValidation>(`/api/auth/invites/${encodeURIComponent(token)}`)
 
 /** Create an account from an invite and start a session; an email pinned to the invite wins. */
 export const acceptInvite = (token: string, body: InviteAcceptRequest) =>
-  api<{ user: User }>(`/api/auth/invites/${token}/accept`, { method: 'POST', body })
+  api<{ user: User }>(`/api/auth/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body })
 
 /** Change the caller's email or vision thresholds; only sent fields change. */
 export const updateMe = (body: MeUpdateRequest) =>
