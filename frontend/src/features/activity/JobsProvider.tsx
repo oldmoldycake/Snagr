@@ -31,6 +31,7 @@ import {
 } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { enqueueJobs, getJobEvents } from '@/api/endpoints'
+import { itemCategories } from './huntScope'
 import { openLiveStream, type Connection } from './liveStream'
 import type {
   Job,
@@ -162,11 +163,13 @@ export function JobsProvider({ children }: { children: ReactNode }) {
       const hunts = live.filter((job) => job.kind === 'hunt')
       if (scope === 'item') return hunts.find((job) => job.item_id === scopeId)
       if (scope === 'site') return hunts.find((job) => job.site_id === scopeId)
-      // a category (or everything) is live when anything in it is — the
-      // client has no item -> category map, and does not need one to say so
+      if (scope === 'category') {
+        const categories = itemCategories(queryClient.getQueriesData({ queryKey: ['items'] }))
+        return hunts.find((job) => job.item_id !== null && categories.get(job.item_id) === scopeId)
+      }
       return hunts[0]
     },
-    [live],
+    [live, queryClient],
   )
 
   const value = useMemo<JobsContextValue>(
