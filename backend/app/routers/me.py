@@ -283,6 +283,9 @@ async def create_channel(
         )
     if body.kind == "ntfy" and not settings.NTFY_SERVER_URL:
         raise err(422, "no_server", "This instance has no ntfy server configured")
+    # the owner's row lock serializes concurrent creates, or two at
+    # MAX_CHANNELS - 1 would both count under the limit and both insert
+    await db.execute(select(UserModel.id).where(UserModel.id == user.id).with_for_update())
     owned = await db.scalar(
         select(func.count())
         .select_from(NotificationChannels)
