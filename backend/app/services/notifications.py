@@ -36,7 +36,7 @@ import logging
 import re
 import socket
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import asyncpg
 import httpx
@@ -65,6 +65,10 @@ RECONNECT_SECONDS = 5
 # pasted into the ntfy server's path, so nothing that could climb out of it
 NTFY_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
+# Everything a URL may already carry stays as is (so an encoded URL isn't
+# double-encoded); only non-ASCII and the unsafe leftovers get escaped.
+_URL_SAFE = "%!#$&'()*+,/:;=?@[]~"
+
 _EMBED_COLORS = {"target.hit": 0x22C55E, "listing.new": 0x3B82F6, "test": 0x64748B}
 
 
@@ -80,9 +84,15 @@ class _RetryAfter(Exception):
 # --- per-kind rendering (pure — shared by real sends, test sends, and tests) --
 
 
+def _header_url(url: str) -> str:
+    """A URL fit for an HTTP header: httpx refuses non-ASCII header values."""
+    return quote(url, safe=_URL_SAFE)
+
+
 def _ntfy_message(event: str, payload: dict) -> tuple[str, dict[str, str]]:
     """(body, headers) for a ntfy push. Title stays ASCII: item names ride in
-    the UTF-8 body because HTTP header values have no encoding to trust."""
+    the UTF-8 body because HTTP header values have no encoding to trust, and
+    the Click URL is percent-encoded for the same reason."""
     if event == "target.hit":
         body = (
             f"{payload['item_name']} — {payload['price']} {payload['currency']} "
@@ -91,7 +101,7 @@ def _ntfy_message(event: str, payload: dict) -> tuple[str, dict[str, str]]:
         return body, {
             "Title": "Snagr target hit",
             "Tags": "moneybag",
-            "Click": payload["listing_url"],
+            "Click": _header_url(payload["listing_url"]),
         }
     if event == "listing.new":
         body = (
@@ -101,7 +111,7 @@ def _ntfy_message(event: str, payload: dict) -> tuple[str, dict[str, str]]:
         return body, {
             "Title": "Snagr new listing",
             "Tags": "mag",
-            "Click": payload["listing_url"],
+            "Click": _header_url(payload["listing_url"]),
         }
     return "Snagr test notification — you're all set!", {"Title": "Snagr", "Tags": "tada"}
 
