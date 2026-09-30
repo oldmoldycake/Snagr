@@ -67,7 +67,7 @@ NTFY_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # Everything a URL may already carry stays as is (so an encoded URL isn't
 # double-encoded); only non-ASCII and the unsafe leftovers get escaped.
-_URL_SAFE = "!#$%&'()*+,/:;=?@[]~"
+_URL_SAFE = "%!#$&'()*+,/:;=?@[]~"
 
 _EMBED_COLORS = {"target.hit": 0x22C55E, "listing.new": 0x3B82F6, "test": 0x64748B}
 
