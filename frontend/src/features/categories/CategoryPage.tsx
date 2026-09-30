@@ -48,6 +48,13 @@ const STATUS_FILTERS = [
  */
 export function CategoryPage() {
   const { slug = '' } = useParams()
+  // The router reuses this element across /categories/:slug, so without the
+  // key one category's filters would apply to the next — hiding its watches,
+  // and unclearable when the site picker isn't shown.
+  return <CategoryView key={slug} slug={slug} />
+}
+
+function CategoryView({ slug }: { slug: string }) {
   const [range, setRange] = useRangeParam()
   const [status, setStatus] = useState<ItemStatusFilter>('all')
   const [siteFilter, setSiteFilter] = useState<number | undefined>(undefined)
