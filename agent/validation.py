@@ -55,8 +55,8 @@ CORROBORATION = Decimal("0.01")
 _GROUPING = " \u00a0\u202f'\u2019"
 _NUMBER = re.compile(rf"\d{{1,3}}(?:[{_GROUPING}]\d{{3}})+(?:[.,]\d+)?|\d+(?:[.,]\d+)*")
 # A minus sign ahead of the number, past any currency code or symbol ("-$10",
-# "−10 €", "-EUR 10"); a hyphen inside a word ("X-100") is not a sign.
-_NEGATIVE = re.compile(r"(?<!\w)[-\u2212]\s*(?:[A-Z]{2,3}\s*)?[^\w\s]?\s*\d")
+# "−10 €", "-EUR 10", "-kr 10"); a hyphen inside a word ("X-100") is not a sign.
+_NEGATIVE = re.compile(r"(?<!\w)[-\u2212]\s*(?:(?i:[A-Z]{2,3})\s*)?[^\w\s]?\s*\d")
 
 # Currency codes a marketplace page might state next to a price. A closed set
 # on purpose: scanning visible text for any three capitals finds "ADD" in
