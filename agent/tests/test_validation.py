@@ -80,6 +80,7 @@ class TestParsePrice:
             "12 bids $30.00",  # the page fragment beside one
             "Free shipping over $50, was $80",
             "12 30",  # a space groups only in threes
+            "1 2341234 €",
             "-$10",  # a negative is not a price
             "-10.00",
             "\u221210 €",
