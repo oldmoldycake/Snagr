@@ -16,6 +16,11 @@ versioned webhook envelope. A failed send spends an attempt and backs off
 (RETRY_BACKOFF); after MAX_ATTEMPTS the delivery goes 'failed' and stays
 as the delivery log.
 
+Sends run DELIVERY_WORKERS at a time, at most PER_HOST_SENDS of them to any
+one host, so a user's dead webhook burns its own timeouts instead of holding
+up everyone else's notifications, and a burst to one Discord webhook doesn't
+take every worker (or trip its rate limit).
+
 Errors here log-and-continue instead of raising — the loud-failure rule
 serves request handlers, but a dead dispatcher silently loses everyone's
 notifications. A send that raises anything (a poisoned payload included) is
@@ -30,6 +35,7 @@ exact path a real event takes.
 """
 
 import asyncio
+import collections
 import ipaddress
 import json
 import logging
@@ -54,6 +60,9 @@ CHANNEL = "snagr_notifications"
 
 SEND_TIMEOUT_SECONDS = 10
 MAX_ATTEMPTS = 5
+# each worker holds a pooled DB connection for the length of its send
+DELIVERY_WORKERS = 4
+PER_HOST_SENDS = 2
 # seconds until retry n+1 after failure n: quick blip, short outage, longer
 # outage, "try again in a while"
 RETRY_BACKOFF = (30, 300, 1800, 7200)
@@ -242,6 +251,16 @@ def _address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
         return None
 
 
+def _host(channel: NotificationChannels) -> str:
+    """The host a send to this channel goes to — what PER_HOST_SENDS counts.
+    A URL too broken to name one groups under "": its send refuses it anyway."""
+    url = settings.NTFY_SERVER_URL if channel.kind == "ntfy" else channel.url
+    try:
+        return urlsplit(url or "").hostname or ""
+    except ValueError:
+        return ""
+
+
 def _check_destination(channel: NotificationChannels) -> None:
     if channel.kind == "ntfy":
         refused = ntfy_topic_error(channel.topic or "")
@@ -357,8 +376,30 @@ async def _expand_one() -> bool:
         return True
 
 
-async def _deliver_one() -> bool:
-    """Claim one due pending delivery and attempt it; True when one was tried.
+class _Sending:
+    """One drain's in-flight sends, shared by its workers. A delivery whose
+    host is at PER_HOST_SENDS is held back — left pending and unclaimable
+    this drain — until one of that host's sends finishes, so the worker moves
+    on instead of waiting on a slow host."""
+
+    def __init__(self) -> None:
+        self.in_flight: collections.Counter[str] = collections.Counter()
+        self.held_back: dict[str, set[int]] = collections.defaultdict(set)
+        self.host_freed = asyncio.Condition()
+
+    def excluded(self) -> list[int]:
+        return [i for ids in self.held_back.values() for i in ids]
+
+    async def release(self, host: str) -> None:
+        async with self.host_freed:
+            self.in_flight[host] -= 1
+            self.held_back.pop(host, None)
+            self.host_freed.notify_all()
+
+
+async def _deliver_one(sending: _Sending) -> bool:
+    """Claim one due pending delivery and attempt it; True when one was
+    claimed (held back for a busy host included).
 
     The send happens while the row lock is held — deliberate: a crash mid-send
     releases the lock and the row is simply still pending, so there is no
@@ -376,6 +417,7 @@ async def _deliver_one() -> bool:
             )
             .where(NotificationDeliveries.status == "pending")
             .where(NotificationDeliveries.next_attempt_at <= now)
+            .where(NotificationDeliveries.id.not_in(sending.excluded()))
             .order_by(NotificationDeliveries.next_attempt_at)
             .limit(1)
             .with_for_update(skip_locked=True, of=NotificationDeliveries)
@@ -384,6 +426,12 @@ async def _deliver_one() -> bool:
         if claimed is None:
             return False
         delivery, outbox, channel = claimed
+        host = _host(channel)
+        if sending.in_flight[host] >= PER_HOST_SENDS:
+            # untouched, so closing the session just drops the lock
+            sending.held_back[host].add(delivery.id)
+            return True
+        sending.in_flight[host] += 1
         delivery.attempts += 1
         try:
             await _send(
@@ -411,8 +459,23 @@ async def _deliver_one() -> bool:
         else:
             delivery.status = "delivered"
             delivery.delivered_at = datetime.now(UTC)
-        await session.commit()
+        try:
+            await session.commit()
+        finally:
+            await sending.release(host)
         return True
+
+
+async def _delivery_worker(sending: _Sending) -> None:
+    """Deliver until nothing is claimable and no send is in flight — while
+    one is, finishing it may free a host with deliveries held back."""
+    while True:
+        if await _deliver_one(sending):
+            continue
+        async with sending.host_freed:
+            if not sending.in_flight.total():
+                return
+            await sending.host_freed.wait()
 
 
 async def _drain() -> None:
@@ -421,8 +484,15 @@ async def _drain() -> None:
     missed NOTIFY is never special."""
     while await _expand_one():
         pass
-    while await _deliver_one():
-        pass
+    sending = _Sending()
+    workers = [asyncio.create_task(_delivery_worker(sending)) for _ in range(DELIVERY_WORKERS)]
+    try:
+        await asyncio.gather(*workers)
+    finally:
+        # one worker losing the DB fails the drain; the rest go with it
+        # rather than outliving it into the reconnect
+        for worker in workers:
+            worker.cancel()
 
 
 async def listen_pg() -> None:

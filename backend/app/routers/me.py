@@ -163,6 +163,11 @@ async def change_password(
     await db.commit()
 
 
+# every channel is another send per event, so one user can't queue unbounded
+# work ahead of everyone else's notifications
+MAX_CHANNELS = 10
+
+
 def _channel_fields(
     kind: str,
     body: NotificationChannelCreateRequest | NotificationChannelUpdateRequest,
@@ -271,13 +276,25 @@ async def create_channel(
     """Add a notification channel; a webhook's signing secret is returned only here.
 
     422 validation_error for invalid fields; 422 no_server for ntfy while the
-    instance has no ntfy server."""
+    instance has no ntfy server; 409 channel_limit at MAX_CHANNELS."""
     if body.kind not in ("ntfy", "webhook", "discord"):
         raise err(
             422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
         )
     if body.kind == "ntfy" and not settings.NTFY_SERVER_URL:
         raise err(422, "no_server", "This instance has no ntfy server configured")
+    # the owner's row lock serializes concurrent creates, or two at
+    # MAX_CHANNELS - 1 would both count under the limit and both insert
+    await db.execute(select(UserModel.id).where(UserModel.id == user.id).with_for_update())
+    owned = await db.scalar(
+        select(func.count())
+        .select_from(NotificationChannels)
+        .where(NotificationChannels.user_id == user.id)
+    )
+    if owned >= MAX_CHANNELS:
+        raise err(
+            409, "channel_limit", f"You can have at most {MAX_CHANNELS} notification channels"
+        )
     fields = _channel_fields(body.kind, body)
     secret = new_channel_secret() if body.kind == "webhook" else None
     channel = NotificationChannels(
