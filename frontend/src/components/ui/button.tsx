@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn'
 
 /** Button class recipe, exported so links and triggers can look like buttons. */
 export const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm font-mono font-medium tracking-[0.06em] uppercase transition-colors disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0',
+  'tap-target relative inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm font-mono font-medium tracking-[0.06em] uppercase transition-colors disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0',
   {
     variants: {
       variant: {

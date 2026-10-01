@@ -763,3 +763,17 @@
 @utility tnum {
   font-variant-numeric: tabular-nums;
 }
+
+/* A 44px hit area on touch screens (WCAG 2.5.5) without growing the control:
+   an invisible ::before reaches past each edge that falls short of 44px. The
+   host must be positioned. ::before, because the nav underlines own ::after. */
+@utility tap-target {
+  @media (pointer: coarse) {
+    &::before {
+      content: '';
+      position: absolute;
+      inset-block: min(0px, calc((100% - 44px) / 2));
+      inset-inline: min(0px, calc((100% - 44px) / 2));
+    }
+  }
+}

@@ -214,7 +214,7 @@ export function WatchList({
                       type="button"
                       aria-expanded={isExpanded}
                       aria-label={`${isExpanded ? 'Collapse' : 'Expand'} listings for ${item.name}`}
-                      className="flex size-5 items-center justify-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
+                      className="tap-target relative flex size-5 items-center justify-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
                       onClick={() => toggleExpand(item.id)}
                     >
                       {isExpanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
