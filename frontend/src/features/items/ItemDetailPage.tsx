@@ -114,6 +114,8 @@ export function ItemDetailPage() {
     mutationFn: () => deleteItem(itemId),
     meta: { inlineError: true },
     onSuccess: () => {
+      // removed, not invalidated: Back would otherwise paint the cached page, live buttons and all
+      queryClient.removeQueries({ queryKey: qk.item(itemId) })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
