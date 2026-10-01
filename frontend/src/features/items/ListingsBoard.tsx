@@ -374,7 +374,7 @@ function ExpandedRow({
         <Switch
           checked={listing.active}
           onCheckedChange={(active) => toggle.mutate(active)}
-          aria-label={`${listing.active ? 'Stop tracking' : 'Track'} this ${listing.site_name} listing`}
+          aria-label={`Track this ${listing.site_name} listing`}
         />
       </label>
     </div>
@@ -413,18 +413,11 @@ function BoardRow({
   const chip = listing.active ? exceptionChip(listing) : null
 
   return (
-    <Collapsible open={expanded}>
+    <Collapsible open={expanded} onOpenChange={onToggle}>
+      {/* The whole row is a mouse target; keyboard and screen readers get the ▸ button, so
+          the title link isn't nested inside another control. */}
       <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
         onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault()
-            onToggle()
-          }
-        }}
         className={cn(
           'group grid cursor-pointer items-center gap-3 px-4 py-2 transition-colors',
           GRID_COLS,
@@ -433,17 +426,21 @@ function BoardRow({
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
-          <span
-            aria-hidden
-            className={cn(
-              'shrink-0 font-mono text-[12px]',
-              expanded
-                ? 'text-lume'
-                : 'text-ink-3 opacity-50 group-hover:opacity-100 group-focus-visible:opacity-100',
-            )}
-          >
-            {expanded ? '▾' : '▸'}
-          </span>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Details for this ${listing.site_name} listing`}
+              onClick={(e) => e.stopPropagation()}
+              className={cn(
+                'shrink-0 font-mono text-[12px]',
+                expanded
+                  ? 'text-lume'
+                  : 'text-ink-3 opacity-50 group-hover:opacity-100 focus-visible:opacity-100',
+              )}
+            >
+              <span aria-hidden>{expanded ? '▾' : '▸'}</span>
+            </button>
+          </CollapsibleTrigger>
           <a
             href={listing.url}
             target="_blank"

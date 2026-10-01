@@ -331,7 +331,7 @@ export function ChannelsCard() {
                   checked={channel.enabled}
                   disabled={toggle.isPending}
                   onCheckedChange={(enabled) => toggle.mutate({ id: channel.id, enabled })}
-                  aria-label={`${channel.enabled ? 'Disable' : 'Enable'} ${channel.name}`}
+                  aria-label={`Notify via ${channel.name}`}
                 />
                 <Button
                   variant="ghost"
