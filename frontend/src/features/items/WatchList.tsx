@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ChevronDown, ChevronRight, ListFilter, Pencil, Search, Trash2 } from 'lucide-react'
 import type { ItemSummary, PriceDrop } from '@/api/types'
 import { Sparkline } from '@/components/charts/Sparkline'
@@ -191,7 +191,11 @@ export function WatchList({
               <TR
                 data-clickable="true"
                 data-strike={struck?.has(item.id) || undefined}
-                onClick={() => navigate(`/items/${item.id}`)}
+                // the name's link is what keyboards, screen readers and new tabs use; the row
+                // click is a mouse convenience, and leaves a click on the link to the link
+                onClick={(e) => {
+                  if (!(e.target as Element).closest('a')) navigate(`/items/${item.id}`)
+                }}
                 className={cn(
                   'border-l-2 border-l-transparent',
                   // the in-range gradient is a background image, so the flash shows through its clear end
@@ -221,11 +225,15 @@ export function WatchList({
                         ⌖
                       </span>
                     ) : null}
-                    <span
-                      className={cn('min-w-0 truncate font-medium text-ink', item.target_met && 'text-sm font-semibold')}
+                    <Link
+                      to={`/items/${item.id}`}
+                      className={cn(
+                        'min-w-0 truncate font-medium text-ink hover:text-lume',
+                        item.target_met && 'text-sm font-semibold',
+                      )}
                     >
                       {item.name}
-                    </span>
+                    </Link>
                     {showCategory ? (
                       <span className="hidden shrink-0 font-mono text-[10.5px] text-ink-3 md:inline">
                         {item.category_name}
