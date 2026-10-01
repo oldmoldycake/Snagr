@@ -5,11 +5,13 @@ import { ApiError } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
 import { useInstance, useRegister } from './useSession'
 
 /** Self-registration page; redirects to /login when the instance has registration closed. */
 export function RegisterPage() {
+  usePageTitle('Create your account')
   const { data: instance, isLoading } = useInstance()
   const register = useRegister()
   const [email, setEmail] = useState('')

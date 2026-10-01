@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import type { ComponentPropsWithoutRef } from 'react'
 import { cn } from '@/lib/cn'
+import { focusMovedElsewhere } from '@/lib/focus'
 
 /** Side-panel root — Radix Dialog.Root. */
 export const Sheet = DialogPrimitive.Root
@@ -19,6 +20,7 @@ export function SheetContent({
   side = 'right',
   className,
   children,
+  onCloseAutoFocus,
   ...props
 }: ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { side?: 'left' | 'right' }) {
   return (
@@ -32,6 +34,10 @@ export function SheetContent({
             : 'left-0 border-r data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left',
           className,
         )}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event)
+          if (focusMovedElsewhere(event.currentTarget)) event.preventDefault()
+        }}
         {...props}
       >
         {children}

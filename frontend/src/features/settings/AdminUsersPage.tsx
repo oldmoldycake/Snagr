@@ -33,6 +33,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { copyText } from '@/lib/clipboard'
 import { relativeTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useSession } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
 
@@ -146,6 +147,7 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
  * or revoke invites.
  */
 export function AdminUsersPage() {
+  usePageTitle('Users · Settings')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)
   const queryClient = useQueryClient()

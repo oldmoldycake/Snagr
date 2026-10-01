@@ -27,6 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { copyText } from '@/lib/clipboard'
 import { formatDateTime, relativeTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
 
@@ -327,6 +328,7 @@ function expiryCell(token: ApiToken) {
  * when the instance has MCP enabled.
  */
 export function ApiSettingsPage() {
+  usePageTitle('MCP & API · Settings')
   const { data: instance } = useInstance()
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)

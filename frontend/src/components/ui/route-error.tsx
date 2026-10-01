@@ -1,5 +1,6 @@
 import { Link, useRouteError } from 'react-router-dom'
 import { cn } from '@/lib/cn'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { Button, buttonVariants } from './button'
 
 /**
@@ -11,6 +12,7 @@ import { Button, buttonVariants } from './button'
  */
 export function RouteError({ fullPage = false }: { fullPage?: boolean }) {
   const error = useRouteError()
+  usePageTitle('Something broke')
   return (
     <div className={cn(fullPage && 'flex min-h-screen items-center justify-center p-4')}>
       <div

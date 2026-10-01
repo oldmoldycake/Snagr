@@ -33,6 +33,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { relativeTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { useSession } from '@/features/auth/useSession'
 
@@ -191,6 +192,7 @@ function SiteActions({
 
 /** The site list: the stores the hunter searches. Sites are shared, so only an admin adds, edits or deletes one. */
 export function SitesPage() {
+  usePageTitle('Sites')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Site | null>(null)
   // Bumped on every open so the dialog's form starts fresh, while staying

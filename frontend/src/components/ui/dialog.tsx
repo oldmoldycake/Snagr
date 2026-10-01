@@ -2,6 +2,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useRef, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
+import { focusMovedElsewhere } from '@/lib/focus'
 
 /** Modal dialog root — Radix Dialog.Root. */
 export const Dialog = DialogPrimitive.Root
@@ -52,6 +53,7 @@ export function DialogContent({
         }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event)
+          if (focusMovedElsewhere(event.currentTarget)) event.preventDefault()
           if (event.defaultPrevented || !returnFocusTo.current?.isConnected) return
           event.preventDefault()
           returnFocusTo.current.focus()

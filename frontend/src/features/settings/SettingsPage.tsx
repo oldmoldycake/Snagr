@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance, useSession } from '@/features/auth/useSession'
 import { ChannelsCard } from '@/features/settings/ChannelsCard'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -18,6 +19,7 @@ import { SettingsTabs } from '@/features/settings/SettingsTabs'
  * is on, the authenticity thresholds.
  */
 export function SettingsPage() {
+  usePageTitle('Settings')
   const { data: user } = useSession()
   const { data: instance } = useInstance()
   const queryClient = useQueryClient()

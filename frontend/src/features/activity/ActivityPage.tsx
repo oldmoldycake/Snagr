@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { HunterHero } from './HunterHero'
 import { NeedsYou } from './NeedsYou'
 import { Timeline } from './Timeline'
@@ -18,6 +19,7 @@ const SUMMARY_POLL_MS = 30_000
  */
 export function ActivityPage() {
   const { connection } = useJobs()
+  usePageTitle('Activity')
   const summary = useQuery({
     queryKey: qk.jobsSummary,
     queryFn: getJobsSummary,

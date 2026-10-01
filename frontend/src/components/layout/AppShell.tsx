@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react'
 import { useLocation, useNavigationType } from 'react-router-dom'
 import { Masthead } from './Masthead'
 import { ActivitySheet } from '@/features/activity/ActivitySheet'
@@ -6,10 +6,11 @@ import { ActivitySheet } from '@/features/activity/ActivitySheet'
 /** Signed-in page chrome: masthead, a scrolling centered content column, and the activity sheet. */
 export function AppShell({ children }: { children: ReactNode }) {
   const mainRef = useMainScrollRestoration()
+  useFocusOnNavigation(mainRef)
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <Masthead />
-      <main ref={mainRef} className="flex-1 overflow-y-auto">
+      <main ref={mainRef} tabIndex={-1} className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1040px] px-6 py-8 md:py-10">{children}</div>
       </main>
       <ActivitySheet />
@@ -49,4 +50,49 @@ function useMainScrollRestoration() {
   }, [key, navigationType])
 
   return mainRef
+}
+
+/**
+ * A route change in a single-page app is silent: nothing tells a screen reader
+ * the page changed, and focus stays on the link that was clicked (or falls to
+ * the body when that link went with the old page). Moving it to the new page's
+ * heading reads the page's name out and starts the next Tab from the top of the
+ * page; <main> stands in while the heading is still loading. The first load
+ * leaves focus to the browser, and a replace is the same page, so focus stays
+ * on the control that changed it. A menu or sheet that navigated leaves focus
+ * here as it closes (focusMovedElsewhere) rather than handing it back to its
+ * trigger.
+ */
+function useFocusOnNavigation(mainRef: RefObject<HTMLElement | null>) {
+  const { key } = useLocation()
+  const navigationType = useNavigationType()
+  const shownKey = useRef(key)
+
+  useEffect(() => {
+    if (shownKey.current === key) return
+    shownKey.current = key
+    const main = mainRef.current
+    if (!main || navigationType === 'REPLACE') return
+    const heading = main.querySelector('h1')
+    if (heading) {
+      focusHeading(heading)
+      return
+    }
+    main.focus({ preventScroll: true })
+    // a page still loading its subject has no heading yet: move on to it when
+    // it lands, unless the reader has taken focus somewhere since
+    const observer = new MutationObserver(() => {
+      const landed = main.querySelector('h1')
+      if (!landed) return
+      observer.disconnect()
+      if (document.activeElement === main) focusHeading(landed)
+    })
+    observer.observe(main, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [mainRef, key, navigationType])
+}
+
+function focusHeading(heading: HTMLElement) {
+  heading.tabIndex = -1
+  heading.focus({ preventScroll: true })
 }

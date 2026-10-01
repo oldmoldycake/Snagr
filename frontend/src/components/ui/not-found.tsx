@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { buttonVariants } from './button'
 import { EmptyState } from './empty-state'
 
@@ -18,6 +19,7 @@ export function NotFound({
   to?: string
   label?: string
 }) {
+  usePageTitle(title)
   return (
     <EmptyState
       title={title}

@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { relativeTime } from '@/lib/time'
 import { useMediaQuery } from '@/lib/useMediaQuery'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { HunterTicker } from '@/features/activity/HunterTicker'
 import { useTick } from '@/features/activity/useTick'
 import { useSession } from '@/features/auth/useSession'
@@ -49,6 +50,7 @@ export function DashboardPage() {
   const [range, setRange] = useRangeParam()
   const [params] = useSearchParams()
   const search = params.get('search') || undefined
+  usePageTitle(search ? `Search: ${search}` : 'Dashboard')
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const userId = useSession().data?.id ?? null
   // categories are shared, so only an admin creates one
