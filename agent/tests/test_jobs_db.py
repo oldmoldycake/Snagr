@@ -1408,6 +1408,21 @@ class TestUnitLookups:
     def test_a_missing_item_has_nothing_to_ground(self):
         assert db(get_ground_unit(9999)) is None
 
+    def test_an_item_nobody_watches_has_nothing_to_ground(self):
+        # its job was queued while somebody watched it; a market price nobody
+        # reads is search and model calls for nothing
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                left = Items(category_id=ids["cat_b"], name="Blastoise")
+                session.add(left)
+                await session.flush()
+                left_id = left.id
+                await session.commit()
+            return await get_ground_unit(left_id)
+
+        assert db(scenario()) is None
+
     def test_a_site_the_watchs_category_does_not_carry_is_not_a_pair(self):
         # CardBay sells cards; the Emerald watch has no business there, even
         # if a stale job says otherwise

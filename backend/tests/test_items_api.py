@@ -1362,3 +1362,54 @@ async def test_recasing_a_shared_item_is_for_an_admin(client, db_session):
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "forbidden"
     assert (await client.get(f"/api/items/{item_id}")).json()["name"] == "Alpha"
+
+
+# --- the last watcher leaving ----------------------------------------------------
+
+
+async def _ground_status(db_session, item_id: int) -> list[str]:
+    async with db_session() as session:
+        statuses = await session.scalars(
+            select(Jobs.status).where(Jobs.kind == "ground", Jobs.item_id == item_id)
+        )
+        return list(statuses)
+
+
+async def test_unwatching_the_last_watch_cancels_its_grounding(client, db_session):
+    """The item stays in the catalog, but nobody is asking about its price:
+    grounding it would spend search and model calls on nothing."""
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    body = {"category_id": catalog["category_id"], "name": "Game Boy Color", "target_price": None}
+    item = (await client.post("/api/items", json=body, headers=CSRF)).json()
+    assert await _ground_status(db_session, item["id"]) == ["pending"]
+
+    assert (await client.delete(f"/api/items/{item['id']}", headers=CSRF)).status_code == 204
+
+    assert await _ground_status(db_session, item["id"]) == ["cancelled"]
+
+
+async def test_unwatching_a_shared_item_keeps_its_grounding(client, db_session):
+    owner_id = await _sign_in(client)
+    item_id, _, _, _ = await _shared_item(db_session, owner_id)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.job("ground", None, status="pending", item_id=item_id)
+
+    assert (await client.delete(f"/api/items/{item_id}", headers=CSRF)).status_code == 204
+
+    assert await _ground_status(db_session, item_id) == ["pending"]
+
+
+async def test_renaming_the_only_watch_away_cancels_the_old_items_grounding(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        mine = await sc.item("Alpha")
+        await sc.watch(mine)
+        await sc.job("ground", None, status="pending", item_id=mine.id)
+        theirs = await sc.item("Beta")
+        await sc.watch(theirs, user=await sc.other_user())
+
+    res = await client.patch(f"/api/items/{mine.id}", json={"name": "Beta"}, headers=CSRF)
+
+    assert res.json()["id"] == theirs.id
+    assert await _ground_status(db_session, mine.id) == ["cancelled"]

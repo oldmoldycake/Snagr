@@ -22,6 +22,7 @@ from sqlalchemy import (
     RowMapping,
     Text,
     UniqueConstraint,
+    exists,
     func,
     or_,
     select,
@@ -477,9 +478,9 @@ async def get_ground_unit(item_id: int) -> RowMapping | None:
     The item a ground job is about — its name and category, which is all
     grounding needs to start.
 
-    None means the item is gone. An unwatched item is still grounded if a job
-    says so: nobody is asking about it, but the job was queued when somebody
-    was, and refusing here would leave the row pending forever.
+    None means the item is gone or nobody watches it any more: its job was
+    queued when somebody did, and a market price nobody reads is search and
+    model calls for nothing. The job still finishes, so nothing stays pending.
 
     Args:
       item_id: The item to refresh market stats for.
@@ -497,6 +498,7 @@ async def get_ground_unit(item_id: int) -> RowMapping | None:
             )
             .join(Categories, Categories.id == Items.category_id)
             .where(Items.id == item_id)
+            .where(exists().where(Watches.item_id == Items.id))
         )
 
         return (await session.execute(stmt)).mappings().one_or_none()

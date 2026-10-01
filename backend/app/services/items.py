@@ -541,12 +541,15 @@ async def _move_watch(db: AsyncSession, watch: Watches, item: Items, *, user_id:
     item: the caller's listings, their jobs (a hunt reads the name it searches
     through the job) and their vision scans. The item it leaves keeps its other
     watchers, its vision library and its market price."""
+    left = watch.item_id
     await db.execute(update(Listings).where(Listings.watch_id == watch.id).values(item_id=item.id))
     await db.execute(update(Jobs).where(Jobs.watch_id == watch.id).values(item_id=item.id))
     await db.execute(
         update(VisionScans).where(VisionScans.watch_id == watch.id).values(item_id=item.id)
     )
     watch.item_id = item.id
+    # renaming onto another item's name can move an item's only watch away
+    await jobs_service.cancel_unwatched_ground(db, left)
     # a name the hunter has never looked for needs its own market price
     await jobs_service.enqueue_ground(db, item.id, user_id=user_id)
 
@@ -707,8 +710,9 @@ async def update_item(
 
 async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
     """Remove the caller's watch and everything hanging off it (listings,
-    checks, site subset); the shared items row stays for other watchers.
-    404 when unwatched. Commits."""
+    checks, site subset); the shared items row stays for other watchers, and
+    its pending grounding goes with the last of them. 404 when unwatched.
+    Commits."""
     watch = (
         await db.execute(
             select(Watches).where(Watches.item_id == item_id, Watches.user_id == user_id)
@@ -723,6 +727,7 @@ async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
     await db.execute(delete(Listings).where(Listings.watch_id == watch.id))
     await db.execute(delete(WatchSites).where(WatchSites.watch_id == watch.id))
     await db.execute(delete(Watches).where(Watches.id == watch.id))
+    await jobs_service.cancel_unwatched_ground(db, item_id)
 
     await db.commit()
 
