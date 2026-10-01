@@ -22,6 +22,7 @@ import { tickFormatterFor, type TimeRange } from '@/lib/time'
 import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
 const HEIGHT = 256
+const END_LABEL_GAP = 13
 
 /**
  * Legend labels: strip the longest shared title prefix (whole words) among the
@@ -102,6 +103,42 @@ function buildTrace(series: PreparedSeries, plot: Plot, nowTs: number): Trace {
   }
 }
 
+/**
+ * Each line's legend number, in the plot's right margin beside its end dot —
+ * lines told apart by hue alone fail anyone who can't tell the hues apart.
+ * Outside the well, so the target label never covers one; pushed apart
+ * top-down so lines ending at near-equal prices stay legible.
+ */
+function EndLabels({ traces, plot, numbers }: { traces: Trace[]; plot: Plot; numbers: Map<number, number> }) {
+  const placed = [...traces].sort((a, b) => a.now.y - b.now.y)
+  const ys: number[] = []
+  for (const tr of placed) {
+    const prev = ys.at(-1)
+    ys.push(Math.max(tr.now.y, plot.box.t + 8, prev != null ? prev + END_LABEL_GAP : -Infinity))
+  }
+  // the push can run off the bottom; pull the stack back up from there
+  for (let i = ys.length - 1; i >= 0; i--) {
+    const below = ys[i + 1]
+    ys[i] = Math.min(ys[i], plot.box.b - 6, below != null ? below - END_LABEL_GAP : Infinity)
+  }
+  return (
+    <g aria-hidden>
+      {placed.map((tr, i) => (
+        <text
+          key={tr.series.listing.listing_id}
+          x={tr.now.x + 6}
+          y={ys[i] + 4}
+          fill={chart.inkSecondary}
+          fontSize={11}
+          fontFamily="'IBM Plex Mono', monospace"
+        >
+          {numbers.get(tr.series.listing.listing_id)}
+        </text>
+      ))}
+    </g>
+  )
+}
+
 /** Per-listing price traces for one item over the range, with the ember tip and sweep-beam scan. */
 export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse; range: TimeRange }) {
   const glowId = useId()
@@ -109,6 +146,11 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
 
   const { plotted, foldedCount } = useMemo(() => prepareSeries(data), [data])
   const labels = useMemo(() => seriesLabels(plotted), [plotted])
+  // one line needs no key; with several, each is numbered on the plot and in the legend
+  const numbers = useMemo(
+    () => new Map(plotted.length > 1 ? plotted.map((s, i) => [s.listing.listing_id, i + 1]) : []),
+    [plotted],
+  )
   const target = data.target_price != null ? Number(data.target_price) : null
 
   const geom = useMemo(() => {
@@ -173,6 +215,7 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
                 glowId={glowId}
               />
             ))}
+            {numbers.size > 0 ? <EndLabels traces={geom.traces} plot={geom.plot} numbers={numbers} /> : null}
             {sweep.pos && struck.length > 0 ? (
               <SweepBeam
                 plot={geom.plot}
@@ -207,6 +250,9 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
           {plotted.map((s) => (
             <span key={s.listing.listing_id} className="flex items-center gap-1.5 text-xs text-ink-2">
               <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: s.color }} />
+              {numbers.has(s.listing.listing_id) ? (
+                <span className="font-mono text-ink-3">{numbers.get(s.listing.listing_id)}</span>
+              ) : null}
               {labels.get(s.listing.listing_id)}
             </span>
           ))}

@@ -4,10 +4,11 @@ import { useQuery } from '@tanstack/react-query'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { Radar } from '@/components/ui/radar'
+import { LogGlyph } from '@/components/ui/terminal-log'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
-import { GLYPHS, checkLine, glyphFor, resultText } from './lines'
+import { checkLine, glyphFor, resultText } from './lines'
 import { useJobs } from './JobsProvider'
 
 const SUMMARY_POLL_MS = 30_000
@@ -50,7 +51,7 @@ export function HunterTicker({ className }: { className?: string }) {
 
   if (hunt) {
     const latest = (events.get(hunt.id) ?? []).at(-1)
-    const glyph = latest ? GLYPHS[glyphFor(latest)] : null
+    const level = latest ? glyphFor(latest) : null
     return (
       <button
         type="button"
@@ -66,11 +67,9 @@ export function HunterTicker({ className }: { className?: string }) {
           │
         </span>
         <span className="min-w-0 flex-1 truncate text-ink-2">
-          {latest && glyph ? (
+          {latest && level ? (
             <>
-              <span aria-hidden className={glyph.className}>
-                {glyph.glyph}
-              </span>{' '}
+              <LogGlyph level={level} />{' '}
               {latest.message}
             </>
           ) : (
@@ -119,12 +118,9 @@ export function HunterTicker({ className }: { className?: string }) {
 
 function TickerCheck({ check }: { check: Parameters<typeof checkLine>[0] }) {
   const line = checkLine(check, 0)
-  const glyph = GLYPHS[line.level]
   return (
     <>
-      <span aria-hidden className={glyph.className}>
-        {glyph.glyph}
-      </span>{' '}
+      <LogGlyph level={line.level} />{' '}
       {line.message}
     </>
   )
