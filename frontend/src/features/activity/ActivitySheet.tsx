@@ -7,7 +7,7 @@ import { qk } from '@/api/queries'
 import { Radar } from '@/components/ui/radar'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { TerminalLog } from '@/components/ui/terminal-log'
-import { cn } from '@/lib/cn'
+import { ConnectionStatus } from './ConnectionStatus'
 import { checkLine } from './lines'
 import { LiveHunts } from './LiveHunts'
 import { useJobs } from './JobsProvider'
@@ -54,16 +54,7 @@ export function ActivitySheet() {
             </SheetTitle>
           </div>
           <SheetDescription className="mt-1 flex flex-wrap items-center gap-3 text-xs text-ink-3">
-            <span className="flex items-center gap-1.5">
-              <span
-                aria-hidden
-                className={cn(
-                  'size-1.5 rounded-full',
-                  connection === 'live' ? 'bg-drop' : 'animate-pulse bg-warn',
-                )}
-              />
-              {connection === 'live' ? 'live' : 'reconnecting…'}
-            </span>
+            <ConnectionStatus connection={connection} />
             <Link
               to="/activity"
               onClick={() => setPanelOpen(false)}
