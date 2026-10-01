@@ -7,18 +7,20 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
 import { AuthLayout } from './AuthLayout'
-import { useInstance, useLogin, useSession } from './useSession'
+import { useInstance, useLogin, useReturnTo, useSession } from './useSession'
 
 const MOCKS_ON = import.meta.env.VITE_USE_MOCKS === 'true'
 
 /**
  * Sign-in page: email and password, plus the SSO button when the instance has
- * an OIDC provider. Already signed-in visitors go straight to the dashboard.
+ * an OIDC provider. Already signed-in visitors go straight to where they were
+ * headed (the dashboard by default).
  */
 export function LoginPage() {
   const session = useSession()
   const { data: instance } = useInstance()
   const login = useLogin()
+  const returnTo = useReturnTo()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [searchParams] = useSearchParams()
@@ -26,16 +28,14 @@ export function LoginPage() {
   // A failed refetch keeps the last user in `data` while AuthGuard, seeing the
   // error, sends the visitor here: only a successful read means signed in, or
   // the two pages redirect to each other forever.
-  if (session.isSuccess) return <Navigate to="/" replace />
+  if (session.isSuccess) return <Navigate to={returnTo} replace />
 
   const errorMessage =
     login.error instanceof ApiError
       ? login.error.message
-      : login.error
-        ? 'Something went wrong — try again'
-        : searchParams.get('error') === 'sso_failed'
-          ? 'SSO sign-in failed — try again or use your password'
-          : null
+      : searchParams.get('error') === 'sso_failed'
+        ? 'SSO sign-in failed — try again or use your password'
+        : null
 
   return (
     <AuthLayout>

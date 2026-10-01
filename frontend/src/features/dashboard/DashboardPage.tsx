@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { getPriceDrops, listCategories, listItems, listSites } from '@/api/endpoints'
+import { getPriceDrops, listCategories, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { Category, ItemSummary, PriceDrop } from '@/api/types'
 import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
@@ -15,6 +15,7 @@ import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { EditCategoryDialog } from '@/features/categories/EditCategoryDialog'
 import { EditSitesDialog } from '@/features/categories/EditSitesDialog'
+import { listAllItems } from '@/features/items/allItems'
 import { WatchListLabels } from '@/features/items/WatchList'
 import { CategoryRow } from './CategoryRow'
 import { CategoryShelf } from './CategoryShelf'
@@ -23,8 +24,6 @@ import { defaultOpen, groupShelves, newlyStruck, resolveOpen, type StoredShelf }
 import { useShelfState } from './useShelfState'
 import { VerdictHero } from './VerdictHero'
 
-/** One page of everything: the self-hosted watch fits in a single fetch. */
-const WATCH_PAGE_SIZE = 200
 /** Rows of categories holding none of your items, before "＋ N more categories". */
 const ROWS_SHOWN = 5
 /** How long a struck row flashes, and how long a shelf or row keeps its outline. */
@@ -59,14 +58,14 @@ export function DashboardPage() {
     placeholderData: keepPreviousData,
   })
   const items = useQuery({
-    queryKey: qk.items({ range, per_page: WATCH_PAGE_SIZE }),
-    queryFn: () => listItems({ range, per_page: WATCH_PAGE_SIZE }),
+    queryKey: qk.items({ range }),
+    queryFn: () => listAllItems({ range }),
     placeholderData: keepPreviousData,
   })
   // the unfiltered list above stays loaded during a search: it gives each shelf its "of N"
   const matches = useQuery({
-    queryKey: qk.items({ range, search, per_page: WATCH_PAGE_SIZE }),
-    queryFn: () => listItems({ range, search, per_page: WATCH_PAGE_SIZE }),
+    queryKey: qk.items({ range, search }),
+    queryFn: () => listAllItems({ range, search }),
     enabled: search != null,
     placeholderData: keepPreviousData,
   })

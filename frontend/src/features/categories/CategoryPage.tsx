@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams } from 'react-router-dom'
 import { Pencil } from 'lucide-react'
+import { ApiError } from '@/api/client'
 import {
   deleteItem,
   getCategoryPriceChange,
   listCategories,
-  listItems,
   listSites,
 } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -24,6 +24,7 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
+import { listAllItems } from '@/features/items/allItems'
 import { EditItemDialog } from '@/features/items/EditItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { HuntButton } from '@/features/activity/HuntButton'
@@ -47,6 +48,13 @@ const STATUS_FILTERS = [
  */
 export function CategoryPage() {
   const { slug = '' } = useParams()
+  // The router reuses this element across /categories/:slug, so without the
+  // key one category's filters would apply to the next — hiding its watches,
+  // and unclearable when the site picker isn't shown.
+  return <CategoryView key={slug} slug={slug} />
+}
+
+function CategoryView({ slug }: { slug: string }) {
   const [range, setRange] = useRangeParam()
   const [status, setStatus] = useState<ItemStatusFilter>('all')
   const [siteFilter, setSiteFilter] = useState<number | undefined>(undefined)
@@ -84,7 +92,7 @@ export function CategoryPage() {
       search: search || undefined,
     }),
     queryFn: () =>
-      listItems({
+      listAllItems({
         category_id: category!.id,
         site_id: siteFilter,
         range,
@@ -104,9 +112,13 @@ export function CategoryPage() {
 
   const removeItem = useMutation({
     mutationFn: (item: ItemSummary) => deleteItem(item.id),
-    onSuccess: () => {
+    meta: { inlineError: true },
+    onSuccess: (_data, item) => {
+      // removed, not invalidated: Back to the item would otherwise paint its cached page
+      queryClient.removeQueries({ queryKey: qk.item(item.id) })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       setDeletingItem(null)
     },
   })
@@ -147,9 +159,9 @@ export function CategoryPage() {
       <CategoryChips activeSlug={slug} />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.03em] text-ink">
+            <h1 className="min-w-0 font-display text-[26px] leading-tight font-semibold tracking-[0.03em] wrap-anywhere text-ink">
               {category.name}
             </h1>
             {isAdmin ? (
@@ -166,7 +178,7 @@ export function CategoryPage() {
               </span>
             ) : (
               linkedSites.map((site) => (
-                <Badge key={site.id} variant="muted" className="font-mono">
+                <Badge key={site.id} variant="muted" className="min-w-0 font-mono wrap-anywhere">
                   {site.name}
                 </Badge>
               ))
@@ -308,7 +320,9 @@ export function CategoryPage() {
       <ConfirmDialog
         open={deletingItem != null}
         onOpenChange={(open) => {
-          if (!open) setDeletingItem(null)
+          if (open) return
+          setDeletingItem(null)
+          removeItem.reset()
         }}
         title="Remove item"
         description={
@@ -318,6 +332,7 @@ export function CategoryPage() {
         }
         confirmLabel="Remove item"
         pending={removeItem.isPending}
+        error={removeItem.error instanceof ApiError ? removeItem.error.message : null}
         onConfirm={() => {
           if (deletingItem) removeItem.mutate(deletingItem)
         }}

@@ -5,7 +5,7 @@ starlette==1.6.0
 python-multipart  # multipart parsing for the reference-upload endpoint
 
 # Data / DB
-sqlalchemy==2.0.54
+sqlalchemy[asyncio]==2.0.54
 asyncpg
 alembic
 pgvector

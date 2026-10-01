@@ -28,6 +28,11 @@ from app.config import settings
 _ph = PasswordHasher()
 _ALGO = "HS256"
 
+# pg_advisory_xact_lock key that serializes creating a user who might be the
+# first: without it two sign-ups (password or SSO) on an empty instance both
+# count zero users and both become admin
+FIRST_USER_LOCK = 0x736E_6167_7200  # "snagr\0"
+
 
 # --- passwords --------------------------------------------------------------
 

@@ -54,8 +54,15 @@ function SiteDialog({
       site
         ? updateSite(site.id, { name: name.trim(), base_url: baseUrl.trim() })
         : createSite({ name: name.trim(), base_url: baseUrl.trim() }),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
+      if (site) {
+        // a rename reaches every row that carries the site's name
+        void queryClient.invalidateQueries({ queryKey: ['items'] })
+        void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      }
       onOpenChange(false)
     },
   })
@@ -124,6 +131,64 @@ function SiteDialog({
   )
 }
 
+/** A site's row actions: hunt it, and for an admin, the edit/delete menu. */
+function SiteActions({
+  site,
+  categoryName,
+  isAdmin,
+  onEdit,
+  onDelete,
+}: {
+  site: Site
+  categoryName: (id: number) => string
+  isAdmin: boolean
+  onEdit: () => void
+  onDelete: () => void
+}) {
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <HuntButton scope="site" scopeId={site.id} label="Hunt" variant="ghost" size="sm" />
+      {isAdmin ? (
+        <DropdownMenu>
+          <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
+          <DropdownMenuContent align="end" className="w-60">
+            <DropdownMenuLabel
+              title={site.name}
+              meta={
+                <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                  {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'}
+                </span>
+              }
+            >
+              {site.category_ids.length === 0 ? (
+                <span className="font-mono text-[10.5px] text-ink-3">not linked to a category</span>
+              ) : (
+                <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
+                  {site.category_ids.map((cid) => (
+                    <span
+                      key={cid}
+                      className="inline-flex h-[17px] items-center rounded-[3px] border border-hairline bg-raised px-[5px]"
+                    >
+                      {categoryName(cid)}
+                    </span>
+                  ))}
+                </span>
+              )}
+            </DropdownMenuLabel>
+            <DropdownMenuItem onSelect={onEdit}>
+              <Pencil /> Edit
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem tone="danger" onSelect={onDelete}>
+              <Trash2 /> Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+    </div>
+  )
+}
+
 /** The site list: the stores the hunter searches. Sites are shared, so only an admin adds, edits or deletes one. */
 export function SitesPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -140,18 +205,28 @@ export function SitesPage() {
 
   const remove = useMutation({
     mutationFn: (site: Site) => deleteSite(site.id),
+    meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       setDeleting(null)
     },
   })
 
-  // a failed fetch never reaches the server, so it has no ApiError message
-  const removeError = remove.error instanceof ApiError ? remove.error.message : remove.error ? 'Snagr could not delete that site' : null
+  const removeError = remove.error instanceof ApiError ? remove.error.message : null
   const categoryName = (id: number) => categories.data?.data.find((c) => c.id === id)?.name ?? '…'
   const rows = sites.data?.data ?? []
+  const openEdit = (site: Site) => {
+    setEditing(site)
+    setDialogSession((n) => n + 1)
+    setDialogOpen(true)
+  }
+  const openDelete = (site: Site) => {
+    remove.reset()
+    setDeleting(site)
+  }
 
   return (
     <div className="space-y-5">
@@ -198,105 +273,93 @@ export function SitesPage() {
               }
             />
           ) : (
-            <Table>
-              <THead>
-                <TR>
-                  <TH>Site</TH>
-                  <TH>Base URL</TH>
-                  <TH className="hidden md:table-cell">Used by</TH>
-                  <TH className="text-right">Listings</TH>
-                  <TH className="hidden md:table-cell">Last check</TH>
-                  <TH className="w-24" />
-                </TR>
-              </THead>
-              <TBody>
+            <>
+              {/* under md the table won't fit, so each site stacks into a card
+                  with its actions in reach instead of behind a sideways scroll */}
+              <ul className="md:hidden">
                 {rows.map((site) => (
-                  <TR key={site.id}>
-                    <TD className="font-medium text-ink">{site.name}</TD>
-                    <TD>
+                  <li key={site.id} className="flex items-center gap-2 border-b border-hairline px-3 py-2.5 last:border-0">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium wrap-anywhere text-ink">{site.name}</p>
                       <a
                         href={site.base_url}
                         target="_blank"
                         rel="noreferrer"
                         title={site.base_url}
-                        className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
+                        className="block truncate text-xs text-lume hover:underline"
                       >
                         {site.base_url}
                       </a>
-                    </TD>
-                    <TD className="hidden md:table-cell">
-                      <span className="flex flex-wrap gap-1">
-                        {site.category_ids.length === 0 ? (
-                          <span className="text-xs text-ink-3">not linked</span>
-                        ) : (
-                          site.category_ids.map((cid) => (
-                            <Badge key={cid} variant="muted">
-                              {categoryName(cid)}
-                            </Badge>
-                          ))
-                        )}
-                      </span>
-                    </TD>
-                    <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
-                    <TD className="hidden text-xs whitespace-nowrap text-ink-3 md:table-cell">{relativeTime(site.last_checked_at)}</TD>
-                    <TD>
-                      <div className="flex items-center justify-end gap-1">
-                        <HuntButton scope="site" scopeId={site.id} label="Hunt this site" variant="ghost" size="sm" />
-                        {isAdmin ? (
-                          <DropdownMenu>
-                            <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
-                            <DropdownMenuContent align="end" className="w-60">
-                              <DropdownMenuLabel
-                                title={site.name}
-                                meta={
-                                  <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
-                                    {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'}
-                                  </span>
-                                }
-                              >
-                                {site.category_ids.length === 0 ? (
-                                  <span className="font-mono text-[10.5px] text-ink-3">not linked to a category</span>
-                                ) : (
-                                  <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
-                                    {site.category_ids.map((cid) => (
-                                      <span
-                                        key={cid}
-                                        className="inline-flex h-[17px] items-center rounded-[3px] border border-hairline bg-raised px-[5px]"
-                                      >
-                                        {categoryName(cid)}
-                                      </span>
-                                    ))}
-                                  </span>
-                                )}
-                              </DropdownMenuLabel>
-                              <DropdownMenuItem
-                                onSelect={() => {
-                                  setEditing(site)
-                                  setDialogSession((n) => n + 1)
-                                  setDialogOpen(true)
-                                }}
-                              >
-                                <Pencil /> Edit
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                tone="danger"
-                                onSelect={() => {
-                                  remove.reset()
-                                  setDeleting(site)
-                                }}
-                              >
-                                <Trash2 /> Delete
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        ) : null}
-                      </div>
-                    </TD>
-                  </TR>
+                      <p className="mt-0.5 font-mono text-[11px] text-ink-3 tnum">
+                        {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'} ·{' '}
+                        {site.last_checked_at ? `checked ${relativeTime(site.last_checked_at)}` : 'never checked'}
+                      </p>
+                    </div>
+                    <SiteActions
+                      site={site}
+                      categoryName={categoryName}
+                      isAdmin={isAdmin}
+                      onEdit={() => openEdit(site)}
+                      onDelete={() => openDelete(site)}
+                    />
+                  </li>
                 ))}
-              </TBody>
-            </Table>
+              </ul>
+              <Table className="max-md:hidden">
+                <THead>
+                  <TR>
+                    <TH>Site</TH>
+                    <TH>Base URL</TH>
+                    <TH>Used by</TH>
+                    <TH className="text-right">Listings</TH>
+                    <TH>Last check</TH>
+                    <TH className="w-24" />
+                  </TR>
+                </THead>
+                <TBody>
+                  {rows.map((site) => (
+                    <TR key={site.id}>
+                      <TD className="font-medium text-ink">{site.name}</TD>
+                      <TD>
+                        <a
+                          href={site.base_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={site.base_url}
+                          className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
+                        >
+                          {site.base_url}
+                        </a>
+                      </TD>
+                      <TD>
+                        <span className="flex flex-wrap gap-1">
+                          {site.category_ids.length === 0 ? (
+                            <span className="text-xs text-ink-3">not linked</span>
+                          ) : (
+                            site.category_ids.map((cid) => (
+                              <Badge key={cid} variant="muted">
+                                {categoryName(cid)}
+                              </Badge>
+                            ))
+                          )}
+                        </span>
+                      </TD>
+                      <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
+                      <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(site.last_checked_at)}</TD>
+                      <TD>
+                        <SiteActions
+                          site={site}
+                          categoryName={categoryName}
+                          isAdmin={isAdmin}
+                          onEdit={() => openEdit(site)}
+                          onDelete={() => openDelete(site)}
+                        />
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </>
           )}
         </CardBody>
       </Card>

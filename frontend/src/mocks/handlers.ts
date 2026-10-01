@@ -151,6 +151,17 @@ function weakPassword(password: string, field: 'password' | 'new_password') {
   return err(422, 'validation_error', message, { fields: { [field]: message } })
 }
 
+/**
+ * The backend's email-taken 422, or null when no other account holds the
+ * address. Addresses are stored lowercased and matched regardless of case.
+ */
+function emailTaken(email: string, exceptId?: number) {
+  const key = email.toLowerCase()
+  if (!store.users.some((u) => u.id !== exceptId && u.email.toLowerCase() === key)) return null
+  const message = 'An account with this email already exists'
+  return err(422, 'validation_error', message, { fields: { email: message } })
+}
+
 const SIGN_IN_LIMIT = 10
 const SIGN_IN_WINDOW = 15 * MINUTE
 const signInAttempts = new Map<string, number[]>()
@@ -413,6 +424,46 @@ function alreadyTracked() {
 }
 
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
+const NTFY_TOPIC = /^[A-Za-z0-9_-]{1,64}$/
+// every channel is another send per event, so one user can't queue unbounded work
+const MAX_CHANNELS = 10
+
+/**
+ * Why a channel URL isn't a public address, or null — an approximation of
+ * the backend's notifications.public_url (which checks every reserved range
+ * via Python's ipaddress): container names, local names, credentials, and
+ * the common private IPv4/IPv6 literals.
+ */
+function privateUrlProblem(raw: string): string | null {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return 'not a valid URL'
+  }
+  if (url.username || url.password) return 'a URL carrying credentials is not accepted'
+  const host = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (host.startsWith('[')) {
+    return /^\[(::1?|::ffff:.*|f[c-d].*|fe[89ab].*)\]$/.test(host) ? `${host} is a private or reserved address` : null
+  }
+  // URL() normalizes the shorthand IPv4 spellings ("127.1") to dotted quads
+  const quad = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host)
+  if (quad) {
+    const [a, b] = [Number(quad[1]), Number(quad[2])]
+    const reserved =
+      [0, 10, 127].includes(a) ||
+      a >= 224 ||
+      (a === 100 && b >= 64 && b < 128) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b < 32) ||
+      (a === 192 && b === 168)
+    return reserved ? `${host} is a private or reserved address` : null
+  }
+  if (!host.includes('.') || host === 'localhost' || /\.(localhost|internal|local|home\.arpa)$/.test(host)) {
+    return `${host} is not a public hostname`
+  }
+  return null
+}
 
 interface ChannelFields {
   name: string
@@ -444,6 +495,11 @@ function validateChannel(
     if (!topic) {
       return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
     }
+    if (!NTFY_TOPIC.test(topic)) {
+      return err(422, 'validation_error', 'Not a valid ntfy topic', {
+        fields: { topic: 'Use 1-64 letters, digits, - or _' },
+      })
+    }
   } else {
     topic = null
     if (!url || !/^https?:\/\//.test(url)) {
@@ -452,6 +508,12 @@ function validateChannel(
     if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
       return err(422, 'validation_error', 'Not a Discord webhook URL', {
         fields: { url: 'Must be a Discord incoming-webhook URL' },
+      })
+    }
+    const problem = privateUrlProblem(url)
+    if (problem) {
+      return err(422, 'validation_error', 'Notifications can only be sent to a public address', {
+        fields: { url: problem },
       })
     }
   }
@@ -490,7 +552,8 @@ export const handlers = [
     const body = (await request.json()) as LoginRequest
     const limited = signInAttempt(body.email)
     if (limited) return limited
-    const user = store.users.find((u) => u.email === body.email && u.password === body.password)
+    const email = body.email.toLowerCase()
+    const user = store.users.find((u) => u.email.toLowerCase() === email && u.password === body.password)
     if (!user || !user.is_active) {
       return err(401, 'invalid_credentials', 'Email or password is incorrect')
     }
@@ -508,7 +571,7 @@ export const handlers = [
     if (weak) return weak
     const user = {
       id: newId(),
-      email: body.email,
+      email: body.email.toLowerCase(),
       password: body.password,
       role: 'admin' as const,
       is_active: true,
@@ -555,9 +618,13 @@ export const handlers = [
     const body = (await request.json()) as InviteAcceptRequest
     const weak = weakPassword(body.password, 'password')
     if (weak) return weak
+    // an invite pinned to an email wins over whatever the form submitted
+    const email = (invite.email ?? body.email).toLowerCase()
+    const taken = emailTaken(email)
+    if (taken) return taken
     const user = {
       id: newId(),
-      email: invite.email ?? body.email,
+      email,
       password: body.password,
       role: 'user' as const,
       is_active: true,
@@ -588,7 +655,11 @@ export const handlers = [
     if (Object.keys(fields).length > 0) {
       return err(422, 'validation_error', 'Thresholds must be between 0.50 and 1.00', { fields })
     }
-    if (body.email !== undefined) user.email = body.email
+    if (body.email !== undefined && body.email.toLowerCase() !== user.email.toLowerCase()) {
+      const taken = emailTaken(body.email, user.id)
+      if (taken) return taken
+      user.email = body.email.toLowerCase()
+    }
     for (const field of thresholds) {
       if (body[field] !== undefined) user[field] = Number(body[field]).toFixed(2)
     }
@@ -627,6 +698,9 @@ export const handlers = [
     }
     // mock-parity gap: the mock instance always has a ntfy server, so the 422
     // no_server branch (ntfy kind while NTFY_SERVER_URL is unset) is backend-only
+    if (store.notificationChannels.filter((c) => c.user_id === user.id).length >= MAX_CHANNELS) {
+      return err(409, 'channel_limit', `You can have at most ${MAX_CHANNELS} notification channels`)
+    }
     const fields = validateChannel(body.kind, body)
     if (fields instanceof HttpResponse) return fields
     const secret = body.kind === 'webhook' ? crypto.randomUUID().replace(/-/g, '') : null
@@ -1710,6 +1784,13 @@ export const handlers = [
     const user = store.users.find((u) => u.id === Number(params.id))
     if (!user) return err(404, 'not_found', `User ${params.id} does not exist`)
     const body = (await request.json()) as AdminUserUpdateRequest
+    const losesAdmin =
+      user.role === 'admin' &&
+      user.is_active &&
+      ((body.role !== undefined && body.role !== 'admin') || body.is_active === false)
+    if (losesAdmin && !store.users.some((u) => u.id !== user.id && u.role === 'admin' && u.is_active)) {
+      return err(409, 'last_admin', 'This is the only active admin — make someone else an admin first')
+    }
     if (body.is_active !== undefined) user.is_active = body.is_active
     if (body.role !== undefined) user.role = body.role
     return HttpResponse.json(toAdminUser(user))
@@ -1719,6 +1800,10 @@ export const handlers = [
     const admin = requireAdmin()
     const id = Number(params.id)
     if (id === admin.id) return err(422, 'cannot_delete_self', 'You cannot delete your own account')
+    if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
+    if (store.watches.some((w) => w.user_id === id)) {
+      return err(409, 'user_has_items', 'This user still has tracked items — deactivate the account instead')
+    }
     store.users = store.users.filter((u) => u.id !== id)
     return new HttpResponse(null, { status: 204 })
   }),
@@ -1737,7 +1822,7 @@ export const handlers = [
     const invite = {
       id: newId(),
       token: crypto.randomUUID().replace(/-/g, ''),
-      email: body.email?.trim() || null,
+      email: body.email?.trim().toLowerCase() || null,
       expires_at: Date.now() + 7 * DAY,
       accepted_at: null,
       created_at: Date.now(),

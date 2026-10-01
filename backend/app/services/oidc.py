@@ -19,10 +19,11 @@ from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from authlib.oauth2.rfc7636 import create_s256_code_challenge
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core.security import FIRST_USER_LOCK
 from app.models import User
 
 
@@ -165,7 +166,8 @@ async def validate_id_token(id_token: str, nonce: str) -> dict:
 async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     """ID-token claims -> local User. Sub-first, marry-by-verified-email
     second, auto-create third (spec decision: Authentik is the access gate).
-    Raises OidcError for inactive users or unusable claims. Caller commits."""
+    Raises OidcError for inactive users, unusable claims, or an email held by
+    an account that can't be married. Caller commits."""
     sub = claims.get("sub")
     if not sub:
         raise OidcError("ID token has no sub")
@@ -175,8 +177,7 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
             # .normalized alone only case-folds the domain (email-validator
             # preserves local-part case per RFC); lower() the whole address
             # too so a same-mailbox claim always marries regardless of how
-            # the IdP cased it. Still a plain `==` lookup below, not a SQL-side
-            # case-insensitive compare.
+            # the IdP cased it.
             email = validate_email(email, check_deliverability=False).normalized.lower()
         except EmailNotValidError:
             email = None
@@ -185,18 +186,34 @@ async def resolve_oidc_user(db: AsyncSession, claims: dict) -> User:
     # 1. the stable link — survives email changes at the IdP
     user = await db.scalar(select(User).where(User.oidc_sub == sub))
 
-    # 2. the marriage: claim an existing local account, once. Only a VERIFIED
-    #    email may do this — an unverified one could hijack someone's account.
+    # 2. the marriage: claim an existing local account, once. Both sides must
+    #    vouch for the email: the IdP's claim, and the account's own flag — a
+    #    user can type any address into signup or their profile, and marrying
+    #    on that would hand the real owner's first SSO login to them. An
+    #    account already married to another sub is never re-pointed.
     if user is None and email_ok:
-        user = await db.scalar(select(User).where(User.email == email))
-        if user is not None:
+        holder = await db.scalar(select(User).where(func.lower(User.email) == email))
+        if holder is not None:
+            if not holder.email_verified or holder.oidc_sub is not None:
+                raise OidcError(f"account {holder.id} holds this email but can't be linked")
+            user = holder
             user.oidc_sub = sub
 
-    # 3. unknown at the IdP-approved door -> provision a fresh account
+    # 3. unknown at the IdP-approved door -> provision a fresh account. The
+    #    first account on the instance owns it, as with password signup —
+    #    otherwise an SSO-only instance would never have an admin.
     if user is None:
         if not email_ok:
             raise OidcError("IdP did not supply a verified email")
-        user = User(email=email, email_verified=True, role="user", is_active=True, oidc_sub=sub)
+        await db.execute(select(func.pg_advisory_xact_lock(FIRST_USER_LOCK)))
+        is_first_user = not await db.scalar(select(func.count()).select_from(User))
+        user = User(
+            email=email,
+            email_verified=True,
+            role="admin" if is_first_user else "user",
+            is_active=True,
+            oidc_sub=sub,
+        )
         db.add(user)
         await db.flush()  # assign user.id for _start_session
 

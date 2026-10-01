@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { copyText } from '@/lib/clipboard'
 import { formatDateTime, relativeTime } from '@/lib/time'
 import { useInstance } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -105,7 +106,11 @@ function snippetFor(kind: ClientKind, url: string, token: string): { code: strin
 function CopyButton({ text, label, size = 'default' }: { text: string; label: string; size?: 'default' | 'sm' }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    await navigator.clipboard.writeText(text)
+    if (!(await copyText(text))) {
+      toast.error("Couldn't copy — select the text and copy it yourself")
+      return
+    }
+    toast.success('Copied to clipboard')
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
@@ -204,6 +209,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         scopes: ACCESS_SCOPES[access],
         expires_in_days: expiry === 'never' ? null : Number(expiry),
       }),
+    meta: { inlineError: true },
     onSuccess: (token) => {
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
       setCreated(token.token)
@@ -261,6 +267,11 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             }}
           >
             <DialogBody className="space-y-3">
+              {createError && !createError.fields ? (
+                <p role="alert" className="text-xs text-rise">
+                  {createError.message}
+                </p>
+              ) : null}
               <div>
                 <Label htmlFor="token-name">Name</Label>
                 <Input
@@ -330,7 +341,6 @@ export function ApiSettingsPage() {
       setRevoking(null)
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
     },
-    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not revoke the token'),
   })
 
   return (

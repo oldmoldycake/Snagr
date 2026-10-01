@@ -140,6 +140,21 @@ class TestCounting:
         )
 
 
+class TestSwitchedOff:
+    def test_zero_errors_never_trips(self, monkeypatch):
+        monkeypatch.setattr(breaker, "SITE_BREAKER_ERRORS", 0)
+
+        async def scenario():
+            site_id = await seed_site()
+            pause = await fail(site_id, 10)
+            return pause, await read_site(site_id)
+
+        pause, site = db(scenario())
+        assert pause is None
+        assert site["consecutive_errors"] == 10
+        assert site["paused_until"] is None
+
+
 class TestDoubling:
     """The trip count is read off the error counter: only a success resets it,
     so five more failures after a pause means this site has now tripped twice

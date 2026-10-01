@@ -40,9 +40,12 @@ READ_ONLY = ToolAnnotations(read_only_hint=True)
 DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
 
 # scope gates — a tool carrying one is invisible to, and uncallable by, tokens
-# without that scope: the MCP twin of REST's 403 insufficient_scope
+# without that scope: the MCP twin of REST's 403 insufficient_scope. They
+# match REST route for route: a GET needs read, any other method needs write,
+# and the jobs routes add jobs on top of that
+READ = require_scopes("read")
 WRITE = require_scopes("write")
-JOBS = require_scopes("jobs")
+JOBS = require_scopes("write", "jobs")
 
 INSTRUCTIONS = """\
 Snagr is a self-hosted price tracker: the user watches items (a shared catalog

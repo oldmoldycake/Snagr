@@ -8,7 +8,7 @@ last_checked_at are computed at query time (house pattern #2), never stored.
 import re
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import delete, exists, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -138,8 +138,12 @@ async def build_category(db: AsyncSession, cat: Categories, user_id: int) -> Cat
         .all()
     )
 
+    # an item nobody watches any more stays in the catalog, but counts for nothing
     item_count = await db.scalar(
-        select(func.count()).select_from(Items).where(Items.category_id == cat.id)
+        select(func.count())
+        .select_from(Items)
+        .where(Items.category_id == cat.id)
+        .where(exists().where(Watches.item_id == Items.id))
     )
 
     snagged_count = await count_snagged_watches(db, user_id, cat.id)

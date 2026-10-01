@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { getInstance, getMe, login, logout, register } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
@@ -20,15 +20,32 @@ export function useInstance() {
   return useQuery({ queryKey: qk.instance, queryFn: getInstance, staleTime: 5 * 60_000 })
 }
 
-/** Sign in, seed the session cache from the response and go to the dashboard. */
+/** Where a signed-in visitor on /login should land; see `returnPath`. */
+export function useReturnTo(): string {
+  return returnPath(useLocation().state)
+}
+
+/**
+ * The page AuthGuard bounced the visitor from (its `state.from`), else the
+ * dashboard. Only an in-app path is honoured, so `//host` can't send them
+ * off-site.
+ */
+export function returnPath(state: unknown): string {
+  const from: unknown = (state as { from?: unknown } | null)?.from
+  return typeof from === 'string' && from.startsWith('/') && !from.startsWith('//') ? from : '/'
+}
+
+/** Sign in, seed the session cache from the response and go back to where the visitor was headed. */
 export function useLogin() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
+  const returnTo = useReturnTo()
   return useMutation({
     mutationFn: login,
+    meta: { inlineError: true },
     onSuccess: ({ user }) => {
       queryClient.setQueryData(qk.session, user)
-      navigate('/', { replace: true })
+      navigate(returnTo, { replace: true })
     },
   })
 }
@@ -39,6 +56,7 @@ export function useRegister() {
   const navigate = useNavigate()
   return useMutation({
     mutationFn: register,
+    meta: { inlineError: true },
     onSuccess: ({ user }) => {
       queryClient.setQueryData(qk.session, user)
       navigate('/', { replace: true })

@@ -34,7 +34,7 @@ export function CategoryRow({
         isNew ? 'border-lume/40' : 'border-hairline',
       )}
     >
-      <span className="font-display text-[17px] leading-none font-semibold tracking-[0.06em] text-ink-2 uppercase">
+      <span className="min-w-0 font-display text-[17px] leading-none font-semibold tracking-[0.06em] wrap-anywhere text-ink-2 uppercase">
         {category.name}
       </span>
       <span

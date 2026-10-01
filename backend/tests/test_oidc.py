@@ -49,7 +49,7 @@ CLAIMS = {"sub": "authentik-sub-1", "email": "sso@example.com", "email_verified"
 
 async def _seed_user(db_session, email, **kw):
     async with db_session() as s:
-        u = User(email=email, email_verified=True, **kw)
+        u = User(email=email, **{"email_verified": True, **kw})
         s.add(u)
         await s.commit()
         return u.id
@@ -84,6 +84,14 @@ async def test_resolve_marries_case_variant_email(db_session):
         assert (await s.get(User, uid)).oidc_sub == "authentik-sub-1"  # married
 
 
+async def test_resolve_marries_a_mixed_case_account(db_session):
+    # an account stored before addresses were lowercased on the way in
+    uid = await _seed_user(db_session, "SSO@Example.com")
+    async with db_session() as s:
+        user = await oidc.resolve_oidc_user(s, CLAIMS)
+    assert user.id == uid
+
+
 async def test_resolve_refuses_unverified_email(db_session):
     uid = await _seed_user(db_session, "sso@example.com")
     async with db_session() as s:
@@ -93,13 +101,41 @@ async def test_resolve_refuses_unverified_email(db_session):
         assert (await s.get(User, uid)).oidc_sub is None  # NOT married
 
 
+async def test_resolve_refuses_an_unverified_account(db_session):
+    # the IdP vouches for the email, but the account holding it only typed it in
+    uid = await _seed_user(db_session, "sso@example.com", email_verified=False)
+    async with db_session() as s:
+        with pytest.raises(oidc.OidcError):
+            await oidc.resolve_oidc_user(s, CLAIMS)
+    async with db_session() as s:
+        assert (await s.get(User, uid)).oidc_sub is None  # NOT married
+
+
+async def test_resolve_never_repoints_a_married_account(db_session):
+    uid = await _seed_user(db_session, "sso@example.com", oidc_sub="authentik-sub-0")
+    async with db_session() as s:
+        with pytest.raises(oidc.OidcError):
+            await oidc.resolve_oidc_user(s, CLAIMS)
+    async with db_session() as s:
+        assert (await s.get(User, uid)).oidc_sub == "authentik-sub-0"
+
+
 async def test_resolve_autocreates_unknown_user(db_session):
+    await _seed_user(db_session, "someone@else.com")
     async with db_session() as s:
         user = await oidc.resolve_oidc_user(s, CLAIMS)
         await s.commit()
     assert user.role == "user"
     assert user.oidc_sub == "authentik-sub-1"
     assert user.password_hash is None
+
+
+async def test_resolve_makes_the_first_user_admin(db_session):
+    # an SSO-only instance still gets an owner: registration closes behind them
+    async with db_session() as s:
+        user = await oidc.resolve_oidc_user(s, CLAIMS)
+        await s.commit()
+    assert user.role == "admin"
 
 
 async def test_resolve_rejects_inactive_user(db_session):
@@ -194,6 +230,104 @@ async def test_callback_marries_existing_account(client, monkeypatch):
     await _sso_login(client, monkeypatch)
     me = await client.get("/api/auth/me")
     assert me.json()["id"] == uid
+
+
+async def test_callback_ignores_an_email_set_in_the_profile(client, make_client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    csrf = {"X-Snagr-Csrf": "1"}
+    await client.post(
+        "/api/auth/register",
+        json={"email": "admin@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    # another user signs up, then claims the SSO user's address in their profile
+    bob = await make_client()
+    reg = await bob.post(
+        "/api/auth/register",
+        json={"email": "bob@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    bob_id = reg.json()["user"]["id"]
+    res = await bob.patch("/api/me", json={"email": "sso@example.com"}, headers=csrf)
+    assert res.status_code == 200
+
+    # the address's real owner signs in via SSO: refused, not handed Bob's account
+    victim = await make_client()
+    res = await _sso_login(victim, monkeypatch)
+    assert res.headers["location"] == "/login?error=sso_failed"
+    assert "snagr_access" not in res.cookies
+    login = await bob.post(
+        "/api/auth/login",
+        json={"email": "sso@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    assert login.json()["user"]["id"] == bob_id  # Bob's account is still only Bob's
+
+
+async def test_callback_ignores_an_email_typed_at_signup(client, make_client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    csrf = {"X-Snagr-Csrf": "1"}
+    await client.post(
+        "/api/auth/register",
+        json={"email": "admin@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    squatter = await make_client()
+    res = await squatter.post(
+        "/api/auth/register",
+        json={"email": "sso@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    assert res.status_code == 201
+
+    victim = await make_client()
+    res = await _sso_login(victim, monkeypatch)
+    assert res.headers["location"] == "/login?error=sso_failed"
+
+
+async def test_callback_ignores_an_email_typed_into_an_invite(client, make_client, monkeypatch):
+    csrf = {"X-Snagr-Csrf": "1"}
+    await client.post(
+        "/api/auth/register",
+        json={"email": "admin@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    token = (await client.post("/api/admin/invites", json={}, headers=csrf)).json()["token"]
+    invitee = await make_client()
+    res = await invitee.post(
+        f"/api/auth/invites/{token}/accept",
+        json={"email": "sso@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    assert res.status_code == 201
+
+    victim = await make_client()
+    res = await _sso_login(victim, monkeypatch)
+    assert res.headers["location"] == "/login?error=sso_failed"
+
+
+async def test_callback_marries_an_invite_pinned_email(client, make_client, monkeypatch):
+    csrf = {"X-Snagr-Csrf": "1"}
+    await client.post(
+        "/api/auth/register",
+        json={"email": "admin@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    created = await client.post(
+        "/api/admin/invites", json={"email": "sso@example.com"}, headers=csrf
+    )
+    invitee = await make_client()
+    accepted = await invitee.post(
+        f"/api/auth/invites/{created.json()['token']}/accept",
+        json={"email": "ignored@example.com", "password": "hunter2hunter2"},
+        headers=csrf,
+    )
+    uid = accepted.json()["user"]["id"]
+
+    # the admin vouched for the address, so SSO may link to it
+    sso = await make_client()
+    await _sso_login(sso, monkeypatch)
+    assert (await sso.get("/api/auth/me")).json()["id"] == uid
 
 
 async def test_callback_rejects_state_mismatch(client, monkeypatch):

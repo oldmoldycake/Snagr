@@ -3,7 +3,7 @@
 from fastmcp import FastMCP
 
 from app.mcp.refs import Ref, resolve_category
-from app.mcp.server import READ_ONLY, caller_session
+from app.mcp.server import READ, READ_ONLY, caller_session
 from app.schemas.charts import (
     CategoryPriceChangeResponse,
     DashboardStats,
@@ -25,7 +25,7 @@ from app.services.items import watch_or_404
 def register(mcp: FastMCP) -> None:
     """Define the price-intelligence tools on the shared server."""
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_price_history(
         item: int, range: TimeRange = "30d", points: int = 300
     ) -> PriceHistoryResponse:
@@ -42,7 +42,7 @@ def register(mcp: FastMCP) -> None:
                 series=await price_history(db, user.id, item, range, points),
             )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_price_summary(
         item: int, range: TimeRange = "30d", points: int = 300
     ) -> PriceSummaryResponse:
@@ -58,7 +58,7 @@ def register(mcp: FastMCP) -> None:
                 points=await price_summary(db, user.id, item, range, points),
             )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_dashboard_stats(range: TimeRange = "30d") -> DashboardStats:
         """The dashboard tiles for this user over `range`: tracked items, active
         listings, items at target, and price drops — each with its delta
@@ -66,7 +66,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await dashboard_stats(db, user.id, range)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_price_drops(range: TimeRange = "30d", limit: int = 10) -> list[PriceDrop]:
         """The biggest recent price drops across everything this user watches —
         one row per listing (its most recent drop), newest first, with the
@@ -75,7 +75,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await price_drops(db, user.id, range, limit)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_category_price_change(
         category: Ref, range: TimeRange = "30d"
     ) -> CategoryPriceChangeResponse:

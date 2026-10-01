@@ -10,7 +10,8 @@ check under anybody's target" query disagreed.
 
 item_count stays instance-wide on purpose: `items` is the shared catalog, and
 the mock's single-user store can't distinguish the two. Only snagged_count is
-scoped to the caller.
+scoped to the caller. An item nobody watches any more stays in the catalog
+but isn't counted.
 
 Seeding here goes through `db_session` and COMMITS, like test_sites_api.py:
 each request runs on its own session, so uncommitted rows are invisible.
@@ -96,6 +97,17 @@ async def test_snagged_count_counts_items_at_or_under_my_target(client, db_sessi
     categories = await _categories_by_name(client)
     assert categories["Cameras"]["item_count"] == 2
     assert categories["Cameras"]["snagged_count"] == 1
+
+
+async def test_item_count_skips_an_item_nobody_watches(client, db_session):
+    """Unwatching keeps the shared items row for whoever adds that name next;
+    until then it is nobody's item, so the chip doesn't count it."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.watch(await sc.item("Watched"))
+        await sc.item("Left behind")
+
+    assert (await _categories_by_name(client))["Cameras"]["item_count"] == 1
 
 
 async def test_snagged_count_ignores_a_dip_that_has_since_recovered(client, db_session):

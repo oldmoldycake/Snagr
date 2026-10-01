@@ -4,24 +4,38 @@ Every module reads config from the single `settings` instance here — never
 `os.getenv` directly. Keeps the env surface in one auditable place.
 """
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Every env var the backend reads; unset ones fall back to the dev defaults below."""
+    """Every env var the backend reads; unset ones fall back to the dev defaults below
+    (JWT_SECRET has none — it must be set)."""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Async driver required: postgresql+asyncpg://... (NOT plain postgresql://)
     DATABASE_URL: str = "postgresql+asyncpg://snagr:CHANGE_ME@localhost:5432/snagr"
 
-    # Auth
-    JWT_SECRET: str = (
-        "dev-only-change-me"  # `python -c 'import secrets; print(secrets.token_urlsafe(48))'`
-    )
+    # Auth. No default: anyone who knows the secret can sign an access token for
+    # any user, so a published value (a default, .env.example's placeholder) is
+    # as good as none. Generate one:
+    #   python -c 'import secrets; print(secrets.token_urlsafe(48))'
+    JWT_SECRET: str
     ACCESS_TTL_MIN: int = 15  # short-lived access JWT
     REFRESH_TTL_DAYS: int = 30  # DB-backed rotating refresh token
     cookie_secure: bool = False  # True in prod (HTTPS only)
+
+    @field_validator("JWT_SECRET")
+    @classmethod
+    def _refuse_weak_jwt_secret(cls, value: str) -> str:
+        """Refuse to start on a placeholder or a guessable secret, rather than
+        run with sessions anyone can forge."""
+        if "changeme" in value.lower().replace("_", "").replace("-", ""):
+            raise ValueError("JWT_SECRET is still the placeholder; generate a real one")
+        if len(value.encode()) < 32:
+            raise ValueError("JWT_SECRET must be at least 32 bytes")
+        return value
 
     # Registration: the very first user can ALWAYS register (bootstrap admin).
     # After that, this toggle decides: True = open self-signup, False = invite-only.

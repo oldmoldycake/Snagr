@@ -4,11 +4,17 @@
 EmailStr requires the `email-validator` package (in requirements.txt).
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, EmailStr
+from pydantic import AfterValidator, BaseModel, EmailStr
 
 UserRole = Literal["admin", "user"]
+
+# An address is stored and compared lowercased, so one mailbox can't hold two
+# accounts or fail a login over casing. EmailStr alone only folds the domain:
+# the RFC lets the local part be case-sensitive, but no real mail host treats
+# it that way. services/oidc.py lowercases the IdP's claim the same way.
+Email = Annotated[EmailStr, AfterValidator(str.lower)]
 
 
 # --- instance ---------------------------------------------------------------
@@ -52,14 +58,14 @@ class UserEnvelope(BaseModel):
 class LoginRequest(BaseModel):
     """POST /api/auth/login body."""
 
-    email: EmailStr
+    email: Email
     password: str
 
 
 class RegisterRequest(BaseModel):
     """POST /api/auth/register body."""
 
-    email: EmailStr
+    email: Email
     password: str
 
 
@@ -73,7 +79,7 @@ class InviteValidation(BaseModel):
 class InviteAcceptRequest(BaseModel):
     """POST /api/auth/invites/{token}/accept body; an invite pinned to an email ignores this one."""
 
-    email: EmailStr
+    email: Email
     password: str
 
 
@@ -83,7 +89,7 @@ class InviteAcceptRequest(BaseModel):
 class MeUpdateRequest(BaseModel):
     """PATCH /api/me body; omitted fields are left unchanged."""
 
-    email: EmailStr | None = None
+    email: Email | None = None
     # plain strs so the 422 validation_error envelope (with a fields map)
     # applies — routers/me.py validates the 0.50–1.00 bounds itself
     vision_auto_reject_fake: str | None = None
@@ -132,7 +138,7 @@ class Invite(BaseModel):
 class InviteCreateRequest(BaseModel):
     """POST /api/admin/invites body; no email makes an invite anyone can accept."""
 
-    email: EmailStr | None = None
+    email: Email | None = None
 
 
 # --- ORM-row -> schema serializers -------------------------------------------

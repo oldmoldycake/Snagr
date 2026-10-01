@@ -49,7 +49,15 @@ MAX_PRICE = Decimal(10) ** 8
 # How close a second read must be to an unconfirmed one to corroborate it.
 CORROBORATION = Decimal("0.01")
 
-_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+# Grouping by space, no-break space, narrow no-break space or apostrophe
+# ("1 299,00 €", "CHF 1'299.00") only counts in strict groups of three, so
+# "12 30" stays two numbers rather than becoming 1230 \u2014 and a last group must
+# end the digits, so "1 2341234" is not read as "1 234" plus a stray "1234".
+_GROUPING = " \u00a0\u202f'\u2019"
+_NUMBER = re.compile(rf"\d{{1,3}}(?:[{_GROUPING}]\d{{3}})+(?!\d)(?:[.,]\d+)?|\d+(?:[.,]\d+)*")
+# A minus sign ahead of the number, past any currency code or symbol ("-$10",
+# "−10 €", "-EUR 10", "-kr 10"); a hyphen inside a word ("X-100") is not a sign.
+_NEGATIVE = re.compile(r"(?<!\w)[-\u2212]\s*(?:(?i:[A-Z]{2,3})\s*)?[^\w\s]?\s*\d")
 
 # Currency codes a marketplace page might state next to a price. A closed set
 # on purpose: scanning visible text for any three capitals finds "ADD" in
@@ -82,26 +90,6 @@ CURRENCY_CODES = frozenset(
         "AED",
     }
 )
-# Registrable-domain suffixes that are two labels deep. The full Public
-# Suffix List is a dependency and a monthly update; this covers the
-# marketplaces Snagr tracks, and a miss is conservative — an unlisted
-# multi-part suffix makes the guard compare MORE of the host, never less.
-_TWO_LABEL_SUFFIXES = frozenset(
-    {
-        "co.uk",
-        "org.uk",
-        "me.uk",
-        "co.jp",
-        "co.nz",
-        "co.za",
-        "com.au",
-        "com.br",
-        "com.mx",
-        "com.sg",
-        "com.hk",
-        "com.tr",
-    }
-)
 
 
 def parse_price(raw: object) -> Decimal | None:
@@ -117,7 +105,8 @@ def parse_price(raw: object) -> Decimal | None:
     happens to sit next to one — so it parses to None rather than to whichever
     number came first. Separators are read by position: with both present the
     rightmost is the decimal point, and a lone comma with one or two digits
-    behind it is a decimal comma.
+    behind it is a decimal comma. A negative is not a price, so a minus
+    sign makes the whole text None rather than reading "-$10" as 10.
 
     Args:
       raw: Text, or a number JSON-LD stated directly. None and objects are
@@ -133,18 +122,23 @@ def parse_price(raw: object) -> Decimal | None:
         raw = repr(raw)
     if not isinstance(raw, str):
         return None
+    if _NEGATIVE.search(raw):
+        return None
 
     values = set()
     last = None
     for token in _NUMBER.findall(raw):
         try:
-            last = Decimal(_normalise(token))
+            last = Decimal(_normalise(token.translate(_UNGROUP)))
         except InvalidOperation:
             return None
         values.add(last)
     if len(values) != 1:
         return None
     return last
+
+
+_UNGROUP = str.maketrans("", "", _GROUPING)
 
 
 def _normalise(token: str) -> str:
@@ -345,12 +339,16 @@ def url_allowed(url: str, site_base_url: str | None) -> str | None:
 
     A listing URL is not a one-off read: it is stored and navigated to on
     every recheck from now on, so accepting one the page chose is accepting a
-    standing request. On top of public_url's network rule, the host must sit
-    inside the site's own registrable domain — which is the rule that makes
-    `http://vision:8100/rescore` unreachable no matter what it resolves to,
-    which also rejects a genuine redirect to a sister domain (ebay.com ->
-    ebay.co.uk). That loss is accepted; it is the same rule that closes the
-    SSRF.
+    standing request. On top of public_url's network rule, the host must be
+    the site's own host or a subdomain of it (a leading "www." on the base URL
+    is dropped, so www.ebay.com also allows m.ebay.com) — which is the rule
+    that makes `http://vision:8100/rescore` unreachable no matter what it
+    resolves to. It anchors on the host rather than a guessed registrable
+    domain because a guess without the Public Suffix List gets suffixes like
+    com.ar or myshopify.com wrong, and a wrong guess widens the rule to a
+    whole country. It also rejects a genuine redirect to a sister domain
+    (ebay.com -> ebay.co.uk) or a sibling subdomain; that loss is accepted,
+    as it is the same rule that closes the SSRF.
 
     Args:
       url: The URL to judge.
@@ -369,7 +367,7 @@ def url_allowed(url: str, site_base_url: str | None) -> str | None:
     if not site_host:
         return "the site has no base URL to check this against"
     host = (urlparse(url).hostname or "").lower().rstrip(".")
-    domain = _registrable(site_host)
+    domain = site_host.removeprefix("www.")
     if host != domain and not host.endswith("." + domain):
         return f"{host} is not part of {domain}"
     return None
@@ -381,15 +379,6 @@ def _address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
         return ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return None
-
-
-def _registrable(host: str) -> str:
-    """The registrable domain of a hostname — what a listing URL must be
-    inside. "www.ebay.com" and "ebay.com" both give "ebay.com"."""
-    labels = host.split(".")
-    if len(labels) > 2 and ".".join(labels[-2:]) in _TWO_LABEL_SUFFIXES:
-        return ".".join(labels[-3:])
-    return ".".join(labels[-2:])
 
 
 def clip_text(value: str | None, limit: int) -> str | None:

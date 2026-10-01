@@ -14,15 +14,16 @@ import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
 import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
-import { labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
+import { axisLabels, labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
 import { prepareSeries } from './seriesPrep'
 
-// Fold threshold, sub-$1 dot threshold, stale age, the label-flip position used
-// before the rail has been measured, and the shared grid.
+// Fold threshold, sub-$1 dot threshold, stale age, the label-flip and ⌖-label
+// right-anchor positions used before the rail has been measured, and the shared grid.
 const FOLD_SCORE = 70
 const UNCHANGED_CENTS = 100
 const STALE_MS = 24 * 3_600_000
 const LABEL_FLIP_PCT = 78
+const TARGET_LABEL_RIGHT_PCT = 82
 
 const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_44px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_44px]'
 const COL_LABEL = 'font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase'
@@ -59,26 +60,40 @@ function AxisStrip({
   currency: string
   range: TimeRange
 }) {
+  const caption = `drift ${RANGE_LABELS[range]}`
+  const targetLabel = `⌖ ${formatMoney(target, currency)}`
+  const layout =
+    rail?.targetPct != null
+      ? axisLabels(rail.targetPct, targetLabel, caption, railPx, TARGET_LABEL_RIGHT_PCT)
+      : { target: null, caption: 'left' as const }
+
   return (
     <div className={cn('hidden items-end gap-3 px-4 pt-1.5 pb-1 sm:grid', GRID_COLS)}>
       <span className={COL_LABEL}>Listing</span>
       <div ref={railRef} className="relative pt-3.5">
-        {rail ? (
-          <span className="absolute top-0 left-0 font-mono text-[10px] text-ink-3">
-            drift {RANGE_LABELS[range]}
+        {rail && layout.caption ? (
+          <span
+            className={cn(
+              'absolute top-0 font-mono text-[10px] whitespace-nowrap text-ink-3',
+              layout.caption === 'left' ? 'left-0' : 'right-0',
+            )}
+          >
+            {caption}
           </span>
         ) : null}
         {rail?.targetPct != null ? (
           <span
             className="absolute top-0 font-mono text-[10px] whitespace-nowrap text-drop"
             style={
-              // right-anchor near the edge so the label can't spill out of the column
-              rail.targetPct > 82
-                ? { right: 0 }
-                : { left: `${rail.targetPct}%`, transform: 'translateX(-50%)' }
+              // pinned to an edge when centring on the notch would spill out of the column
+              layout.target === 'left'
+                ? { left: 0 }
+                : layout.target === 'right'
+                  ? { right: 0 }
+                  : { left: `${rail.targetPct}%`, transform: 'translateX(-50%)' }
             }
           >
-            ⌖ {formatMoney(target, currency)}
+            {targetLabel}
           </span>
         ) : null}
         {/* graduated ruler — the Ladder's baseline, with ticks at real prices placed by the dots' own scale */}
@@ -293,6 +308,9 @@ function ExpandedRow({
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // pausing a listing cancels its re-check; resuming queues one
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
     },
   })
 
