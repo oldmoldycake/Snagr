@@ -23,7 +23,6 @@ import { NotFound } from '@/components/ui/not-found'
 import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/cn'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { listAllItems } from '@/features/items/allItems'
@@ -232,7 +231,7 @@ function CategoryView({ slug }: { slug: string }) {
         />
       </div>
 
-      <Card className={cn(items.isFetching && 'opacity-60')}>
+      <Card className="busy-edge" aria-busy={items.isFetching}>
         {items.isLoading ? (
           <div className="space-y-2 p-4">
             <Skeleton className="h-6" />
@@ -288,7 +287,7 @@ function CategoryView({ slug }: { slug: string }) {
       </Card>
 
       {rows.length > 0 ? (
-        <Card className={cn(change.isFetching && 'opacity-60')}>
+        <Card className="busy-edge" aria-busy={change.isFetching}>
           <CardHeader>
             <CardTitle>Price change</CardTitle>
             <span className="font-mono text-[11px] text-ink-3">

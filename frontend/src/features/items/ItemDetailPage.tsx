@@ -193,7 +193,7 @@ export function ItemDetailPage() {
           <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
             {detail.category_name}
           </Link>{' '}
-          <span className="opacity-50">/</span> {detail.name}
+          / {detail.name}
         </p>
         <Glossary terms={ITEM_TERMS} className="-my-1 shrink-0" />
       </div>

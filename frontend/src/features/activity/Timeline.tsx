@@ -264,7 +264,7 @@ function QueuedRow({ job }: { job: Job }) {
       className="py-1.5"
     >
       <p className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
-        <span className={cn(blocked && 'opacity-60')}>
+        <span className={cn(blocked && 'ink-muted')}>
           <Who job={job} />
         </span>
         <span

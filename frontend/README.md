@@ -71,7 +71,11 @@ values, not CSS vars — change both together). Dark-only, by design.
 
 - **Surfaces** are a green-cast night ramp: `page → well → surface → raised → overlay`
   (`well` is for inset grounds: search, terminal logs, list footers). Borders are always
-  `hairline` / `hairline-strong`, never solid grays.
+  `hairline` / `hairline-strong`, never solid grays; a control's own boundary (input, select,
+  switch, checkbox) is `hairline-field`, which holds 3:1 on every surface.
+- **Contrast**: `ink-3` is the floor for text and holds 4.5:1 up to `overlay`. Never quiet
+  text with opacity: a refetching panel gets `busy-edge` + `aria-busy`, a row that is no
+  longer live gets `ink-muted` (its primary ink steps down to `ink-2`).
 - **`lume`** (illuminated-reticle amber) is the identity color: active nav, primary buttons,
   focus, live states, "close to target". It is never semantic. The desktop nav's active tab
   is one lume bar that tracks between tabs (`.nav-lume`, motion "Reticle Track"); the category

@@ -19,12 +19,14 @@
   --color-overlay: #1c2820;
   --color-hairline: rgb(193 255 208 / 0.09);
   --color-hairline-strong: rgb(193 255 208 / 0.16);
+  /* a control's own boundary (inputs, switches, checkboxes): ≥3:1 on every surface, as WCAG 1.4.11 asks */
+  --color-hairline-field: rgb(193 255 208 / 0.38);
   --color-grid: #202b23;
 
   /* Ink */
   --color-ink: #e9f1e9;
   --color-ink-2: #a6b5a7;
-  --color-ink-3: #69796e;
+  --color-ink-3: #8f9f94; /* ≥4.5:1 up to overlay, the lightest surface it sits on */
 
   /* Identity — "lume", the illuminated reticle. Active/live/primary, never semantic. */
   --color-lume: #ffb454;
@@ -702,6 +704,42 @@
         rotate 260ms var(--ease-panel);
     }
   }
+}
+
+/*
+ * Quieted content never fades with opacity: faded text drops below 4.5:1.
+ * A panel refetching in place (aria-busy) shows a lume edge instead, and a
+ * row that is no longer live steps its primary ink down to ink-2 (ink-muted).
+ */
+@layer components {
+  .busy-edge {
+    position: relative;
+  }
+  .busy-edge[aria-busy='true']::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    z-index: 1;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--color-lume), transparent);
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .busy-edge[aria-busy='true']::after {
+      animation: busy-pulse 1.2s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes busy-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@utility ink-muted {
+  --color-ink: var(--color-ink-2);
 }
 
 /* What a menu acts on stays lit while it is open: a shelf's edge, a table row's

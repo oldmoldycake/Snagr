@@ -98,7 +98,7 @@ export function InvitePage() {
             required
             value={lockedEmail ?? email}
             readOnly={lockedEmail != null}
-            className={lockedEmail != null ? 'opacity-60' : undefined}
+            className={lockedEmail != null ? 'text-ink-2' : undefined}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>

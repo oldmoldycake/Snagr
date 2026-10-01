@@ -18,7 +18,7 @@ import { UploadReferenceDialog } from './UploadReferenceDialog'
 function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onRevoke: () => void }) {
   const fake = reference.label === 'fake'
   return (
-    <div className={cn('overflow-hidden rounded-md border border-hairline', reference.revoked && 'opacity-45')}>
+    <div className={cn('overflow-hidden rounded-md border border-hairline', reference.revoked && 'ink-muted')}>
       <img
         src={reference.image_url}
         alt={`${reference.label} reference photo`}

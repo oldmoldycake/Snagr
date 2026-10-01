@@ -162,7 +162,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
                   <span
                     className={cn(
                       'grid size-4 place-items-center rounded-[3px] border transition-colors',
-                      picked ? 'border-lume bg-lume' : 'border-hairline-strong',
+                      picked ? 'border-lume bg-lume' : 'border-hairline-field',
                     )}
                   >
                     <svg
