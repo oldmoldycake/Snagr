@@ -9,9 +9,10 @@ import { useMeasuredWidth } from '@/components/charts/pricePlot'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
-import { RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
+import { formatDateTime, RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
 import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
 import { axisLabels, labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
@@ -349,13 +350,19 @@ function ExpandedRow({
         ) : startC != null ? (
           <>unchanged over {RANGE_LABELS[range]} · </>
         ) : null}
-        {stockText(listing)} · checked {relativeTime(listing.last_checked_at)} · {listing.site_name} ·{' '}
+        {stockText(listing)} · checked <RelativeTime iso={listing.last_checked_at} /> · {listing.site_name} ·{' '}
         {listing.discovered_by_job_id != null ? (
-          <Link to={`/activity/${listing.discovered_by_job_id}`} className="hover:text-ink hover:underline">
+          <Link
+            to={`/activity/${listing.discovered_by_job_id}`}
+            title={formatDateTime(listing.created_at)}
+            className="hover:text-ink hover:underline"
+          >
             found {relativeTime(listing.created_at)}
           </Link>
         ) : (
-          <>found {relativeTime(listing.created_at)}</>
+          <>
+            found <RelativeTime iso={listing.created_at} />
+          </>
         )}
         {' · '}
         <a href={listing.url} target="_blank" rel="noreferrer" className="text-ink-2 hover:text-lume">
@@ -453,7 +460,7 @@ function BoardRow({
           ) : null}
           {soldOrEnded ? (
             <Badge variant="warn" className="shrink-0">
-              {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} · {relativeTime(listing.last_checked_at)}
+              {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} · <RelativeTime iso={listing.last_checked_at} />
             </Badge>
           ) : null}
           {chip ? (

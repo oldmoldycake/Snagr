@@ -31,8 +31,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { copyText } from '@/lib/clipboard'
-import { relativeTime } from '@/lib/time'
+import { formatDate } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useSession } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -88,7 +89,7 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
         {created ? (
           <>
             <DialogBody className="space-y-3">
-              <Label>Invite link (expires {new Date(created.expires_at).toLocaleDateString()})</Label>
+              <Label>Invite link (expires {formatDate(created.expires_at)})</Label>
               <div className="flex gap-2">
                 <Input readOnly value={inviteUrl(created)} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
                 <Button onClick={copy} aria-label="Copy invite link">
@@ -221,7 +222,7 @@ export function AdminUsersPage() {
                       )}
                     </TD>
                     <TD className="hidden text-right font-mono text-ink-2 tnum sm:table-cell">{user.item_count}</TD>
-                    <TD className="hidden text-xs whitespace-nowrap text-ink-3 sm:table-cell">{relativeTime(user.created_at)}</TD>
+                    <TD className="hidden text-xs whitespace-nowrap text-ink-3 sm:table-cell"><RelativeTime iso={user.created_at} /></TD>
                     <TD>
                       {user.id !== me?.id ? (
                         <DropdownMenu>
@@ -288,7 +289,7 @@ export function AdminUsersPage() {
                   <TR key={invite.id}>
                     <TD className="text-ink-2">{invite.email ?? <span className="text-ink-3">anyone with the link</span>}</TD>
                     <TD className="text-xs whitespace-nowrap text-ink-3">
-                      {new Date(invite.expires_at).toLocaleDateString()}
+                      {formatDate(invite.expires_at)}
                     </TD>
                     <TD>
                       <div className="flex justify-end gap-1">

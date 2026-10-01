@@ -1,4 +1,5 @@
 import type { Job } from '@/api/types'
+import { formatClock } from '@/lib/time'
 
 /** How far back a failed hunt still asks for attention. */
 export const FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -6,7 +7,7 @@ export const FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000
 /** One hour of finished work, as the timeline heads it. */
 export interface HourGroup {
   key: string
-  /** `14:00` today, `yesterday 22:00` or `Sep 18 14:00` before that */
+  /** `2:00 PM` today, `yesterday 10:00 PM` or `Sep 18 2:00 PM` before that (24-hour where the locale is) */
   label: string
   jobs: Job[]
 }
@@ -32,21 +33,19 @@ export function groupByHour(jobs: Job[], now: Date = new Date()): HourGroup[] {
 }
 
 function hourLabel(at: Date, now: Date): string {
-  const hour = `${String(at.getHours()).padStart(2, '0')}:00`
+  const top = new Date(at)
+  top.setMinutes(0, 0, 0)
+  const hour = formatClock(top)
   if (at.toDateString() === now.toDateString()) return hour
   const yesterday = new Date(now)
   yesterday.setDate(now.getDate() - 1)
   if (at.toDateString() === yesterday.toDateString()) return `yesterday ${hour}`
-  return `${at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} ${hour}`
+  return `${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${hour}`
 }
 
-/** `14:02` — a row's time; its hour heading already names the day. */
+/** `2:02 PM` / `14:02` — a row's time; its hour heading already names the day. */
 export function rowTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour12: false,
-    hour: '2-digit',
-    minute: '2-digit',
-  })
+  return formatClock(new Date(iso))
 }
 
 /** The failed jobs recent enough that someone should still look at them. */

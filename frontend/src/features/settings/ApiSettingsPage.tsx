@@ -25,8 +25,9 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { copyText } from '@/lib/clipboard'
-import { formatDateTime, relativeTime } from '@/lib/time'
+import { formatDateTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -440,7 +441,7 @@ export function ApiSettingsPage() {
                           </div>
                         </TD>
                         <TD className="hidden text-ink-3 sm:table-cell">
-                          {token.last_used_at ? relativeTime(token.last_used_at) : 'never'}
+                          {token.last_used_at ? <RelativeTime iso={token.last_used_at} /> : 'never'}
                         </TD>
                         <TD className="hidden text-ink-3 sm:table-cell">{expiryCell(token)}</TD>
                         <TD className="text-right">

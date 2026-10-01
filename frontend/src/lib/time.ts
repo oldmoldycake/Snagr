@@ -48,16 +48,42 @@ export function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-/** `Sep 18, 3:04 PM` — an absolute timestamp in the viewer's locale. */
+/*
+ * Every date and time the app prints comes from this file, in the viewer's
+ * own locale (`undefined` below), so the clock is 12- or 24-hour the same
+ * way on every page — whichever the browser's language uses.
+ */
+const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' }
+
+/** `3:04 PM` or `15:04`, per the viewer's locale. */
+export function formatClock(date: Date): string {
+  return date.toLocaleTimeString(undefined, CLOCK)
+}
+
+/** `Sep 18, 3:04 PM` — an absolute timestamp; the year shows once it is not this one. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
-  return d.toLocaleString('en-US', {
+  if (!Number.isFinite(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    ...CLOCK,
   })
+}
+
+/** `Oct 2, 2026` — a calendar date, for things that happen on a day rather than at a time. */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** `Wed, Oct 1` — today, the way the page headers name it. */
+export function formatToday(): string {
+  return new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 /** `2m 14s` from start to end, or to now while it is still going. */
@@ -83,9 +109,9 @@ export function tickFormatterFor(range: TimeRange): (ts: number) => string {
   return (ts: number) => {
     const d = new Date(ts)
     if (range === '7d' || range === '30d') {
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     }
-    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '")
+    return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' }).replace(' ', " '")
   }
 }
 
@@ -113,25 +139,27 @@ export function countdown(iso: string | null | undefined): string {
   return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`
 }
 
-/** `15:04`, or `yesterday` / `Sep 18` once it is not today's clock. */
+/** `3:04 PM` / `15:04`, or `yesterday` / `Sep 18` once it is not today's clock. */
 export function clockTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const then = new Date(iso)
   if (!Number.isFinite(then.getTime())) return '—'
   const today = new Date()
   if (then.toDateString() === today.toDateString()) {
-    return then.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+    return formatClock(then)
   }
   const yesterday = new Date(today)
   yesterday.setDate(today.getDate() - 1)
   if (then.toDateString() === yesterday.toDateString()) return 'yesterday'
-  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-/** `14:02:11` — the timestamp every log line carries. */
+/**
+ * `02:02:11 PM` / `14:02:11` — the timestamp every log line carries; the
+ * two-digit hour keeps the column one width.
+ */
 export function logTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour12: false,
+  return new Date(iso).toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',

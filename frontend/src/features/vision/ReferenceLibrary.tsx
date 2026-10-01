@@ -11,8 +11,8 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
 import { UploadReferenceDialog } from './UploadReferenceDialog'
 
 function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onRevoke: () => void }) {
@@ -51,7 +51,7 @@ function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onR
           <p className="truncate text-[11px] text-ink-2 italic">“{reference.variant_tag}”</p>
         ) : null}
         <p className="truncate font-mono text-[10px] text-ink-3">
-          {relativeTime(reference.created_at)}
+          <RelativeTime iso={reference.created_at} />
           {reference.source_listing_url ? (
             <>
               {' · '}

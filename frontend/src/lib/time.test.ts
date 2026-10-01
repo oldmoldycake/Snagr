@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { countdown, formatTokens } from './time'
+import { countdown, formatDate, formatDateTime, formatTokens } from './time'
 
 describe('formatTokens', () => {
   it('shows small counts as they are', () => {
@@ -44,5 +44,31 @@ describe('countdown', () => {
   it('says "overdue" rather than "now" for a time long past', () => {
     expect(countdown(at(-61))).toBe('overdue')
     expect(countdown(at(-50 * 60))).toBe('overdue')
+  })
+})
+
+describe('formatDateTime', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 27, 18, 0))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('leaves the year out for this year and names it for any other', () => {
+    expect(formatDateTime(new Date(2026, 8, 25, 10, 3).toISOString())).not.toContain('2026')
+    expect(formatDateTime(new Date(2027, 0, 5, 10, 3).toISOString())).toContain('2027')
+  })
+
+  it('shows a dash rather than "Invalid Date"', () => {
+    expect(formatDateTime(null)).toBe('—')
+    expect(formatDateTime('not a date')).toBe('—')
+  })
+})
+
+describe('formatDate', () => {
+  it('always names the year', () => {
+    expect(formatDate(new Date(2026, 9, 2).toISOString())).toContain('2026')
   })
 })

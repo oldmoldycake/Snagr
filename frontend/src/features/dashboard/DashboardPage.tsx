@@ -8,8 +8,8 @@ import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
 import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/ui/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HunterTicker } from '@/features/activity/HunterTicker'
@@ -480,5 +480,9 @@ function SearchResults({
  */
 function UpdatedAgo({ at }: { at: number }) {
   useTick(true)
-  return <span>updated {relativeTime(new Date(at).toISOString())}</span>
+  return (
+    <span>
+      updated <RelativeTime iso={new Date(at).toISOString()} />
+    </span>
+  )
 }

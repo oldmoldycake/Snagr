@@ -3,9 +3,9 @@ import { ExternalLink } from 'lucide-react'
 import { getItem } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
-import { relativeTime } from '@/lib/time'
 import { MatchPill } from './MatchPill'
 
 /**
@@ -69,7 +69,7 @@ export function ItemListingsPanel({ itemId }: { itemId: number }) {
                 listing.in_stock == null ? 'bg-ink-3' : listing.in_stock ? 'bg-drop' : 'bg-rise',
               )}
             />
-            {relativeTime(listing.last_checked_at)}
+            <RelativeTime iso={listing.last_checked_at} />
           </span>
         </div>
       ))}

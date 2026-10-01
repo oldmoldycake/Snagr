@@ -15,9 +15,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { SimpleTooltip } from '@/components/ui/tooltip'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney, toCents } from '@/lib/money'
-import { relativeTime } from '@/lib/time'
 import { ItemListingsPanel } from './ItemListingsPanel'
 
 /** Rows plus the optional columns and row actions each page turns on. */
@@ -280,7 +280,7 @@ export function WatchList({
                   )}
                 </TD>
                 <TD className="hidden text-right font-mono text-xs whitespace-nowrap text-ink-3 sm:table-cell">
-                  {relativeTime(item.last_checked_at)}
+                  <RelativeTime iso={item.last_checked_at} />
                 </TD>
                 {hasActions ? (
                   <TD onClick={(e) => e.stopPropagation()}>

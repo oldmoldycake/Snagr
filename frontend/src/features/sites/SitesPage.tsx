@@ -32,7 +32,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
-import { relativeTime } from '@/lib/time'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { useSession } from '@/features/auth/useSession'
@@ -294,7 +294,13 @@ export function SitesPage() {
                       </a>
                       <p className="mt-0.5 font-mono text-[11px] text-ink-3 tnum">
                         {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'} ·{' '}
-                        {site.last_checked_at ? `checked ${relativeTime(site.last_checked_at)}` : 'never checked'}
+                        {site.last_checked_at ? (
+                          <>
+                            checked <RelativeTime iso={site.last_checked_at} />
+                          </>
+                        ) : (
+                          'never checked'
+                        )}
                       </p>
                     </div>
                     <SiteActions
@@ -347,7 +353,7 @@ export function SitesPage() {
                         </span>
                       </TD>
                       <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
-                      <TD className="text-xs whitespace-nowrap text-ink-3">{relativeTime(site.last_checked_at)}</TD>
+                      <TD className="text-xs whitespace-nowrap text-ink-3"><RelativeTime iso={site.last_checked_at} /></TD>
                       <TD>
                         <SiteActions
                           site={site}

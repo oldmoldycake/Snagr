@@ -15,8 +15,8 @@ import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 
@@ -81,7 +81,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           {entry.llm_authenticity_read
             ? `Snagr's read: ${LLM_READ_LABELS[entry.llm_authenticity_read]} · `
             : ''}
-          captured {relativeTime(entry.created_at)} ·{' '}
+          captured <RelativeTime iso={entry.created_at} /> ·{' '}
           <a
             href={entry.listing_url}
             target="_blank"
