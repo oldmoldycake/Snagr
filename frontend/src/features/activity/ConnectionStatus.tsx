@@ -4,7 +4,7 @@ import type { Connection } from './liveStream'
 /** What each state means to someone wondering whether the prices are current. */
 const DESCRIPTIONS: Record<Connection, string> = {
   connecting: 'Connecting to live updates…',
-  live: 'Live: prices update as the hunter checks them',
+  live: 'Live: prices update as Snagr checks them',
   reconnecting: 'Reconnecting: prices may be out of date',
   paused: 'Live updates paused: prices may be out of date. Reload to reconnect.',
 }
