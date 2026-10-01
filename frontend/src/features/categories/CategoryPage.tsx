@@ -113,7 +113,9 @@ function CategoryView({ slug }: { slug: string }) {
   const removeItem = useMutation({
     mutationFn: (item: ItemSummary) => deleteItem(item.id),
     meta: { inlineError: true },
-    onSuccess: () => {
+    onSuccess: (_data, item) => {
+      // removed, not invalidated: Back to the item would otherwise paint its cached page
+      queryClient.removeQueries({ queryKey: qk.item(item.id) })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
