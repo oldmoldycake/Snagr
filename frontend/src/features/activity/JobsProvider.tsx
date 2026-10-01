@@ -35,6 +35,7 @@ import { enqueueJobs, getJobEvents } from '@/api/endpoints'
 import { itemCategories } from './huntScope'
 import { eventsForLive } from './jobEvents'
 import { openLiveStream, type Connection } from './liveStream'
+import { throttle } from './throttle'
 import type {
   Job,
   JobCreateRequest,
@@ -47,6 +48,10 @@ import type {
 /** The tail is what this tab has seen, not what happened — 50 lines is about
  *  a screenful and a half at the terminal's line height. */
 const CHECK_TAIL = 50
+
+/** Checks arrive in bursts when a sweep comes due, and an item list refetch
+ *  pages through every watch, so the lists follow at most this often. */
+const LIST_REFRESH_MS = 15_000
 
 interface JobsContextValue {
   /** every running hunt and ground job this viewer may see */
@@ -79,7 +84,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   const [live, setLive] = useState<Job[]>([])
   const [events, setEvents] = useState<Map<number, JobEvent[]>>(new Map())
   const [checks, setChecks] = useState<ListingChecked[]>([])
-  const [connection, setConnection] = useState<Connection>('live')
+  const [connection, setConnection] = useState<Connection>('connecting')
   const [panelOpen, setPanelOpen] = useState(false)
   const eventsRef = useRef(events)
   eventsRef.current = events
@@ -98,6 +103,13 @@ export function JobsProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
+    // a check that crosses a target changes the dashboard's verdict and
+    // strikes, not just the item page — so the lists follow, throttled
+    const refreshLists = throttle(() => {
+      void queryClient.invalidateQueries({ queryKey: ['items', 'list'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    }, LIST_REFRESH_MS)
+
     const listen = (source: EventSource) => {
       source.addEventListener('job.snapshot', (e: MessageEvent) => {
         const { jobs } = JSON.parse(e.data) as JobSnapshotData
@@ -157,10 +169,15 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         setChecks((prev) => [...prev, check].slice(-CHECK_TAIL))
         void queryClient.invalidateQueries({ queryKey: ['jobs', 'summary'] })
         void queryClient.invalidateQueries({ queryKey: ['items', 'detail', check.item_id] })
+        refreshLists.run()
       })
     }
 
-    return openLiveStream('/api/events', listen, setConnection)
+    const close = openLiveStream('/api/events', listen, setConnection)
+    return () => {
+      close()
+      refreshLists.cancel()
+    }
   }, [mergeEvents, queryClient])
 
   const enqueueMutation = useMutation({
