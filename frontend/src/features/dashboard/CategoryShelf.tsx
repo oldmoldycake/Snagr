@@ -483,7 +483,7 @@ function SearchingSites({ siteNames }: { siteNames: string[] }) {
     <>
       <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
       {siteNames.map((name) => (
-        <span key={name} className="inline-flex h-[19px] items-center rounded-[3px] border border-hairline bg-raised px-1.5">
+        <span key={name} className="inline-flex min-h-[19px] min-w-0 items-center rounded-[3px] border border-hairline bg-raised px-1.5 wrap-anywhere">
           {name}
         </span>
       ))}

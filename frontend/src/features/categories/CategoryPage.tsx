@@ -178,7 +178,7 @@ function CategoryView({ slug }: { slug: string }) {
               </span>
             ) : (
               linkedSites.map((site) => (
-                <Badge key={site.id} variant="muted" className="font-mono">
+                <Badge key={site.id} variant="muted" className="min-w-0 font-mono wrap-anywhere">
                   {site.name}
                 </Badge>
               ))
