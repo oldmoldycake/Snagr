@@ -197,6 +197,11 @@ def wire(monkeypatch, **overrides):
             "category_slug": "video-games",
         }
 
+    async def grounding_candidates():
+        # housekeeping reads these on every pass; nothing is due unless a
+        # test says so
+        return []
+
     async def deterministic(browser, row):
         return overrides.get("ladder", FakeOutcome(True))
 
@@ -236,6 +241,7 @@ def wire(monkeypatch, **overrides):
     monkeypatch.setattr(worker, "get_recheck_unit", recheck_unit)
     monkeypatch.setattr(worker, "get_hunt_unit", hunt_unit)
     monkeypatch.setattr(worker, "get_ground_unit", ground_unit)
+    monkeypatch.setattr(worker, "get_grounding_candidates", grounding_candidates)
     monkeypatch.setattr(worker, "recheck_deterministic", deterministic)
     monkeypatch.setattr(worker, "recheck_listing", llm_recheck)
     monkeypatch.setattr(worker, "run_hunt_job", hunt)
