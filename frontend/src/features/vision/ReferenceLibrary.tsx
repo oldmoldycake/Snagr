@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { ApiError } from '@/api/client'
 import { listReferences, revokeAutoReferences, revokeReference } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ReferenceImage } from '@/api/types'
@@ -88,12 +89,14 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
 
   const revoke = useMutation({
     mutationFn: (id: number) => revokeReference(id),
+    meta: { inlineError: true },
     onSuccess: () => setRevokeTarget(null),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) }),
   })
 
   const revokeAuto = useMutation({
     mutationFn: () => revokeAutoReferences(itemId),
+    meta: { inlineError: true },
     onSuccess: ({ revoked }) => {
       setRevokeAutoOpen(false)
       toast.success(`Revoked ${revoked} auto-promoted ${revoked === 1 ? 'reference' : 'references'}`)
@@ -161,22 +164,29 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
       <ConfirmDialog
         open={revokeTarget != null}
         onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null)
+          if (open) return
+          setRevokeTarget(null)
+          revoke.reset()
         }}
         title="Revoke reference"
         description={`This ${revokeTarget?.label ?? ''} reference stops counting toward the item's photo checks. There is no un-revoke.`}
         confirmLabel="Revoke"
         pending={revoke.isPending}
+        error={revoke.error instanceof ApiError ? revoke.error.message : null}
         onConfirm={() => revokeTarget && revoke.mutate(revokeTarget.id)}
       />
 
       <ConfirmDialog
         open={revokeAutoOpen}
-        onOpenChange={setRevokeAutoOpen}
+        onOpenChange={(open) => {
+          setRevokeAutoOpen(open)
+          if (!open) revokeAuto.reset()
+        }}
         title="Revoke auto-promoted references"
         description={`${autoCount} auto-promoted ${autoCount === 1 ? 'reference' : 'references'} will stop counting toward this item's photo checks. Human-confirmed and uploaded references are untouched.`}
         confirmLabel={`Revoke ${autoCount}`}
         pending={revokeAuto.isPending}
+        error={revokeAuto.error instanceof ApiError ? revokeAuto.error.message : null}
         onConfirm={() => revokeAuto.mutate()}
       />
 
