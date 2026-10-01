@@ -8,6 +8,7 @@ import { qk } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
 
 /**
@@ -15,6 +16,7 @@ import { AuthLayout } from './AuthLayout'
  * account and signs the new user in.
  */
 export function InvitePage() {
+  usePageTitle('Invitation')
   const { token = '' } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()

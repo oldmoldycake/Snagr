@@ -3,6 +3,7 @@ import { MoreHorizontal } from 'lucide-react'
 import { useRef, type ComponentProps, type ComponentPropsWithoutRef, type FocusEvent, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
+import { focusMovedElsewhere } from '@/lib/focus'
 
 /** Dropdown menu root — Radix DropdownMenu.Root. */
 export const DropdownMenu = MenuPrimitive.Root
@@ -63,6 +64,7 @@ export function DropdownMenuContent({
   className,
   sideOffset = 4,
   onFocus,
+  onCloseAutoFocus,
   children,
   ...props
 }: ComponentPropsWithoutRef<typeof MenuPrimitive.Content>) {
@@ -76,6 +78,10 @@ export function DropdownMenuContent({
         onFocus={(e: FocusEvent<HTMLDivElement>) => {
           if (plateRef.current) placePlate(e.currentTarget, plateRef.current, e.target)
           onFocus?.(e)
+        }}
+        onCloseAutoFocus={(event) => {
+          onCloseAutoFocus?.(event)
+          if (focusMovedElsewhere(event.currentTarget)) event.preventDefault()
         }}
         className={cn(
           'menu-panel relative z-50 min-w-36 origin-(--radix-dropdown-menu-content-transform-origin) overflow-hidden rounded-md border border-hairline-strong bg-overlay p-1 shadow-[0_1px_0_rgb(193_255_208/0.05)_inset,0_22px_44px_-14px_rgb(0_0_0/0.75),0_0_0_1px_rgb(0_0_0/0.35)] outline-none',

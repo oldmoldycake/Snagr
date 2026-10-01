@@ -17,6 +17,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { relativeTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 
 const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
@@ -131,6 +132,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
  * viewer's own captures, admins included — you review what your hunts found.
  */
 export function ReviewQueuePage() {
+  usePageTitle('Photo review')
   const { data: instance } = useInstance()
   const [page, setPage] = useState(1)
 

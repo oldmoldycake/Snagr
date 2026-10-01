@@ -242,6 +242,12 @@
     @apply outline-2 outline-offset-2 outline-lume;
   }
 
+  /* where focus lands after a route change (AppShell): a landmark, not a control to ring */
+  main:focus-visible,
+  main h1[tabindex='-1']:focus-visible {
+    outline: none;
+  }
+
   * {
     scrollbar-width: thin;
     scrollbar-color: #26332a transparent;

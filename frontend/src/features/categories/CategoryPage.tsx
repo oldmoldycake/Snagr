@@ -24,6 +24,7 @@ import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { listAllItems } from '@/features/items/allItems'
 import { EditItemDialog } from '@/features/items/EditItemDialog'
@@ -77,6 +78,7 @@ function CategoryView({ slug }: { slug: string }) {
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const category = categories.data?.data.find((c) => c.slug === slug)
+  usePageTitle(category?.name ?? (categories.isSuccess ? 'Category not found' : undefined))
 
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
   const linkedSites = useMemo(

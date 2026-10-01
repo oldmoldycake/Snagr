@@ -19,6 +19,7 @@ import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { formatDateTime, relativeTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { CheckPricesButton } from '@/features/activity/CheckPricesButton'
 import { HuntButton } from '@/features/activity/HuntButton'
@@ -91,6 +92,7 @@ export function ItemDetailPage() {
     queryFn: () => listPriceChecks(itemId, 50),
   })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
+  usePageTitle(item.data?.name ?? (isNotFound(item.error) ? 'Item not found' : undefined))
 
   const notifyToggle = useMutation({
     mutationFn: (notify: boolean) => updateWatch(itemId, { notify }),

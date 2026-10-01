@@ -6,6 +6,7 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
 import { useInstance, useLogin, useReturnTo, useSession } from './useSession'
 
@@ -17,6 +18,7 @@ const MOCKS_ON = import.meta.env.VITE_USE_MOCKS === 'true'
  * headed (the dashboard by default).
  */
 export function LoginPage() {
+  usePageTitle('Sign in')
   const session = useSession()
   const { data: instance } = useInstance()
   const login = useLogin()

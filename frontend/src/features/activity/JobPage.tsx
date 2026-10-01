@@ -15,6 +15,7 @@ import { TerminalLog } from '@/components/ui/terminal-log'
 import { useSession } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatDateTime, formatDuration, formatTokens } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { JobStatusDot } from './JobStatusDot'
 import { eventLine, resultText } from './lines'
 import { useJobs } from './JobsProvider'
@@ -58,6 +59,8 @@ export function JobPage() {
     queryFn: () => getJobEvents(jobId),
     enabled: !isLive,
   })
+
+  usePageTitle(job.data ? title(job.data, isLive) : isNotFound(job.error) ? 'Job not found' : undefined)
 
   const events: JobEvent[] = useMemo(
     () => (isLive ? (liveEvents.get(jobId) ?? []) : (fetched.data?.data ?? [])),
