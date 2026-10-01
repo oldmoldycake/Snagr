@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, KeyRound, Loader2, Plug, Plus, Trash2 } from 'lucide-react'
+import { toast } from 'sonner'
 import { createToken, listTokens, revokeToken } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
@@ -24,6 +25,7 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { copyText } from '@/lib/clipboard'
 import { formatDateTime, relativeTime } from '@/lib/time'
 import { useInstance } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -104,7 +106,11 @@ function snippetFor(kind: ClientKind, url: string, token: string): { code: strin
 function CopyButton({ text, label, size = 'default' }: { text: string; label: string; size?: 'default' | 'sm' }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    await navigator.clipboard.writeText(text)
+    if (!(await copyText(text))) {
+      toast.error("Couldn't copy — select the text and copy it yourself")
+      return
+    }
+    toast.success('Copied to clipboard')
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }

@@ -31,6 +31,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
+import { copyText } from '@/lib/clipboard'
 import { relativeTime } from '@/lib/time'
 import { useSession } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -55,7 +56,11 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 
   const copy = async () => {
     if (!created) return
-    await navigator.clipboard.writeText(inviteUrl(created))
+    if (!(await copyText(inviteUrl(created)))) {
+      toast.error("Couldn't copy — select the link and copy it yourself")
+      return
+    }
+    toast.success('Invite link copied')
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
@@ -289,8 +294,8 @@ export function AdminUsersPage() {
                           variant="ghost"
                           size="sm"
                           onClick={async () => {
-                            await navigator.clipboard.writeText(inviteUrl(invite))
-                            toast.success('Invite link copied')
+                            if (await copyText(inviteUrl(invite))) toast.success('Invite link copied')
+                            else toast.error(`Couldn't copy — the link is ${inviteUrl(invite)}`)
                           }}
                         >
                           <Copy /> Copy link

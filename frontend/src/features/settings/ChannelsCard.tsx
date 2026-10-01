@@ -24,6 +24,7 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { copyText } from '@/lib/clipboard'
 import { useInstance, useSession } from '@/features/auth/useSession'
 
 const EVENT_LABELS: Record<NotificationEvent, string> = {
@@ -87,7 +88,11 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 
   const copy = async () => {
     if (secret == null) return
-    await navigator.clipboard.writeText(secret)
+    if (!(await copyText(secret))) {
+      toast.error("Couldn't copy — select the secret and copy it yourself")
+      return
+    }
+    toast.success('Signing secret copied')
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
