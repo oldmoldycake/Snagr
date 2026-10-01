@@ -7,7 +7,6 @@ import {
   deleteItem,
   getCategoryPriceChange,
   listCategories,
-  listItems,
   listSites,
 } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -25,6 +24,7 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
+import { listAllItems } from '@/features/items/allItems'
 import { EditItemDialog } from '@/features/items/EditItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { HuntButton } from '@/features/activity/HuntButton'
@@ -92,7 +92,7 @@ function CategoryView({ slug }: { slug: string }) {
       search: search || undefined,
     }),
     queryFn: () =>
-      listItems({
+      listAllItems({
         category_id: category!.id,
         site_id: siteFilter,
         range,
