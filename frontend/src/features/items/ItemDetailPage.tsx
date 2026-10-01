@@ -166,7 +166,7 @@ export function ItemDetailPage() {
 
   return (
     <div>
-      <p className="font-mono text-[11px] tracking-[0.06em] text-ink-3 uppercase">
+      <p className="font-mono text-[11px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
         <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
           {detail.category_name}
         </Link>{' '}
@@ -174,7 +174,7 @@ export function ItemDetailPage() {
       </p>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-[30px] leading-tight font-semibold tracking-[0.02em] text-ink">
+        <h1 className="min-w-0 font-display text-[30px] leading-tight font-semibold tracking-[0.02em] wrap-anywhere text-ink">
           {detail.name}
         </h1>
         {detail.target_met ? <SnaggedBadge /> : null}

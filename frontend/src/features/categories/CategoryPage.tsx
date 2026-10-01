@@ -159,9 +159,9 @@ function CategoryView({ slug }: { slug: string }) {
       <CategoryChips activeSlug={slug} />
 
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.03em] text-ink">
+            <h1 className="min-w-0 font-display text-[26px] leading-tight font-semibold tracking-[0.03em] wrap-anywhere text-ink">
               {category.name}
             </h1>
             {isAdmin ? (
@@ -178,7 +178,7 @@ function CategoryView({ slug }: { slug: string }) {
               </span>
             ) : (
               linkedSites.map((site) => (
-                <Badge key={site.id} variant="muted" className="font-mono">
+                <Badge key={site.id} variant="muted" className="min-w-0 font-mono wrap-anywhere">
                   {site.name}
                 </Badge>
               ))
