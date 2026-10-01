@@ -344,13 +344,13 @@ async def _work_one(worker: str, job: dict) -> None:
         # the API already wrote 'cancelled'; say so in the log the page shows
         log.info(f"Job {job_id} was cancelled mid-flight")
         await job_queue.append_event(job_id, "warn", "job_finished", "Cancelled by you")
-        await job_queue.complete(job_id, None)
+        await job_queue.complete(job_id, None, worker=worker)
     except SearchSuspended as e:
         # not a failure: nothing can succeed until the suspension lifts, and
         # holding the slot while it does is what this pool exists to avoid
         log.warning(f"Job {job_id} deferred: {e}")
         await job_queue.append_event(job_id, "warn", "error", str(e))
-        await job_queue.defer(job_id, e.until)
+        await job_queue.defer(job_id, e.until, worker=worker)
     except Exception as e:
         log.error(f"{job['kind'].title()} job {job_id} failed: {e}")
         if isinstance(e, SiteUnreadable):
@@ -358,7 +358,7 @@ async def _work_one(worker: str, job: dict) -> None:
         else:
             backoff.failed(e)
         await job_queue.append_event(job_id, "error", "error", str(e)[:500])
-        await job_queue.fail_or_retry(job_id, str(e))
+        await job_queue.fail_or_retry(job_id, str(e), worker=worker)
     else:
         backoff.cleared()
         if job["kind"] == "hunt":
@@ -368,7 +368,7 @@ async def _work_one(worker: str, job: dict) -> None:
                 "job_finished",
                 f"Hunt complete — {stats['new_listings']} new · {stats['listings_checked']} seen",
             )
-        await job_queue.complete(job_id, stats)
+        await job_queue.complete(job_id, stats, worker=worker)
     finally:
         flush_traces()
 
