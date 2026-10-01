@@ -50,6 +50,8 @@ export function EditCategoryDialog({
     meta: { inlineError: true },
     onSuccess: async (slug) => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
+      // item rows carry the category's name
+      await queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)
       if (onSaved) onSaved()
       else navigate(`/categories/${slug}`, { replace: true })

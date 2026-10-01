@@ -57,6 +57,12 @@ function SiteDialog({
     meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
+      if (site) {
+        // a rename reaches every row that carries the site's name
+        void queryClient.invalidateQueries({ queryKey: ['items'] })
+        void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      }
       onOpenChange(false)
     },
   })
