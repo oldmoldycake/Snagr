@@ -11,6 +11,7 @@ import {
   PlotFrame,
   polylineD,
   priceDomain,
+  priceSummary,
   SweepBeam,
   timeTicks,
   useMeasuredWidth,
@@ -99,7 +100,11 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
     return { plot, domain, avg, best, xTicks: timeTicks(plot, xMin, xMax, range) }
   }, [width, avgPts, bestPts, target, range])
 
-  const sweep = useSweep(geom?.plot ?? null)
+  const stops = useMemo(
+    () => [...new Set([...avgPts, ...bestPts].map((p) => p.ts))].sort((a, b) => a - b),
+    [avgPts, bestPts],
+  )
+  const sweep = useSweep(geom?.plot ?? null, stops)
 
   if (avgPts.length === 0 && bestPts.length === 0) {
     return (
@@ -119,11 +124,28 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
     .filter((r): r is { label: string; color: string; value: number } => r.value != null)
     .sort((a, b) => a.value - b.value)
 
+  // the best line leads the summary; the average only when there is no best
+  const lead = bestPts.length > 0 ? bestPts : avgPts
+  const avgNow = bestPts.length > 0 && avgPts.length > 0 ? avgPts[avgPts.length - 1].value : null
+  const summary = `${lead === bestPts ? BEST_LABEL : AVG_LABEL}: ${priceSummary(
+    lead.map((p) => p.value),
+    lead[lead.length - 1].value,
+    target,
+    data.currency,
+  )}${avgNow != null ? `. Average now ${formatMoney(avgNow.toFixed(2), data.currency)}` : ''}. Arrow keys step through the checks.`
+
   return (
     <div>
       <div ref={ref} className="relative h-64">
         {geom ? (
-          <svg width={width} height={HEIGHT} className="touch-none" {...sweep.handlers}>
+          <svg
+            width={width}
+            height={HEIGHT}
+            role="img"
+            aria-label={summary}
+            className="touch-pan-y select-none focus-visible:-outline-offset-2"
+            {...sweep.svgProps}
+          >
             <GlowDefs id={glowId} />
             <PlotFrame
               plot={geom.plot}
@@ -181,6 +203,13 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
           </FloatingTip>
         ) : null}
       </div>
+      <p aria-live="polite" className="sr-only">
+        {sweep.pos?.keyed
+          ? `${tooltipTimeLabel(sweep.pos.ts)}: ${struck
+              .map((r) => `${r.label} ${formatMoney(r.value.toFixed(2), data.currency)}`)
+              .join('; ')}`
+          : ''}
+      </p>
       <div className="flex items-center gap-4 px-4 pt-2">
         <span className="flex items-center gap-1.5 text-xs text-ink-2">
           <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: chart.ink }} />

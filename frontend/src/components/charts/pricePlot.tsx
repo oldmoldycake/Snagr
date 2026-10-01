@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  RefObject,
+} from 'react'
+import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
 import { chart, mixToWhite } from './chartTheme'
 
@@ -27,6 +34,10 @@ const MARGIN = { l: 54, r: 14, t: 14, b: 30 } as const
 /** Beam dead zone before the right edge — keeps the scan off the now-dots. */
 const BEAM_INSET = 30
 const TICK_FONT = { fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" } as const
+/** How long a finger must rest on the chart before it scans instead of scrolling the page. */
+const LONG_PRESS_MS = 350
+/** Movement that turns a pending long-press into a scroll. */
+const PRESS_SLOP = 10
 
 /** Measured width of the chart's container — the ResponsiveContainer stand-in. */
 export function useMeasuredWidth(): { ref: RefObject<HTMLDivElement | null>; width: number } {
@@ -324,33 +335,171 @@ export interface SweepPos {
   x: number
   y: number
   ts: number
+  /** placed by the arrow keys, so the chart's live region announces it */
+  keyed: boolean
 }
 
-/** Cursor scan state — pointer events, so touch-drag scans too. */
-export function useSweep(plot: Plot | null): {
+/**
+ * The text alternative's price summary: `low $X, high $Y, now $Z, target $T`.
+ * A null `now` reads as out of stock; a null target is left out.
+ */
+export function priceSummary(
+  values: number[],
+  now: number | null,
+  target: number | null,
+  currency: string,
+): string {
+  const money = (n: number) => formatMoney(n.toFixed(2), currency)
+  const parts = [
+    `low ${money(Math.min(...values))}`,
+    `high ${money(Math.max(...values))}`,
+    now != null ? `now ${money(now)}` : 'now out of stock',
+  ]
+  if (target != null) parts.push(`target ${money(target)}`)
+  return parts.join(', ')
+}
+
+/**
+ * The stop an arrow key moves the keyboard scan to, out of `count` stops.
+ * From no stop yet, Left starts at the latest and Right at the earliest;
+ * keys that aren't steps return null.
+ */
+export function stepStop(count: number, current: number | null, key: string): number | null {
+  if (count === 0) return null
+  const last = count - 1
+  switch (key) {
+    case 'ArrowLeft':
+      return current == null ? last : Math.max(0, current - 1)
+    case 'ArrowRight':
+      return current == null ? 0 : Math.min(last, current + 1)
+    case 'Home':
+      return 0
+    case 'End':
+      return last
+    default:
+      return null
+  }
+}
+
+/**
+ * Scan state for a chart's SVG, spread onto it as `svgProps`. A mouse or pen
+ * scans on hover. A finger scans only after a long-press: the SVG is
+ * `touch-action: pan-y`, so a swipe that starts on the chart still scrolls
+ * the page, and once the press is held a non-passive touchmove keeps the
+ * drag on the chart. The arrow keys (plus Home/End) step through `stops`,
+ * the check timestamps in ascending order; Escape or leaving the chart
+ * clears the scan.
+ */
+export function useSweep(
+  plot: Plot | null,
+  stops: number[],
+): {
   pos: SweepPos | null
-  handlers: {
+  svgProps: {
+    ref: (el: SVGSVGElement | null) => (() => void) | undefined
+    tabIndex: number
+    onPointerDown: (e: ReactPointerEvent<SVGSVGElement>) => void
     onPointerMove: (e: ReactPointerEvent<SVGSVGElement>) => void
+    onPointerUp: (e: ReactPointerEvent<SVGSVGElement>) => void
     onPointerLeave: () => void
     onPointerCancel: () => void
+    onContextMenu: (e: ReactMouseEvent<SVGSVGElement>) => void
+    onKeyDown: (e: ReactKeyboardEvent<SVGSVGElement>) => void
+    onBlur: () => void
   }
 } {
   const [pos, setPos] = useState<SweepPos | null>(null)
-  const clear = () => setPos(null)
+  const press = useRef<{ x: number; y: number; timer: number | null; held: boolean } | null>(null)
+
+  const endPress = () => {
+    if (press.current?.timer != null) window.clearTimeout(press.current.timer)
+    press.current = null
+  }
+  useEffect(() => endPress, [])
+
+  const clear = () => {
+    endPress()
+    setPos(null)
+  }
+
+  const place = (x: number, y: number) => {
+    if (!plot) return
+    const { l, r, t, b } = plot.box
+    if (x < l || x > r - BEAM_INSET || y < t || y > b) setPos(null)
+    else setPos({ x, y, ts: plot.tsAt(x), keyed: false })
+  }
+
+  const local = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  // React registers touchmove as passive, so the scroll lock needs its own listener.
+  const ref = useCallback((el: SVGSVGElement | null) => {
+    if (!el) return undefined
+    const onTouchMove = (e: TouchEvent) => {
+      if (press.current?.held && e.cancelable) e.preventDefault()
+    }
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => el.removeEventListener('touchmove', onTouchMove)
+  }, [])
+
   return {
     pos,
-    handlers: {
-      onPointerMove: (e) => {
-        if (!plot) return
-        const rect = e.currentTarget.getBoundingClientRect()
-        const x = e.clientX - rect.left
-        const y = e.clientY - rect.top
-        const { l, r, t, b } = plot.box
-        if (x < l || x > r - BEAM_INSET || y < t || y > b) clear()
-        else setPos({ x, y, ts: plot.tsAt(x) })
+    svgProps: {
+      ref,
+      tabIndex: 0,
+      onPointerDown: (e) => {
+        if (e.pointerType !== 'touch') return
+        endPress()
+        const { x, y } = local(e)
+        const p = { x, y, timer: null as number | null, held: false }
+        p.timer = window.setTimeout(() => {
+          p.timer = null
+          p.held = true
+          place(p.x, p.y)
+        }, LONG_PRESS_MS)
+        press.current = p
       },
-      onPointerLeave: clear,
+      onPointerMove: (e) => {
+        const { x, y } = local(e)
+        if (e.pointerType === 'touch') {
+          const p = press.current
+          if (!p) return
+          if (p.held) place(x, y)
+          else if (Math.hypot(x - p.x, y - p.y) > PRESS_SLOP) endPress()
+          return
+        }
+        place(x, y)
+      },
+      onPointerUp: (e) => {
+        if (e.pointerType === 'touch') clear()
+      },
+      onPointerLeave: () => {
+        if (!pos?.keyed) clear()
+      },
       onPointerCancel: clear,
+      // a held press would otherwise open the long-press callout over the scan
+      onContextMenu: (e) => {
+        if (press.current) e.preventDefault()
+      },
+      onKeyDown: (e) => {
+        if (!plot) return
+        if (e.key === 'Escape' && pos) {
+          e.preventDefault()
+          setPos(null)
+          return
+        }
+        const current = pos?.keyed ? stops.indexOf(pos.ts) : -1
+        const next = stepStop(stops.length, current >= 0 ? current : null, e.key)
+        if (next == null) return
+        e.preventDefault()
+        const ts = stops[next]
+        setPos({ x: plot.x(ts), y: plot.box.t, ts, keyed: true })
+      },
+      onBlur: () => {
+        if (pos?.keyed) setPos(null)
+      },
     },
   }
 }

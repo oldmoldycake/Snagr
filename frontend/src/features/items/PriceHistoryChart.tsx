@@ -10,6 +10,7 @@ import {
   makePlot,
   PlotFrame,
   priceDomain,
+  priceSummary,
   SweepBeam,
   timeTicks,
   useMeasuredWidth,
@@ -129,7 +130,11 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
     }
   }, [width, plotted, target, range])
 
-  const sweep = useSweep(geom?.plot ?? null)
+  const stops = useMemo(
+    () => [...new Set(plotted.flatMap((s) => s.points.map((p) => p.ts)))].sort((a, b) => a - b),
+    [plotted],
+  )
+  const sweep = useSweep(geom?.plot ?? null, stops)
 
   if (plotted.length === 0) {
     return (
@@ -147,11 +152,26 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
           .sort((a, b) => a.at.price - b.at.price)
       : []
 
+  const inStockNow = plotted.map((s) => s.points[s.points.length - 1]).filter((p) => p.in_stock)
+  const summary = `Price history of ${plotted.length} ${plotted.length === 1 ? 'listing' : 'listings'}: ${priceSummary(
+    plotted.flatMap((s) => s.points.map((p) => p.price)),
+    inStockNow.length > 0 ? Math.min(...inStockNow.map((p) => p.price)) : null,
+    target,
+    data.currency,
+  )}. Arrow keys step through the checks.`
+
   return (
     <div>
       <div ref={ref} className="relative h-64">
         {geom ? (
-          <svg width={width} height={HEIGHT} className="touch-none" {...sweep.handlers}>
+          <svg
+            width={width}
+            height={HEIGHT}
+            role="img"
+            aria-label={summary}
+            className="touch-pan-y select-none focus-visible:-outline-offset-2"
+            {...sweep.svgProps}
+          >
             <GlowDefs id={glowId} />
             <PlotFrame
               plot={geom.plot}
@@ -201,6 +221,16 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
           </FloatingTip>
         ) : null}
       </div>
+      <p aria-live="polite" className="sr-only">
+        {sweep.pos?.keyed
+          ? `${tooltipTimeLabel(sweep.pos.ts)}: ${struck
+              .map(
+                ({ s, at }) =>
+                  `${labels.get(s.listing.listing_id) ?? s.listing.site_name} ${formatMoney(at.price.toFixed(2), data.currency)}${at.in_stock ? '' : ', out of stock'}`,
+              )
+              .join('; ')}`
+          : ''}
+      </p>
 
       {plotted.length > 1 || foldedCount > 0 ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
