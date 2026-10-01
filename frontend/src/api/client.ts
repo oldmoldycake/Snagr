@@ -38,7 +38,8 @@ export interface RequestOptions {
 /**
  * Auth lives in httpOnly cookies, so "logged in" is invisible to JS — we just
  * send requests and react to 401s: refresh once (single-flight across all
- * concurrent requests), retry once, then give up and let the caller redirect.
+ * concurrent requests), retry once, then give up and throw: the query and
+ * mutation caches in main.tsx send a signed-in visitor back to /login.
  */
 let refreshPromise: Promise<boolean> | null = null
 

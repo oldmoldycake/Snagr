@@ -1,10 +1,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MutationCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { RouterProvider } from 'react-router-dom'
 import { Toaster, toast } from 'sonner'
 import { ApiError } from '@/api/client'
+import { qk } from '@/api/queries'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { router } from '@/router'
 
@@ -32,11 +33,29 @@ declare module '@tanstack/react-query' {
   }
 }
 
+/**
+ * A 401 that reaches the cache already survived `api`'s refresh-and-retry, so
+ * the refresh token has expired too: drop everything this session cached and
+ * send the visitor to sign in, coming back to where they were. Only a visitor
+ * the cache still thinks is signed in is sent: a refused login or the signed-out
+ * /me on the login page is that page's to show. The cache is cleared first so
+ * LoginPage doesn't find the old user and bounce straight back.
+ */
+function endExpiredSession(error: Error): void {
+  if (!(error instanceof ApiError && error.status === 401)) return
+  if (queryClient.getQueryData(qk.session) === undefined) return
+  const { pathname, search, hash } = router.state.location
+  queryClient.clear()
+  void router.navigate('/login', { replace: true, state: { from: pathname + search + hash } })
+}
+
 const queryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: endExpiredSession }),
   // A failed save always says so: a toast, unless the component shows the
   // server's reason in place. Nothing a user clicks fails silently.
   mutationCache: new MutationCache({
     onError: (error, _variables, _context, mutation) => {
+      endExpiredSession(error)
       if (error instanceof ApiError) {
         if (!mutation.meta?.inlineError) toast.error(error.message)
       } else {
