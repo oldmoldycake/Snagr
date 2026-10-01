@@ -144,7 +144,7 @@ function AccountMenu() {
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger className="relative flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[12px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
+      <DropdownMenuTrigger className="tap-target relative flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[12px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
         {user?.email ? user.email[0].toUpperCase() : <UserIcon className="size-3.5" />}
         <span className="sr-only">Account menu</span>
         <svg viewBox="0 0 40 40" aria-hidden className="avatar-ticks size-10">

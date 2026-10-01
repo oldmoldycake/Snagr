@@ -63,7 +63,7 @@ export function DialogContent({
         <div aria-hidden className="mx-auto mt-2 h-1 w-8 rounded-full bg-hairline-strong sm:hidden" />
         {children}
         <DialogPrimitive.Close
-          className="absolute top-3.5 right-3.5 grid size-7 place-items-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
+          className="tap-target absolute top-3.5 right-3.5 grid size-7 place-items-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
           aria-label="Close"
         >
           <X className="size-4" />
