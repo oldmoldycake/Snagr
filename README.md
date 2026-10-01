@@ -9,11 +9,11 @@ A self-hosted price tracker for secondhand-marketplace hunting. You describe wha
 
 **Status: early (0.x).** The whole stack runs end to end, every push to `main` publishes container images, and release-please cuts a tagged release from the [CHANGELOG](CHANGELOG.md). Expect rough edges, and read the release notes before upgrading between minor versions.
 
-![The dashboard: tonight's verdict, the hunter's status ticker, and every watched item with trend, best price, site, and distance to target](docs/screenshots/dashboard.png)
+![The dashboard: tonight's verdict, the hunter's status line, and your items grouped into collapsible category shelves, each row with trend, best price, site, and distance to target](docs/screenshots/dashboard.png)
 
-![The Activity page: two hunts running live, a paused site, the stream of price checks, and what the hunter does next](docs/screenshots/activity.png)
+![The Activity page: a timeline of what the hunter does next, the two hunts running now and the history behind them, with a Needs you column for a paused site and a failed hunt](docs/screenshots/activity.png)
 
-![An item: the price headline and hunt controls, per-listing price history against the target line, and each listing on a price rail](docs/screenshots/item-detail.png)
+![An item: the price headline and hunt controls, per-listing price history against the target line, the tracking settings, and each listing on a price rail](docs/screenshots/item-detail.png)
 
 *All three screenshots are the frontend's built-in mock data (see [Development](#development)).*
 
@@ -35,9 +35,9 @@ A self-hosted price tracker for secondhand-marketplace hunting. You describe wha
 
 ## Features
 
-- **Watches, not bookmarks** — track an *item* across several marketplace sites at once, with a target price, free-form criteria the agent applies when judging listings, a selection mode (`cheapest` or `best_match`), and a slot budget so a watch never balloons past the number of listings you asked for.
+- **Watches, not bookmarks** — track an *item* across several marketplace sites at once, with a target price, free-form criteria the agent applies when judging listings, a selection mode (`cheapest` or `best_match`), and a listing budget so a watch never tracks more listings than you asked for.
 - **LLM scraping through a real browser** — the agent works marketplace pages via [Playwright MCP](https://github.com/microsoft/playwright-mcp), so it sees what you'd see. The model is pluggable: any [LangChain `init_chat_model`](https://python.langchain.com/docs/how_to/chat_models_universal_init/) provider via four env vars. The agent ships adapters for OpenRouter, OpenAI, Anthropic, Google, Ollama, Groq, Mistral, Together, Fireworks, xAI, DeepSeek, Cohere, and AWS Bedrock.
-- **An agent that is always on** — the agent is a daemon working a queue, not a batch job you start. A new watch is being hunted within seconds, and keeps being hunted on its own while it has open slots — backing off from 15 minutes to 6 hours while a site has nothing new, and stopping once every slot is filled until one frees. On a full watch, **Hunt for better** asks for one more look: a hunt that swaps out the weakest tracked listing only for something better (in cheapest mode, only for a strictly lower price). Tracked listings are re-read on their own every half hour, or at a watch's own interval; **Hunt now** and **Check prices** jump the queue; and a watch can switch its own hunting off. The Activity page shows every hunt's log live, what is queued next, and the history.
+- **An agent that is always on** — the agent is a daemon working a queue, not a batch job you start. A new watch is being hunted within seconds, and keeps being hunted on its own while it has room for more listings — backing off from 15 minutes to 6 hours while a site has nothing new, and stopping once every listing is tracked until one is dropped. On a full watch, **Hunt for better** asks for one more look: a hunt that swaps out the weakest tracked listing only for something better (in cheapest mode, only for a strictly lower price). Tracked listings are re-read on their own every half hour, or at a watch's own interval; **Hunt now** and **Check prices** jump the queue; and a watch can switch its own hunting off. The Activity page shows every hunt's log live, what is queued next, and the history.
 - **Most re-checks never call the model** — the first time the model confirms a listing's price, code learns where on that page the price lives and replays that on every later check; where the same locator works against the raw HTML, the check is a plain HTTP GET with no browser at all. A site that starts answering challenge pages trips a circuit breaker and is left alone — an hour at first, doubling on each repeat trip up to a day — rather than burning tokens on every listing.
 - **Price history that means something** — every re-check is recorded; best/average price, sparklines, and percent drift are derived from the raw checks. Prices are `Numeric(10,2)` in the database and decimal strings in the API, never floats. A reading wildly out of line is recorded but disbelieved — it never counts, and only a second read that agrees with it is believed — and auction bids are never recorded as prices (Buy It Now is the exception), so neither a scraping slip nor a $1 opening bid can fake a target hit.
 - **Market-price grounding** — the agent periodically researches a reference market price per item and condition tier (price guides first, then a broad [SearXNG](https://docs.searxng.org) snippet search) so "is this a deal?" has a denominator.
@@ -130,7 +130,7 @@ The compose `agent` service runs `main.py --serve`: the hunter LISTENs for work 
 2. **Add the marketplaces** you hunt on: Sites → **Add site** (a name and a base URL).
 3. **Group them into a category**: **New category**, then edit it to link its sites. The hunter searches an item on its category's sites, so a category with no sites gets no hunts.
 4. **Add an item**: **Add item**, pick the category, name the thing you want and (optionally) a target price. On the item page, **Edit tracking** sets what you're looking for (the criteria the agent judges listings by), how to pick listings, how many to track, the check interval, whether it hunts on its own, and which of the category's sites to search.
-5. **Watch it work.** The first hunt starts within seconds — follow it on the Activity page. From then on the watch is hunted while it has open slots and its listings are re-checked on their own; set up a channel under Settings → Notifications to hear about target hits.
+5. **Watch it work.** The first hunt starts within seconds — follow it on the Activity page. From then on the watch is hunted while it has room for more listings and its listings are re-checked on their own; set up a channel under Settings → Notifications to hear about target hits.
 
 ## Deploying from the images
 
@@ -164,6 +164,14 @@ Images are published for `linux/amd64` only — on arm64, build from source. The
 
 — and enabling it and re-running the migration is the whole upgrade; no data changes.
 
+**From 0.7 to 0.8.**
+
+- **`JWT_SECRET` is now required.** The backend refuses to start on the old `dev-only-change-me` default, on `.env.example`'s `CHANGE_ME` placeholder, or on anything shorter than 32 bytes. Generate one with `python -c 'import secrets; print(secrets.token_urlsafe(48))'` and set it in `backend/.env` *before* restarting. Changing it signs everyone out.
+- **Migrations 019–022 tidy existing data**, and none of it needs your attention unless you want to rename what they flag. Target prices stored as `NaN` are cleared (the watch keeps tracking, with no target). Items that shared a name within a category (ignoring case) are merged into the oldest, with their watches, listings and jobs; the ones that can't merge are renamed `<name> (duplicate <id>)`. Categories and sites that shared a name are renamed the same way, and blank names become `Untitled item/category/site <id>`. Look for `(duplicate` in your item, category and site lists after upgrading. Downgrading does not un-merge.
+- **Sign-ins carry over.** Migration 022 groups refresh tokens into sign-in families; access tokens minted before the upgrade are refused once and the app refreshes them silently. From then on a password change ends your other sessions, and a replayed refresh token ends its whole sign-in.
+- **Behind a reverse proxy**, set `FORWARDED_ALLOW_IPS` to the proxy's address or subnet, or every visitor shares one sign-in rate limit (see `backend/.env.example`).
+- **Grounding has its own worker pool** (`GROUND_CONCURRENCY`, default 1) so a suspended SearXNG no longer holds hunts back. Category and site writes are admin-only. `SITE_BREAKER_ERRORS=0` now switches the circuit breaker off.
+
 **Settings that live on both sides.** `HUNT_ENABLED`, `RECHECK_INTERVAL_MINUTES` and `RECHECK_INTERVAL_FLOOR_MINUTES` are read by the agent (which acts on them) *and* the backend (which reports and enforces them in the UI and API). When a release adds one of these, set it in both env files with the same value.
 
 ## Configuration
@@ -191,7 +199,7 @@ The sidecar embeds listing photos with DINOv3 and scores them against each item'
 2. Set `VISION_SIDECAR_URL=http://vision:8100` in `backend/.env` and `agent/.env.docker`. The profile only starts the sidecar; each component switches the feature on when that var is set (use `http://localhost:8100` only when the backend or agent runs on the host).
 3. `docker compose --profile vision up --build`.
 
-The [DINOv3 weights](https://huggingface.co/facebook/dinov3-vits16plus-pretrain-lvd1689m) are license-gated: accept the license and set `HF_TOKEN` in `vision/.env`, or the sidecar starts degraded (`/health` says so) and scoring is skipped. Review surfaces (the Review tab, authenticity badges, the reference library) appear in the UI only while the feature is on.
+The [DINOv3 weights](https://huggingface.co/facebook/dinov3-vits16plus-pretrain-lvd1689m) are license-gated: accept the license and set `HF_TOKEN` in `vision/.env`, or the sidecar starts degraded (`/health` says so) and scoring is skipped. Review surfaces (the Photo Review page, authenticity badges, the reference library) appear in the UI only while the feature is on.
 
 ## Connecting an agent (MCP)
 
