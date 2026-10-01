@@ -50,6 +50,8 @@ export function EditCategoryDialog({
     meta: { inlineError: true },
     onSuccess: async (slug) => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
+      // item rows carry the category's name
+      await queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)
       if (onSaved) onSaved()
       else navigate(`/categories/${slug}`, { replace: true })
@@ -64,6 +66,7 @@ export function EditCategoryDialog({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       await queryClient.invalidateQueries({ queryKey: ['items'] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       navigate('/', { replace: true })
     },
   })

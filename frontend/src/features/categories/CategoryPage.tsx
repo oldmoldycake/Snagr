@@ -116,6 +116,7 @@ function CategoryView({ slug }: { slug: string }) {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       setDeletingItem(null)
     },
   })

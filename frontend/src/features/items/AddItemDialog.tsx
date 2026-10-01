@@ -69,6 +69,9 @@ export function AddItemDialog({
     onSuccess: (item) => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // creating a watch queues its hunts and a grounding
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
       setOpen(false)
       onAdded?.(item)
     },

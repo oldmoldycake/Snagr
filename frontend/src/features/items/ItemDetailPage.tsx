@@ -116,6 +116,7 @@ export function ItemDetailPage() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       navigate(`/categories/${item.data?.category_slug ?? ''}`)
     },
   })

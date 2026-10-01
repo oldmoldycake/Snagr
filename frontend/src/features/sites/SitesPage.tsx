@@ -57,6 +57,12 @@ function SiteDialog({
     meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
+      if (site) {
+        // a rename reaches every row that carries the site's name
+        void queryClient.invalidateQueries({ queryKey: ['items'] })
+        void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+        void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      }
       onOpenChange(false)
     },
   })
@@ -146,6 +152,7 @@ export function SitesPage() {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       setDeleting(null)
     },
   })
