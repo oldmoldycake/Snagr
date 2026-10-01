@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/ui/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RelativeTime } from '@/components/ui/relative-time'
-import { cn } from '@/lib/cn'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HunterTicker } from '@/features/activity/HunterTicker'
@@ -313,7 +312,7 @@ export function DashboardPage() {
   const hiddenRows = rows.length - shownRows.length
   return (
     <div>
-      <VerdictHero items={myItems} drops={dropsByItem} className={cn(items.isFetching && 'opacity-60')} />
+      <VerdictHero items={myItems} drops={dropsByItem} />
       <HunterTicker className="mt-2" />
 
       <section className="mt-[26px]">
@@ -336,7 +335,7 @@ export function DashboardPage() {
         </div>
 
         <LabelStrip hidden={!anyOpen} />
-        <div className={cn('grid grid-cols-1 gap-2.5', items.isFetching && 'opacity-60')}>
+        <div className="busy-edge grid grid-cols-1 gap-2.5" aria-busy={items.isFetching}>
           {shelves.map((shelf, i) => (
             <CategoryShelf
               key={shelf.category.id}

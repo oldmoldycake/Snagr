@@ -7,7 +7,6 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ErrorState } from '@/components/ui/error-state'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/cn'
 import type { TimeRange } from '@/lib/time'
 import { AvgBestChart } from './AvgBestChart'
 import { PriceHistoryChart } from './PriceHistoryChart'
@@ -46,7 +45,7 @@ export function ChartPanel({
   const active = tab === 'listings' ? history : summary
 
   return (
-    <Card className={cn(active.isFetching && 'opacity-60')}>
+    <Card className="busy-edge" aria-busy={active.isFetching}>
       <CardHeader className="flex-wrap gap-x-4 gap-y-2.5 border-b border-hairline pb-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
           <CardTitle>Price history</CardTitle>

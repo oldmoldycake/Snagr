@@ -429,7 +429,7 @@ function BoardRow({
           'group grid cursor-pointer items-center gap-3 px-4 py-2 transition-colors',
           GRID_COLS,
           expanded ? 'bg-raised' : 'hover:bg-raised/60',
-          dimmed && 'opacity-45',
+          dimmed && 'ink-muted',
         )}
       >
         <div className="flex min-w-0 items-center gap-2">

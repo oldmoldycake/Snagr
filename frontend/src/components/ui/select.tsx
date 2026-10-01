@@ -26,7 +26,7 @@ export function Select({
       <SelectPrimitive.Trigger
         aria-label={ariaLabel}
         className={cn(
-          'flex h-8 items-center justify-between gap-2 rounded-sm border border-hairline-strong bg-well px-2.5 text-[13px] text-ink',
+          'flex h-8 items-center justify-between gap-2 rounded-sm border border-hairline-field bg-well px-2.5 text-[13px] text-ink',
           'focus:border-lume/60 focus:outline-none data-[placeholder]:text-ink-3',
           className,
         )}
