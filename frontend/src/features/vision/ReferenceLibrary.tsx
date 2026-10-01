@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
+import { ApiError } from '@/api/client'
 import { listReferences, revokeAutoReferences, revokeReference } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ReferenceImage } from '@/api/types'
@@ -88,6 +89,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
 
   const revoke = useMutation({
     mutationFn: (id: number) => revokeReference(id),
+    meta: { inlineError: true },
     onSuccess: () => setRevokeTarget(null),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) }),
   })
@@ -161,12 +163,15 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
       <ConfirmDialog
         open={revokeTarget != null}
         onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null)
+          if (open) return
+          setRevokeTarget(null)
+          revoke.reset()
         }}
         title="Revoke reference"
         description={`This ${revokeTarget?.label ?? ''} reference stops counting toward the item's photo checks. There is no un-revoke.`}
         confirmLabel="Revoke"
         pending={revoke.isPending}
+        error={revoke.error instanceof ApiError ? revoke.error.message : null}
         onConfirm={() => revokeTarget && revoke.mutate(revokeTarget.id)}
       />
 

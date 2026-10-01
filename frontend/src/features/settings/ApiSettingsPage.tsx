@@ -337,6 +337,7 @@ export function ApiSettingsPage() {
 
   const remove = useMutation({
     mutationFn: (id: number) => revokeToken(id),
+    meta: { inlineError: true },
     onSuccess: () => {
       setRevoking(null)
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
@@ -463,11 +464,16 @@ export function ApiSettingsPage() {
       <NewTokenDialog open={adding} onOpenChange={setAdding} />
       <ConfirmDialog
         open={revoking != null}
-        onOpenChange={(o) => (o ? null : setRevoking(null))}
+        onOpenChange={(o) => {
+          if (o) return
+          setRevoking(null)
+          remove.reset()
+        }}
         title={`Revoke ${revoking?.name ?? 'token'}?`}
         description="Anything using this token stops working immediately. This can't be undone."
         confirmLabel="Revoke"
         pending={remove.isPending}
+        error={remove.error instanceof ApiError ? remove.error.message : null}
         onConfirm={() => (revoking ? remove.mutate(revoking.id) : null)}
       />
     </div>
