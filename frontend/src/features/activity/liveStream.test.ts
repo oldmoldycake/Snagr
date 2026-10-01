@@ -111,6 +111,29 @@ describe('openLiveStream', () => {
     expect(sources()).toHaveLength(2)
   })
 
+  it('reads paused after five refusals in a row, keeps retrying, and recovers', async () => {
+    const { connections } = open()
+    for (let i = 0; i < 4; i++) {
+      sources()[i].refuse()
+      await vi.advanceTimersByTimeAsync(30_000)
+    }
+    expect(connections.at(-1)).toBe('reconnecting')
+
+    sources()[4].refuse()
+    expect(connections.at(-1)).toBe('paused')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(sources()).toHaveLength(6)
+
+    // a drop the browser retries by itself doesn't hide that the stream was paused
+    sources()[5].drop()
+    expect(connections.at(-1)).toBe('paused')
+
+    sources()[5].open()
+    expect(connections.at(-1)).toBe('live')
+    sources()[5].refuse()
+    expect(connections.at(-1)).toBe('reconnecting')
+  })
+
   it('opens nothing more once stopped', async () => {
     const { stop } = open()
     sources()[0].refuse()

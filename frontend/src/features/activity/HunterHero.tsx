@@ -2,6 +2,8 @@ import type { JobsSummary } from '@/api/types'
 import { Radar } from '@/components/ui/radar'
 import { cn } from '@/lib/cn'
 import { countdown } from '@/lib/time'
+import { ConnectionStatus } from './ConnectionStatus'
+import type { Connection } from './liveStream'
 
 /**
  * The hunter's presence as a sentence, then the few numbers that say how the
@@ -13,7 +15,7 @@ export function HunterHero({
   connection,
 }: {
   summary?: JobsSummary
-  connection: 'live' | 'reconnecting'
+  connection: Connection
 }) {
   const hunts = summary?.hunts_running ?? 0
   const checks = summary?.checks_running ?? 0
@@ -34,15 +36,8 @@ export function HunterHero({
           <p className="flex items-center gap-2 font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase">
             {eyebrow}
             <span aria-hidden>·</span>
-            <span className="flex items-center gap-1.5 tracking-[0.08em]">
-              <span
-                aria-hidden
-                className={cn(
-                  'size-1.5 rounded-full',
-                  connection === 'live' ? 'bg-drop' : 'animate-pulse bg-warn',
-                )}
-              />
-              {connection === 'live' ? 'live' : 'reconnecting…'}
+            <span className="tracking-[0.08em]">
+              <ConnectionStatus connection={connection} />
             </span>
           </p>
           <h1
