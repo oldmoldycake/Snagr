@@ -96,6 +96,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
 
   const revokeAuto = useMutation({
     mutationFn: () => revokeAutoReferences(itemId),
+    meta: { inlineError: true },
     onSuccess: ({ revoked }) => {
       setRevokeAutoOpen(false)
       toast.success(`Revoked ${revoked} auto-promoted ${revoked === 1 ? 'reference' : 'references'}`)
@@ -177,11 +178,15 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
 
       <ConfirmDialog
         open={revokeAutoOpen}
-        onOpenChange={setRevokeAutoOpen}
+        onOpenChange={(open) => {
+          setRevokeAutoOpen(open)
+          if (!open) revokeAuto.reset()
+        }}
         title="Revoke auto-promoted references"
         description={`${autoCount} auto-promoted ${autoCount === 1 ? 'reference' : 'references'} will stop counting toward this item's photo checks. Human-confirmed and uploaded references are untouched.`}
         confirmLabel={`Revoke ${autoCount}`}
         pending={revokeAuto.isPending}
+        error={revokeAuto.error instanceof ApiError ? revokeAuto.error.message : null}
         onConfirm={() => revokeAuto.mutate()}
       />
 
