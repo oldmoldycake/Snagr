@@ -228,22 +228,27 @@ export function WatchList({
                         ⌖
                       </span>
                     ) : null}
-                    <Link
-                      to={`/items/${item.id}`}
-                      className={cn(
-                        'min-w-0 truncate font-medium text-ink hover:text-lume',
-                        item.target_met && 'text-sm font-semibold',
-                      )}
-                    >
-                      {item.name}
-                    </Link>
-                    {showCategory ? (
-                      <span className="hidden shrink-0 font-mono text-[12px] text-ink-3 md:inline">
-                        {item.category_name}
-                      </span>
-                    ) : null}
-                    <CriteriaHint item={item} />
-                    {drop && !item.target_met ? <DropChip drop={drop} /> : null}
+                    {/* on a phone the chip sits under the name: sharing its line, it left room for ~10 characters */}
+                    <div className="flex min-w-0 gap-x-2 gap-y-1 max-sm:flex-col max-sm:items-start sm:items-center">
+                      <div className="flex max-w-full min-w-0 items-center gap-2">
+                        <Link
+                          to={`/items/${item.id}`}
+                          className={cn(
+                            'min-w-0 truncate font-medium text-ink hover:text-lume',
+                            item.target_met && 'text-sm font-semibold',
+                          )}
+                        >
+                          {item.name}
+                        </Link>
+                        {showCategory ? (
+                          <span className="hidden shrink-0 font-mono text-[12px] text-ink-3 md:inline">
+                            {item.category_name}
+                          </span>
+                        ) : null}
+                        <CriteriaHint item={item} />
+                      </div>
+                      {drop && !item.target_met ? <DropChip drop={drop} /> : null}
+                    </div>
                   </div>
                 </TD>
                 <TD className="hidden md:table-cell">
