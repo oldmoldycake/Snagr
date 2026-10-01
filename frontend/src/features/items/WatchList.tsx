@@ -91,7 +91,7 @@ function DropChip({ drop }: { drop: PriceDrop }) {
   if (!Number.isFinite(pct)) return null
   const fresh = isFreshDrop(drop)
   return (
-    <span className="shrink-0 rounded-full border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[10px] text-drop tnum">
+    <span className="shrink-0 rounded-full border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[12px] text-drop tnum">
       <span aria-hidden>▼</span> {pct.toFixed(1)}%{fresh ? ' today' : ''}
     </span>
   )
@@ -235,7 +235,7 @@ export function WatchList({
                       {item.name}
                     </Link>
                     {showCategory ? (
-                      <span className="hidden shrink-0 font-mono text-[10.5px] text-ink-3 md:inline">
+                      <span className="hidden shrink-0 font-mono text-[12px] text-ink-3 md:inline">
                         {item.category_name}
                       </span>
                     ) : null}
@@ -255,7 +255,7 @@ export function WatchList({
                 >
                   {struckFrom ? (
                     // stacked, never inline: side by side the two prices overrun the fixed-width Best column
-                    <s className="block font-mono text-[11px] leading-tight font-normal text-ink-3">
+                    <s className="block font-mono text-[12px] leading-tight font-normal text-ink-3">
                       {formatMoney(struckFrom.old_price, item.currency)}
                     </s>
                   ) : null}
@@ -270,7 +270,7 @@ export function WatchList({
                 {showSite ? (
                   <TD
                     title={item.best_site_name ?? undefined}
-                    className="hidden truncate text-right font-mono text-[11.5px] text-ink-3 md:table-cell"
+                    className="hidden truncate text-right font-mono text-[12px] text-ink-3 md:table-cell"
                   >
                     {item.best_site_name ?? '—'}
                   </TD>
@@ -282,7 +282,7 @@ export function WatchList({
                   {item.target_met ? (
                     <SnaggedBadge />
                   ) : item.active_listing_count === 0 ? (
-                    <span className="font-mono text-[11px] text-ink-3">no listings yet</span>
+                    <span className="font-mono text-[12px] text-ink-3">no listings yet</span>
                   ) : (
                     <MeterToTarget best={item.best_price} target={effectiveTarget(item)} currency={item.currency} />
                   )}
@@ -298,12 +298,12 @@ export function WatchList({
                         <DropdownMenuLabel
                           title={item.name}
                           meta={
-                            <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                            <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                               target {formatMoney(effectiveTarget(item), item.currency)}
                             </span>
                           }
                         >
-                          <span className="font-mono text-[10.5px] text-ink-2 tnum">
+                          <span className="font-mono text-[12px] text-ink-2 tnum">
                             {item.best_price == null ? (
                               <span className="text-ink-3">no price yet</span>
                             ) : (

@@ -111,7 +111,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
 
   return (
     <div>
-      <div className="mb-1.5 flex items-baseline justify-between font-mono text-[10px] font-medium tracking-[0.14em] text-ink-3 uppercase">
+      <div className="mb-1.5 flex items-baseline justify-between font-mono text-[12px] font-medium text-ink-3">
         <span>Sites</span>
         <span className="text-ink-2 tnum">{selected.length} picked</span>
       </div>
@@ -182,20 +182,20 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
                   </span>
                   <span
                     aria-hidden
-                    className="grid size-5 place-items-center rounded-[3px] border border-hairline bg-raised font-mono text-[9.5px] font-medium text-ink-2 uppercase"
+                    className="grid size-5 place-items-center rounded-[3px] border border-hairline bg-raised font-mono text-[12px] font-medium text-ink-2 uppercase"
                   >
                     {site.name.slice(0, 2)}
                   </span>
-                  <span className="truncate text-[13px] text-ink">{site.name}</span>
-                  <span className="truncate font-mono text-[11px] text-ink-3 max-sm:hidden">
+                  <span className="truncate text-[14px] text-ink">{site.name}</span>
+                  <span className="truncate font-mono text-[12px] text-ink-3 max-sm:hidden">
                     {hostOf(site.base_url) ?? site.base_url}
                   </span>
                   {paused ? (
-                    <span className="font-mono text-[11px] whitespace-nowrap text-warn">⚠ paused</span>
+                    <span className="font-mono text-[12px] whitespace-nowrap text-warn">⚠ paused</span>
                   ) : added ? (
-                    <span className="font-mono text-[11px] text-lume">new</span>
+                    <span className="font-mono text-[12px] text-lume">new</span>
                   ) : (
-                    <span className="font-mono text-[11px] whitespace-nowrap text-ink-3 tnum">
+                    <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                       {site.listing_count} tracked
                     </span>
                   )}
@@ -212,7 +212,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
           aria-controls={formId}
           hidden={adding}
           onClick={openForm}
-          className="flex h-10 w-full items-center gap-2.5 border-t border-hairline px-3 text-[13px] text-ink-3 transition-colors hover:text-lume focus-visible:-outline-offset-2"
+          className="flex h-10 w-full items-center gap-2.5 border-t border-hairline px-3 text-[14px] text-ink-3 transition-colors hover:text-lume focus-visible:-outline-offset-2"
         >
           <span aria-hidden className="w-4 text-center font-mono">
             ＋
@@ -238,7 +238,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
                     autoComplete="off"
                     placeholder="facebook.com/marketplace"
                     aria-invalid={notice?.kind === 'invalid' || undefined}
-                    className="h-[30px] font-mono text-[12.5px] aria-invalid:border-rise/60"
+                    className="h-[30px] font-mono text-[14px] aria-invalid:border-rise/60"
                     value={url}
                     onChange={(e) => {
                       setUrl(e.target.value)
@@ -253,7 +253,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
                   <Input
                     id={nameId}
                     autoComplete="off"
-                    className="h-[30px] text-[12.5px]"
+                    className="h-[30px] text-[14px]"
                     value={name}
                     onChange={(e) => {
                       setName(e.target.value)

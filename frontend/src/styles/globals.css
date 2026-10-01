@@ -230,7 +230,7 @@
   }
 
   body {
-    @apply font-sans text-[13px] leading-normal text-ink antialiased;
+    @apply font-sans text-[14px] leading-normal text-ink antialiased;
     background:
       radial-gradient(900px 340px at 30% 0%, rgb(66 208 124 / 0.045), transparent 70%),
       var(--color-page);

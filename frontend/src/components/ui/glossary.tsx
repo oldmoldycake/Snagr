@@ -33,8 +33,8 @@ export function Glossary({ terms, className }: { terms: GlossaryTerm[]; classNam
           <dl className="grid gap-3.5">
             {terms.map(({ term, meaning }) => (
               <div key={term}>
-                <dt className="font-mono text-[11px] tracking-[0.06em] text-ink uppercase">{term}</dt>
-                <dd className="mt-0.5 text-[13px] leading-relaxed text-ink-2">{meaning}</dd>
+                <dt className="font-mono text-[12px] text-ink">{term}</dt>
+                <dd className="mt-0.5 text-[14px] leading-relaxed text-ink-2">{meaning}</dd>
               </div>
             ))}
           </dl>

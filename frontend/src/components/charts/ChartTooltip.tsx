@@ -6,7 +6,7 @@ import { formatDateTime } from '@/lib/time'
 export function TooltipFrame({ label, children }: { label?: string; children: ReactNode }) {
   return (
     <div className="max-w-[280px] rounded-sm border border-hairline bg-overlay px-2.5 py-2 shadow-xl">
-      {label ? <p className="mb-1.5 text-[11px] text-ink-3">{label}</p> : null}
+      {label ? <p className="mb-1.5 text-[12px] text-ink-3">{label}</p> : null}
       <div className="space-y-1">{children}</div>
     </div>
   )

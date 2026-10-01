@@ -26,7 +26,7 @@ export interface Plot {
 const MARGIN = { l: 54, r: 14, t: 14, b: 30 } as const
 /** Beam dead zone before the right edge — keeps the scan off the now-dots. */
 const BEAM_INSET = 30
-const TICK_FONT = { fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" } as const
+const TICK_FONT = { fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" } as const
 
 /** Measured width of the chart's container — the ResponsiveContainer stand-in. */
 export function useMeasuredWidth(): { ref: RefObject<HTMLDivElement | null>; width: number } {

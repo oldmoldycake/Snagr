@@ -41,6 +41,6 @@ export function mixToWhite(hex: string, t: number): string {
 /** SVG text style for axis tick labels — muted mono, so labels never compete with the traces. */
 export const axisTickStyle = {
   fill: chart.inkMuted,
-  fontSize: 11,
+  fontSize: 12,
   fontFamily: "'IBM Plex Mono', monospace",
 } as const

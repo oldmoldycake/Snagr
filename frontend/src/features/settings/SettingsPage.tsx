@@ -153,7 +153,7 @@ export function SettingsPage() {
             </CardTitle>
           </CardHeader>
           <CardBody className="space-y-3">
-            <p className="text-[13px] text-ink-2">
+            <p className="text-[14px] text-ink-2">
               Confidence thresholds for the image-based authenticity check, 0.50–1.00. Auto-reject
               drops a listing before it's saved; auto-promote lets a strong suggestion join an
               item's library without review — it also needs three confirmed references of that

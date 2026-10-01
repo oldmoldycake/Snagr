@@ -284,7 +284,7 @@ export function ChannelsCard() {
         </Button>
       </CardHeader>
       <CardBody className="space-y-3">
-        <p className="text-[13px] text-ink-2">
+        <p className="text-[14px] text-ink-2">
           Where your alerts go when an item reaches its target or Snagr finds a new listing. To silence one
           item, turn off Notify at target on its page.
         </p>
@@ -292,7 +292,7 @@ export function ChannelsCard() {
         {channels.isPending ? (
           <Skeleton className="h-16" />
         ) : (channels.data?.data.length ?? 0) === 0 ? (
-          <p className="text-[13px] text-ink-3">No channels yet — notifications go nowhere until you add one.</p>
+          <p className="text-[14px] text-ink-3">No channels yet — notifications go nowhere until you add one.</p>
         ) : (
           <ul className="divide-y divide-hairline">
             {channels.data?.data.map((channel) => (

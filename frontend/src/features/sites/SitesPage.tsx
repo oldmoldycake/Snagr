@@ -156,15 +156,15 @@ function SiteActions({
             <DropdownMenuLabel
               title={site.name}
               meta={
-                <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+                <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                   {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'}
                 </span>
               }
             >
               {site.category_ids.length === 0 ? (
-                <span className="font-mono text-[10.5px] text-ink-3">not linked to a category</span>
+                <span className="font-mono text-[12px] text-ink-3">not linked to a category</span>
               ) : (
-                <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
+                <span className="flex flex-wrap gap-1 font-mono text-[12px] text-ink-2">
                   {site.category_ids.map((cid) => (
                     <span
                       key={cid}
@@ -292,7 +292,7 @@ export function SitesPage() {
                       >
                         {site.base_url}
                       </a>
-                      <p className="mt-0.5 font-mono text-[11px] text-ink-3 tnum">
+                      <p className="mt-0.5 font-mono text-[12px] text-ink-3 tnum">
                         {site.listing_count} {site.listing_count === 1 ? 'listing' : 'listings'} ·{' '}
                         {site.last_checked_at ? (
                           <>

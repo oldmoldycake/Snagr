@@ -68,7 +68,7 @@ export function Segmented<T extends string>({
             tabIndex={i === tabStop ? 0 : -1}
             onClick={() => onChange(o.value)}
             className={cn(
-              'seg-option relative flex h-[22px] flex-[1_0_auto] items-center justify-center rounded-[3px] px-2 font-mono text-[11px] tracking-[0.04em] whitespace-nowrap uppercase transition-colors focus-visible:-outline-offset-2 max-sm:h-[26px]',
+              'seg-option relative flex h-[22px] flex-[1_0_auto] items-center justify-center rounded-[3px] px-2 font-mono text-[12px] tracking-[0.04em] whitespace-nowrap uppercase transition-colors focus-visible:-outline-offset-2 max-sm:h-[26px]',
               value === o.value ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
             )}
           >

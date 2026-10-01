@@ -143,7 +143,7 @@ export function DropdownMenuItem({
     <MenuPrimitive.Item
       data-tone={tone}
       className={cn(
-        'relative z-[1] flex min-h-8 cursor-default items-center gap-2.5 rounded-sm py-1.5 pr-2 pl-[11px] text-[13px] text-ink-2 outline-none select-none',
+        'relative z-[1] flex min-h-8 cursor-default items-center gap-2.5 rounded-sm py-1.5 pr-2 pl-[11px] text-[14px] text-ink-2 outline-none select-none',
         '[&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-ink-3 [&_svg]:transition-colors',
         'data-highlighted:text-ink data-highlighted:[&_svg]:text-lume data-disabled:opacity-50',
         tone === 'danger' && 'text-rise data-highlighted:text-rise [&_svg]:text-rise data-highlighted:[&_svg]:text-rise',
@@ -156,7 +156,7 @@ export function DropdownMenuItem({
 
 /** Mono text on a menu row's right edge: a count, a path, a version. */
 export function DropdownMenuHint({ className, ...props }: ComponentPropsWithoutRef<'span'>) {
-  return <span className={cn('ml-auto font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum', className)} {...props} />
+  return <span className={cn('ml-auto font-mono text-[12px] whitespace-nowrap text-ink-3 tnum', className)} {...props} />
 }
 
 /** Hairline between menu groups — Radix DropdownMenu.Separator. */

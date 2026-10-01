@@ -22,7 +22,7 @@ export function ChecksTail({ summary }: { summary?: JobsSummary }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left font-mono text-[11px] text-ink-3 hover:text-ink-2"
+        className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left font-mono text-[12px] text-ink-3 hover:text-ink-2"
       >
         {running > 0 ? (
           <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-lume" />
@@ -38,7 +38,7 @@ export function ChecksTail({ summary }: { summary?: JobsSummary }) {
       {open ? (
         <div className="rounded-lg border border-hairline bg-well px-4 py-3">
           {checks.length === 0 ? (
-            <p className="py-1 font-mono text-[11px] text-ink-3">
+            <p className="py-1 font-mono text-[12px] text-ink-3">
               Nothing checked while this page has been open.
             </p>
           ) : (

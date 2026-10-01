@@ -25,7 +25,7 @@ const LIVE_POLL_MS = 4000
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
   return (
     <div className="rounded-md border border-hairline bg-surface px-3.5 py-2.5">
-      <p className="font-mono text-[10px] tracking-[0.13em] text-ink-3 uppercase">{label}</p>
+      <p className="font-mono text-[12px] text-ink-3">{label}</p>
       <p className={cn('mt-1 font-display text-[26px] leading-none font-semibold tnum', tone ?? 'text-ink')}>
         {value}
       </p>
@@ -117,7 +117,7 @@ export function JobPage() {
           detail.item_id ? (
             <Link
               to={`/items/${detail.item_id}`}
-              className="font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+              className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
             >
               Open the item →
             </Link>
@@ -136,7 +136,7 @@ export function JobPage() {
       <div className="flex items-center gap-4">
         {isLive ? <Radar size={44} glyph /> : null}
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-2 font-mono text-[10.5px] tracking-[0.14em] text-ink-3 uppercase">
+          <p className="flex flex-wrap items-center gap-2 font-mono text-[12px] tracking-[0.14em] text-ink-3 uppercase">
             <JobStatusDot status={detail.status} withLabel />
             <span aria-hidden>·</span>
             <span className="tnum">{formatDateTime(detail.created_at)}</span>
@@ -163,7 +163,7 @@ export function JobPage() {
       {detail.error ? (
         <p
           role="alert"
-          className="rounded-sm border border-rise/40 bg-rise/10 px-3 py-2 text-[13px] text-rise"
+          className="rounded-sm border border-rise/40 bg-rise/10 px-3 py-2 text-[14px] text-rise"
         >
           <span aria-hidden>✗</span> {detail.error}
         </p>

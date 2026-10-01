@@ -82,7 +82,7 @@ export function DialogHeader({ className, ...props }: HTMLAttributes<HTMLDivElem
 export function DialogEyebrow({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
-      className={cn('mb-2 font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase', className)}
+      className={cn('mb-2 font-mono text-[12px] tracking-[0.16em] text-ink-3 uppercase', className)}
       {...props}
     />
   )
@@ -111,7 +111,7 @@ export function DialogDescription({
 }: ComponentPropsWithoutRef<typeof DialogPrimitive.Description>) {
   return (
     <DialogPrimitive.Description
-      className={cn('mt-1.5 text-[13px] text-ink-2', className)}
+      className={cn('mt-1.5 text-[14px] text-ink-2', className)}
       {...props}
     />
   )

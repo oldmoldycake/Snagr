@@ -27,7 +27,7 @@ const LABEL_FLIP_PCT = 78
 const TARGET_LABEL_RIGHT_PCT = 82
 
 const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_44px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_44px]'
-const COL_LABEL = 'font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase'
+const COL_LABEL = 'font-mono text-[12px] font-medium text-ink-3'
 
 function stockText(listing: Listing): string {
   return listing.in_stock == null ? 'stock unknown' : listing.in_stock ? 'in stock' : 'out of stock'
@@ -75,7 +75,7 @@ function AxisStrip({
         {rail && layout.caption ? (
           <span
             className={cn(
-              'absolute top-0 font-mono text-[10px] whitespace-nowrap text-ink-3',
+              'absolute top-0 font-mono text-[12px] whitespace-nowrap text-ink-3',
               layout.caption === 'left' ? 'left-0' : 'right-0',
             )}
           >
@@ -84,7 +84,7 @@ function AxisStrip({
         ) : null}
         {rail?.targetPct != null ? (
           <span
-            className="absolute top-0 font-mono text-[10px] whitespace-nowrap text-drop"
+            className="absolute top-0 font-mono text-[12px] whitespace-nowrap text-drop"
             style={
               // pinned to an edge when centring on the notch would spill out of the column
               layout.target === 'left'
@@ -121,7 +121,7 @@ function AxisStrip({
                 return (
                   <span
                     key={c}
-                    className="absolute top-0 font-mono text-[10px] whitespace-nowrap text-ink-3 tnum"
+                    className="absolute top-0 font-mono text-[12px] whitespace-nowrap text-ink-3 tnum"
                     style={
                       pct < 6
                         ? { left: 0 }
@@ -222,7 +222,7 @@ function Track({
       />
       {now.clamp ? (
         <span
-          className="absolute top-3 font-mono text-[10px] text-ink-3"
+          className="absolute top-3 font-mono text-[12px] text-ink-3"
           // inset so the glyph doesn't overprint the edge-pinned dot
           style={now.clamp === '»' ? { right: 8 } : { left: 8 }}
         >
@@ -231,7 +231,7 @@ function Track({
       ) : null}
       <span
         className={cn(
-          'absolute top-0 font-mono text-[10px] font-semibold whitespace-nowrap tnum',
+          'absolute top-0 font-mono text-[12px] font-semibold whitespace-nowrap tnum',
           under ? 'text-drop' : 'text-ink',
         )}
         style={
@@ -260,17 +260,17 @@ function DeltaCell({
   return (
     <div className="text-right">
       {/* below sm the rail is gone, so the price returns as text */}
-      <p className="font-mono text-[13px] font-semibold text-ink tnum sm:hidden">
+      <p className="font-mono text-[14px] font-semibold text-ink tnum sm:hidden">
         {formatMoney(listing.latest_price, currency)}
       </p>
       {diff == null ? (
-        <p className="font-mono text-[11px] text-ink-3">—</p>
+        <p className="font-mono text-[12px] text-ink-3">—</p>
       ) : diff <= 0 ? (
-        <p className="font-mono text-[11px] whitespace-nowrap text-drop tnum">
+        <p className="font-mono text-[12px] whitespace-nowrap text-drop tnum">
           ✓ {formatMoney(fromCents(-diff), currency)} under
         </p>
       ) : (
-        <p className="font-mono text-[11px] whitespace-nowrap text-ink-3 tnum">
+        <p className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
           +{formatMoney(fromCents(diff), currency)}
         </p>
       )}
@@ -321,7 +321,7 @@ function ExpandedRow({
 
   return (
     <div className="flex items-start gap-4 border-t border-hairline bg-well py-3 pr-4 pl-10">
-      <p className="min-w-0 flex-1 font-mono text-[11px] leading-relaxed text-ink-3">
+      <p className="min-w-0 flex-1 font-mono text-[12px] leading-relaxed text-ink-3">
         {listing.match_score != null ? (
           <>
             <span className="text-ink-2">match {listing.match_score}</span>
@@ -369,7 +369,7 @@ function ExpandedRow({
           open listing ↗
         </a>
       </p>
-      <label className="flex shrink-0 items-center gap-2 font-mono text-[10px] tracking-[0.08em] text-ink-3 uppercase">
+      <label className="flex shrink-0 items-center gap-2 font-mono text-[12px] text-ink-3">
         Track
         <Switch
           checked={listing.active}
@@ -436,7 +436,7 @@ function BoardRow({
           <span
             aria-hidden
             className={cn(
-              'shrink-0 font-mono text-[10px]',
+              'shrink-0 font-mono text-[12px]',
               expanded
                 ? 'text-lume'
                 : 'text-ink-3 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
@@ -449,7 +449,7 @@ function BoardRow({
             target="_blank"
             rel="noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="min-w-0 truncate text-[13px] font-medium text-ink hover:text-lume hover:underline"
+            className="min-w-0 truncate text-[14px] font-medium text-ink hover:text-lume hover:underline"
           >
             {listing.title ?? listing.url.replace(/^https?:\/\/(www\.)?/, '')}
           </a>
@@ -464,7 +464,7 @@ function BoardRow({
             </Badge>
           ) : null}
           {chip ? (
-            <Badge variant="warn" className="shrink-0 font-mono text-[10px]">
+            <Badge variant="warn" className="shrink-0 font-mono text-[12px]">
               {chip}
             </Badge>
           ) : null}
@@ -602,7 +602,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
           <CollapsibleTrigger asChild>
             <button
               type="button"
-              className="flex w-full items-center gap-3 bg-well px-4 py-1.5 font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase before:h-px before:flex-1 before:bg-hairline-strong before:content-[''] after:h-px after:flex-1 after:bg-hairline-strong after:content-[''] hover:text-ink-2"
+              className="flex w-full items-center gap-3 bg-well px-4 py-1.5 font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase before:h-px before:flex-1 before:bg-hairline-strong before:content-[''] after:h-px after:flex-1 after:bg-hairline-strong after:content-[''] hover:text-ink-2"
             >
               {foldLabel} — {foldOpen ? 'hide' : 'show'}
               <svg

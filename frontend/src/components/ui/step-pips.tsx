@@ -21,8 +21,7 @@ export function StepPips({
   return (
     <ol
       className={cn(
-        'flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono font-medium tracking-[0.08em] text-ink-3 uppercase',
-        size === 'sm' ? 'text-[10px]' : 'text-[11px]',
+        'flex flex-wrap items-center gap-x-2.5 gap-y-1.5 font-mono font-medium tracking-[0.08em] text-[12px] text-ink-3 uppercase',
         className,
       )}
     >
@@ -44,7 +43,7 @@ export function StepPips({
               <span
                 className={cn(
                   'grid place-items-center rounded-full border tracking-normal',
-                  size === 'sm' ? 'size-4 text-[9px]' : 'size-[18px] text-[10px]',
+                  size === 'sm' ? 'size-[18px]' : 'size-5',
                   on ? 'border-lume' : 'border-hairline-strong',
                 )}
               >

@@ -88,7 +88,7 @@ export function UploadReferenceDialog({
                 type="file"
                 accept="image/*"
                 required
-                className="h-auto py-1.5 text-xs file:mr-2 file:rounded-sm file:border-0 file:bg-raised file:px-2 file:py-0.5 file:font-mono file:text-[11px] file:text-ink-2"
+                className="h-auto py-1.5 text-xs file:mr-2 file:rounded-sm file:border-0 file:bg-raised file:px-2 file:py-0.5 file:font-mono file:text-[12px] file:text-ink-2"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
             </div>

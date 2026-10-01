@@ -359,7 +359,7 @@ export function ApiSettingsPage() {
       ) : !enabled ? (
         <Card>
           <CardBody className="pt-4">
-            <p className="text-[13px] text-ink-2">
+            <p className="text-[14px] text-ink-2">
               Agent access is turned off on this instance — the operator set{' '}
               <code className="rounded-sm bg-well px-1 py-0.5 font-mono">MCP_ENABLED=false</code>. There is no
               MCP endpoint and API tokens are not accepted.
@@ -375,7 +375,7 @@ export function ApiSettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardBody className="space-y-3">
-              <p className="text-[13px] text-ink-2">
+              <p className="text-[14px] text-ink-2">
                 Snagr speaks the Model Context Protocol: point Claude Code, Hermes, OpenClaw or any MCP
                 client at the endpoint below with a token, and it can browse your items and prices, add
                 items, and start hunts and price checks. It can do exactly what you can do here, nothing more.
@@ -413,7 +413,7 @@ export function ApiSettingsPage() {
                   retrying={tokens.isFetching}
                 />
               ) : (tokens.data?.data.length ?? 0) === 0 ? (
-                <p className="px-4 py-3 text-[13px] text-ink-3">
+                <p className="px-4 py-3 text-[14px] text-ink-3">
                   No tokens yet — create one to connect your first agent.
                 </p>
               ) : (

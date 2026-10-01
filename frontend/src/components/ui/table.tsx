@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 export function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
     <div className="w-full overflow-x-auto">
-      <table className={cn('w-full caption-bottom border-collapse text-[13px]', className)} {...props} />
+      <table className={cn('w-full caption-bottom border-collapse text-[14px]', className)} {...props} />
     </div>
   )
 }
@@ -30,11 +30,11 @@ export function TR({ className, ...props }: HTMLAttributes<HTMLTableRowElement>)
   )
 }
 
-/** Header cell in the small uppercase mono style. */
+/** Header cell in the small mono style. */
 export function TH({ className, ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={cn('h-8 px-3 text-left align-middle font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase', className)}
+      className={cn('h-8 px-3 text-left align-middle font-mono text-[12px] font-medium text-ink-3', className)}
       {...props}
     />
   )

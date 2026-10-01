@@ -44,7 +44,7 @@ export function HunterTicker({ className }: { className?: string }) {
   const checksRunning = summary.data?.checks_running ?? 0
 
   const barClass = cn(
-    'flex h-11 w-full items-center gap-3 rounded-md border border-hairline bg-well px-4 text-left font-mono text-[11.5px]',
+    'flex h-11 w-full items-center gap-3 rounded-md border border-hairline bg-well px-4 text-left font-mono text-[12px]',
     className,
   )
 

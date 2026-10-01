@@ -69,7 +69,7 @@ export function MastheadConnection({ connection }: { connection: Connection }) {
     </>
   )
   const className =
-    'flex min-h-6 min-w-6 items-center justify-center gap-1.5 font-mono text-[10.5px] tracking-[0.08em] text-warn uppercase'
+    'flex min-h-6 min-w-6 items-center justify-center gap-1.5 font-mono text-[12px] tracking-[0.08em] text-warn uppercase'
   if (connection === 'paused') {
     return (
       <button

@@ -29,7 +29,7 @@ export function HunterHero({
       <div className="flex min-w-0 flex-1 basis-80 items-center gap-4">
         <Radar size={56} glyph animate={busy} />
         <div className="min-w-0">
-          <p className="flex items-center gap-2 font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase">
+          <p className="flex items-center gap-2 font-mono text-[12px] tracking-[0.16em] text-ink-3 uppercase">
             {eyebrow}
             <span aria-hidden>·</span>
             <span className="tracking-[0.08em]">
@@ -60,7 +60,7 @@ export function HunterHero({
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col-reverse gap-1 sm:items-end">
-      <dt className="font-mono text-[10px] tracking-[0.14em] text-ink-3 uppercase">{label}</dt>
+      <dt className="font-mono text-[12px] text-ink-3">{label}</dt>
       <dd className="font-mono text-[24px] leading-none font-medium text-ink tnum">{value}</dd>
     </div>
   )

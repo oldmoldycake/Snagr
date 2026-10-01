@@ -77,7 +77,7 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
         </NavLink>
       ))}
 
-      <p className="mt-5 mb-1 px-2.5 font-mono text-[10px] font-medium tracking-[0.14em] text-ink-3 uppercase">
+      <p className="mt-5 mb-1 px-2.5 font-mono text-[12px] font-medium tracking-[0.14em] text-ink-3 uppercase">
         Categories
       </p>
       {categories.map((category) => (
@@ -87,7 +87,7 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
           onClick={onNavigate}
           className={({ isActive }) =>
             cn(
-              'flex items-center justify-between rounded-sm px-2.5 py-1.5 text-[13px] text-ink-2 transition-colors hover:bg-raised hover:text-ink',
+              'flex items-center justify-between rounded-sm px-2.5 py-1.5 text-[14px] text-ink-2 transition-colors hover:bg-raised hover:text-ink',
               isActive && 'bg-raised text-ink',
             )
           }
@@ -144,7 +144,7 @@ function AccountMenu() {
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger className="relative flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[11px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
+      <DropdownMenuTrigger className="relative flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[12px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
         {user?.email ? user.email[0].toUpperCase() : <UserIcon className="size-3.5" />}
         <span className="sr-only">Account menu</span>
         <svg viewBox="0 0 40 40" aria-hidden className="avatar-ticks size-10">
@@ -160,11 +160,11 @@ function AccountMenu() {
             {user?.email ? user.email[0].toUpperCase() : null}
           </span>
           <span className="grid min-w-0 gap-px">
-            <span className="font-mono text-[9.5px] tracking-[0.16em] text-ink-3 uppercase">Signed in as</span>
+            <span className="font-mono text-[12px] tracking-[0.16em] text-ink-3 uppercase">Signed in as</span>
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate text-[13px] text-ink">{user?.email}</span>
+              <span className="truncate text-[14px] text-ink">{user?.email}</span>
               {user?.role === 'admin' ? (
-                <span className="rounded-[3px] border border-hairline-strong px-[5px] font-mono text-[9.5px] leading-[15px] font-medium tracking-[0.12em] text-ink-2 uppercase">
+                <span className="rounded-[3px] border border-hairline-strong px-[5px] font-mono text-[12px] leading-[15px] font-medium tracking-[0.12em] text-ink-2 uppercase">
                   Admin
                 </span>
               ) : null}
@@ -175,7 +175,7 @@ function AccountMenu() {
           <Radar size={16} animate={hunts + checksRunning > 0} />
           <span className="grid min-w-0 flex-1 gap-px">
             <span>Activity</span>
-            <span className={cn('font-mono text-[10.5px]', hunts + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
+            <span className={cn('font-mono text-[12px]', hunts + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
               {status}
             </span>
           </span>
@@ -273,7 +273,7 @@ export function Masthead() {
               end={item.end}
               className={({ isActive }) =>
                 cn(
-                  'nav-tab relative flex h-full items-center px-3 font-mono text-[11px] tracking-[0.11em] text-ink-3 uppercase transition-colors hover:text-ink-2 focus-visible:-outline-offset-2',
+                  'nav-tab relative flex h-full items-center px-3 font-mono text-[12px] tracking-[0.11em] text-ink-3 uppercase transition-colors hover:text-ink-2 focus-visible:-outline-offset-2',
                   isActive && 'text-ink hover:text-ink',
                 )
               }
@@ -297,7 +297,7 @@ export function Masthead() {
             />
             <kbd
               aria-hidden
-              className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded-[3px] border border-hairline px-1 font-mono text-[10px] text-ink-3"
+              className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded-[3px] border border-hairline px-1 font-mono text-[12px] text-ink-3"
             >
               /
             </kbd>
@@ -313,7 +313,7 @@ export function Masthead() {
             <button
               type="button"
               onClick={() => setPanelOpen(true)}
-              className="flex items-center gap-1.5 rounded-full border border-lume/40 bg-lume-glow px-2.5 py-1 font-mono text-[11px] tracking-[0.06em] text-lume uppercase hover:bg-lume/20"
+              className="flex items-center gap-1.5 rounded-full border border-lume/40 bg-lume-glow px-2.5 py-1 font-mono text-[12px] tracking-[0.06em] text-lume uppercase hover:bg-lume/20"
             >
               <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-lume" />
               {live.length} {live.length === 1 ? 'hunt' : 'hunts'}

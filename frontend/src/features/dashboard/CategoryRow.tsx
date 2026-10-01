@@ -39,7 +39,7 @@ export function CategoryRow({
       </span>
       <span
         className={cn(
-          'min-w-40 flex-1 font-mono text-[11px]',
+          'min-w-40 flex-1 font-mono text-[12px]',
           noSites ? 'text-warn' : isNew ? 'text-lume' : 'text-ink-3',
         )}
       >

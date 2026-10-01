@@ -36,7 +36,7 @@ export function GuideHero({
   return (
     <div>
       <section className="max-w-[640px]">
-        <p className="font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase">{eyebrow}</p>
+        <p className="font-mono text-[12px] tracking-[0.16em] text-ink-3 uppercase">{eyebrow}</p>
         <h1 className="mt-2 font-display text-[38px] leading-[1.05] font-semibold tracking-[0.015em] text-ink text-balance">
           {state.kind === 'ready'
             ? `${state.category.name} is ready`
@@ -103,7 +103,7 @@ export function GuideHero({
             />
           ) : null}
           {state.kind === 'shared' ? (
-            <span className="text-[12.5px] text-ink-3">
+            <span className="text-[14px] text-ink-3">
               {isAdmin ? 'or use Add item on a category below' : 'Use Add item on a category below'}
             </span>
           ) : null}
@@ -116,14 +116,14 @@ export function GuideHero({
             <span className="font-display text-[19px] leading-none font-semibold tracking-[0.06em] text-ink-3 uppercase">
               Your first category
             </span>
-            <span className="font-mono text-[11px] text-ink-3">searching eBay · Newegg</span>
+            <span className="font-mono text-[12px] text-ink-3">searching eBay · Newegg</span>
           </div>
           <div className="mt-3.5 grid gap-2">
             <i className="block h-2.5 w-[92%] rounded-[3px] bg-raised" />
             <i className="block h-2.5 w-[78%] rounded-[3px] bg-raised" />
             <i className="block h-2.5 w-[85%] rounded-[3px] bg-raised" />
           </div>
-          <p className="mt-3 text-[12.5px] text-ink-3">
+          <p className="mt-3 text-[14px] text-ink-3">
             This is how a category looks on your dashboard. Items you add appear here, closest to target first.
           </p>
         </div>
