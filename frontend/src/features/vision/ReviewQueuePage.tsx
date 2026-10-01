@@ -79,7 +79,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
         </div>
         <p className="font-mono text-[11px] text-ink-3">
           {entry.llm_authenticity_read
-            ? `agent read: ${LLM_READ_LABELS[entry.llm_authenticity_read]} · `
+            ? `Snagr's read: ${LLM_READ_LABELS[entry.llm_authenticity_read]} · `
             : ''}
           captured {relativeTime(entry.created_at)} ·{' '}
           <a
