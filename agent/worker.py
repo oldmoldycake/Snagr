@@ -289,7 +289,7 @@ async def _run_ground(job: dict) -> dict | None:
     search results and guide pages over plain HTTP."""
     row = await get_ground_unit(job["item_id"])
     if row is None:
-        log.info(f"Item {job['item_id']} is gone; nothing to ground")
+        log.info(f"Item {job['item_id']} is gone or unwatched; nothing to ground")
         return _empty()
 
     # grounding is shared by everyone watching the item, so its trace groups
