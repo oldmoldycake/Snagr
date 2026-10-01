@@ -106,7 +106,8 @@ STATIC_FETCH = os.getenv("STATIC_FETCH", "true").lower() != "false"
 # fallback that also fails. SITE_BREAKER_ERRORS consecutive read errors stop
 # the site outright for SITE_BREAKER_MINUTES; a bot wall that persists doubles
 # the wait each time up to SITE_BREAKER_CAP_MINUTES, and any successful read
-# resets the count. A wall then costs five reads and goes quiet.
+# resets the count. A wall then costs five reads and goes quiet. ERRORS=0
+# switches the breaker off.
 SITE_BREAKER_ERRORS = int(os.getenv("SITE_BREAKER_ERRORS", "5"))
 SITE_BREAKER_MINUTES = int(os.getenv("SITE_BREAKER_MINUTES", "60"))
 SITE_BREAKER_CAP_MINUTES = int(os.getenv("SITE_BREAKER_CAP_MINUTES", "1440"))

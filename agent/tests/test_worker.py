@@ -100,6 +100,7 @@ def wire(monkeypatch, **overrides):
         "outcomes": [],
         "grounded": [],
         "deferred": [],
+        "ended_by": [],
         "reaped": 0,
         "pruned": 0,
         "swept": 0,
@@ -112,12 +113,14 @@ def wire(monkeypatch, **overrides):
         queue = overrides.get("queue", [])
         return queue.pop(0) if queue else None
 
-    async def complete(job_id, stats=None):
+    async def complete(job_id, stats=None, *, worker):
         seen["completed"].append((job_id, stats))
+        seen["ended_by"].append(worker)
         return True
 
-    async def fail_or_retry(job_id, error):
+    async def fail_or_retry(job_id, error, *, worker):
         seen["failed"].append((job_id, error))
+        seen["ended_by"].append(worker)
         return "pending"
 
     async def append_event(job_id, level, event_type, message, payload=None):
@@ -148,8 +151,9 @@ def wire(monkeypatch, **overrides):
         seen["grounded"].append(item_id)
         return True
 
-    async def defer(job_id, until):
+    async def defer(job_id, until, *, worker):
         seen["deferred"].append((job_id, until))
+        seen["ended_by"].append(worker)
         return True
 
     async def record_outcome(site_id, ok, **kwargs):
@@ -420,6 +424,19 @@ class TestTerminalWrites:
         assert stats["listings_checked"] == 1
         assert seen["failed"] == []
 
+    def test_every_terminal_write_names_the_worker_that_held_the_job(self, monkeypatch):
+        # the queue drops the write of a worker the reaper took the job from,
+        # so the pool must say which worker it is
+        seen = wire(monkeypatch)
+        asyncio.run(worker._work_one("x#check-2", job()))
+        seen_failed = wire(monkeypatch, hunt_raises=RuntimeError("the page timed out"))
+        asyncio.run(worker._work_one("x#hunt-0", job("hunt")))
+        seen_deferred = wire(monkeypatch, ground_raises=SearchSuspended(datetime.now(UTC)))
+        asyncio.run(worker._work_one("x#ground-0", job("ground", listing_id=None)))
+        assert seen["ended_by"] == ["x#check-2"]
+        assert seen_failed["ended_by"] == ["x#hunt-0"]
+        assert seen_deferred["ended_by"] == ["x#ground-0"]
+
     def test_a_site_that_gave_up_no_page_is_retried_and_counted_against_it(self, monkeypatch):
         seen = wire(monkeypatch, hunt_raises=agent.SiteUnreadable("every browser call failed"))
         asyncio.run(worker._work_one("w1", job("hunt")))
@@ -624,7 +641,7 @@ class TestPool:
                 raise RuntimeError("the page timed out")
             return FakeOutcome(True)
 
-        async def db_gone(job_id, error):
+        async def db_gone(job_id, error, *, worker):
             raise ConnectionError("connection was closed in the middle of operation")
 
         seen = wire(monkeypatch, queue=queue, fail_or_retry=db_gone)

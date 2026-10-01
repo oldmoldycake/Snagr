@@ -119,7 +119,11 @@ across all of it deciding what is believed and which sites are read at all.
    every ground job behind it waits too, spending nothing). Successors
    are inserted **in the same transaction**: a recheck that completes, is
    cancelled, or fails for good queues the listing's next check; a hunt that
-   completes queues its pair's next hunt (see below).
+   completes queues its pair's next hunt (see below). Every terminal write
+   (`complete`, `fail_or_retry`, `defer`) names the worker and is dropped
+   unless that worker still holds the job (`locked_by`): one whose heartbeat
+   stalled until the reaper took the job back must not end it under its new
+   owner.
 6. **Shutdown.** `main._supervised` turns SIGTERM/SIGINT into task
    cancellation; `serve`'s `finally` cancels the pools and hands everything this
    process holds back to `pending` in one statement (`jobs.release_all`).
@@ -129,8 +133,8 @@ across all of it deciding what is believed and which sites are read at all.
    pool ends `serve`, and `_supervised` exits 1, so a supervisor that restarts
    on failure brings the hunter back.
 7. **Housekeeping.** `worker._scheduler` runs `housekeeping` every 60 s:
-   `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` goes
-   through `fail_or_retry`) and `queue_grounding` every pass; `jobs.sweep` and
+   `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` is
+   failed or retried, picked and taken back under one row lock) and `queue_grounding` every pass; `jobs.sweep` and
    `jobs.prune` every 60th pass **and on the first**, so a hunter that was down
    picks dropped pairs back up the moment it starts. `--once` runs one
    housekeeping pass (first-pass rules) before draining.
@@ -306,7 +310,7 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | | `CHEAP_RECHECK` | true | false = every recheck through the model |
 | | `STATIC_FETCH` | true | false = never the browserless GET |
 | | `LOCATOR_MAX_FAILURES` | 3 | misses before a locator is cleared and relearned |
-| Breaker | `SITE_BREAKER_ERRORS` | 5 | consecutive failed reads that trip it |
+| Breaker | `SITE_BREAKER_ERRORS` | 5 | consecutive failed reads that trip it; 0 = off |
 | | `SITE_BREAKER_MINUTES` / `_CAP_MINUTES` | 60 / 1440 | first pause, doubling to the cap |
 | Plausibility | `PRICE_BAND_LOW` / `PRICE_BAND_HIGH` | 0.2 / 5 | ratio band against the listing's last confirmed price; 0 = off |
 | | `PRICE_MARKET_FLOOR` | 0.1 | fraction of the market median below which a price is disbelieved; 0 = off |
