@@ -13,7 +13,7 @@ import { ReviewQueuePage } from '@/features/vision/ReviewQueuePage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import { ApiSettingsPage } from '@/features/settings/ApiSettingsPage'
 import { AdminUsersPage } from '@/features/settings/AdminUsersPage'
-import { EmptyState } from '@/components/ui/empty-state'
+import { NotFound } from '@/components/ui/not-found'
 
 /** Every page in the app; the public auth pages sit outside the guard, admin pages behind a second one. */
 export const router = createBrowserRouter([
@@ -42,7 +42,7 @@ export const router = createBrowserRouter([
       },
       {
         path: '*',
-        element: <EmptyState title="Page not found" description="This page doesn't exist. Use the navigation to get back on track." />,
+        element: <NotFound title="Page not found" description="This page doesn't exist." />,
       },
     ],
   },

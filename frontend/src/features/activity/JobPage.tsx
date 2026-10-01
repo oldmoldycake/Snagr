@@ -8,6 +8,7 @@ import type { Job, JobEvent } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
+import { NotFound } from '@/components/ui/not-found'
 import { Radar } from '@/components/ui/radar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TerminalLog } from '@/components/ui/terminal-log'
@@ -93,7 +94,14 @@ export function JobPage() {
   }
 
   if (!job.data) {
-    return <EmptyState title="Not found" description="It may have been cleaned up." />
+    return (
+      <NotFound
+        title="Job not found"
+        description="It may have been cleaned up."
+        to="/activity"
+        label="Back to Activity"
+      />
+    )
   }
 
   const detail = job.data
