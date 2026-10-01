@@ -4,9 +4,10 @@ import { cancelJob } from '@/api/endpoints'
 import type { Job } from '@/api/types'
 import { Card } from '@/components/ui/card'
 import { Radar } from '@/components/ui/radar'
+import { LogGlyph } from '@/components/ui/terminal-log'
 import { useSession } from '@/features/auth/useSession'
 import { formatDuration } from '@/lib/time'
-import { GLYPHS, glyphFor } from './lines'
+import { glyphFor } from './lines'
 import { useJobs } from './JobsProvider'
 import { useTick } from './useTick'
 
@@ -38,7 +39,7 @@ export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) 
   const { data: me } = useSession()
   const queryClient = useQueryClient()
   const latest = (events.get(job.id) ?? []).at(-1)
-  const glyph = latest ? GLYPHS[glyphFor(latest)] : null
+  const level = latest ? glyphFor(latest) : null
 
   const cancel = useMutation({
     mutationFn: () => cancelJob(job.id),
@@ -57,11 +58,9 @@ export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) 
           {job.site_name ? <span className="text-ink-3"> × {job.site_name}</span> : null}
         </p>
         <p className="mt-0.5 truncate font-mono text-[12px] text-ink-2">
-          {latest && glyph ? (
+          {latest && level ? (
             <>
-              <span aria-hidden className={glyph.className}>
-                {glyph.glyph}
-              </span>{' '}
+              <LogGlyph level={level} />{' '}
               {latest.message}
             </>
           ) : (

@@ -7,7 +7,7 @@
  */
 
 import type { Job, JobEvent, JobEventType, ListingChecked } from '@/api/types'
-import { LOG_GLYPHS, type LogGlyphLevel, type LogLine } from '@/components/ui/terminal-log'
+import type { LogGlyphLevel, LogLine } from '@/components/ui/terminal-log'
 import { priceMethodLabel } from '@/lib/priceMethod'
 import { logTime } from '@/lib/time'
 
@@ -94,6 +94,3 @@ export function checkLine(check: ListingChecked, index: number): LogLine {
     ),
   }
 }
-
-/** Each log level's glyph and color, re-exported so Activity surfaces take words and glyphs from one place. */
-export const GLYPHS = LOG_GLYPHS

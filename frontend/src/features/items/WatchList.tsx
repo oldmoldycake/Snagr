@@ -119,7 +119,7 @@ function WatchListHead({
       <TR>
         {expandable ? <TH className="w-8" /> : null}
         <TH>Item</TH>
-        <TH className={cn('hidden md:table-cell', fixed && 'w-24')}>Trend</TH>
+        <TH className={cn('hidden md:table-cell', fixed && 'w-36')}>Trend</TH>
         <TH className={cn('text-right', fixed && 'w-24 max-sm:w-20')}>Best</TH>
         {showSite ? <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[88px]')}>Site</TH> : null}
         <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[92px]')}>Target</TH>
@@ -247,7 +247,7 @@ export function WatchList({
                   </div>
                 </TD>
                 <TD className="hidden md:table-cell">
-                  <Sparkline data={item.spark} width={80} height={22} />
+                  <Sparkline data={item.spark} width={56} height={22} />
                 </TD>
                 <TD
                   className={cn(

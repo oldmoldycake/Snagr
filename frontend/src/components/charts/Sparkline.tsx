@@ -1,9 +1,11 @@
 import { chart } from './chartTheme'
+import { DeltaText } from './DeltaText'
 
 /**
  * Row sparkline: 96×28 plain SVG, de-emphasis gray, 4px end dot colored by
- * direction of (last − first). Color is never the only channel — the adjacent
- * Δ column carries the signed number + glyph.
+ * direction of (last − first). Color is never the only channel — the ▲/▼
+ * percentage beside it is computed from the same two points, so the number
+ * and the dot can never disagree.
  */
 export function Sparkline({
   data,
@@ -39,16 +41,19 @@ export function Sparkline({
   const [endX, endY] = points[points.length - 1]
 
   return (
-    <svg width={width} height={height} aria-hidden className="shrink-0">
-      <polyline
-        points={points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')}
-        fill="none"
-        stroke={chart.sparkDim}
-        strokeWidth={1.5}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <circle cx={endX} cy={endY} r={2} fill={endColor} />
-    </svg>
+    <span className="inline-flex items-center gap-1.5">
+      <svg width={width} height={height} aria-hidden className="shrink-0">
+        <polyline
+          points={points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')}
+          fill="none"
+          stroke={chart.sparkDim}
+          strokeWidth={1.5}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <circle cx={endX} cy={endY} r={2} fill={endColor} />
+      </svg>
+      <DeltaText value={first === 0 ? null : ((last - first) / first) * 100} className="text-[11px]" />
+    </span>
   )
 }
