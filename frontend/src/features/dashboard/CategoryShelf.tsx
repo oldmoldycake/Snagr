@@ -184,7 +184,7 @@ export function CategoryShelf({
             <svg viewBox="0 0 10 10" aria-hidden className="shelf-chevron size-3.5 shrink-0">
               <path d="M3.5 1.5 7 5l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             </svg>
-            <span className="font-display text-[19px] leading-none font-semibold tracking-[0.06em] text-ink uppercase">
+            <span className="min-w-0 font-display text-[19px] leading-none font-semibold tracking-[0.06em] wrap-anywhere text-ink uppercase">
               {category.name}
             </span>
             <span className="font-mono text-[11px] text-ink-3 tnum">
