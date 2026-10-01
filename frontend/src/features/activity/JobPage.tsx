@@ -210,7 +210,7 @@ function Tiles({ job }: { job: Job }) {
   const rejected = Math.max(0, stats.listings_checked - stats.new_listings - stats.errors)
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Stat label="Candidates seen" value={stats.listings_checked} />
+      <Stat label="Listings looked at" value={stats.listings_checked} />
       <Stat
         label="Saved"
         value={stats.new_listings}

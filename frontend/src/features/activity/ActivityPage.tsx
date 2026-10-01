@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
+import { Glossary } from '@/components/ui/glossary'
+import { TERMS } from '@/components/ui/glossaryTerms'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HunterHero } from './HunterHero'
 import { NeedsYou } from './NeedsYou'
@@ -10,6 +12,18 @@ import { useJobs } from './JobsProvider'
 /** The summary is cheap and its numbers age visibly (a countdown), so it is
  *  polled as well as invalidated on every frame. */
 const SUMMARY_POLL_MS = 30_000
+
+/** The words on this page that stay because no plainer one says the same. */
+const ACTIVITY_TERMS = [
+  TERMS.hunt,
+  TERMS.check,
+  TERMS.market,
+  TERMS.paused,
+  TERMS.pageData,
+  TERMS.learnedSpot,
+  TERMS.unconfirmed,
+  TERMS.tokens,
+]
 
 /**
  * What the hunter is doing, answered in the order people ask: is it working
@@ -30,8 +44,9 @@ export function ActivityPage() {
     <div className="space-y-8">
       <HunterHero summary={summary.data} connection={connection} />
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
-        <div className="lg:order-2 lg:sticky lg:top-20">
+        <div className="space-y-3 lg:order-2 lg:sticky lg:top-20">
           <NeedsYou summary={summary.data} />
+          <Glossary terms={ACTIVITY_TERMS} className="-ml-2" />
         </div>
         <div className="lg:order-1">
           <Timeline summary={summary.data} />

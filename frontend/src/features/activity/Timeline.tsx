@@ -10,6 +10,7 @@ import { Pagination } from '@/components/ui/pagination'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
+import { priceMethodLabel } from '@/lib/priceMethod'
 import { clockTime, countdown, formatMillis, formatTokens } from '@/lib/time'
 import { CheckPricesButton } from './CheckPricesButton'
 import { ChecksTail } from './ChecksTail'
@@ -31,6 +32,11 @@ const FILTERS: readonly { value: Filter; label: string }[] = [
 ]
 
 const REMEMBERED = 'snagr:activity-filter'
+/** How a recheck fetched the page, for its expanded detail line. */
+const TRANSPORT_LABELS: Record<string, string> = {
+  static: 'plain download',
+  browser: 'in a browser',
+}
 const FINISHED = 'done,failed,cancelled'
 const PENDING = {
   status: 'pending',
@@ -426,7 +432,12 @@ function PastRow({ job }: { job: Job }) {
         {open ? (
           <Row>
             <p className="pb-2 font-mono text-[11px] text-ink-3">
-              {[job.stats?.method, job.stats?.transport, took, job.error]
+              {[
+                job.stats?.method === 'llm' ? 'read by AI' : priceMethodLabel(job.stats?.method),
+                TRANSPORT_LABELS[job.stats?.transport ?? ''],
+                took,
+                job.error,
+              ]
                 .filter(Boolean)
                 .join(' · ')}
             </p>

@@ -153,8 +153,8 @@ export function startDemoHunt(job: MockJob) {
       'job_started',
       (swap
         ? `Hunting ${site.name} for something better than "${item.name}"'s weakest tracked listing — ` +
-          `all ${item.max_listings} slots filled`
-        : `Hunting ${site.name} for "${item.name}" — ${slotsOpen} open slot${slotsOpen === 1 ? '' : 's'}`) +
+          `all ${item.max_listings} already tracked`
+        : `Hunting ${site.name} for "${item.name}" — room for ${slotsOpen} more listing${slotsOpen === 1 ? '' : 's'}`) +
         `, ${item.selection_mode === 'best_match' ? 'best match' : 'cheapest'} mode`,
     )
   })
@@ -252,7 +252,7 @@ export function startDemoHunt(job: MockJob) {
       job,
       'success',
       'listing_discovered',
-      `Saved as listing #${listing.id} — ${activeListings(item.id).length} of ${item.max_listings} slots filled · locator learned (jsonld)`,
+      `Saved as listing #${listing.id} — tracking ${activeListings(item.id).length} of ${item.max_listings} listings`,
       { listing_id: listing.id, item_id: item.id },
     )
   })
@@ -271,7 +271,7 @@ export function startDemoHunt(job: MockJob) {
       'success',
       'job_finished',
       stats.new_listings > 0
-        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} seen · ${left} slots left`
+        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} seen · room for ${left} more`
         : `Hunt complete — nothing new · ${stats.listings_checked} seen`,
     )
     broadcastJob('job.finished', job)
