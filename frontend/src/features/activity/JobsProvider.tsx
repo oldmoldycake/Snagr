@@ -5,9 +5,10 @@
  *
  * Two shapes of state, because the hunter does two shapes of work. Hunts have
  * a voice: `live` holds the running ones and `events` their logs, both
- * rebuilt from the snapshot on every (re)connect. A queued hunt is not live —
- * with perpetual hunting nearly every watch has one waiting, and the item
- * page counts those down instead. Checks have a pulse:
+ * rebuilt from the snapshot on every (re)connect, and a log is dropped once
+ * its job leaves `live`. A queued hunt is not live — with perpetual hunting
+ * nearly every watch has one waiting, and the item page counts those down
+ * instead. Checks have a pulse:
  * `checks` is a ring buffer of the last 50 `listing.checked` frames, held only
  * in this tab and never fetched — there is no endpoint for "the last fifty
  * checks", because 2,400 rows a day is a heartbeat, not history.
@@ -32,6 +33,7 @@ import {
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { enqueueJobs, getJobEvents } from '@/api/endpoints'
 import { itemCategories } from './huntScope'
+import { eventsForLive } from './jobEvents'
 import { openLiveStream, type Connection } from './liveStream'
 import type {
   Job,
@@ -101,6 +103,7 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         const { jobs } = JSON.parse(e.data) as JobSnapshotData
         const running = jobs.filter((job) => job.status === 'running')
         setLive(running)
+        setEvents((prev) => eventsForLive(prev, running))
         // always backfill: the filtered response is authoritative, and
         // comparing last_seq would tell us nothing we could act on
         for (const job of running) {
@@ -121,6 +124,13 @@ export function JobsProvider({ children }: { children: ReactNode }) {
         })
         void queryClient.invalidateQueries({ queryKey: ['jobs'] })
         if (job.status !== 'running') {
+          // its log is now the events endpoint's to serve (JobPage fetches it)
+          setEvents((prev) => {
+            if (!prev.has(job.id)) return prev
+            const next = new Map(prev)
+            next.delete(job.id)
+            return next
+          })
           // a finished hunt may have saved listings and prices anywhere in its
           // watch — cheap to refetch, and the alternative is a stale page
           void queryClient.invalidateQueries({ queryKey: ['items'] })
