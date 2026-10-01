@@ -1,7 +1,7 @@
 import type { JobsSummary } from '@/api/types'
 import { Radar } from '@/components/ui/radar'
 import { cn } from '@/lib/cn'
-import { countdown } from '@/lib/time'
+import { countdown, formatToday } from '@/lib/time'
 import { ConnectionStatus } from './ConnectionStatus'
 import type { Connection } from './liveStream'
 
@@ -22,11 +22,7 @@ export function HunterHero({
   const busy = hunts + checks > 0
   const nothingYet = summary != null && summary.listings_watched === 0 && summary.last_hunt == null
 
-  const eyebrow = `Today · ${new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })}`
+  const eyebrow = `Today · ${formatToday()}`
 
   return (
     <section className="flex flex-wrap items-end gap-x-8 gap-y-5">

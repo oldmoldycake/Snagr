@@ -18,10 +18,11 @@ import { NotFound } from '@/components/ui/not-found'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { priceMethodLabel } from '@/lib/priceMethod'
-import { formatDateTime, relativeTime } from '@/lib/time'
+import { formatDateTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { CheckPricesButton } from '@/features/activity/CheckPricesButton'
@@ -241,7 +242,7 @@ export function ItemDetailPage() {
             avg {formatMoney(detail.avg_price, detail.currency)}
             {detail.best_site_name ? ` · ${detail.best_site_name}` : ''}
             {' · checked '}
-            {relativeTime(detail.last_checked_at)}
+            <RelativeTime iso={detail.last_checked_at} />
             {bestListing ? (
               <>
                 {' · '}

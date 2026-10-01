@@ -1,8 +1,8 @@
 import type { AuthenticityRead, AuthenticityVerdict } from '@/api/types'
 import { SimpleTooltip } from '@/components/ui/tooltip'
 import { Badge } from '@/components/ui/badge'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
 
 /**
  * The copy states the evidence asymmetry verbatim: matching known fakes
@@ -67,7 +67,7 @@ export function AuthenticityLine({ read }: { read: AuthenticityRead }) {
       ) : null}
       {' · '}
       {read.image_count} {read.image_count === 1 ? 'photo' : 'photos'} · scanned{' '}
-      {relativeTime(read.checked_at)}
+      <RelativeTime iso={read.checked_at} />
     </>
   )
 }

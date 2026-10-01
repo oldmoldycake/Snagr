@@ -4,6 +4,7 @@ import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { siteList } from '@/features/sites/siteList'
+import { formatToday } from '@/lib/time'
 
 /** Where a caller with no items stands: nothing on the instance, others' categories, or one just made. */
 export type GuideState =
@@ -30,11 +31,7 @@ export function GuideHero({
   onAdded: (item: ItemSummary) => void
 }) {
   const isAdmin = useSession().data?.role === 'admin'
-  const eyebrow = `Getting started · ${new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })}`
+  const eyebrow = `Getting started · ${formatToday()}`
 
   return (
     <div>

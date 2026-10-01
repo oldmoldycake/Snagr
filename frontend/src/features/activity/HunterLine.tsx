@@ -5,7 +5,7 @@ import { qk } from '@/api/queries'
 import type { ItemDetail } from '@/api/types'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
-import { countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
+import { clockTime, countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
 import { useJobs } from './JobsProvider'
 
 /**
@@ -50,11 +50,7 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
           </span>{' '}
           <span className="text-warn">
             {paused.site_name} paused until{' '}
-            {new Date(paused.paused_until).toLocaleTimeString('en-US', {
-              hour12: false,
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
+            {clockTime(paused.paused_until)}
           </span>
           {' · '}
         </>

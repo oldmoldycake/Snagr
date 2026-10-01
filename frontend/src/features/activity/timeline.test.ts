@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { Job } from '@/api/types'
+import { formatClock } from '@/lib/time'
 import { groupByHour, recentFailures } from './timeline'
 
-// local-time constructors, so the expectations hold in any time zone
+// local-time constructors, and clocks through formatClock, so the
+// expectations hold in any time zone and locale
 const NOW = new Date(2026, 8, 25, 14, 5)
+const clock = (h: number) => formatClock(new Date(2026, 8, 25, h, 0))
 
 function job(id: number, finished: Date, status: Job['status'] = 'done'): Job {
   return {
@@ -23,7 +26,7 @@ describe('groupByHour', () => {
       job(4, new Date(2026, 8, 25, 12, 55)),
     ]
     const groups = groupByHour(jobs, NOW)
-    expect(groups.map((g) => g.label)).toEqual(['14:00', '13:00', '12:00'])
+    expect(groups.map((g) => g.label)).toEqual([clock(14), clock(13), clock(12)])
     expect(groups[1].jobs.map((j) => j.id)).toEqual([2, 3])
   })
 
@@ -32,7 +35,10 @@ describe('groupByHour', () => {
       [job(1, new Date(2026, 8, 24, 22, 15)), job(2, new Date(2026, 8, 18, 9, 0))],
       NOW,
     )
-    expect(groups.map((g) => g.label)).toEqual(['yesterday 22:00', 'Sep 18 09:00'])
+    expect(groups.map((g) => g.label)).toEqual([
+      `yesterday ${clock(22)}`,
+      `${new Date(2026, 8, 18).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${clock(9)}`,
+    ])
   })
 
   it('keeps the same hour on different days apart', () => {

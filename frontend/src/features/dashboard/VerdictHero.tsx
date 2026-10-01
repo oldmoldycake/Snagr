@@ -5,6 +5,7 @@ import { qk } from '@/api/queries'
 import type { ItemSummary, PriceDrop } from '@/api/types'
 import { effectiveTarget, isFreshDrop } from '@/features/items/WatchList'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
+import { formatToday } from '@/lib/time'
 
 /**
  * Beat one of the dashboard: the app states the hunt's status in a sentence,
@@ -34,11 +35,7 @@ export function VerdictHero({
     if (closest == null || ratio < closest.ratio) closest = { item, gapCents, ratio }
   }
 
-  const eyebrow = `Today · ${new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })}`
+  const eyebrow = `Today · ${formatToday()}`
 
   return (
     <section className={className}>
