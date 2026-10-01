@@ -12,12 +12,15 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
+import { Glossary } from '@/components/ui/glossary'
+import { TERMS } from '@/components/ui/glossaryTerms'
 import { NotFound } from '@/components/ui/not-found'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
+import { priceMethodLabel } from '@/lib/priceMethod'
 import { formatDateTime, relativeTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
@@ -55,7 +58,7 @@ function checkLine(check: PriceCheck): LogLine {
             check.in_stock == null ? 'stock unknown' : check.in_stock ? 'in stock' : 'out of stock'
           } · ${check.site_name}`
   const marks = [
-    check.method && check.method !== 'llm' ? check.method : null,
+    priceMethodLabel(check.method),
     check.confirmed ? null : 'unconfirmed',
   ].filter(Boolean)
   const message = (
@@ -70,6 +73,21 @@ function checkLine(check: PriceCheck): LogLine {
 }
 
 const CHECKS_PREVIEW = 8
+
+/** The words on this page that stay because no plainer one says the same. */
+const ITEM_TERMS = [
+  TERMS.target,
+  TERMS.vsTarget,
+  TERMS.change,
+  TERMS.match,
+  TERMS.mode,
+  TERMS.tracked,
+  TERMS.hunt,
+  TERMS.pageData,
+  TERMS.learnedSpot,
+  TERMS.unconfirmed,
+  TERMS.replicas,
+]
 
 /**
  * One item's page at /items/:id: price charts, the listings board, recent
@@ -169,12 +187,15 @@ export function ItemDetailPage() {
 
   return (
     <div>
-      <p className="font-mono text-[11px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
-        <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
-          {detail.category_name}
-        </Link>{' '}
-        <span className="opacity-50">/</span> {detail.name}
-      </p>
+      <div className="flex items-center gap-3">
+        <p className="min-w-0 flex-1 font-mono text-[11px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
+          <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
+            {detail.category_name}
+          </Link>{' '}
+          <span className="opacity-50">/</span> {detail.name}
+        </p>
+        <Glossary terms={ITEM_TERMS} className="-my-1 shrink-0" />
+      </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
         <h1 className="min-w-0 font-display text-[30px] leading-tight font-semibold tracking-[0.02em] wrap-anywhere text-ink">
@@ -328,7 +349,7 @@ export function ItemDetailPage() {
                 ['Mode', detail.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'],
                 ['Listings', `${trackedCount} of ${detail.max_listings} tracked`],
                 ['Sites', siteNames],
-                ['Reproductions', detail.allow_reproductions ? 'allowed' : 'not allowed'],
+                ['Replicas', detail.allow_reproductions ? 'accepted' : 'skipped'],
               ].map(([key, value]) => (
                 <div
                   key={key}

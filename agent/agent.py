@@ -429,12 +429,12 @@ async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
         swap_listings = await get_tracked_listings(watch_id, row["selection_mode"])
         started = (
             f'Hunting {site_name} for something better than "{item_name}"\'s weakest '
-            f"tracked listings — all {max_listings} slots filled, {mode} mode"
+            f"tracked listings — all {max_listings} already tracked, {mode} mode"
         )
     else:
         started = (
-            f'Hunting {site_name} for "{item_name}" — {open_slots} open '
-            f"slot{'' if open_slots == 1 else 's'}, {mode} mode"
+            f'Hunting {site_name} for "{item_name}" — room for {open_slots} more '
+            f"listing{'' if open_slots == 1 else 's'}, {mode} mode"
         )
 
     log.info(

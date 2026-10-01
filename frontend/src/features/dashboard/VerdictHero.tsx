@@ -34,7 +34,7 @@ export function VerdictHero({
     if (closest == null || ratio < closest.ratio) closest = { item, gapCents, ratio }
   }
 
-  const eyebrow = `Tonight · ${new Date().toLocaleDateString('en-US', {
+  const eyebrow = `Today · ${new Date().toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',
@@ -111,7 +111,7 @@ function PulseLine({ items, drops }: { items: ItemSummary[]; drops: Map<number, 
   const quiet = struck === 0 && dropped === 0
   return (
     <p className="mt-4.5 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 font-mono text-xs text-ink-2 tnum">
-      <span className="text-[10.5px] tracking-[0.1em] text-ink-3 uppercase">Tonight</span>
+      <span className="text-[10.5px] tracking-[0.1em] text-ink-3 uppercase">Last 24 hours</span>
       {quiet ? <span>no movement</span> : null}
       {struck > 0 ? (
         <span className="text-drop">

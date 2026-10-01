@@ -22,7 +22,7 @@ export function HunterHero({
   const busy = hunts + checks > 0
   const nothingYet = summary != null && summary.listings_watched === 0 && summary.last_hunt == null
 
-  const eyebrow = `Tonight · ${new Date().toLocaleDateString('en-US', {
+  const eyebrow = `Today · ${new Date().toLocaleDateString('en-US', {
     weekday: 'short',
     month: 'short',
     day: 'numeric',

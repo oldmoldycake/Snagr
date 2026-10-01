@@ -8,6 +8,7 @@
 
 import type { Job, JobEvent, JobEventType, ListingChecked } from '@/api/types'
 import { LOG_GLYPHS, type LogGlyphLevel, type LogLine } from '@/components/ui/terminal-log'
+import { priceMethodLabel } from '@/lib/priceMethod'
 import { logTime } from '@/lib/time'
 
 /** Some events mean more than their level does: a save is a find (✚), a
@@ -71,12 +72,12 @@ export function resultText(job: Job): { text: string; tone: string } {
 }
 
 /** One recheck, as the checks tail says it. The method tag is shown only when
- *  a model was not involved — `llm` is the fallback, not the news. */
+ *  a model was not involved (see priceMethodLabel). */
 export function checkLine(check: ListingChecked, index: number): LogLine {
   const ended = check.status === 'sold' || check.status === 'ended'
   const level: LogGlyphLevel = ended ? 'error' : check.confirmed ? 'success' : 'warn'
   const head = ended ? check.status : check.price ? `$${check.price}` : 'no price'
-  const tag = check.method && check.method !== 'llm' ? check.method : null
+  const tag = priceMethodLabel(check.method)
   return {
     key: `${check.listing_id}:${check.checked_at}:${index}`,
     time: logTime(check.checked_at),

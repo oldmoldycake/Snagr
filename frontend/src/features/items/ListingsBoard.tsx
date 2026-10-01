@@ -60,7 +60,7 @@ function AxisStrip({
   currency: string
   range: TimeRange
 }) {
-  const caption = `drift ${RANGE_LABELS[range]}`
+  const caption = `${RANGE_LABELS[range]} change`
   const targetLabel = `⌖ ${formatMoney(target, currency)}`
   const layout =
     rail?.targetPct != null
@@ -136,7 +136,7 @@ function AxisStrip({
             : null}
         </div>
       </div>
-      <span className={cn(COL_LABEL, 'text-right')}>vs ⌖</span>
+      <span className={cn(COL_LABEL, 'text-right')}>vs target</span>
       <span className={COL_LABEL}>Match</span>
     </div>
   )
@@ -327,7 +327,7 @@ function ExpandedRow({
             {listing.match_summary ? <> — {listing.match_summary}</> : null}
           </>
         ) : (
-          'not scored yet'
+          'no match score yet'
         )}
         <br />
         {listing.authenticity ? (

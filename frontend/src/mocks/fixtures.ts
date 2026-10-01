@@ -987,7 +987,7 @@ function seedShowcaseHunt() {
     })
   }
 
-  push('info', 'job_started', `Hunting ${site.name} for "${item.name}" — 3 open slots, best match mode`)
+  push('info', 'job_started', `Hunting ${site.name} for "${item.name}" — room for 3 more listings, best match mode`)
   push('info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 6 results, 2 already tracked`)
   push('info', 'listing_evaluated', `Skipped "Pokemon Emerald repro cart" — reproduction, not authentic (match 12)`, {
     item_id: item.id,
@@ -1002,11 +1002,11 @@ function seedShowcaseHunt() {
     item_id: item.id,
     price: (price / 100).toFixed(2),
   })
-  push('success', 'listing_discovered', `Saved as listing #${saved.id} — 3 of 5 slots filled · locator learned (jsonld) · static ok`, {
+  push('success', 'listing_discovered', `Saved as listing #${saved.id} — tracking 3 of 5 listings`, {
     listing_id: saved.id,
     item_id: item.id,
   })
-  push('success', 'job_finished', `Hunt complete — 2 new · 4 seen · 3 slots left · 11.4k tokens`)
+  push('success', 'job_finished', `Hunt complete — 2 new · 4 seen · room for 1 more · 11.4k tokens`)
 }
 
 /** ~200 finished rechecks over three days — the Checks filter's rows. */
