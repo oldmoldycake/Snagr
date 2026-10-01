@@ -4,7 +4,7 @@
 
 # Web framework
 fastapi==0.141.1
-uvicorn[standard]==0.53.0
+uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 
 # Model
@@ -18,18 +18,18 @@ torch==2.14.0
 # (same untagged pin as torch, for the same arm64 reason).
 torchvision==0.29.0
 transformers==5.17.0
-huggingface_hub==1.30.0
+huggingface_hub==1.33.0
 pillow==12.3.0
 numpy==2.5.3
 
 # Data / DB
-sqlalchemy==2.1.0
+sqlalchemy==2.1.1
 psycopg[binary]==3.3.6
 pgvector==0.5.0
 python-dotenv==1.2.3
 
 # Object store / image fetching
-boto3==1.43.102
+boto3==1.43.103
 httpx==0.28.1
 
 # Dev / test
