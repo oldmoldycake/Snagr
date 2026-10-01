@@ -184,7 +184,7 @@ export function CategoryShelf({
             <svg viewBox="0 0 10 10" aria-hidden className="shelf-chevron size-3.5 shrink-0">
               <path d="M3.5 1.5 7 5l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
             </svg>
-            <span className="font-display text-[19px] leading-none font-semibold tracking-[0.06em] text-ink uppercase">
+            <span className="min-w-0 font-display text-[19px] leading-none font-semibold tracking-[0.06em] wrap-anywhere text-ink uppercase">
               {category.name}
             </span>
             <span className="font-mono text-[11px] text-ink-3 tnum">
@@ -483,7 +483,7 @@ function SearchingSites({ siteNames }: { siteNames: string[] }) {
     <>
       <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
       {siteNames.map((name) => (
-        <span key={name} className="inline-flex h-[19px] items-center rounded-[3px] border border-hairline bg-raised px-1.5">
+        <span key={name} className="inline-flex min-h-[19px] min-w-0 items-center rounded-[3px] border border-hairline bg-raised px-1.5 wrap-anywhere">
           {name}
         </span>
       ))}

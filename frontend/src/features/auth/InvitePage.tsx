@@ -29,6 +29,7 @@ export function InvitePage() {
 
   const accept = useMutation({
     mutationFn: () => acceptInvite(token, { email: invite.data?.email ?? email, password }),
+    meta: { inlineError: true },
     onSuccess: ({ user }) => {
       queryClient.setQueryData(qk.session, user)
       navigate('/', { replace: true })

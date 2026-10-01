@@ -62,7 +62,7 @@ backend/
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY) — job.* frames + listing.checked
 │       ├── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
-│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
+│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders + the channel-destination guard (public URLs only, safe ntfy topics)
 │       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
@@ -173,7 +173,10 @@ Find any `endpoints.ts` function here:
    to one watch, so seeing the job is seeing its events. `listing.checked` frames
    are gated by listing ownership instead, which is the same person. Reconnects
    never infer gaps from seq arithmetic; the client refetches each visible
-   backfill on every snapshot and the filtered response is authoritative. This is
+   backfill on every snapshot and the filtered response is authoritative. An open
+   stream is re-authorised every `REAUTH_SECONDS` (account active, same role,
+   sign-in or API token still live) and closed when it fails, so deactivating,
+   demoting or signing out a user ends their stream within a minute. This is
    **peer privacy only**: the instance operator can always read the DB.
 
    **The queue's own rules live half here and half in the agent** (the agent's
@@ -247,3 +250,5 @@ Find any `endpoints.ts` function here:
 - **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, deleting a category takes every user's items, watches and price history in it with it, and deleting a site takes every listing found on it and that listing's price history. Reads stay open to any signed-in user.
 - **`/api/auth/*` returns 401 directly**; the client's refresh-retry skips the credential routes (login, register, refresh, logout, invites) so a refused login is never replayed, but refreshes on `/me`.
 - **Passwords never touch the event loop.** `hash_password` / `verify_password` are async and run argon2 on `core/security`'s thread pool; login checks an unknown email against a stand-in hash, so the response time doesn't say which emails exist, and hands its DB connection back before verifying. A new password (register, invite accept, password change) is 8+ characters or 422 `validation_error`. Login and the password change's current-password check count against `core/ratelimit` (per client address and per account; 429 `rate_limited`, right password or not).
+- **SSO links only to a vouched-for email.** `services/oidc.resolve_oidc_user` gives a first SSO login an existing account with the same email only when the IdP marks it verified *and* the account's `email_verified` is set, and never re-points an account already linked to another subject. Only the first user's signup and an invite pinned to an email set the flag; an address typed in at signup, into an unpinned invite, or through `PATCH /api/me` leaves it false, so that SSO login fails (`/login?error=sso_failed`) instead of handing over the account.
+- **The instance always keeps an admin.** The first account becomes admin however it arrives — password signup (`routers/auth.register`) or a first SSO login (`services/oidc.resolve_oidc_user`), both under the same `FIRST_USER_LOCK` advisory lock — and `PATCH /api/admin/users/{id}` refuses (409 `last_admin`) to demote or deactivate the only active admin, since recovering from zero admins takes SQL.

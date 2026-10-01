@@ -51,6 +51,7 @@ export function UploadReferenceDialog({
       if (variantTag.trim()) form.set('variant_tag', variantTag.trim())
       return uploadReference(itemId, form)
     },
+    meta: { inlineError: true },
     onSuccess: () => {
       toast.success(`Added to the ${label} references`)
       void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) })

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { isNotFound } from '@/api/client'
+import { ApiError, isNotFound } from '@/api/client'
 import { deleteItem, getItem, listPriceChecks, listSites, updateWatch } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, PriceCheck } from '@/api/types'
@@ -112,9 +112,13 @@ export function ItemDetailPage() {
 
   const remove = useMutation({
     mutationFn: () => deleteItem(itemId),
+    meta: { inlineError: true },
     onSuccess: () => {
+      // removed, not invalidated: Back would otherwise paint the cached page, live buttons and all
+      queryClient.removeQueries({ queryKey: qk.item(itemId) })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       navigate(`/categories/${item.data?.category_slug ?? ''}`)
     },
   })
@@ -162,7 +166,7 @@ export function ItemDetailPage() {
 
   return (
     <div>
-      <p className="font-mono text-[11px] tracking-[0.06em] text-ink-3 uppercase">
+      <p className="font-mono text-[11px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
         <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
           {detail.category_name}
         </Link>{' '}
@@ -170,7 +174,7 @@ export function ItemDetailPage() {
       </p>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-[30px] leading-tight font-semibold tracking-[0.02em] text-ink">
+        <h1 className="min-w-0 font-display text-[30px] leading-tight font-semibold tracking-[0.02em] wrap-anywhere text-ink">
           {detail.name}
         </h1>
         {detail.target_met ? <SnaggedBadge /> : null}
@@ -370,13 +374,17 @@ export function ItemDetailPage() {
 
       <ConfirmDialog
         open={deleteOpen}
-        onOpenChange={setDeleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open)
+          if (!open) remove.reset()
+        }}
         title="Remove item"
         description={`Remove “${detail.name}” from your items? Your listings and price history for it are deleted${
           instance?.vision_enabled ? ', along with the listing photos saved for it. Its reference photos stay' : ''
         }. Anyone else tracking it keeps theirs.`}
         confirmLabel="Remove item"
         pending={remove.isPending}
+        error={remove.error instanceof ApiError ? remove.error.message : null}
         onConfirm={() => remove.mutate()}
       />
 

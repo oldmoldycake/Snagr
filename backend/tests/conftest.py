@@ -20,6 +20,8 @@ _live_url = os.environ.get("DATABASE_URL") or _env["DATABASE_URL"]
 _test_url = _live_url.rsplit("/", 1)[0] + "/snagr_test"
 assert _test_url != _live_url, "test DB must not be the live DB"
 os.environ["DATABASE_URL"] = _test_url
+# Settings refuses to load without a real JWT_SECRET, and CI has no .env.
+os.environ["JWT_SECRET"] = "test-only-jwt-secret-" + "x" * 32
 # ------------------------------------------------------------------------------
 
 import asyncpg

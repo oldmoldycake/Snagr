@@ -71,11 +71,11 @@ export const getMe = () => api<User>('/api/auth/me')
 
 /** Check an invite link before showing the signup form; 404 unknown, 410 used or expired. */
 export const validateInvite = (token: string) =>
-  api<InviteValidation>(`/api/auth/invites/${token}`)
+  api<InviteValidation>(`/api/auth/invites/${encodeURIComponent(token)}`)
 
 /** Create an account from an invite and start a session; an email pinned to the invite wins. */
 export const acceptInvite = (token: string, body: InviteAcceptRequest) =>
-  api<{ user: User }>(`/api/auth/invites/${token}/accept`, { method: 'POST', body })
+  api<{ user: User }>(`/api/auth/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body })
 
 /** Change the caller's email or vision thresholds; only sent fields change. */
 export const updateMe = (body: MeUpdateRequest) =>
@@ -88,7 +88,7 @@ export const changePassword = (body: PasswordChangeRequest) =>
 /** The caller's notification channels. */
 export const listChannels = () => api<{ data: NotificationChannel[] }>('/api/me/channels')
 
-/** Add a notification channel; a webhook's signing secret comes back only in this response. */
+/** Add a notification channel (409 channel_limit past ten); a webhook's signing secret comes back only in this response. */
 export const createChannel = (body: NotificationChannelCreateRequest) =>
   api<NotificationChannelCreated>('/api/me/channels', { method: 'POST', body })
 
@@ -258,7 +258,10 @@ export const cancelJob = (id: number) => api<Job>(`/api/jobs/${id}/cancel`, { me
 /** Every user on the instance (admin only). */
 export const listUsers = () => api<{ data: AdminUser[] }>('/api/admin/users')
 
-/** Activate or deactivate a user, or change their role (admin only). */
+/**
+ * Activate or deactivate a user, or change their role (admin only); 409 last_admin
+ * for a change that would leave no active admin.
+ */
 export const updateUser = (id: number, body: AdminUserUpdateRequest) =>
   api<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body })
 

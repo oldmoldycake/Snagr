@@ -28,7 +28,7 @@ import json
 import logging
 import os
 import socket
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import asyncpg
 import breaker
@@ -48,13 +48,14 @@ from database import (
     get_hunt_unit,
     get_recheck_unit,
 )
-from llm import build_llm, flush_traces, job_trace
+from llm import build_llm, count_tokens, flush_traces, job_trace
 from pricing import SearchSuspended, ground_item, select_grounding_work
 from recheck import recheck_deterministic
 from sqlalchemy.exc import SQLAlchemyError
 
 from agent import Cancelled as JobCancelled
 from agent import (
+    SiteUnreadable,
     bounded,
     build_hunt_agent,
     build_recheck_agent,
@@ -72,11 +73,21 @@ TICK_SECONDS = 30
 # Housekeeping: the reaper has to run faster than a stale job matters, the
 # retention sweep does not.
 SCHEDULER_INTERVAL_SECONDS = 60
+# how long a pool waits after losing the database before it tries to claim again
+POOL_RETRY_SECONDS = 5
 PRUNE_EVERY_TICKS = 60
 # The sweep is a safety net under the hunt chain, not its engine, so hourly
 # is plenty; it also runs on the first pass, so a hunter that was down picks
 # every dropped pair back up the moment it starts.
 SWEEP_EVERY_TICKS = 60
+
+# A failure no site is to blame for — the model provider refusing the key or
+# out of quota, the Playwright MCP gone, the database dropping — fails the
+# next job the same way whatever site it is on. So the whole process holds off
+# instead: this long after the first, doubling per consecutive one up to the
+# cap, and any job that finishes clears it.
+INFRA_BACKOFF_SECONDS = 30
+INFRA_BACKOFF_CAP_SECONDS = 900
 
 CHECK_KINDS = ("recheck",)
 HUNT_KINDS = ("hunt",)
@@ -108,6 +119,47 @@ def worker_ids() -> list[str]:
         + [f"{origin}#hunt-{i}" for i in range(hunts)]
         + [f"{origin}#ground-{i}" for i in range(GROUND_CONCURRENCY)]
     )
+
+
+# --- the hunter's own failures ---------------------------------------------
+
+
+class Backoff:
+    """The process-wide hold after failures the breaker must not hear about.
+
+    Shared by every pool, because the outage is: a model provider that
+    refuses a hunt refuses the recheck fallback too, and a database that is
+    gone is gone for everyone. In memory on purpose — a restart that forgets
+    costs one failed job.
+    """
+
+    failures: int = 0
+    until: datetime | None = None
+
+    def failed(self, error: Exception) -> None:
+        """Start a hold after one more failure in a row, doubling each time."""
+        self.failures += 1
+        seconds = min(INFRA_BACKOFF_SECONDS * 2 ** (self.failures - 1), INFRA_BACKOFF_CAP_SECONDS)
+        self.until = datetime.now(UTC) + timedelta(seconds=seconds)
+        log.warning(
+            f"Holding off for {seconds}s after {self.failures} failure(s) no site "
+            f"is to blame for: {error}"
+        )
+
+    def cleared(self) -> None:
+        """A job finished: whatever was down is back."""
+        if self.failures:
+            log.info(f"A job finished; clearing {self.failures} failure(s)")
+        self.failures = 0
+        self.until = None
+
+    async def wait(self) -> None:
+        """Sleep out the current hold, if there is one."""
+        if self.until is not None:
+            await asyncio.sleep(max((self.until - datetime.now(UTC)).total_seconds(), 0))
+
+
+backoff = Backoff()
 
 
 # --- running one job -------------------------------------------------------
@@ -237,18 +289,21 @@ async def _run_ground(job: dict) -> dict | None:
     search results and guide pages over plain HTTP."""
     row = await get_ground_unit(job["item_id"])
     if row is None:
-        log.info(f"Item {job['item_id']} is gone; nothing to ground")
+        log.info(f"Item {job['item_id']} is gone or unwatched; nothing to ground")
         return _empty()
 
     # grounding is shared by everyone watching the item, so its trace groups
     # by item and carries no user
-    with job_trace(
-        "ground",
-        f"item-{row['item_id']}",
-        ["kind:ground", f"category:{row['category_slug']}"],
-        job_id=job["id"],
-        item_id=row["item_id"],
-        category_id=row["category_id"],
+    with (
+        job_trace(
+            "ground",
+            f"item-{row['item_id']}",
+            ["kind:ground", f"category:{row['category_slug']}"],
+            job_id=job["id"],
+            item_id=row["item_id"],
+            category_id=row["category_id"],
+        ),
+        count_tokens() as spent,
     ):
         payload = await ground_item(row["item_id"], row["item_name"], row["category_id"])
     observations = payload.get("observations") or []
@@ -269,7 +324,12 @@ async def _run_ground(job: dict) -> dict | None:
         message,
         {"item_id": row["item_id"]},
     )
-    return _empty(listings_checked=len(observations), prices_found=len(observations))
+    return _empty(
+        listings_checked=len(observations),
+        prices_found=len(observations),
+        tokens_in=spent.tokens_in,
+        tokens_out=spent.tokens_out,
+    )
 
 
 # --- the pools -------------------------------------------------------------
@@ -284,19 +344,23 @@ async def _work_one(worker: str, job: dict) -> None:
         # the API already wrote 'cancelled'; say so in the log the page shows
         log.info(f"Job {job_id} was cancelled mid-flight")
         await job_queue.append_event(job_id, "warn", "job_finished", "Cancelled by you")
-        await job_queue.complete(job_id, None)
+        await job_queue.complete(job_id, None, worker=worker)
     except SearchSuspended as e:
         # not a failure: nothing can succeed until the suspension lifts, and
         # holding the slot while it does is what this pool exists to avoid
         log.warning(f"Job {job_id} deferred: {e}")
         await job_queue.append_event(job_id, "warn", "error", str(e))
-        await job_queue.defer(job_id, e.until)
+        await job_queue.defer(job_id, e.until, worker=worker)
     except Exception as e:
         log.error(f"{job['kind'].title()} job {job_id} failed: {e}")
-        await breaker.record_outcome(job["site_id"], False, job_id=job_id, detail=str(e)[:120])
+        if isinstance(e, SiteUnreadable):
+            await breaker.record_outcome(job["site_id"], False, job_id=job_id, detail=str(e)[:120])
+        else:
+            backoff.failed(e)
         await job_queue.append_event(job_id, "error", "error", str(e)[:500])
-        await job_queue.fail_or_retry(job_id, str(e))
+        await job_queue.fail_or_retry(job_id, str(e), worker=worker)
     else:
+        backoff.cleared()
         if job["kind"] == "hunt":
             await job_queue.append_event(
                 job_id,
@@ -304,7 +368,7 @@ async def _work_one(worker: str, job: dict) -> None:
                 "job_finished",
                 f"Hunt complete — {stats['new_listings']} new · {stats['listings_checked']} seen",
             )
-        await job_queue.complete(job_id, stats)
+        await job_queue.complete(job_id, stats, worker=worker)
     finally:
         flush_traces()
 
@@ -315,11 +379,23 @@ async def _pool(worker: str, kinds: tuple[str, ...], wake: asyncio.Event) -> Non
     Clearing the flag before claiming is what makes a missed wake impossible
     to sleep through for long: a NOTIFY that lands between the clear and the
     last empty claim is lost, and the 30-second tick picks it up.
+
+    Losing the database — in a claim, or in the writes that end a job — must
+    not end the pool: a pool that dies stops that worker for good while the
+    process looks healthy. A job whose terminal write failed stays `running`
+    and stops beating, so the reaper takes it back.
     """
     while True:
         wake.clear()
-        while (job := await job_queue.claim(worker, kinds)) is not None:
-            await _work_one(worker, job)
+        try:
+            await backoff.wait()
+            while (job := await job_queue.claim(worker, kinds)) is not None:
+                await _work_one(worker, job)
+                await backoff.wait()
+        except (SQLAlchemyError, OSError) as e:
+            log.error(f"Worker {worker} lost the database ({e}); retrying in {POOL_RETRY_SECONDS}s")
+            await asyncio.sleep(POOL_RETRY_SECONDS)
+            continue
         await wake.wait()
 
 
@@ -464,5 +540,6 @@ async def once() -> None:
         for worker in workers:
             while (job := await job_queue.claim(worker, kinds_for(worker))) is not None:
                 await _work_one(worker, job)
+                await backoff.wait()
     finally:
         await job_queue.release_all(workers)

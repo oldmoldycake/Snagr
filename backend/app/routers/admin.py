@@ -57,8 +57,24 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 async def update_user(
     user_id: int, body: AdminUserUpdateRequest, db: AsyncSession = Depends(get_db)
 ):
-    """Activate/deactivate a user or change their role; 404 for an unknown user."""
+    """Activate/deactivate a user or change their role; 404 for an unknown user,
+    409 last_admin for a change that would leave no active admin."""
     user = await _get_user(db, user_id)
+    demoting = body.role is not None and body.role != "admin"
+    if user.role == "admin" and user.is_active and (demoting or body.is_active is False):
+        # FOR UPDATE on every active admin: two admins demoting each other at
+        # once would otherwise each see the other and both succeed
+        admins = (
+            await db.scalars(
+                select(User.id).where(User.role == "admin", User.is_active).with_for_update()
+            )
+        ).all()
+        if admins == [user.id]:
+            raise err(
+                409,
+                "last_admin",
+                "This is the only active admin — make someone else an admin first",
+            )
     if body.is_active is not None:
         user.is_active = body.is_active
     if body.role is not None:

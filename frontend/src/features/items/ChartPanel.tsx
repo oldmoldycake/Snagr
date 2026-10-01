@@ -4,6 +4,7 @@ import { getPriceHistory, getPriceSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { RangeSelector } from '@/components/charts/RangeSelector'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
+import { ErrorState } from '@/components/ui/error-state'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
@@ -56,6 +57,14 @@ export function ChartPanel({
       <CardBody className="px-2 pt-3">
         {active.isLoading ? (
           <Skeleton className="m-2 h-64" />
+        ) : active.isError ? (
+          <ErrorState
+            className="m-2"
+            title="Couldn't load the price history"
+            error={active.error}
+            onRetry={() => void active.refetch()}
+            retrying={active.isFetching}
+          />
         ) : tab === 'listings' && history.data ? (
           <PriceHistoryChart data={history.data} range={range} />
         ) : tab === 'summary' && summary.data ? (

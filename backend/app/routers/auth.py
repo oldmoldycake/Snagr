@@ -53,6 +53,7 @@ from app.core.cookies import (
 from app.core.deps import csrf_guard, current_user, reject_bearer
 from app.core.errors import ApiError, err
 from app.core.security import (
+    FIRST_USER_LOCK,
     hash_password,
     hash_refresh,
     make_access_jwt,
@@ -74,10 +75,6 @@ from app.schemas.auth import User as UserSchema
 from app.services import oidc
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-
-# pg_advisory_xact_lock key that serializes self-signup: without it two sign-ups
-# on an empty instance both count zero users and both become admin
-_REGISTER_LOCK = 0x736E_6167_7200  # "snagr\0"
 
 _UNIQUE_VIOLATION = "23505"
 
@@ -233,7 +230,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
     # the very first user can always register (and becomes admin). After that,
     # self-signup is only open while the REGISTRATION_OPEN toggle is on —
     # otherwise people join via an admin invite.
-    await db.execute(select(func.pg_advisory_xact_lock(_REGISTER_LOCK)))
+    await db.execute(select(func.pg_advisory_xact_lock(FIRST_USER_LOCK)))
     user_count = await db.scalar(select(func.count()).select_from(User))
     is_first_user = (user_count or 0) == 0
     if not is_first_user and not settings.REGISTRATION_OPEN:
@@ -242,7 +239,7 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         )
     _check_new_password(body.password)
 
-    if await db.scalar(select(User).where(User.email == body.email)):
+    if await db.scalar(select(User).where(func.lower(User.email) == body.email)):
         raise _email_taken()
 
     user = User(
@@ -250,7 +247,9 @@ async def register(body: RegisterRequest, response: Response, db: AsyncSession =
         password_hash=await hash_password(body.password),
         role="admin" if is_first_user else "user",
         is_active=True,
-        email_verified=True,
+        # a typed-in address is unconfirmed, so SSO won't link to it
+        # (services/oidc.py) — except the first user's: they own the instance
+        email_verified=is_first_user,
     )
     await _insert_user(db, user)
     await _start_session(db, response, user)
@@ -268,7 +267,7 @@ async def login(
     403 forbidden for a deactivated account; 429 rate_limited once the client
     address or the account has made too many attempts (core/ratelimit.py)."""
     address = request.client.host if request.client else ""
-    account = body.email.lower()
+    account = body.email
     if wait := max(
         ratelimit.by_address.retry_after(address), ratelimit.by_account.retry_after(account)
     ):
@@ -276,7 +275,7 @@ async def login(
     ratelimit.by_address.record(address)
     ratelimit.by_account.record(account)
 
-    user = await db.scalar(select(User).where(User.email == body.email))
+    user = await db.scalar(select(User).where(func.lower(User.email) == body.email))
     # hand the connection back while argon2 works: a queue of logins holding
     # the whole pool would stall every other request as surely as hashing on
     # the event loop did
@@ -424,8 +423,8 @@ async def accept_invite(
     if burned is None:
         raise err(410, "invite_expired", "This invite has expired or was already used")
     # an invite pinned to an email wins over whatever the form submitted
-    email = invite.email or body.email
-    if await db.scalar(select(User).where(User.email == email)):
+    email = (invite.email or body.email).lower()
+    if await db.scalar(select(User).where(func.lower(User.email) == email)):
         raise _email_taken()
 
     user = User(
@@ -433,7 +432,9 @@ async def accept_invite(
         password_hash=await hash_password(body.password),
         role=invite.role,
         is_active=True,
-        email_verified=True,
+        # the admin vouched for a pinned email; one typed into the form is
+        # unconfirmed, so SSO won't link to it (services/oidc.py)
+        email_verified=invite.email is not None,
     )
     await _insert_user(db, user)
     await _start_session(db, response, user)

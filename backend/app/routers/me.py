@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 
 import httpx
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -90,8 +90,15 @@ async def update_me(
 
     # PATCH semantics: only touch fields the client actually sent — that's what
     # model_fields_set tracks.
-    if "email" in body.model_fields_set and body.email is not None and body.email != user.email:
-        if await db.scalar(select(UserModel).where(UserModel.email == body.email)):
+    if (
+        "email" in body.model_fields_set
+        and body.email is not None
+        and body.email != user.email.lower()
+    ):
+        taken = select(UserModel).where(
+            func.lower(UserModel.email) == body.email, UserModel.id != user.id
+        )
+        if await db.scalar(taken):
             raise err(
                 422,
                 "validation_error",
@@ -99,6 +106,9 @@ async def update_me(
                 fields={"email": "An account with this email already exists"},
             )
         user.email = body.email
+        # nobody confirmed the new address; unverified keeps SSO from linking
+        # its real owner's IdP identity to this account (services/oidc.py)
+        user.email_verified = False
     for field, value in thresholds.items():
         setattr(user, field, value)
     await db.commit()
@@ -153,6 +163,11 @@ async def change_password(
     await db.commit()
 
 
+# every channel is another send per event, so one user can't queue unbounded
+# work ahead of everyone else's notifications
+MAX_CHANNELS = 10
+
+
 def _channel_fields(
     kind: str,
     body: NotificationChannelCreateRequest | NotificationChannelUpdateRequest,
@@ -185,6 +200,8 @@ def _channel_fields(
             raise err(
                 422, "validation_error", "Topic is required", fields={"topic": "Topic is required"}
             )
+        if problem := notifications_service.ntfy_topic_error(topic):
+            raise err(422, "validation_error", "Not a valid ntfy topic", fields={"topic": problem})
     else:
         topic = None
         if not url or not re.match(r"^https?://", url):
@@ -202,6 +219,13 @@ def _channel_fields(
                 "validation_error",
                 "Not a Discord webhook URL",
                 fields={"url": "Must be a Discord incoming-webhook URL"},
+            )
+        if problem := notifications_service.public_url(url):
+            raise err(
+                422,
+                "validation_error",
+                "Notifications can only be sent to a public address",
+                fields={"url": problem},
             )
 
     events = (
@@ -252,13 +276,25 @@ async def create_channel(
     """Add a notification channel; a webhook's signing secret is returned only here.
 
     422 validation_error for invalid fields; 422 no_server for ntfy while the
-    instance has no ntfy server."""
+    instance has no ntfy server; 409 channel_limit at MAX_CHANNELS."""
     if body.kind not in ("ntfy", "webhook", "discord"):
         raise err(
             422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
         )
     if body.kind == "ntfy" and not settings.NTFY_SERVER_URL:
         raise err(422, "no_server", "This instance has no ntfy server configured")
+    # the owner's row lock serializes concurrent creates, or two at
+    # MAX_CHANNELS - 1 would both count under the limit and both insert
+    await db.execute(select(UserModel.id).where(UserModel.id == user.id).with_for_update())
+    owned = await db.scalar(
+        select(func.count())
+        .select_from(NotificationChannels)
+        .where(NotificationChannels.user_id == user.id)
+    )
+    if owned >= MAX_CHANNELS:
+        raise err(
+            409, "channel_limit", f"You can have at most {MAX_CHANNELS} notification channels"
+        )
     fields = _channel_fields(body.kind, body)
     secret = new_channel_secret() if body.kind == "webhook" else None
     channel = NotificationChannels(
@@ -309,13 +345,17 @@ async def test_channel(
 ):
     """Send a test notification through one of the caller's channels.
 
-    422 no_server for ntfy while the instance has no ntfy server; 502
+    422 no_server for ntfy while the instance has no ntfy server; 422
+    validation_error for a destination the channel guard refuses; 502
     channel_failed when the destination can't be reached."""
     channel = await _own_channel(channel_id, user, db)
     try:
         await notifications_service.send_test(channel)
     except RuntimeError as e:  # ntfy kind while the instance has no server
         raise err(422, "no_server", "This instance has no ntfy server configured") from e
+    # httpx.InvalidURL is no HTTPError: a URL httpx can't parse would be a 500
+    except (notifications_service.RefusedDestination, httpx.InvalidURL) as e:
+        raise err(422, "validation_error", "This channel's destination is not accepted") from e
     except httpx.HTTPError as e:
         raise err(502, "channel_failed", "Could not reach the channel destination") from e
 

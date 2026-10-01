@@ -47,8 +47,11 @@ export function EditCategoryDialog({
       // new name: a rename keeps the original slug, so the derived URL 404s.
       return (await setCategorySites(category.id, siteIds)).slug
     },
+    meta: { inlineError: true },
     onSuccess: async (slug) => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
+      // item rows carry the category's name
+      await queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)
       if (onSaved) onSaved()
       else navigate(`/categories/${slug}`, { replace: true })
@@ -63,6 +66,7 @@ export function EditCategoryDialog({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       await queryClient.invalidateQueries({ queryKey: ['items'] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       navigate('/', { replace: true })
     },
   })

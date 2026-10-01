@@ -22,7 +22,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from pydantic import ValidationError
-from sqlalchemy import and_, func, or_, select, true, update
+from sqlalchemy import and_, exists, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -711,6 +711,23 @@ async def cancel_recheck(db: AsyncSession, listing_id: int) -> None:
         .where(Jobs.kind == "recheck")
         .where(Jobs.listing_id == listing_id)
         .where(Jobs.status == "pending")
+        .values(status="cancelled", finished_at=datetime.now(UTC))
+    )
+
+
+async def cancel_unwatched_ground(db: AsyncSession, item_id: int) -> None:
+    """Drop an item's pending grounding once nobody watches it, in the
+    caller's transaction — what the last watcher leaving means to the queue.
+    The items row stays (whoever watches that name next picks it back up,
+    market price and all), but nobody is asking about its price until then.
+    A job the agent already claimed is its own: it finds nobody watching and
+    finishes without grounding."""
+    await db.execute(
+        update(Jobs)
+        .where(Jobs.kind == "ground")
+        .where(Jobs.item_id == item_id)
+        .where(Jobs.status == "pending")
+        .where(~exists().where(Watches.item_id == item_id))
         .values(status="cancelled", finished_at=datetime.now(UTC))
     )
 

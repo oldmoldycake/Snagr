@@ -57,6 +57,13 @@ class TestParsePrice:
             ("1.234,56 €", "1234.56"),
             ("14,50 €", "14.50"),
             ("1.234", "1.234"),
+            ("1 299,00 €", "1299.00"),
+            ("1\u00a0299,00\u00a0€", "1299.00"),
+            ("1\u202f299,00\u202f€", "1299.00"),
+            ("CHF 1'299.00", "1299.00"),
+            ("CHF 1\u2019299.00", "1299.00"),
+            ("12 345 678,90 €", "12345678.90"),
+            ("Model X-100 for $100", "100"),
         ],
     )
     def test_a_stated_price_parses(self, raw, expected):
@@ -72,6 +79,17 @@ class TestParsePrice:
             "$10.00 to $20.00",  # a range is not a price
             "12 bids $30.00",  # the page fragment beside one
             "Free shipping over $50, was $80",
+            "12 30",  # a space groups only in threes
+            "1 2341234 €",
+            "-$10",  # a negative is not a price
+            "-10.00",
+            "\u221210 €",
+            "- EUR 10",
+            "-eur 10",
+            "-kr 10",
+            "US $-10",
+            -5,
+            -5.0,
             "",
             "no price here",
             None,
@@ -285,6 +303,45 @@ class TestUrlAllowed:
 
     def test_a_multi_part_suffix_still_compares_the_registrable_domain(self):
         assert url_allowed("https://www.ebay.co.uk/itm/1", "https://ebay.co.uk") is None
+
+    @pytest.mark.parametrize(
+        ("url", "site"),
+        [
+            ("https://evil.com.ar/itm/1", "https://www.mercadolibre.com.ar"),
+            ("https://evil.com.my/itm/1", "https://www.lazada.com.my"),
+            ("https://evil.co.in/itm/1", "https://www.flipkart.co.in"),
+            ("https://evil.myshopify.com/products/1", "https://shop.myshopify.com"),
+        ],
+    )
+    def test_a_multi_part_suffix_never_widens_to_the_whole_suffix(self, url, site):
+        # without the Public Suffix List a guessed registrable domain can be
+        # the suffix itself; anchoring on the site's own host cannot
+        assert url_allowed(url, site) is not None
+
+    def test_a_subdomain_of_a_www_base_is_allowed(self):
+        site = "https://www.mercadolibre.com.ar"
+
+        assert url_allowed("https://articulo.mercadolibre.com.ar/MLA-1", site) is None
+
+    def test_a_base_without_www_is_used_as_it_is(self):
+        # only a leading "www." is dropped; any other base host is the anchor
+        # as written, so a sibling subdomain stays out
+        assert (
+            url_allowed("https://articulo.mercadolibre.com.ar/MLA-1", "https://mercadolibre.com.ar")
+            is None
+        )
+        assert url_allowed("https://www.example.com/p/1", "https://shop.example.com") is not None
+        assert url_allowed("https://m.shop.example.com/p/1", "https://shop.example.com") is None
+
+    @pytest.mark.parametrize(
+        ("url", "site"),
+        [
+            ("HTTPS://WWW.MERCADOLIBRE.COM.AR./MLA-1", "https://www.mercadolibre.com.ar"),
+            ("https://articulo.mercadolibre.com.ar/MLA-1", "https://WWW.MercadoLibre.com.ar./"),
+        ],
+    )
+    def test_host_case_and_a_trailing_dot_are_ignored(self, url, site):
+        assert url_allowed(url, site) is None
 
     def test_another_marketplace_is_refused(self):
         assert url_allowed("https://www.mercari.com/us/item/1", SITE) is not None

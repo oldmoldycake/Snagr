@@ -65,9 +65,13 @@ export function AddItemDialog({
         target_price: target.trim() ? Number(target).toFixed(2) : null,
         ...trackingPayload(tracking),
       }),
+    meta: { inlineError: true },
     onSuccess: (item) => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // creating a watch queues its hunts and a grounding
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
       setOpen(false)
       onAdded?.(item)
     },

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import err
 from app.mcp.refs import Ref, resolve_category, resolve_site
 from app.mcp.schemas import JobDetail
-from app.mcp.server import JOBS, READ_ONLY, caller_session
+from app.mcp.server import JOBS, READ, READ_ONLY, caller_session
 from app.schemas.common import Paginated
 from app.schemas.jobs import Job, JobListParams, JobScope, JobsSummary
 from app.services import jobs as jobs_service
@@ -32,7 +32,7 @@ async def _scope_id(db: AsyncSession, scope: str, target: Ref | None) -> int | N
 def register(mcp: FastMCP) -> None:
     """Define the job tools on the shared server."""
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_jobs(
         kind: str | None = None,
         status: str | None = None,
@@ -57,7 +57,7 @@ def register(mcp: FastMCP) -> None:
             )
             return await jobs_service.list_jobs(db, user, filters)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def jobs_summary() -> JobsSummary:
         """What the hunter is doing right now, in one object: how many hunts
         and checks are running, how many checks are queued and when the next
@@ -67,7 +67,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await jobs_service.summary(db, user)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_job(job_id: int) -> JobDetail:
         """One job with the last 50 lines of its log — what the hunt searched,
         which candidates it judged and why, what it saved, what failed. Checks

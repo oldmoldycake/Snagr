@@ -9,15 +9,16 @@ python-multipart==0.0.32
 
 # Model
 # torch is pinned without the +cpu local tag: version ordering still prefers
-# the extra index's 2.13.0+cpu wheel where one exists, and arm64 CPU wheels
+# the extra index's 2.14.0+cpu wheel where one exists, and arm64 CPU wheels
 # (which carry no +cpu suffix) stay resolvable under the same pin.
-torch==2.13.0+cpu
+torch==2.14.0
 # transformers v5 image processors are torchvision-backed (DINOv3 ships only
 # the fast processor) — without this, weights load fails and the sidecar sits
-# in degraded mode even with a valid HF_TOKEN. 0.28 is the torch-2.13 pair.
-torchvision==0.29.0+cpu
+# in degraded mode even with a valid HF_TOKEN. 0.29 is the torch-2.14 pair
+# (same untagged pin as torch, for the same arm64 reason).
+torchvision==0.29.0
 transformers==5.17.0
-huggingface_hub==2.0.0
+huggingface_hub==1.30.0
 pillow==12.3.0
 numpy==2.5.3
 

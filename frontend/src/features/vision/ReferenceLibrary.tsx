@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { listReferences, revokeAutoReferences, revokeReference } from '@/api/endpoints'
-import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
 import type { ReferenceImage } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
@@ -90,8 +89,6 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
   const revoke = useMutation({
     mutationFn: (id: number) => revokeReference(id),
     onSuccess: () => setRevokeTarget(null),
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not revoke the reference'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) }),
   })
 
@@ -101,8 +98,6 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
       setRevokeAutoOpen(false)
       toast.success(`Revoked ${revoked} auto-promoted ${revoked === 1 ? 'reference' : 'references'}`)
     },
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not revoke the references'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) }),
   })
 

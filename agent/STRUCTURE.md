@@ -40,7 +40,7 @@ agent/
 ├── validation.py      # what the agent may believe (pure): parse_price, validate_observation, url_allowed, clip_text
 ├── pricing.py         # market-price grounding: SearXNG + guide pages over plain HTTP, model extraction, tier stats → market_prices
 ├── notify.py          # the target-hit *decision* only (pure): is this reading a crossing, and what is the owner told
-├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces
+├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces; count_tokens for a ground job's bare model calls
 ├── config.py          # settings from env/.env — every one except DATABASE_URL (see Conventions)
 ├── database.py        # engine + session factory, the ORM subset of backend/app/models.py, the read/write helpers the units use
 ├── Dockerfile         # 2-stage: build venv → slim runtime; CMD is --once, compose overrides it with --serve
@@ -119,13 +119,22 @@ across all of it deciding what is believed and which sites are read at all.
    every ground job behind it waits too, spending nothing). Successors
    are inserted **in the same transaction**: a recheck that completes, is
    cancelled, or fails for good queues the listing's next check; a hunt that
-   completes queues its pair's next hunt (see below).
+   completes queues its pair's next hunt (see below). Every terminal write
+   (`complete`, `fail_or_retry`, `defer`) names the worker and is dropped
+   unless that worker still holds the job (`locked_by`): one whose heartbeat
+   stalled until the reaper took the job back must not end it under its new
+   owner.
 6. **Shutdown.** `main._supervised` turns SIGTERM/SIGINT into task
    cancellation; `serve`'s `finally` cancels the pools and hands everything this
    process holds back to `pending` in one statement (`jobs.release_all`).
+   A pool that loses the database (in a claim, or in a job's terminal write)
+   logs, waits `POOL_RETRY_SECONDS` and claims again; a job whose terminal
+   write was lost stays `running` for the reaper. Anything else that ends a
+   pool ends `serve`, and `_supervised` exits 1, so a supervisor that restarts
+   on failure brings the hunter back.
 7. **Housekeeping.** `worker._scheduler` runs `housekeeping` every 60 s:
-   `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` goes
-   through `fail_or_retry`) and `queue_grounding` every pass; `jobs.sweep` and
+   `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` is
+   failed or retried, picked and taken back under one row lock) and `queue_grounding` every pass; `jobs.sweep` and
    `jobs.prune` every 60th pass **and on the first**, so a hunter that was down
    picks dropped pairs back up the moment it starts. `--once` runs one
    housekeeping pass (first-pass rules) before draining.
@@ -209,7 +218,12 @@ across all of it deciding what is believed and which sites are read at all.
    `SITE_BREAKER_ERRORS` (5) consecutive failed reads pause the site for
    `SITE_BREAKER_MINUTES` (60), doubling per trip up to `SITE_BREAKER_CAP_MINUTES`
    (1440); any successful read resets the count, and a disbelieved price still
-   counts as an answer. Paused means invisible: the claim skips the site's jobs
+   counts as an answer. Only failures the site is to blame for count — a unit
+   whose reads all errored, or `agent.SiteUnreadable` (every browser call
+   failed). Any other exception (model provider auth or quota, MCP down, a DB
+   blip) is the hunter's own: it blames no site, and `worker.Backoff` holds
+   every pool off 30 s, doubling per consecutive one to 15 min, until a job
+   finishes. Paused means invisible: the claim skips the site's jobs
    and its pending jobs are pushed out to the moment the pause lifts
    (`reason='paused'`, a user's own request keeps `'user'`). The trip writes a
    `warn` `site_paused` event on the job that caused it. `PATCH /api/sites/{id}`
@@ -223,12 +237,13 @@ across all of it deciding what is believed and which sites are read at all.
    A disbelieved model read is recorded with `confirmed = false`, never
    notifies, and stays out of every aggregate for good; the *next* read landing
    within 1% of it is the one believed. A disbelieved locator read is thrown
-   away and the model re-reads the page. `url_allowed` keeps a URL inside the
-   site's registrable domain and off the private network, for storing a URL
-   *and* for every navigation: the model is given a `browser_navigate` wrapper
-   (`guarded_navigate`), and code execution, file upload and tab control are
-   withheld (`BLOCKED_BROWSER_TOOLS`). `clip_text` caps model-typed text before
-   it reaches a later prompt or a notification body.
+   away and the model re-reads the page. `url_allowed` keeps a URL on the
+   site's own host (or a subdomain of it) and off the private network, for
+   storing a URL *and* for every navigation: the model is given a
+   `browser_navigate` wrapper (`guarded_navigate`), and code execution, file
+   upload and tab control are withheld (`BLOCKED_BROWSER_TOOLS`). `clip_text`
+   caps model-typed text before it reaches a later prompt or a notification
+   body.
 
 7. **One writer owns the observation** (`observations.record_price_check`).
    The model's `save_price_check`, `save_listing` with a price, and the
@@ -295,7 +310,7 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | | `CHEAP_RECHECK` | true | false = every recheck through the model |
 | | `STATIC_FETCH` | true | false = never the browserless GET |
 | | `LOCATOR_MAX_FAILURES` | 3 | misses before a locator is cleared and relearned |
-| Breaker | `SITE_BREAKER_ERRORS` | 5 | consecutive failed reads that trip it |
+| Breaker | `SITE_BREAKER_ERRORS` | 5 | consecutive failed reads that trip it; 0 = off |
 | | `SITE_BREAKER_MINUTES` / `_CAP_MINUTES` | 60 / 1440 | first pause, doubling to the cap |
 | Plausibility | `PRICE_BAND_LOW` / `PRICE_BAND_HIGH` | 0.2 / 5 | ratio band against the listing's last confirmed price; 0 = off |
 | | `PRICE_MARKET_FLOOR` | 0.1 | fraction of the market median below which a price is disbelieved; 0 = off |
