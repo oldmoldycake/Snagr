@@ -67,8 +67,11 @@ export function sortByDistanceToTarget(items: ItemSummary[]): ItemSummary[] {
   }
   return [...items].sort((a, b) => {
     if (a.target_met !== b.target_met) return a.target_met ? -1 : 1
-    const diff = ratio(a) - ratio(b)
-    if (diff !== 0) return diff
+    // compared, not subtracted: two unpriced items are Infinity - Infinity = NaN,
+    // which would skip the name tiebreak
+    const ra = ratio(a)
+    const rb = ratio(b)
+    if (ra !== rb) return ra < rb ? -1 : 1
     return a.name.localeCompare(b.name)
   })
 }
