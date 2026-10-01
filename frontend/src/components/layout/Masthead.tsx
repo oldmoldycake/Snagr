@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'react'
+import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, KeyRound, LogOut, Menu, Plus, Search, SlidersHorizontal, User as UserIcon, Users } from 'lucide-react'
 import { getJobsSummary, listCategories } from '@/api/endpoints'
@@ -48,6 +48,46 @@ function Wordmark() {
         SNAGR
       </span>
     </NavLink>
+  )
+}
+
+/** The item search box: submitting opens the dashboard's `?search=` results. */
+function SearchForm({
+  inputRef,
+  value,
+  onChange,
+  onSubmit,
+  className,
+  shortcutHint = false,
+}: {
+  inputRef?: RefObject<HTMLInputElement | null>
+  value: string
+  onChange: (value: string) => void
+  onSubmit: (e: FormEvent) => void
+  className?: string
+  /** show the `/` key that focuses it — only where a keyboard is likely */
+  shortcutHint?: boolean
+}) {
+  return (
+    <form role="search" onSubmit={onSubmit} className={cn('relative', className)}>
+      <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-3" />
+      <Input
+        ref={inputRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Search items…"
+        className={cn('pl-8', shortcutHint ? 'h-7 pr-7 text-xs' : 'h-9')}
+        aria-label="Search items"
+      />
+      {shortcutHint ? (
+        <kbd
+          aria-hidden
+          className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded-[3px] border border-hairline px-1 font-mono text-[12px] text-ink-3"
+        >
+          /
+        </kbd>
+      ) : null}
+    </form>
   )
 }
 
@@ -217,11 +257,24 @@ function AccountMenu() {
 export function Masthead() {
   const navigate = useNavigate()
   const { live, connection, setPanelOpen } = useJobs()
-  const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
+  // opened from the phone header's search button: the drawer focuses its search box
+  const [navForSearch, setNavForSearch] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const drawerSearchRef = useRef<HTMLInputElement>(null)
   const navItems = useNavItems()
   const { pathname } = useLocation()
+  const [params] = useSearchParams()
+
+  // The box shows the search the page is showing: clearing the results, or
+  // leaving the dashboard, empties it. What the user types is kept until then.
+  const query = pathname === '/' ? (params.get('search') ?? '') : ''
+  const [search, setSearch] = useState(query)
+  const [shownQuery, setShownQuery] = useState(query)
+  if (query !== shownQuery) {
+    setShownQuery(query)
+    setSearch(query)
+  }
   // item and category pages have no tab: the bar folds away
   const { hostRef: navRef, markerRef: lumeRef } = useTrack<HTMLElement>('a[aria-current="page"]', pathname)
 
@@ -241,7 +294,9 @@ export function Masthead() {
   const submitSearch = (e: FormEvent) => {
     e.preventDefault()
     const q = search.trim()
-    if (q) navigate(`/?search=${encodeURIComponent(q)}`)
+    if (!q) return
+    setNavOpen(false)
+    navigate(`/?search=${encodeURIComponent(q)}`)
   }
 
   return (
@@ -254,11 +309,34 @@ export function Masthead() {
           >
             <Menu className="size-4" />
           </SheetTrigger>
-          <SheetContent side="left" className="max-w-64">
+          <SheetContent
+            side="left"
+            className="max-w-64"
+            // Radix would focus the first non-link, the search box, and raise the
+            // phone keyboard on every menu open: only the search button wants that.
+            onOpenAutoFocus={(e) => {
+              e.preventDefault()
+              const panel = e.currentTarget as HTMLElement
+              if (navForSearch) {
+                drawerSearchRef.current?.focus()
+                setNavForSearch(false)
+              } else {
+                panel.focus()
+              }
+            }}
+          >
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <div className="px-4 pt-4 pb-5">
               <Wordmark />
             </div>
+            {/* below sm the header has no room for the box */}
+            <SearchForm
+              inputRef={drawerSearchRef}
+              value={search}
+              onChange={setSearch}
+              onSubmit={submitSearch}
+              className="mx-4 mb-4 sm:hidden"
+            />
             <MobileNav onNavigate={() => setNavOpen(false)} />
           </SheetContent>
         </Sheet>
@@ -285,23 +363,25 @@ export function Masthead() {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
-          <form onSubmit={submitSearch} className="relative hidden w-44 sm:block lg:w-52">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-ink-3" />
-            <Input
-              ref={searchRef}
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search items…"
-              className="h-7 pr-7 pl-8 text-xs"
-              aria-label="Search items"
-            />
-            <kbd
-              aria-hidden
-              className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded-[3px] border border-hairline px-1 font-mono text-[12px] text-ink-3"
-            >
-              /
-            </kbd>
-          </form>
+          <SearchForm
+            inputRef={searchRef}
+            value={search}
+            onChange={setSearch}
+            onSubmit={submitSearch}
+            className="hidden w-44 sm:block lg:w-52"
+            shortcutHint
+          />
+          <button
+            type="button"
+            onClick={() => {
+              setNavForSearch(true)
+              setNavOpen(true)
+            }}
+            className="tap-target relative flex size-8 items-center justify-center rounded-sm text-ink-2 hover:text-ink sm:hidden"
+            aria-label="Search items"
+          >
+            <Search className="size-4" />
+          </button>
 
           {/* whether what every page shows is current: a dot while it is, a
               word once it isn't */}
