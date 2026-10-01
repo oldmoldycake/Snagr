@@ -265,7 +265,7 @@ function CategoryView({ slug }: { slug: string }) {
             }
           />
         ) : rows.length === 0 ? (
-          <p className="px-4 py-6 text-[13px] text-ink-3">No items match this filter.</p>
+          <p className="px-4 py-6 text-[14px] text-ink-3">No items match this filter.</p>
         ) : (
           <>
             <WatchList
@@ -279,7 +279,7 @@ function CategoryView({ slug }: { slug: string }) {
               onDelete={(item) => setDeletingItem(item)}
               onHunt={(item) => enqueue({ kind: 'hunt', scope: 'item', scope_id: item.id })}
             />
-            <div className="border-t border-hairline bg-well px-4 py-2 font-mono text-[11px] text-ink-3">
+            <div className="border-t border-hairline bg-well px-4 py-2 font-mono text-[12px] text-ink-3">
               {rows.length} {rows.length === 1 ? 'item' : 'items'} · sorted by distance to target
             </div>
           </>
@@ -290,7 +290,7 @@ function CategoryView({ slug }: { slug: string }) {
         <Card className="busy-edge" aria-busy={change.isFetching}>
           <CardHeader>
             <CardTitle>Price change</CardTitle>
-            <span className="font-mono text-[11px] text-ink-3">
+            <span className="font-mono text-[12px] text-ink-3">
               {range === 'all' ? 'all time' : `last ${range}`}
             </span>
           </CardHeader>

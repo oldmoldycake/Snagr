@@ -39,7 +39,7 @@ export function MeterToTarget({
           style={{ width: `${(fill * 100).toFixed(1)}%` }}
         />
       </span>
-      <span className={cn('font-mono text-[11px] whitespace-nowrap tnum', close ? 'text-lume' : 'text-ink-3')}>
+      <span className={cn('font-mono text-[12px] whitespace-nowrap tnum', close ? 'text-lume' : 'text-ink-3')}>
         {formatMoney(fromCents(Math.max(gap, 0)), currency)}
       </span>
     </span>

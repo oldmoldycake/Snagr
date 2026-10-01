@@ -282,7 +282,7 @@ export function DashboardPage() {
               <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">
                 Categories
               </h2>
-              <span className="font-mono text-[11px] text-ink-3 tnum">{categoryList.length} on this instance</span>
+              <span className="font-mono text-[12px] text-ink-3 tnum">{categoryList.length} on this instance</span>
               <span className="flex-1" />
               {justCreated ? (
                 <CreateCategoryDialog variant="default" trigger="＋ New category" onCreated={onCreated} />
@@ -318,7 +318,7 @@ export function DashboardPage() {
       <section className="mt-[26px]">
         <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
           <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">Your items</h2>
-          <span className="font-mono text-[11px] text-ink-3 tnum">
+          <span className="font-mono text-[12px] text-ink-3 tnum">
             {shelves.length} {shelves.length === 1 ? 'category' : 'categories'} · {myItems.length}{' '}
             {myItems.length === 1 ? 'item' : 'items'}
             <span aria-hidden> · </span>
@@ -355,7 +355,7 @@ export function DashboardPage() {
 
         {rows.length > 0 ? (
           <>
-            <h3 className="mt-[18px] mb-1 ml-0.5 font-mono text-[10px] font-medium tracking-[0.14em] text-ink-3 uppercase">
+            <h3 className="mt-[18px] mb-1 ml-0.5 font-mono text-[12px] font-medium text-ink-3">
               No items of yours yet
             </h3>
             <div className="grid grid-cols-1 gap-2.5">
@@ -434,7 +434,7 @@ function SearchResults({
     <section>
       <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
         <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">Search</h2>
-        <span className="font-mono text-[11px] text-ink-3">
+        <span className="font-mono text-[12px] text-ink-3">
           matching “{search}” · {clear}
         </span>
       </div>
@@ -446,7 +446,7 @@ function SearchResults({
       ) : error ? (
         error
       ) : shelves.length === 0 ? (
-        <p className="rounded-md border border-dashed border-hairline-strong px-3.5 py-[26px] text-center text-[13px] text-ink-3">
+        <p className="rounded-md border border-dashed border-hairline-strong px-3.5 py-[26px] text-center text-[14px] text-ink-3">
           None of your items match “{search}”. · {clear}
         </p>
       ) : (

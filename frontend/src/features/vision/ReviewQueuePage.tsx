@@ -66,18 +66,18 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
         <div className="flex items-center justify-between gap-2">
           <Link
             to={`/items/${entry.item_id}`}
-            className="min-w-0 truncate text-[13px] font-medium text-ink hover:text-lume hover:underline"
+            className="min-w-0 truncate text-[14px] font-medium text-ink hover:text-lume hover:underline"
           >
             {entry.item_name}
           </Link>
           <Badge
             variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
-            className="shrink-0 font-mono text-[10px] tnum"
+            className="shrink-0 font-mono text-[12px] tnum"
           >
             {entry.suggested_label === 'fake' ? '✗' : '✓'} {entry.suggested_label} {entry.confidence}
           </Badge>
         </div>
-        <p className="font-mono text-[11px] text-ink-3">
+        <p className="font-mono text-[12px] text-ink-3">
           {entry.llm_authenticity_read
             ? `Snagr's read: ${LLM_READ_LABELS[entry.llm_authenticity_read]} · `
             : ''}
@@ -151,7 +151,7 @@ export function ReviewQueuePage() {
           Photo review
         </h1>
         {queue.data ? (
-          <span className="font-mono text-[11px] text-ink-3 tnum">
+          <span className="font-mono text-[12px] text-ink-3 tnum">
             {queue.data.meta.total} {queue.data.meta.total === 1 ? 'photo' : 'photos'} waiting
           </span>
         ) : null}

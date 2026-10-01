@@ -55,7 +55,7 @@ export function InvitePage() {
         <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">
           {expired ? 'Invite expired' : 'Invite not valid'}
         </h1>
-        <p className="mt-2 text-[13px] text-ink-2">
+        <p className="mt-2 text-[14px] text-ink-2">
           {expired
             ? 'This invite has expired or was already used. Ask your admin for a new one.'
             : 'This invite link is not valid. Check the link or ask your admin for a new invite.'}

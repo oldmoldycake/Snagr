@@ -43,7 +43,7 @@ export function TerminalLogLine({ line }: { line: LogLine }) {
 /** A block of log lines in the terminal voice. */
 export function TerminalLog({ lines, className }: { lines: LogLine[]; className?: string }) {
   return (
-    <div className={cn('font-mono text-[11px] leading-[2.05]', className)}>
+    <div className={cn('font-mono text-[12px] leading-[2.05]', className)}>
       {lines.map((line) => (
         <TerminalLogLine key={line.key} line={line} />
       ))}

@@ -112,7 +112,7 @@ function LadderLabels({
 }) {
   const { ref, width } = useMeasuredWidth()
   return (
-    <div ref={ref} className="relative mt-1 h-4 font-mono text-[10px]">
+    <div ref={ref} className="relative mt-1 h-4 font-mono text-[12px]">
       <span className="absolute left-0 text-ink-3">{highLabel}</span>
       {/* Where the positioned label would overprint a neighbour (best ≈ target
           on the right, a target at or above the high on the left), the pair

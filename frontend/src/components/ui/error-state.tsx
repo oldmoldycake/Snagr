@@ -33,8 +33,8 @@ export function ErrorState({
         ⚠
       </span>
       <p className="text-sm font-medium text-ink">{title}</p>
-      <p className="max-w-sm text-[13px] text-ink-2">The request failed — nothing here is missing or deleted.</p>
-      {error ? <p className="max-w-sm font-mono text-[11px] text-ink-3">{error.message}</p> : null}
+      <p className="max-w-sm text-[14px] text-ink-2">The request failed — nothing here is missing or deleted.</p>
+      {error ? <p className="max-w-sm font-mono text-[12px] text-ink-3">{error.message}</p> : null}
       <div className="mt-2">
         <Button size="sm" onClick={onRetry} disabled={retrying}>
           {retrying ? <Loader2 className="animate-spin" /> : null}

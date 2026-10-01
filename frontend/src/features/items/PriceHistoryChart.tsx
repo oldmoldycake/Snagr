@@ -133,7 +133,7 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
 
   if (plotted.length === 0) {
     return (
-      <p className="px-4 py-10 text-center text-[13px] text-ink-3">
+      <p className="px-4 py-10 text-center text-[14px] text-ink-3">
         No price history yet. It fills in as Snagr checks this item's listings.
       </p>
     )

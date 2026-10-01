@@ -24,7 +24,7 @@ export function AuthenticityChip({ read }: { read: AuthenticityRead }) {
   if (read.verdict !== 'leans_fake') return null
   return (
     <SimpleTooltip content={<span className="max-w-64">{VERDICT_COPY.leans_fake}</span>}>
-      <Badge variant="rise" className="shrink-0 font-mono text-[10px] tnum">
+      <Badge variant="rise" className="shrink-0 font-mono text-[12px] tnum">
         ✗ likely fake{read.fake_confidence != null ? ` · ${Math.round(Number(read.fake_confidence) * 100)}%` : ''}
       </Badge>
     </SimpleTooltip>

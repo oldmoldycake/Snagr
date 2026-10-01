@@ -229,8 +229,8 @@ export function AdminUsersPage() {
                           <DropdownMenuMoreTrigger label={`Actions for ${user.email}`} />
                           <DropdownMenuContent align="end" className="w-60">
                             <DropdownMenuLabel>
-                              <span className="truncate text-[13px] text-ink">{user.email}</span>
-                              <span className="font-mono text-[10.5px] text-ink-3 tnum">
+                              <span className="truncate text-[14px] text-ink">{user.email}</span>
+                              <span className="font-mono text-[12px] text-ink-3 tnum">
                                 {user.role} ·{' '}
                                 {user.is_active ? 'active' : <span className="text-warn">deactivated</span>} ·{' '}
                                 {user.item_count} {user.item_count === 1 ? 'item' : 'items'}
@@ -274,7 +274,7 @@ export function AdminUsersPage() {
         </CardHeader>
         <CardBody className="px-0 py-1">
           {(invites.data?.data.length ?? 0) === 0 ? (
-            <p className="px-4 pb-3 text-[13px] text-ink-3">No pending invites.</p>
+            <p className="px-4 pb-3 text-[14px] text-ink-3">No pending invites.</p>
           ) : (
             <Table>
               <THead>

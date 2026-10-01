@@ -22,7 +22,7 @@ export function CategoryChips({ activeSlug, className }: { activeSlug?: string; 
 
   const chipClass = (isActive: boolean) =>
     cn(
-      'chip-tab relative pb-1 font-mono text-[11px] whitespace-nowrap transition-colors',
+      'chip-tab relative pb-1 font-mono text-[12px] whitespace-nowrap transition-colors',
       isActive ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
     )
 
@@ -55,7 +55,7 @@ export function CategoryChips({ activeSlug, className }: { activeSlug?: string; 
       {isAdmin ? (
         <CreateCategoryDialog
           variant="ghost"
-          className="h-auto px-1 py-0 text-[11px] text-ink-3"
+          className="h-auto px-1 py-0 text-[12px] text-ink-3"
           trigger={<span>＋ category</span>}
         />
       ) : null}

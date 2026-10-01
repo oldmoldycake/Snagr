@@ -189,7 +189,7 @@ export function ItemDetailPage() {
   return (
     <div>
       <div className="flex items-center gap-3">
-        <p className="min-w-0 flex-1 font-mono text-[11px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
+        <p className="min-w-0 flex-1 font-mono text-[12px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
           <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
             {detail.category_name}
           </Link>{' '}
@@ -234,11 +234,11 @@ export function ItemDetailPage() {
           {formatMoney(detail.best_price, detail.currency)}
         </div>
         <div className="pb-1">
-          <p className="font-mono text-[13px] text-ink-2 tnum">
+          <p className="font-mono text-[14px] text-ink-2 tnum">
             target <span className="font-semibold text-ink">{formatMoney(target, detail.currency)}</span>
             {' · '}best of {trackedCount} tracked {trackedCount === 1 ? 'listing' : 'listings'}
           </p>
-          <p className="mt-1 font-mono text-[11px] text-ink-3">
+          <p className="mt-1 font-mono text-[12px] text-ink-3">
             avg {formatMoney(detail.avg_price, detail.currency)}
             {detail.best_site_name ? ` · ${detail.best_site_name}` : ''}
             {' · checked '}
@@ -276,7 +276,7 @@ export function ItemDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>Listings</CardTitle>
-              <span className="font-mono text-[11px] text-ink-3 tnum">
+              <span className="font-mono text-[12px] text-ink-3 tnum">
                 {trackedCount} tracked
                 {detail.listings.length > trackedCount ? ` · ${detail.listings.length - trackedCount} not tracked` : ''}
                 {detail.selection_mode === 'best_match' ? ' · picked by best match' : ''}
@@ -304,7 +304,7 @@ export function ItemDetailPage() {
             <CardHeader>
               <CardTitle>Recent checks</CardTitle>
               <div className="flex items-center gap-3">
-                <span className="font-mono text-[11px] text-ink-3 tnum">
+                <span className="font-mono text-[12px] text-ink-3 tnum">
                   {shownChecks.length} of {checkRows.length}
                 </span>
                 {checkRows.length > CHECKS_PREVIEW ? (
@@ -329,7 +329,7 @@ export function ItemDetailPage() {
                   retrying={checks.isFetching}
                 />
               ) : checkRows.length === 0 ? (
-                <p className="py-2 font-mono text-[11px] text-ink-3">
+                <p className="py-2 font-mono text-[12px] text-ink-3">
                   No price checks yet. They appear once Snagr is tracking a listing.
                 </p>
               ) : (
@@ -356,7 +356,7 @@ export function ItemDetailPage() {
                   key={key}
                   className="flex items-center justify-between gap-3 border-b border-hairline py-2"
                 >
-                  <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">{key}</dt>
+                  <dt className="font-mono text-[12px] text-ink-3">{key}</dt>
                   <dd
                     className={cn(
                       'text-right font-mono text-xs text-ink tnum',
@@ -368,7 +368,7 @@ export function ItemDetailPage() {
                 </div>
               ))}
               <div className="flex items-center justify-between gap-3 py-2">
-                <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">Notify at target</dt>
+                <dt className="font-mono text-[12px] text-ink-3">Notify at target</dt>
                 <dd>
                   <Switch
                     checked={detail.watch.notify}
@@ -388,7 +388,7 @@ export function ItemDetailPage() {
             </Button>
             <button
               type="button"
-              className="mt-3 block w-full text-center font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase hover:text-rise"
+              className="mt-3 block w-full text-center font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase hover:text-rise"
               onClick={() => setDeleteOpen(true)}
             >
               Remove item

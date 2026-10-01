@@ -146,8 +146,8 @@ export function TrackingFields({
       </div>
 
       <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border border-hairline-strong bg-well">
-        <CollapsibleTrigger className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[11px] text-ink-2 focus-visible:-outline-offset-2">
-          <span className="text-[10px] tracking-[0.14em] text-ink-3 uppercase">Tracking</span>
+        <CollapsibleTrigger className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[12px] text-ink-2 focus-visible:-outline-offset-2">
+          <span className="text-[12px] text-ink-3">Tracking</span>
           <span className="min-w-0 flex-1 truncate">
             {value.selectionMode === 'best_match' ? 'Best match' : 'Cheapest'} · up to {value.maxListings} ·{' '}
             {interval != null ? `every ${formatInterval(interval)} · ` : ''}

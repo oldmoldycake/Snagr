@@ -29,9 +29,9 @@ export function PausedSiteCard({ site }: { site: PausedSite }) {
           ⚠
         </span>
         <p className="min-w-0 flex-1 text-sm font-semibold text-warn">{site.site_name} paused</p>
-        <span className="font-mono text-[11px] text-warn tnum">{countdown(site.paused_until)}</span>
+        <span className="font-mono text-[12px] text-warn tnum">{countdown(site.paused_until)}</span>
       </div>
-      <p className="text-[12.5px] leading-relaxed text-ink-2">
+      <p className="text-[14px] leading-relaxed text-ink-2">
         {site.paused_reason}. Its checks and hunts wait until {clockTime(site.paused_until)}, then
         resume on their own.
       </p>

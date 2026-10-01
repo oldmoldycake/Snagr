@@ -172,7 +172,7 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
           </Row>
         ) : groups.length === 0 ? (
           <Row>
-            <p className="py-2 font-mono text-[11px] text-ink-3">
+            <p className="py-2 font-mono text-[12px] text-ink-3">
               {filter === 'failed' ? 'Nothing has failed.' : 'Nothing has finished yet.'}
             </p>
           </Row>
@@ -207,7 +207,7 @@ function Row({
     <li
       className={cn('grid grid-cols-[4rem_0.75rem_minmax(0,1fr)] items-center gap-x-3', className)}
     >
-      <span className="text-right font-mono text-[11px] whitespace-nowrap text-ink-3 tnum">
+      <span className="text-right font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
         {time}
       </span>
       <span className="grid h-5 place-items-center bg-page">{marker}</span>
@@ -219,7 +219,7 @@ function Row({
 function Heading({ label, children }: { label: string; children?: ReactNode }) {
   return (
     <li className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-3 pt-5 pb-2 first:pt-0">
-      <h2 className="text-right font-mono text-[10px] tracking-[0.14em] text-ink-3 uppercase">
+      <h2 className="text-right font-mono text-[12px] text-ink-3">
         {label}
       </h2>
       <div className="flex min-h-7 flex-wrap items-center gap-3 border-b border-hairline pb-1.5 pl-[calc(0.75rem_+_0.75rem)]">
@@ -241,7 +241,7 @@ function Who({ job }: { job: Job }) {
         <span className="text-ink-3"> × {job.site_name}</span>
       ) : null}
       {job.user_id === null ? (
-        <span className="ml-2 font-mono text-[10.5px] text-ink-3">system</span>
+        <span className="ml-2 font-mono text-[12px] text-ink-3">system</span>
       ) : null}
     </>
   )
@@ -263,13 +263,13 @@ function QueuedRow({ job }: { job: Job }) {
       }
       className="py-1.5"
     >
-      <p className="flex flex-wrap items-baseline gap-x-2 text-[13px]">
+      <p className="flex flex-wrap items-baseline gap-x-2 text-[14px]">
         <span className={cn(blocked && 'ink-muted')}>
           <Who job={job} />
         </span>
         <span
           className={cn(
-            'font-mono text-[10.5px]',
+            'font-mono text-[12px]',
             blocked ? 'rounded-sm bg-warn/10 px-1.5 py-0.5 text-warn' : 'text-ink-3',
           )}
         >
@@ -291,7 +291,7 @@ function QueuedChecks({ summary }: { summary?: JobsSummary }) {
       className="py-1.5"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <p className="min-w-0 flex-1 font-mono text-[11.5px] text-ink-3">
+        <p className="min-w-0 flex-1 font-mono text-[12px] text-ink-3">
           {pending > 0 ? (
             <>
               <span className="text-ink">{pending} price checks</span> spread over the coming half
@@ -318,7 +318,7 @@ function NowBlock({ summary }: { summary?: JobsSummary }) {
       <li className="grid grid-cols-[4rem_0.75rem_minmax(0,1fr)] items-center gap-x-3 pt-4 pb-1">
         <span
           className={cn(
-            'text-right font-mono text-[11px] font-semibold tracking-[0.08em] uppercase',
+            'text-right font-mono text-[12px] font-semibold tracking-[0.08em] uppercase',
             busy ? 'text-lume' : 'text-ink-2',
           )}
         >
@@ -341,7 +341,7 @@ function NowBlock({ summary }: { summary?: JobsSummary }) {
               busy ? 'bg-gradient-to-r from-lume to-transparent' : 'bg-hairline-strong',
             )}
           />
-          <span className="font-mono text-[11px] text-ink-3 tnum">{clockTime(now)}</span>
+          <span className="font-mono text-[12px] text-ink-3 tnum">{clockTime(now)}</span>
         </div>
       </li>
       <li className="relative grid grid-cols-[4rem_0.75rem_minmax(0,1fr)] gap-x-3 pt-2 pb-3">
@@ -361,7 +361,7 @@ function NowBlock({ summary }: { summary?: JobsSummary }) {
           ))}
           <ChecksTail summary={summary} />
           {!busy ? (
-            <p className="font-mono text-[11px] text-ink-3">
+            <p className="font-mono text-[12px] text-ink-3">
               Idle
               {summary?.next_hunt_at ? ` — next hunt ${nextHunt(summary.next_hunt_at)}` : null}
             </p>
@@ -382,7 +382,7 @@ function HourGroupRows({ label, jobs }: { label: string; jobs: Job[] }) {
   return (
     <>
       <li className="grid grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-3 pt-4 pb-1">
-        <span className="text-right font-mono text-[10px] tracking-[0.14em] whitespace-nowrap text-ink-3 uppercase">
+        <span className="text-right font-mono text-[12px] whitespace-nowrap text-ink-3">
           {label}
         </span>
         <span aria-hidden className="ml-[calc(0.75rem_+_0.75rem)] h-px bg-hairline" />
@@ -403,11 +403,11 @@ function PastRow({ job }: { job: Job }) {
 
   const body = (
     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-2 pr-2">
-      <p className="min-w-0 flex-1 basis-48 truncate text-[13px]">
+      <p className="min-w-0 flex-1 basis-48 truncate text-[14px]">
         <Who job={job} />
       </p>
       <p className={cn('font-mono text-xs tnum sm:min-w-44', result.tone)}>{result.text}</p>
-      <p className="hidden min-w-24 text-right font-mono text-[11px] whitespace-nowrap text-ink-3 sm:block tnum">
+      <p className="hidden min-w-24 text-right font-mono text-[12px] whitespace-nowrap text-ink-3 sm:block tnum">
         {took} · {tokens}
       </p>
     </div>
@@ -431,7 +431,7 @@ function PastRow({ job }: { job: Job }) {
         </Row>
         {open ? (
           <Row>
-            <p className="pb-2 font-mono text-[11px] text-ink-3">
+            <p className="pb-2 font-mono text-[12px] text-ink-3">
               {[
                 job.stats?.method === 'llm' ? 'read by AI' : priceMethodLabel(job.stats?.method),
                 TRANSPORT_LABELS[job.stats?.transport ?? ''],

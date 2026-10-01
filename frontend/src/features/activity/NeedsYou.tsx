@@ -36,11 +36,11 @@ export function NeedsYou({ summary }: { summary?: JobsSummary }) {
         >
           Needs you
         </h2>
-        {count > 0 ? <span className="font-mono text-[11px] text-warn tnum">{count}</span> : null}
+        {count > 0 ? <span className="font-mono text-[12px] text-warn tnum">{count}</span> : null}
       </div>
 
       {summary && !failed.isLoading && count === 0 ? (
-        <p className="flex items-center gap-2 rounded-lg border border-hairline bg-surface px-4 py-3 font-mono text-[11.5px] text-ink-2">
+        <p className="flex items-center gap-2 rounded-lg border border-hairline bg-surface px-4 py-3 font-mono text-[12px] text-ink-2">
           <span aria-hidden className="text-drop">
             ✓
           </span>
@@ -73,9 +73,9 @@ function FailureCard({ job }: { job: Job }) {
             <span className="font-normal text-ink-3"> × {job.site_name}</span>
           ) : null}
         </p>
-        <span className="font-mono text-[11px] text-ink-3 tnum">{clockTime(job.finished_at)}</span>
+        <span className="font-mono text-[12px] text-ink-3 tnum">{clockTime(job.finished_at)}</span>
       </div>
-      <p className="text-[12.5px] leading-relaxed text-ink-2">
+      <p className="text-[14px] leading-relaxed text-ink-2">
         Hunt failed{job.error ? `: ${job.error}` : '.'}
       </p>
       <div className="flex items-center gap-3">
@@ -84,7 +84,7 @@ function FailureCard({ job }: { job: Job }) {
         ) : null}
         <Link
           to={`/activity/${job.id}`}
-          className="font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+          className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
         >
           Details →
         </Link>
@@ -107,20 +107,20 @@ function SiteHealth() {
       <div className="flex items-baseline justify-between">
         <h3
           id="site-health"
-          className="font-mono text-[10px] tracking-[0.14em] text-ink-3 uppercase"
+          className="font-mono text-[12px] text-ink-3"
         >
           Sites
         </h3>
         <Link
           to="/sites"
-          className="font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase hover:text-lume"
+          className="font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase hover:text-lume"
         >
           All →
         </Link>
       </div>
       <ul className="divide-y divide-hairline rounded-lg border border-hairline bg-surface px-4">
         {rows.map((site) => (
-          <li key={site.id} className="flex items-center gap-2.5 py-2 font-mono text-[11.5px]">
+          <li key={site.id} className="flex items-center gap-2.5 py-2 font-mono text-[12px]">
             <span
               aria-hidden
               className={

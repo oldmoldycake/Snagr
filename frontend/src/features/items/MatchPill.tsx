@@ -27,7 +27,7 @@ export function MatchPill({
   const pill = (
     <span
       className={cn(
-        'inline-flex min-w-8 items-center justify-center rounded-full border px-1.5 py-0.5 font-mono text-[11px] font-medium tnum',
+        'inline-flex min-w-8 items-center justify-center rounded-full border px-1.5 py-0.5 font-mono text-[12px] font-medium tnum',
         band,
       )}
     >

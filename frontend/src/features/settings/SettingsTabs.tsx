@@ -53,7 +53,7 @@ export function SettingsTabs() {
           end={tab.end}
           className={({ isActive }) =>
             cn(
-              'seg-option relative flex h-[22px] items-center rounded-[3px] px-2 font-mono text-[11px] tracking-[0.04em] whitespace-nowrap uppercase transition-colors focus-visible:-outline-offset-2 max-sm:h-[26px]',
+              'seg-option relative flex h-[22px] items-center rounded-[3px] px-2 font-mono text-[12px] tracking-[0.04em] whitespace-nowrap uppercase transition-colors focus-visible:-outline-offset-2 max-sm:h-[26px]',
               isActive ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
             )
           }

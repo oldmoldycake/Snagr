@@ -171,12 +171,12 @@ export function CreateCategoryDialog({
                     }}
                   />
                   <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className="mr-0.5 font-mono text-[11px] text-ink-3">Try:</span>
+                    <span className="mr-0.5 font-mono text-[12px] text-ink-3">Try:</span>
                     {SUGGESTIONS.map((suggestion) => (
                       <button
                         key={suggestion}
                         type="button"
-                        className="rounded-[3px] border border-hairline px-[7px] py-0.5 font-mono text-[11px] text-ink-3 transition-colors hover:border-hairline-strong hover:text-ink"
+                        className="rounded-[3px] border border-hairline px-[7px] py-0.5 font-mono text-[12px] text-ink-3 transition-colors hover:border-hairline-strong hover:text-ink"
                         onClick={() => {
                           setName(suggestion)
                           setNameMissing(false)
@@ -195,7 +195,7 @@ export function CreateCategoryDialog({
                 </>
               ) : (
                 <>
-                  <p className="mb-3 text-[13.5px] text-ink-2">
+                  <p className="mb-3 text-[14px] text-ink-2">
                     Where should Snagr look for <b className="font-medium text-ink">{name.trim()}</b>?
                   </p>
                   <SitePicker

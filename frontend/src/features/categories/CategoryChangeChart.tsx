@@ -31,7 +31,7 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
   const shown = data.slice(0, MAX_BARS)
 
   if (shown.length === 0) {
-    return <p className="px-4 py-6 text-[13px] text-ink-3">Not enough price history in this range yet.</p>
+    return <p className="px-4 py-6 text-[14px] text-ink-3">Not enough price history in this range yet.</p>
   }
 
   const height = Math.max(120, shown.length * 34 + 30)
@@ -84,7 +84,7 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
               dataKey="pct"
               position="right"
               formatter={(v: unknown) => `${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}%`}
-              style={{ fill: chart.inkSecondary, fontSize: 11, fontFamily: "'IBM Plex Mono', monospace" }}
+              style={{ fill: chart.inkSecondary, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}
             />
           </Bar>
         </BarChart>

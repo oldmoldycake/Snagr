@@ -187,15 +187,15 @@ export function CategoryShelf({
             <span className="min-w-0 font-display text-[19px] leading-none font-semibold tracking-[0.06em] wrap-anywhere text-ink uppercase">
               {category.name}
             </span>
-            <span className="font-mono text-[11px] text-ink-3 tnum">
+            <span className="font-mono text-[12px] text-ink-3 tnum">
               {total != null ? `${items.length} of ${total} match` : plural(items.length, 'item', 'items')}
             </span>
-            {hits > 0 ? <span className="font-mono text-[11px] text-drop tnum">⌖ {hits} at target</span> : null}
+            {hits > 0 ? <span className="font-mono text-[12px] text-drop tnum">⌖ {hits} at target</span> : null}
             <LeadLine lead={lead} />
             <span className="flex-1 max-sm:hidden" />
             <span
               className={cn(
-                'shelf-peek font-mono text-[11px] tnum max-sm:hidden',
+                'shelf-peek font-mono text-[12px] tnum max-sm:hidden',
                 noSites ? 'text-warn' : 'text-ink-3',
               )}
             >
@@ -243,7 +243,7 @@ export function CategoryShelf({
           {noSites ? (
             <div
               style={{ '--i': 0 } as CSSProperties}
-              className="shelf-stagger flex items-center gap-3 border-t border-warn/25 bg-warn/10 px-3.5 py-[9px] text-[13px] text-warn"
+              className="shelf-stagger flex items-center gap-3 border-t border-warn/25 bg-warn/10 px-3.5 py-[9px] text-[14px] text-warn"
             >
               <span aria-hidden>⚠</span>
               <span>
@@ -257,17 +257,17 @@ export function CategoryShelf({
               aria-label={`Edit sites for ${category.name}`}
               onClick={() => onEditSites(category)}
               style={{ '--i': 0 } as CSSProperties}
-              className="shelf-stagger group/sites mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] rounded-sm px-1.5 py-[3px] font-mono text-[11px] text-ink-2 transition-colors hover:bg-raised max-sm:ml-[26px]"
+              className="shelf-stagger group/sites mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] rounded-sm px-1.5 py-[3px] font-mono text-[12px] text-ink-2 transition-colors hover:bg-raised max-sm:ml-[26px]"
             >
               <SearchingSites siteNames={siteNames} />
-              <span className="ml-1 text-[10px] tracking-[0.08em] text-ink-3 uppercase group-hover/sites:text-lume">
+              <span className="ml-1 text-[12px] tracking-[0.08em] text-ink-3 uppercase group-hover/sites:text-lume">
                 edit
               </span>
             </button>
           ) : (
             <div
               style={{ '--i': 0 } as CSSProperties}
-              className="shelf-stagger mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] px-1.5 py-[3px] font-mono text-[11px] text-ink-2 max-sm:ml-[26px]"
+              className="shelf-stagger mb-2.5 ml-[38px] inline-flex flex-wrap items-center gap-[5px] px-1.5 py-[3px] font-mono text-[12px] text-ink-2 max-sm:ml-[26px]"
             >
               <SearchingSites siteNames={siteNames} />
             </div>
@@ -277,7 +277,7 @@ export function CategoryShelf({
           </div>
           <div
             style={{ '--i': 5 } as CSSProperties}
-            className="shelf-stagger flex flex-wrap gap-x-3 gap-y-1 border-t border-hairline bg-well px-3.5 py-[7px] font-mono text-[11px] text-ink-3"
+            className="shelf-stagger flex flex-wrap gap-x-3 gap-y-1 border-t border-hairline bg-well px-3.5 py-[7px] font-mono text-[12px] text-ink-3"
           >
             <span className="tnum">{plural(total ?? items.length, 'item', 'items')} · closest first</span>
             <span className="flex-1" />
@@ -358,19 +358,19 @@ function ShelfMenu({
           title={category.name}
           meta={
             <>
-              <span className="font-mono text-[10.5px] whitespace-nowrap text-ink-3 tnum">
+              <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                 {plural(category.item_count, 'item', 'items')}
               </span>
               {hits > 0 ? (
-                <span className="font-mono text-[10.5px] whitespace-nowrap text-drop tnum">⌖ {hits} at target</span>
+                <span className="font-mono text-[12px] whitespace-nowrap text-drop tnum">⌖ {hits} at target</span>
               ) : null}
             </>
           }
         >
           {noSites ? (
-            <span className="font-mono text-[10.5px] text-warn">⚠ no sites · Snagr can't search this category</span>
+            <span className="font-mono text-[12px] text-warn">⚠ no sites · Snagr can't search this category</span>
           ) : (
-            <span className="flex flex-wrap gap-1 font-mono text-[10.5px] text-ink-2">
+            <span className="flex flex-wrap gap-1 font-mono text-[12px] text-ink-2">
               {siteNames.map((name) => (
                 <span
                   key={name}
@@ -438,7 +438,7 @@ function ShelfMenu({
               <DropdownMenuItem
                 ref={keepRef}
                 data-noplate
-                className="min-h-[26px] border border-transparent px-2.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase data-highlighted:border-hairline-strong data-highlighted:bg-raised"
+                className="min-h-[26px] border border-transparent px-2.5 font-mono text-[12px] font-medium tracking-[0.06em] uppercase data-highlighted:border-hairline-strong data-highlighted:bg-raised"
                 onSelect={(e) => {
                   e.preventDefault()
                   setConfirming(false)
@@ -450,7 +450,7 @@ function ShelfMenu({
                 data-noplate
                 tone="danger"
                 disabled={remove.isPending}
-                className="min-h-[26px] border border-rise/40 bg-rise/10 px-2.5 font-mono text-[11px] font-medium tracking-[0.06em] uppercase data-highlighted:bg-rise/20 data-highlighted:outline-2 data-highlighted:outline-offset-1 data-highlighted:outline-rise"
+                className="min-h-[26px] border border-rise/40 bg-rise/10 px-2.5 font-mono text-[12px] font-medium tracking-[0.06em] uppercase data-highlighted:bg-rise/20 data-highlighted:outline-2 data-highlighted:outline-offset-1 data-highlighted:outline-rise"
                 onSelect={() => remove.mutate()}
               >
                 <Trash2 /> Delete
@@ -481,7 +481,7 @@ function ShelfMenu({
 function SearchingSites({ siteNames }: { siteNames: string[] }) {
   return (
     <>
-      <span className="mr-0.5 text-[9.5px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
+      <span className="mr-0.5 text-[12px] tracking-[0.14em] text-ink-3 uppercase">Searching</span>
       {siteNames.map((name) => (
         <span key={name} className="inline-flex min-h-[19px] min-w-0 items-center rounded-[3px] border border-hairline bg-raised px-1.5 wrap-anywhere">
           {name}
@@ -496,7 +496,7 @@ function MenuRowText({ label, sub, subClassName }: { label: string; sub: string;
   return (
     <span className="grid min-w-0 flex-1 gap-px">
       <span>{label}</span>
-      <span className={cn('font-mono text-[10.5px] text-ink-3', subClassName)}>{sub}</span>
+      <span className={cn('font-mono text-[12px] text-ink-3', subClassName)}>{sub}</span>
     </span>
   )
 }
@@ -514,24 +514,24 @@ function LeadLine({
   switch (lead.kind) {
     case 'hit':
       return (
-        <span className={cn(base, 'font-mono text-[11.5px] text-drop')}>
+        <span className={cn(base, 'font-mono text-[12px] text-drop')}>
           ⌖ {lead.name} at {lead.amount}
         </span>
       )
     case 'closest':
       return (
-        <span className={cn(base, 'text-[12.5px] text-ink-2')}>
+        <span className={cn(base, 'text-[14px] text-ink-2')}>
           {lead.name} · <span className="font-mono text-xs font-semibold text-lume tnum">{lead.amount}</span> above
           target
         </span>
       )
     case 'priced':
       return (
-        <span className={cn(base, 'text-[12.5px] text-ink-2')}>
+        <span className={cn(base, 'text-[14px] text-ink-2')}>
           {lead.name} at <span className="font-mono text-xs text-ink tnum">{lead.amount}</span>
         </span>
       )
     case 'idle':
-      return <span className={cn(base, 'font-mono text-[11px] text-ink-3')}>hunting · no prices yet</span>
+      return <span className={cn(base, 'font-mono text-[12px] text-ink-3')}>hunting · no prices yet</span>
   }
 }

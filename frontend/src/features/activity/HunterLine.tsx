@@ -31,7 +31,7 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
 
   if (live) {
     return (
-      <p className="mt-1 font-mono text-[11px] text-lume tnum">
+      <p className="mt-1 font-mono text-[12px] text-lume tnum">
         <span aria-hidden className="mr-1">
           ●
         </span>
@@ -42,7 +42,7 @@ export function HunterLine({ detail }: { detail: ItemDetail }) {
   }
 
   return (
-    <p className="mt-1 font-mono text-[11px] text-ink-3 tnum">
+    <p className="mt-1 font-mono text-[12px] text-ink-3 tnum">
       {paused ? (
         <>
           <span aria-hidden className="text-warn">

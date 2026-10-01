@@ -23,10 +23,10 @@ export function RouteError({ fullPage = false }: { fullPage?: boolean }) {
           ⚠
         </span>
         <p className="text-sm font-medium text-ink">Something broke on this page</p>
-        <p className="max-w-sm text-[13px] text-ink-2">
+        <p className="max-w-sm text-[14px] text-ink-2">
           This is a bug in Snagr, not a problem with your data. Reloading usually clears it.
         </p>
-        {error instanceof Error ? <p className="max-w-sm font-mono text-[11px] text-ink-3">{error.message}</p> : null}
+        {error instanceof Error ? <p className="max-w-sm font-mono text-[12px] text-ink-3">{error.message}</p> : null}
         <div className="mt-2 flex gap-2">
           <Button size="sm" onClick={() => window.location.reload()}>
             Reload

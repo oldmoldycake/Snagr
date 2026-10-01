@@ -22,7 +22,7 @@ export function LiveHunts({ onOpen }: { onOpen?: () => void }) {
 
   return (
     <section className="space-y-2">
-      <h2 className="font-mono text-[10px] tracking-[0.14em] text-ink-3 uppercase">Live hunts</h2>
+      <h2 className="font-mono text-[12px] text-ink-3">Live hunts</h2>
       <Card className="divide-y divide-hairline">
         {live.map((job) => (
           <LiveHuntRow key={job.id} job={job} onOpen={onOpen} />
@@ -52,11 +52,11 @@ export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) 
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3">
       <Radar size={22} />
       <div className="min-w-0 flex-1 basis-56">
-        <p className="truncate text-[13px] font-medium text-ink">
+        <p className="truncate text-[14px] font-medium text-ink">
           {job.item_name}
           {job.site_name ? <span className="text-ink-3"> × {job.site_name}</span> : null}
         </p>
-        <p className="mt-0.5 truncate font-mono text-[11px] text-ink-2">
+        <p className="mt-0.5 truncate font-mono text-[12px] text-ink-2">
           {latest && glyph ? (
             <>
               <span aria-hidden className={glyph.className}>
@@ -69,7 +69,7 @@ export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) 
           )}
         </p>
       </div>
-      <span className="font-mono text-[11px] text-ink-3 tnum">
+      <span className="font-mono text-[12px] text-ink-3 tnum">
         {formatDuration(job.started_at)}
       </span>
       {canCancel ? (
@@ -77,7 +77,7 @@ export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) 
           type="button"
           disabled={cancel.isPending}
           onClick={() => cancel.mutate()}
-          className="font-mono text-[11px] text-rise hover:underline disabled:opacity-50"
+          className="font-mono text-[12px] text-rise hover:underline disabled:opacity-50"
         >
           Cancel
         </button>
@@ -85,7 +85,7 @@ export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) 
       <Link
         to={`/activity/${job.id}`}
         onClick={onOpen}
-        className="font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+        className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
       >
         Open →
       </Link>

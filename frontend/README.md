@@ -88,6 +88,9 @@ values, not CSS vars — change both together). Dark-only, by design.
 - **Type roles**: Big Shoulders Display (wordmark, page titles, verdicts, big prices — always
   letter-spaced), IBM Plex Sans (body), IBM Plex Mono + `tnum` (every numeral, timestamp,
   eyebrow, button label, log line).
+- **Type sizes**: 12px is the floor for any text (chart ticks included) and body copy is 14px.
+  All-caps is for eyebrows, buttons, nav tabs and badges; form labels, table headers and other
+  small labels are sentence case, without letter-spacing.
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
   sentence plus one line of tonight's totals — aggregates only, since per-item facts appear
   exactly once, on the shelves; `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to

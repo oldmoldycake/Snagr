@@ -27,30 +27,30 @@ function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onR
       />
       <div className="space-y-1.5 p-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant={fake ? 'rise' : 'snagged'} className="font-mono text-[10px]">
+          <Badge variant={fake ? 'rise' : 'snagged'} className="font-mono text-[12px]">
             {fake ? '✗ fake' : '✓ real'}
           </Badge>
-          <Badge variant="muted" className="font-mono text-[10px]">
+          <Badge variant="muted" className="font-mono text-[12px]">
             {reference.provenance}
           </Badge>
           {reference.revoked ? (
-            <Badge variant="muted" className="font-mono text-[10px]">
+            <Badge variant="muted" className="font-mono text-[12px]">
               revoked
             </Badge>
           ) : (
             <button
               type="button"
               onClick={onRevoke}
-              className="ml-auto font-mono text-[10px] tracking-[0.06em] text-ink-3 uppercase hover:text-rise"
+              className="ml-auto font-mono text-[12px] tracking-[0.06em] text-ink-3 uppercase hover:text-rise"
             >
               Revoke
             </button>
           )}
         </div>
         {reference.variant_tag ? (
-          <p className="truncate text-[11px] text-ink-2 italic">“{reference.variant_tag}”</p>
+          <p className="truncate text-[12px] text-ink-2 italic">“{reference.variant_tag}”</p>
         ) : null}
-        <p className="truncate font-mono text-[10px] text-ink-3">
+        <p className="truncate font-mono text-[12px] text-ink-3">
           <RelativeTime iso={reference.created_at} />
           {reference.source_listing_url ? (
             <>
@@ -116,7 +116,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
         <CardTitle>Reference photos</CardTitle>
         <div className="flex items-center gap-3">
           {rows.length > 0 ? (
-            <span className="font-mono text-[11px] text-ink-3 tnum">
+            <span className="font-mono text-[12px] text-ink-3 tnum">
               {realCount} real · {fakeCount} fake
             </span>
           ) : null}
