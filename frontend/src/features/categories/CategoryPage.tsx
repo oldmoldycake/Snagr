@@ -19,6 +19,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
+import { NotFound } from '@/components/ui/not-found'
 import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -145,7 +146,7 @@ function CategoryView({ slug }: { slug: string }) {
   }
 
   if (!category) {
-    return <EmptyState title="Category not found" description="It may have been renamed or deleted." />
+    return <NotFound title="Category not found" description="It may have been deleted." />
   }
 
   const rows = sortByDistanceToTarget(items.data?.data ?? [])

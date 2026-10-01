@@ -12,6 +12,7 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
+import { NotFound } from '@/components/ui/not-found'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
@@ -145,7 +146,7 @@ export function ItemDetailPage() {
   }
 
   if (!item.data) {
-    return <EmptyState title="Item not found" description="It may have been deleted." />
+    return <NotFound title="Item not found" description="It may have been deleted." />
   }
 
   const detail = item.data
