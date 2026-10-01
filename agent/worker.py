@@ -48,7 +48,7 @@ from database import (
     get_hunt_unit,
     get_recheck_unit,
 )
-from llm import build_llm, flush_traces, job_trace
+from llm import build_llm, count_tokens, flush_traces, job_trace
 from pricing import SearchSuspended, ground_item, select_grounding_work
 from recheck import recheck_deterministic
 from sqlalchemy.exc import SQLAlchemyError
@@ -294,13 +294,16 @@ async def _run_ground(job: dict) -> dict | None:
 
     # grounding is shared by everyone watching the item, so its trace groups
     # by item and carries no user
-    with job_trace(
-        "ground",
-        f"item-{row['item_id']}",
-        ["kind:ground", f"category:{row['category_slug']}"],
-        job_id=job["id"],
-        item_id=row["item_id"],
-        category_id=row["category_id"],
+    with (
+        job_trace(
+            "ground",
+            f"item-{row['item_id']}",
+            ["kind:ground", f"category:{row['category_slug']}"],
+            job_id=job["id"],
+            item_id=row["item_id"],
+            category_id=row["category_id"],
+        ),
+        count_tokens() as spent,
     ):
         payload = await ground_item(row["item_id"], row["item_name"], row["category_id"])
     observations = payload.get("observations") or []
@@ -321,7 +324,12 @@ async def _run_ground(job: dict) -> dict | None:
         message,
         {"item_id": row["item_id"]},
     )
-    return _empty(listings_checked=len(observations), prices_found=len(observations))
+    return _empty(
+        listings_checked=len(observations),
+        prices_found=len(observations),
+        tokens_in=spent.tokens_in,
+        tokens_out=spent.tokens_out,
+    )
 
 
 # --- the pools -------------------------------------------------------------
