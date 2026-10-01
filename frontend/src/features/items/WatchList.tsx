@@ -80,8 +80,11 @@ function CriteriaHint({ item }: { item: ItemSummary }) {
   if (!item.criteria) return null
   const mode = item.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'
   return (
-    <SimpleTooltip content={<span className="block max-w-64">{`${mode} — “${item.criteria}”`}</span>}>
-      <ListFilter aria-label="Has criteria" className="size-3.5 shrink-0 text-ink-3" />
+    <SimpleTooltip
+      label="Show criteria"
+      content={<span className="block max-w-64">{`${mode} — “${item.criteria}”`}</span>}
+    >
+      <ListFilter aria-hidden className="size-3.5 shrink-0 text-ink-3" />
     </SimpleTooltip>
   )
 }

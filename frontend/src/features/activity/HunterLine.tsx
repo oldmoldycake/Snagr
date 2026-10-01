@@ -90,7 +90,7 @@ function huntingHalf(detail: ItemDetail): string {
   const { hunt } = detail
   const full = hunt.slots_open === 0
   let slots = full
-    ? `tracking ${detail.max_listings} of ${detail.max_listings} listings · automatic hunts wait until you stop tracking one`
+    ? `tracking ${detail.max_listings} of ${detail.max_listings} listings · automatic hunts wait until you stop tracking one · Hunt for better swaps out the weakest`
     : `room for ${hunt.slots_open} more ${hunt.slots_open === 1 ? 'listing' : 'listings'}`
   // a switched-off watch has nothing queued on its own, so there is no "next"
   if (hunt.enabled && !full && hunt.next_at != null) {

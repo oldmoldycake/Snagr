@@ -1,6 +1,7 @@
 import { Loader2, Search } from 'lucide-react'
 import type { JobScope } from '@/api/types'
 import { Button, type ButtonProps } from '@/components/ui/button'
+import { SimpleTooltip } from '@/components/ui/tooltip'
 import { useInstance } from '@/features/auth/useSession'
 import { useJobs } from './JobsProvider'
 
@@ -9,7 +10,9 @@ import { useJobs } from './JobsProvider'
  * already live the button says so and opens the sheet instead of queueing
  * another — the queue would dedupe it anyway, and "Hunting…" is the honest
  * answer to "hunt now". With hunting switched off for the instance it is
- * disabled and says why: the backend would answer 409 hunting_disabled.
+ * disabled and says why: the backend would answer 409 hunting_disabled. It is
+ * aria-disabled rather than disabled, because a disabled button takes no
+ * pointer or focus events and its reason could never be shown.
  */
 export function HuntButton({
   scope,
@@ -34,11 +37,21 @@ export function HuntButton({
     )
   }
 
+  if (huntingOff) {
+    return (
+      <SimpleTooltip content="Hunting is turned off on this server" asChild>
+        <Button {...buttonProps} aria-disabled>
+          <Search />
+          {label ?? 'Hunt now'}
+        </Button>
+      </SimpleTooltip>
+    )
+  }
+
   return (
     <Button
       {...buttonProps}
-      disabled={huntingOff || isEnqueuing || buttonProps.disabled}
-      title={huntingOff ? 'Hunting is turned off on this server' : buttonProps.title}
+      disabled={isEnqueuing || buttonProps.disabled}
       onClick={() => enqueue({ kind: 'hunt', scope, scope_id: scopeId })}
     >
       {isEnqueuing ? <Loader2 className="animate-spin" /> : <Search />}

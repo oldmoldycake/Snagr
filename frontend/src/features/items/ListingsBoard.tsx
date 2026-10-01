@@ -439,7 +439,7 @@ function BoardRow({
               'shrink-0 font-mono text-[12px]',
               expanded
                 ? 'text-lume'
-                : 'text-ink-3 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+                : 'text-ink-3 opacity-50 group-hover:opacity-100 group-focus-visible:opacity-100',
             )}
           >
             {expanded ? '▾' : '▸'}
