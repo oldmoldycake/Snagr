@@ -66,6 +66,7 @@ export function EditCategoryDialog({
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       await queryClient.invalidateQueries({ queryKey: ['items'] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       navigate('/', { replace: true })
     },
   })

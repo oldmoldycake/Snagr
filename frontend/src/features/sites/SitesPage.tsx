@@ -152,6 +152,7 @@ export function SitesPage() {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       setDeleting(null)
     },
   })

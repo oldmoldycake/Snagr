@@ -309,6 +309,8 @@ function ExpandedRow({
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // pausing a listing cancels its re-check; resuming queues one
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
     },
   })
 
