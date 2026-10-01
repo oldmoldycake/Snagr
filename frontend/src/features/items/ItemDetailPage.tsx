@@ -205,17 +205,12 @@ export function ItemDetailPage() {
         {detail.target_met ? <SnaggedBadge /> : null}
         <span className="flex-1" />
         {/* a full watch is never hunted on its own; asking is a swap hunt,
-            which trades its weakest listing for something better */}
+            which trades its weakest listing for something better (HunterLine says so) */}
         <HuntButton
           scope="item"
           scopeId={detail.id}
           label={detail.hunt.slots_open === 0 ? 'Hunt for better' : 'Hunt now'}
           size="sm"
-          title={
-            detail.hunt.slots_open === 0
-              ? `Look for something better than the weakest of the ${detail.max_listings} tracked listings`
-              : undefined
-          }
         />
         <CheckPricesButton scope="item" scopeId={detail.id} size="sm" />
         <Button size="sm" onClick={() => setEditOpen(true)}>

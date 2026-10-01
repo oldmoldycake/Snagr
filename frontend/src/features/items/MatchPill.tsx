@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn'
 
 /**
  * 0–100 criteria-fit score, tinted by band. The agent's one-line rationale
- * lives in the tooltip. `quietMid` drops the amber 70–84 tint — the listings
+ * lives in the tooltip, which a tap opens too. `quietMid` drops the amber 70–84 tint — the listings
  * board only lets the top band glow.
  */
 export function MatchPill({
