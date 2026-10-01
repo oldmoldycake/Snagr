@@ -38,10 +38,26 @@ const PENDING = {
   per_page: 8,
 } as const
 
+// The remembered filter is a per-browser convenience, so storage failures
+// (private mode, blocked site data, a full quota) are ignored rather than
+// surfaced: the page falls back to Hunts.
+
 /** The filter this browser last chose, or Hunts. */
 function rememberedFilter(): Filter {
-  const held = localStorage.getItem(REMEMBERED)
-  return FILTERS.find((f) => f.value === held)?.value ?? 'hunt'
+  try {
+    const held = localStorage.getItem(REMEMBERED)
+    return FILTERS.find((f) => f.value === held)?.value ?? 'hunt'
+  } catch {
+    return 'hunt'
+  }
+}
+
+function rememberFilter(filter: Filter) {
+  try {
+    localStorage.setItem(REMEMBERED, filter)
+  } catch {
+    // see rememberedFilter()
+  }
 }
 
 function historyParams(filter: Filter, page: number): JobListParams {
@@ -127,7 +143,7 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
             onChange={(value) => {
               setFilter(value)
               setPage(1)
-              localStorage.setItem(REMEMBERED, value)
+              rememberFilter(value)
             }}
           />
         </Heading>
