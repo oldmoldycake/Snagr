@@ -8,6 +8,7 @@ import { cn } from '@/lib/cn'
 import { countdown } from '@/lib/time'
 import { useTrack } from '@/lib/useTrack'
 import { useInstance, useLogout, useSession } from '@/features/auth/useSession'
+import { MastheadConnection } from '@/features/activity/ConnectionStatus'
 import { useJobs } from '@/features/activity/JobsProvider'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { Input } from '@/components/ui/input'
@@ -209,12 +210,13 @@ function AccountMenu() {
 }
 
 /**
- * Top bar of every signed-in page: navigation, item search, the live-job
- * indicator that opens the activity sheet, and the account menu.
+ * Top bar of every signed-in page: navigation, item search, the live-feed
+ * dot, the live-job indicator that opens the activity sheet, and the account
+ * menu.
  */
 export function Masthead() {
   const navigate = useNavigate()
-  const { live, setPanelOpen } = useJobs()
+  const { live, connection, setPanelOpen } = useJobs()
   const [search, setSearch] = useState('')
   const [navOpen, setNavOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -301,8 +303,12 @@ export function Masthead() {
             </kbd>
           </form>
 
-          {/* the only masthead state: a pill while something is running.
-              There is no button — the hunter is already hunting. */}
+          {/* whether what every page shows is current: a dot while it is, a
+              word once it isn't */}
+          <MastheadConnection connection={connection} />
+
+          {/* a pill while something is running. There is no button — the
+              hunter is already hunting. */}
           {live.length > 0 ? (
             <button
               type="button"

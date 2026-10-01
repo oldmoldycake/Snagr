@@ -9,8 +9,10 @@ import { Button } from '@/components/ui/button'
 import { ErrorState } from '@/components/ui/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
+import { relativeTime } from '@/lib/time'
 import { useMediaQuery } from '@/lib/useMediaQuery'
 import { HunterTicker } from '@/features/activity/HunterTicker'
+import { useTick } from '@/features/activity/useTick'
 import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { EditCategoryDialog } from '@/features/categories/EditCategoryDialog'
@@ -318,6 +320,8 @@ export function DashboardPage() {
           <span className="font-mono text-[11px] text-ink-3 tnum">
             {shelves.length} {shelves.length === 1 ? 'category' : 'categories'} · {myItems.length}{' '}
             {myItems.length === 1 ? 'item' : 'items'}
+            <span aria-hidden> · </span>
+            <UpdatedAgo at={items.dataUpdatedAt} />
           </span>
           <span className="flex-1" />
           {shelves.length >= 2 ? (
@@ -465,4 +469,14 @@ function SearchResults({
       )}
     </section>
   )
+}
+
+/**
+ * When this tab last fetched the prices it shows. The live feed and window
+ * focus keep that recent; this says so when they haven't. Ticks on its own so
+ * the dashboard doesn't re-render every second.
+ */
+function UpdatedAgo({ at }: { at: number }) {
+  useTick(true)
+  return <span>updated {relativeTime(new Date(at).toISOString())}</span>
 }

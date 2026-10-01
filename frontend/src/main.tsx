@@ -67,7 +67,11 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       retry: 1,
-      refetchOnWindowFocus: false,
+      // Lists are what a tab left open overnight shows, so they catch up when
+      // it is looked at again. Everything else waits for the live feed or its
+      // own staleTime: a detail page's charts refetching on every alt-tab
+      // would redraw under the reader for nothing.
+      refetchOnWindowFocus: (query) => query.queryKey[1] === 'list' || query.queryKey[0] === 'dashboard',
     },
   },
 })

@@ -1,6 +1,7 @@
 import { tryRefresh } from '@/api/client'
 
-export type Connection = 'live' | 'reconnecting' | 'paused'
+/** `connecting` until the first stream opens: nothing is live before then. */
+export type Connection = 'connecting' | 'live' | 'reconnecting' | 'paused'
 
 const FIRST_RETRY_MS = 1_000
 const MAX_RETRY_MS = 30_000
