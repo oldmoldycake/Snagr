@@ -27,7 +27,7 @@ export function Select({
         aria-label={ariaLabel}
         className={cn(
           'flex h-8 items-center justify-between gap-2 rounded-sm border border-hairline-field bg-well px-2.5 text-[14px] text-ink',
-          'focus:border-lume/60 focus:outline-none data-[placeholder]:text-ink-3',
+          'focus:border-lume/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-lume/60 data-[placeholder]:text-ink-3',
           className,
         )}
       >
