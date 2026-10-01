@@ -40,7 +40,7 @@ agent/
 ├── validation.py      # what the agent may believe (pure): parse_price, validate_observation, url_allowed, clip_text
 ├── pricing.py         # market-price grounding: SearXNG + guide pages over plain HTTP, model extraction, tier stats → market_prices
 ├── notify.py          # the target-hit *decision* only (pure): is this reading a crossing, and what is the owner told
-├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces
+├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces; count_tokens for a ground job's bare model calls
 ├── config.py          # settings from env/.env — every one except DATABASE_URL (see Conventions)
 ├── database.py        # engine + session factory, the ORM subset of backend/app/models.py, the read/write helpers the units use
 ├── Dockerfile         # 2-stage: build venv → slim runtime; CMD is --once, compose overrides it with --serve

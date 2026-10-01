@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 import pytest
 import worker
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from observations import UnitContext
 from pricing import SearchSuspended
@@ -364,6 +365,29 @@ class TestGroundPath:
         assert [(level, m) for _, level, t, m in seen["events"] if t == "job_finished"] == [
             ("warn", "Market price for Item 1: found no prices")
         ]
+
+    def test_grounding_counts_the_tokens_its_model_calls_spend(self, monkeypatch):
+        wire(monkeypatch)
+
+        def reply(tokens_in, tokens_out, **metadata):
+            usage = {
+                "input_tokens": tokens_in,
+                "output_tokens": tokens_out,
+                "total_tokens": tokens_in + tokens_out,
+            }
+            message = AIMessage(content="{}", usage_metadata=usage, response_metadata=metadata)
+            return GenericFakeChatModel(messages=iter([message]))
+
+        async def ground(item_id, item_name, category_id):
+            # extraction calls sit deep inside the grounding, some in tasks of
+            # their own, and a provider need not name its model for them to count
+            await reply(100, 20, model_name="m").ainvoke("tiers")
+            await asyncio.gather(reply(300, 40).ainvoke("snippets"), reply(5, 1).ainvoke("guide"))
+            return {"status": "ok", "confidence": "high", "observations": [1]}
+
+        monkeypatch.setattr(worker, "ground_item", ground)
+        stats = asyncio.run(worker.run_job(job("ground", listing_id=None)))
+        assert (stats["tokens_in"], stats["tokens_out"]) == (405, 61)
 
     def test_grounding_runs_inside_one_trace_per_item_for_no_one_user(self, monkeypatch):
         wire(monkeypatch)
