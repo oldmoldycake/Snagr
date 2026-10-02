@@ -18,6 +18,7 @@ import { SimpleTooltip } from '@/components/ui/tooltip'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney, toCents } from '@/lib/money'
+import { dayPhrase } from '@/lib/time'
 import { ItemListingsPanel } from './ItemListingsPanel'
 
 /** Rows plus the optional columns and row actions each page turns on. */
@@ -52,7 +53,7 @@ export function effectiveTarget(item: ItemSummary): string | null {
   return item.watch.target_price ?? item.target_price
 }
 
-/** "Tonight" freshness — the window for the chip's "today" and the struck-through old price. */
+/** "Tonight" freshness — the last 24 hours, the window for the struck-through old price. */
 export function isFreshDrop(drop: PriceDrop): boolean {
   return Date.now() - new Date(drop.checked_at).getTime() < 86_400_000
 }
@@ -89,13 +90,23 @@ function CriteriaHint({ item }: { item: ItemSummary }) {
   )
 }
 
+/**
+ * The item's latest single drop, on whichever listing it was seen. Dated, so it
+ * can't be read as the change over the range that the Trend column prints.
+ */
 function DropChip({ drop }: { drop: PriceDrop }) {
   const pct = Math.abs(Number(drop.pct_change))
   if (!Number.isFinite(pct)) return null
-  const fresh = isFreshDrop(drop)
+  // A phone's Item column is narrower than the chip, so it breaks between figure and date
+  // instead of overrunning the Best column; half the one-line height keeps it a pill on one
+  // line and makes it a tag, not a stretched capsule, on two.
   return (
-    <span className="shrink-0 rounded-full border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[12px] text-drop tnum">
-      <span aria-hidden>▼</span> {pct.toFixed(1)}%{fresh ? ' today' : ''}
+    <span className="shrink-0 rounded-[11px] border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[12px] text-drop tnum">
+      <span className="whitespace-nowrap">
+        <span aria-hidden>▼</span>
+        <span className="sr-only">dropped</span> {pct.toFixed(1)}%
+      </span>{' '}
+      <span className="whitespace-nowrap">{dayPhrase(drop.checked_at)}</span>
     </span>
   )
 }
@@ -228,8 +239,9 @@ export function WatchList({
                         ⌖
                       </span>
                     ) : null}
-                    {/* on a phone the chip sits under the name: sharing its line, it left room for ~10 characters */}
-                    <div className="flex min-w-0 gap-x-2 gap-y-1 max-sm:flex-col max-sm:items-start sm:items-center">
+                    {/* the chip wraps under a name it doesn't fit beside rather than cutting the name short,
+                        and always does on a phone, where sharing the line left room for ~10 characters */}
+                    <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 max-sm:flex-col max-sm:items-start sm:items-center">
                       <div className="flex max-w-full min-w-0 items-center gap-2">
                         <Link
                           to={`/items/${item.id}`}

@@ -155,6 +155,28 @@ export function clockTime(iso: string | null | undefined): string {
 }
 
 /**
+ * `today`, `yesterday` or `on Sep 18` — the calendar day something happened,
+ * worded to follow what happened (`▼ 8.4% on Sep 18`). The year shows once it
+ * is not this one.
+ */
+export function dayPhrase(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const then = new Date(iso)
+  if (!Number.isFinite(then.getTime())) return '—'
+  const today = new Date()
+  if (then.toDateString() === today.toDateString()) return 'today'
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (then.toDateString() === yesterday.toDateString()) return 'yesterday'
+  const date = then.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: then.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  })
+  return `on ${date}`
+}
+
+/**
  * `02:02:11 PM` / `14:02:11` — the timestamp every log line carries; the
  * two-digit hour keeps the column one width.
  */

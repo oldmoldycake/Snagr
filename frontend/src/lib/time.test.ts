@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { countdown, formatDate, formatDateTime, formatTokens } from './time'
+import { countdown, dayPhrase, formatDate, formatDateTime, formatTokens } from './time'
 
 describe('formatTokens', () => {
   it('shows small counts as they are', () => {
@@ -70,5 +70,33 @@ describe('formatDateTime', () => {
 describe('formatDate', () => {
   it('always names the year', () => {
     expect(formatDate(new Date(2026, 9, 2).toISOString())).toContain('2026')
+  })
+})
+
+describe('dayPhrase', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 9, 2, 9, 0))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('names today and yesterday by the calendar, not the last 24 hours', () => {
+    expect(dayPhrase(new Date(2026, 9, 2, 0, 5).toISOString())).toBe('today')
+    expect(dayPhrase(new Date(2026, 9, 1, 23, 0).toISOString())).toBe('yesterday')
+    expect(dayPhrase(new Date(2026, 9, 1, 0, 5).toISOString())).toBe('yesterday')
+  })
+
+  it('dates anything older, with the year once it is not this one', () => {
+    const older = dayPhrase(new Date(2026, 8, 24, 10, 3).toISOString())
+    expect(older).toMatch(/^on /)
+    expect(older).not.toContain('2026')
+    expect(dayPhrase(new Date(2025, 11, 18, 10, 3).toISOString())).toMatch(/^on .*2025/)
+  })
+
+  it('shows a dash rather than "on Invalid Date"', () => {
+    expect(dayPhrase(null)).toBe('—')
+    expect(dayPhrase('not a date')).toBe('—')
   })
 })
