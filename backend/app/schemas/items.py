@@ -58,6 +58,9 @@ class ItemSummary(BaseModel):
     pct_change_range: str | None  # signed percent, e.g. "-8.30"
     last_checked_at: str | None
     created_at: str
+    # users watching the item, the caller among them; above 1 a rename is not
+    # the caller's alone (services/items.py _rename)
+    watcher_count: int
     watch: Watch
     spark: list[str | None]  # <=30 bucketed best-price points; null = no data in bucket
 

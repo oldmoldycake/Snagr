@@ -13,6 +13,7 @@ import {
   priceDomain,
   priceSummary,
   SweepBeam,
+  TargetKey,
   timeTicks,
   useMeasuredWidth,
   useSweep,
@@ -153,7 +154,6 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
               yMax={geom.domain[1]}
               xTicks={geom.xTicks}
               target={target}
-              targetLabel={`⌖ TARGET ${formatMoney(data.target_price, data.currency)}`}
               beamX={struck.length > 0 ? sweep.pos!.x : null}
             />
             {geom.avg ? (
@@ -210,7 +210,7 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
               .join('; ')}`
           : ''}
       </p>
-      <div className="flex items-center gap-4 px-4 pt-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
         <span className="flex items-center gap-1.5 text-xs text-ink-2">
           <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: chart.ink }} />
           {BEST_LABEL}
@@ -219,6 +219,7 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
           <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: chart.series[0] }} />
           {AVG_LABEL}
         </span>
+        {data.target_price != null ? <TargetKey price={data.target_price} currency={data.currency} /> : null}
       </div>
     </div>
   )

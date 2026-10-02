@@ -10,6 +10,7 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { usePageTitle } from '@/lib/usePageTitle'
+import { NewPasswordInput } from '@/features/auth/NewPasswordInput'
 import { useInstance, useSession } from '@/features/auth/useSession'
 import { ChannelsCard } from '@/features/settings/ChannelsCard'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -136,15 +137,7 @@ export function SettingsPage() {
               </div>
               <div>
                 <Label htmlFor="new-password">New password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={8}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
+                <NewPasswordInput id="new-password" value={newPassword} onChange={setNewPassword} />
               </div>
             </div>
             <Button type="submit" disabled={password.isPending || !currentPassword || !newPassword}>

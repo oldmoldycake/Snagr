@@ -15,7 +15,12 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSession } from '@/features/auth/useSession'
+import { cn } from '@/lib/cn'
 import { currencySign } from '@/lib/money'
+import { hasItemEdits, type ItemForm } from './itemEdits'
+import { itemSaveErrors } from './itemSaveErrors'
+import { renameNote } from './renameNote'
 import { parseTargetPrice } from './targetPrice'
 import { TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
@@ -41,16 +46,22 @@ export function EditItemDialog({
   const [name, setName] = useState(item.name)
   const [target, setTarget] = useState(item.target_price ?? '')
   const [targetError, setTargetError] = useState<string | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
   const targetRef = useRef<HTMLInputElement>(null)
   const sign = currencySign(item.currency)
+  const isAdmin = useSession().data?.role === 'admin'
+  const nameNote = renameNote(item.watcher_count, isAdmin)
   const [tracking, setTracking] = useState<TrackingValue>({
     criteria: item.criteria ?? '',
     selectionMode: item.selection_mode,
     maxListings: item.max_listings,
     recheckIntervalMinutes: item.recheck_interval_minutes,
     hunt: item.hunt,
+    allowReproductions: item.allow_reproductions,
     siteIds: item.site_ids,
   })
+  // useState keeps its first value: the form as it opened, to tell edits from it
+  const [opened] = useState<ItemForm>({ name, target, tracking })
   const bodyRef = useRef<HTMLDivElement>(null)
   const trackingToggleRef = useRef<HTMLButtonElement>(null)
   const queryClient = useQueryClient()
@@ -68,13 +79,22 @@ export function EditItemDialog({
       onOpenChange(false)
       onSaved?.(saved)
     },
+    onError: (error) => {
+      // bring a refused name or target into view, the way a mistyped target is
+      const fields = error instanceof ApiError ? error.fields : undefined
+      if (fields?.name) nameRef.current?.focus()
+      else if (fields?.target_price) targetRef.current?.focus()
+    },
   })
 
-  const errorMessage = save.error instanceof ApiError ? save.error.message : null
+  const saveErrors = itemSaveErrors(save.error)
+  const shownTargetError = targetError ?? saveErrors.fields.target_price
+  const dirty = hasItemEdits(opened, { name, target, tracking })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        dirty={dirty}
         onOpenAutoFocus={(e) => {
           const body = bodyRef.current
           const toggle = trackingToggleRef.current
@@ -104,10 +124,30 @@ export function EditItemDialog({
           }}
         >
           <DialogBody ref={bodyRef} className="space-y-3">
-            {errorMessage ? <p className="text-xs text-rise">{errorMessage}</p> : null}
+            {saveErrors.message ? (
+              <p role="alert" className="text-xs text-rise">
+                {saveErrors.message}
+              </p>
+            ) : null}
             <div>
               <Label htmlFor="edit-item-name">Name</Label>
-              <Input id="edit-item-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              <Input
+                ref={nameRef}
+                id="edit-item-name"
+                required
+                aria-invalid={!!saveErrors.fields.name || undefined}
+                className="aria-invalid:border-rise/60"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+              {saveErrors.fields.name ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {saveErrors.fields.name}
+                </p>
+              ) : null}
+              {nameNote ? (
+                <p className={cn('mt-1.5 text-xs', isAdmin ? 'text-warn' : 'text-ink-3')}>{nameNote}</p>
+              ) : null}
             </div>
             <div>
               <Label htmlFor="edit-item-target">Target price</Label>
@@ -119,7 +159,7 @@ export function EditItemDialog({
                   ref={targetRef}
                   id="edit-item-target"
                   inputMode="decimal"
-                  aria-invalid={!!targetError || undefined}
+                  aria-invalid={!!shownTargetError || undefined}
                   className="font-mono tnum aria-invalid:border-rise/60"
                   // clears a sign of any length (CA$): the input's ch is wider than the sign's
                   style={{ paddingLeft: `calc(${sign.length}ch + 1rem)` }}
@@ -130,11 +170,23 @@ export function EditItemDialog({
                   }}
                 />
               </div>
-              {targetError ? (
+              {shownTargetError ? (
                 <p role="alert" className="mt-1.5 text-xs text-rise">
-                  ⚠ {targetError}
+                  ⚠ {shownTargetError}
                 </p>
               ) : null}
+              <p className="mt-1.5 text-xs text-ink-3">
+                {target.trim() ? (
+                  <>
+                    You'll see <span className="text-drop">⌖ at target</span> when the best price is at or below this.
+                  </>
+                ) : (
+                  <>
+                    Without a target, Snagr can't mark the item <span className="text-drop">⌖ at target</span> or
+                    alert you when its price is low enough.
+                  </>
+                )}
+              </p>
             </div>
 
             <TrackingFields
@@ -143,6 +195,7 @@ export function EditItemDialog({
               onChange={setTracking}
               defaultOpen={focusTracking}
               toggleRef={trackingToggleRef}
+              intervalError={saveErrors.fields.recheck_interval_minutes}
             />
           </DialogBody>
 

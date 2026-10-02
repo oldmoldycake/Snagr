@@ -200,8 +200,6 @@ export function DashboardPage() {
           category={renameDialog.category}
           open={renameDialog.open}
           onOpenChange={(open) => setRenameDialog((prev) => prev && { ...prev, open })}
-          // renaming from a shelf stays on the dashboard
-          onSaved={() => undefined}
         />
       ) : null}
     </>
@@ -298,6 +296,7 @@ export function DashboardPage() {
                   isNew={category.id === justCreatedId}
                   edge={edgeIds.has(category.id)}
                   onEditSites={openSites}
+                  onRename={openRename}
                   onAdded={onAdded}
                 />
               ))}
@@ -339,7 +338,7 @@ export function DashboardPage() {
         </div>
 
         <LabelStrip hidden={!anyOpen} />
-        <div className="busy-edge grid grid-cols-1 gap-2.5" aria-busy={items.isFetching}>
+        <div className="busy-edge grid grid-cols-1 gap-2.5" aria-busy={items.isPlaceholderData}>
           {shelves.map((shelf, i) => (
             <CategoryShelf
               key={shelf.category.id}
@@ -371,6 +370,7 @@ export function DashboardPage() {
                   isNew={category.id === justCreatedId}
                   edge={edgeIds.has(category.id)}
                   onEditSites={openSites}
+                  onRename={openRename}
                   onAdded={onAdded}
                 />
               ))}
