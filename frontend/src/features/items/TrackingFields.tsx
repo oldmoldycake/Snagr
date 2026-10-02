@@ -74,11 +74,11 @@ export function TrackingFields({
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
   const [maxListingsEdit, setMaxListingsEdit] = useState<{ text: string; from: number } | null>(null)
-  // once the user picks a mode explicitly, stop auto-switching it
-  const modeTouched = useRef(false)
   // the mode is Best match only because criteria were typed; that happens out of
   // sight (Tracking starts collapsed), so a note under the criteria says so
   const [modeSwitched, setModeSwitched] = useState(false)
+  // once the user picks a mode explicitly, stop auto-switching it
+  const modeTouched = useRef(false)
   // a stored interval that is not a preset opens on the custom field
   const [customInterval, setCustomInterval] = useState(
     value.recheckIntervalMinutes != null && !INTERVAL_PRESETS.includes(value.recheckIntervalMinutes),
