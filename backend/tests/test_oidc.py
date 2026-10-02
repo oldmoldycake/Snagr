@@ -217,6 +217,34 @@ async def test_callback_signs_in_and_creates_user(client, monkeypatch):
     assert me.json()["email"] == "sso@example.com"
 
 
+async def test_callback_returns_to_the_page_sso_started_from(client, monkeypatch):
+    monkeypatch.setattr(oidc, "_metadata", FAKE_METADATA)  # skip discovery HTTP
+    _stub_idp(monkeypatch, CLAIMS)
+    start = await client.get("/api/auth/oidc/login", params={"next": "/items/42?range=30d#history"})
+    flow = oidc.unpack_flow(start.cookies["snagr_oidc_flow"])
+    res = await client.get(
+        "/api/auth/oidc/callback", params={"code": "c-1", "state": flow["state"]}
+    )
+    assert res.status_code == 302
+    assert res.headers["location"] == "/items/42?range=30d#history"
+    assert "snagr_access" in res.cookies
+
+
+@pytest.mark.parametrize(
+    "next_path",
+    ["//evil.example/x", "/\\evil.example/x", "https://evil.example/x", "items/42", 42],
+)
+async def test_callback_ignores_a_return_that_is_not_an_in_app_path(client, monkeypatch, next_path):
+    _stub_idp(monkeypatch, CLAIMS)
+    _set_flow_cookie(
+        client, {"state": "st-1", "nonce": "n-1", "verifier": "v-1", "next": next_path}
+    )
+    res = await client.get("/api/auth/oidc/callback", params={"code": "c-1", "state": "st-1"})
+    assert res.status_code == 302
+    assert res.headers["location"] == "/"
+    assert "snagr_access" in res.cookies
+
+
 async def test_callback_marries_existing_account(client, monkeypatch):
     # a password user registers first...
     reg = await client.post(
