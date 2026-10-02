@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
@@ -40,6 +40,7 @@ import { usePageTitle } from '@/lib/usePageTitle'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { useTick } from '@/features/activity/useTick'
 import { useSession } from '@/features/auth/useSession'
+import { isPaused } from './sitePause'
 import { defaultSiteName, findDuplicate, isPlausibleUrl, normalizeBaseUrl } from './siteUrl'
 
 function SiteDialog({
