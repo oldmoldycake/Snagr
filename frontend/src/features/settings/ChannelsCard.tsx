@@ -178,7 +178,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
                 <Label htmlFor="channel-name">Name</Label>
                 <Input
                   id="channel-name"
-                  placeholder={kind === 'ntfy' ? 'my phone' : kind === 'discord' ? 'deals channel' : 'automation'}
+                  placeholder={kind === 'ntfy' ? 'e.g. My phone' : kind === 'discord' ? 'e.g. Deals' : 'e.g. Automation'}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />

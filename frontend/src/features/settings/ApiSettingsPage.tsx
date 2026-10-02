@@ -278,7 +278,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
                 <Label htmlFor="token-name">Name</Label>
                 <Input
                   id="token-name"
-                  placeholder="claude code (laptop)"
+                  placeholder="e.g. Claude Code (laptop)"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                 />

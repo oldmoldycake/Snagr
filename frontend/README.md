@@ -75,7 +75,9 @@ values, not CSS vars — change both together). Dark-only, by design.
   switch, checkbox) is `hairline-field`, which holds 3:1 on every surface.
 - **Contrast**: `ink-3` is the floor for text and holds 4.5:1 up to `overlay`. Never quiet
   text with opacity: a refetching panel gets `busy-edge` + `aria-busy`, a row that is no
-  longer live gets `ink-muted` (its primary ink steps down to `ink-2`).
+  longer live gets `ink-muted` (its primary ink steps down to `ink-2`). The one ink under the
+  floor is `ink-placeholder`, a field's placeholder: a step below `ink-3` so an example never
+  passes for a typed value, and 4.5:1 on `well`, the only ground a field has.
 - **`lume`** (illuminated-reticle amber) is the identity color: active nav, primary buttons,
   focus, live states, "close to target". It is never semantic. The desktop nav's active tab
   is one lume bar that tracks between tabs (`.nav-lume`, motion "Reticle Track"); the category
