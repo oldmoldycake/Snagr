@@ -1,5 +1,5 @@
 import type { Job, JobsSummary, PausedSite } from '@/api/types'
-import { formatClock, isOverdue } from '@/lib/time'
+import { countdown, formatClock, isOverdue } from '@/lib/time'
 
 /** How far back a failed hunt still asks for attention. */
 export const FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -125,4 +125,16 @@ export function behindSchedule(
   return (
     isOverdue(summary.next_check_at, now) || (huntEnabled && isOverdue(summary.next_hunt_at, now))
   )
+}
+
+/**
+ * "next check …" for the dashboard strip, where it sits beside "Idle".
+ * `countdown`'s bare "now" there reads as a contradiction: a check that is due
+ * but not yet late is about to start, and one that is late is overdue (the
+ * strip then reads "Behind schedule", not "Idle").
+ */
+export function nextCheckText(iso: string, now: number = Date.now()): string {
+  if (isOverdue(iso, now)) return 'next check overdue'
+  if (Date.parse(iso) <= now) return 'next check starting'
+  return `next check ${countdown(iso)}`
 }

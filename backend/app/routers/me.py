@@ -32,6 +32,7 @@ from app.schemas.notifications import (
     NotificationChannel,
     NotificationChannelCreated,
     NotificationChannelCreateRequest,
+    NotificationChannelTestRequest,
     NotificationChannelUpdateRequest,
     channel_created_out,
     channel_out,
@@ -168,6 +169,54 @@ async def change_password(
 MAX_CHANNELS = 10
 
 
+def _check_new_kind(kind: str | None) -> None:
+    """Refuse a kind a new channel can't have: 422 validation_error for an
+    unknown one, 422 no_server for ntfy while the instance has no ntfy server."""
+    if kind not in ("ntfy", "webhook", "discord"):
+        raise err(
+            422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
+        )
+    if kind == "ntfy" and not settings.NTFY_SERVER_URL:
+        raise err(422, "no_server", "This instance has no ntfy server configured")
+
+
+def _destination(kind: str, url: str | None, topic: str | None) -> tuple[str | None, str | None]:
+    """Validate where a channel of this kind sends — mock parity with
+    handlers.ts validateDestination. Returns (url, topic) with the one the kind
+    doesn't use cleared. Saves and the unsaved test share it, so a test never
+    reaches a destination a save would refuse."""
+    if kind == "ntfy":
+        if not topic:
+            raise err(
+                422, "validation_error", "Topic is required", fields={"topic": "Topic is required"}
+            )
+        if problem := notifications_service.ntfy_topic_error(topic):
+            raise err(422, "validation_error", "Not a valid ntfy topic", fields={"topic": problem})
+        return None, topic
+    if not url or not re.match(r"^https?://", url):
+        raise err(
+            422,
+            "validation_error",
+            "A valid URL is required",
+            fields={"url": "Must be an http(s) URL"},
+        )
+    if kind == "discord" and not re.match(r"^https://(discord|discordapp)\.com/api/webhooks/", url):
+        raise err(
+            422,
+            "validation_error",
+            "Not a Discord webhook URL",
+            fields={"url": "Must be a Discord incoming-webhook URL"},
+        )
+    if problem := notifications_service.public_url(url):
+        raise err(
+            422,
+            "validation_error",
+            "Notifications can only be sent to a public address",
+            fields={"url": problem},
+        )
+    return url, None
+
+
 def _channel_fields(
     kind: str,
     body: NotificationChannelCreateRequest | NotificationChannelUpdateRequest,
@@ -193,40 +242,7 @@ def _channel_fields(
         topic = (body.topic or "").strip() or None
     else:
         topic = existing.topic if existing is not None else None
-
-    if kind == "ntfy":
-        url = None
-        if not topic:
-            raise err(
-                422, "validation_error", "Topic is required", fields={"topic": "Topic is required"}
-            )
-        if problem := notifications_service.ntfy_topic_error(topic):
-            raise err(422, "validation_error", "Not a valid ntfy topic", fields={"topic": problem})
-    else:
-        topic = None
-        if not url or not re.match(r"^https?://", url):
-            raise err(
-                422,
-                "validation_error",
-                "A valid URL is required",
-                fields={"url": "Must be an http(s) URL"},
-            )
-        if kind == "discord" and not re.match(
-            r"^https://(discord|discordapp)\.com/api/webhooks/", url
-        ):
-            raise err(
-                422,
-                "validation_error",
-                "Not a Discord webhook URL",
-                fields={"url": "Must be a Discord incoming-webhook URL"},
-            )
-        if problem := notifications_service.public_url(url):
-            raise err(
-                422,
-                "validation_error",
-                "Notifications can only be sent to a public address",
-                fields={"url": problem},
-            )
+    url, topic = _destination(kind, url, topic)
 
     events = (
         body.events if "events" in sent else (existing.events if existing is not None else None)
@@ -277,12 +293,7 @@ async def create_channel(
 
     422 validation_error for invalid fields; 422 no_server for ntfy while the
     instance has no ntfy server; 409 channel_limit at MAX_CHANNELS."""
-    if body.kind not in ("ntfy", "webhook", "discord"):
-        raise err(
-            422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
-        )
-    if body.kind == "ntfy" and not settings.NTFY_SERVER_URL:
-        raise err(422, "no_server", "This instance has no ntfy server configured")
+    _check_new_kind(body.kind)
     # the owner's row lock serializes concurrent creates, or two at
     # MAX_CHANNELS - 1 would both count under the limit and both insert
     await db.execute(select(UserModel.id).where(UserModel.id == user.id).with_for_update())
@@ -339,6 +350,20 @@ async def delete_channel(
     return None
 
 
+async def _send_test(channel: NotificationChannels) -> None:
+    """Send a test notification through a channel, saved or not, and answer
+    the dispatcher's failures with the error envelope."""
+    try:
+        await notifications_service.send_test(channel)
+    except RuntimeError as e:  # ntfy kind while the instance has no server
+        raise err(422, "no_server", "This instance has no ntfy server configured") from e
+    # httpx.InvalidURL is no HTTPError: a URL httpx can't parse would be a 500
+    except (notifications_service.RefusedDestination, httpx.InvalidURL) as e:
+        raise err(422, "validation_error", "This channel's destination is not accepted") from e
+    except httpx.HTTPError as e:
+        raise err(502, "channel_failed", "Could not reach the channel destination") from e
+
+
 @router.post("/channels/{channel_id}/test", status_code=status.HTTP_204_NO_CONTENT)
 async def test_channel(
     channel_id: int, user=Depends(current_user), db: AsyncSession = Depends(get_db)
@@ -349,15 +374,23 @@ async def test_channel(
     validation_error for a destination the channel guard refuses; 502
     channel_failed when the destination can't be reached."""
     channel = await _own_channel(channel_id, user, db)
-    try:
-        await notifications_service.send_test(channel)
-    except RuntimeError as e:  # ntfy kind while the instance has no server
-        raise err(422, "no_server", "This instance has no ntfy server configured") from e
-    # httpx.InvalidURL is no HTTPError: a URL httpx can't parse would be a 500
-    except (notifications_service.RefusedDestination, httpx.InvalidURL) as e:
-        raise err(422, "validation_error", "This channel's destination is not accepted") from e
-    except httpx.HTTPError as e:
-        raise err(502, "channel_failed", "Could not reach the channel destination") from e
+    await _send_test(channel)
+
+
+@router.post("/channels/test", status_code=status.HTTP_204_NO_CONTENT)
+async def test_new_channel(body: NotificationChannelTestRequest, user=Depends(current_user)):
+    """Send a test notification to a channel before it is saved; nothing is stored.
+
+    422 validation_error and 422 no_server wherever create would answer them;
+    502 channel_failed when the destination can't be reached."""
+    _check_new_kind(body.kind)
+    url, topic = _destination(
+        body.kind, (body.url or "").strip() or None, (body.topic or "").strip() or None
+    )
+    # a webhook's signing secret is created with the channel, so a test sent
+    # before then is signed with a one-off key no receiver holds
+    secret = new_channel_secret() if body.kind == "webhook" else None
+    await _send_test(NotificationChannels(kind=body.kind, url=url, topic=topic, secret=secret))
 
 
 # --- API tokens ---------------------------------------------------------------

@@ -183,7 +183,9 @@ export function priceTicks(yMin: number, yMax: number): { v: number; label: stri
 /**
  * The static chrome: well ground, graduated ruler (minors every fifth of a
  * major, labeled majors with a faint gridline), x axis, and the target zone.
- * While the beam is up, tick labels near it yield to the beam's date.
+ * While the beam is up, tick labels near it yield to the beam's date. The
+ * target line goes unlabeled here: prices hover around the target, so a label
+ * in the well sits on a trace; the chart's legend names it (TargetKey).
  */
 export function PlotFrame({
   plot,
@@ -191,7 +193,6 @@ export function PlotFrame({
   yMax,
   xTicks,
   target,
-  targetLabel,
   beamX,
 }: {
   plot: Plot
@@ -199,7 +200,6 @@ export function PlotFrame({
   yMax: number
   xTicks: { x: number; label: string }[]
   target: number | null
-  targetLabel: string
   beamX: number | null
 }) {
   const { l, r, t, b } = plot.box
@@ -225,16 +225,6 @@ export function PlotFrame({
         <g>
           <rect x={l} y={yTarget} width={r - l} height={b - yTarget} fill={chart.drop} opacity={0.08} />
           <line x1={l} y1={yTarget} x2={r} y2={yTarget} stroke={chart.drop} opacity={0.5} strokeDasharray="4 4" />
-          <text
-            x={r - 8}
-            y={yTarget - 6}
-            textAnchor="end"
-            fill={chart.drop}
-            letterSpacing="0.08em"
-            {...TICK_FONT}
-          >
-            {targetLabel}
-          </text>
         </g>
       ) : null}
       <line x1={l} y1={b} x2={r} y2={b} stroke={chart.hairlineStrong} />
@@ -246,6 +236,20 @@ export function PlotFrame({
         ),
       )}
     </g>
+  )
+}
+
+/** The target line's legend entry, its swatch dashed like the line. */
+export function TargetKey({ price, currency }: { price: string; currency: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-ink-2">
+      <span
+        aria-hidden
+        className="h-0.5 w-3"
+        style={{ background: `repeating-linear-gradient(90deg, ${chart.drop} 0 4px, transparent 4px 8px)` }}
+      />
+      Target {formatMoney(price, currency)}
+    </span>
   )
 }
 

@@ -49,7 +49,7 @@ export function EditSitesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent onInteractOutside={(e) => changed && e.preventDefault()}>
+      <DialogContent dirty={changed}>
         <DialogHeader>
           <DialogEyebrow>Sites</DialogEyebrow>
           <DialogTitle>{category.name}</DialogTitle>

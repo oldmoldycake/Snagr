@@ -74,8 +74,12 @@ values, not CSS vars — change both together). Dark-only, by design.
   `hairline` / `hairline-strong`, never solid grays; a control's own boundary (input, select,
   switch, checkbox) is `hairline-field`, which holds 3:1 on every surface.
 - **Contrast**: `ink-3` is the floor for text and holds 4.5:1 up to `overlay`. Never quiet
-  text with opacity: a refetching panel gets `busy-edge` + `aria-busy`, a row that is no
-  longer live gets `ink-muted` (its primary ink steps down to `ink-2`).
+  text with opacity: a panel still showing the old range or filter while the new one loads
+  gets `busy-edge` + `aria-busy={query.isPlaceholderData}` (a background refetch shows
+  nothing), a row that is no longer live gets `ink-muted` (its primary ink steps down to
+  `ink-2`). The one ink under the floor is `ink-placeholder`, a field's placeholder: a step
+  below `ink-3` so an example never passes for a typed value, and 4.5:1 on `well`, the only
+  ground a field has.
 - **`lume`** (illuminated-reticle amber) is the identity color: active nav, primary buttons,
   focus, live states, "close to target". It is never semantic. The desktop nav's active tab
   is one lume bar that tracks between tabs (`.nav-lume`, motion "Reticle Track"); the category
@@ -95,13 +99,14 @@ values, not CSS vars — change both together). Dark-only, by design.
   sentence that names the items at target and the closest one still above, plus one line of
   tonight's totals (counts only; every other per-item fact appears once, on the shelves); `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into one log-scale price rail
-  per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
+  per listing (cheapest left → range-high right, a ⌖ notch on each row, a labeled price
   ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.
 - **Dialogs are field cards** (`components/ui/dialog.tsx`): `DialogHeader` (optional
   `DialogEyebrow`, title, description) → `DialogBody` → `DialogFooter`. Only the body
   scrolls, so the footer's buttons never leave the screen; under `sm` the card becomes a
-  bottom sheet. A form wraps body and footer in `<form className="contents">` so both stay
+  bottom sheet whose grab handle swipes it closed (pulled a quarter of its height, or
+  flicked; the rule is `components/ui/sheetSwipe.ts`). A form wraps body and footer in `<form className="contents">` so both stay
   grid rows. Footer order is Back (`mr-auto`), Cancel, then the primary, always rightmost.
   Enter and exit are keyframe animations (`animate-dialog-in/out`, `animate-sheet-up/down`)
   because Radix waits for `animationend` before unmounting; keep a dialog mounted after
@@ -109,7 +114,8 @@ values, not CSS vars — change both together). Dark-only, by design.
   shows `StepPips` in its eyebrow (a finished step is ✓ in ink-2, never drop-green). A
   dialog showing a secret that is shown only once (a new API token, a webhook's signing
   secret) passes `dismissible={false}` while it's on screen, so only **I've saved it**
-  closes it.
+  closes it. A form dialog passes `dirty` while it holds input closing would lose, so
+  Escape, a click outside or the handle can't throw it away; Cancel and ✕ still can.
 - **Sites are picked, not typed**: every place a category's sites are chosen (New
   category, Edit sites, Edit category) uses `features/sites/SitePicker`, a checklist whose
   last row adds a site inline and picks it (`siteUrl.ts` normalizes the address and catches

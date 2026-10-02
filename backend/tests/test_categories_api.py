@@ -8,10 +8,10 @@ snagged tile counts — so the category chip has to agree with the badge on the
 items underneath it. The tests below are the four ways the old "any historical
 check under anybody's target" query disagreed.
 
-item_count stays instance-wide on purpose: `items` is the shared catalog, and
-the mock's single-user store can't distinguish the two. Only snagged_count is
-scoped to the caller. An item nobody watches any more stays in the catalog
-but isn't counted.
+item_count is the caller's too: the chip sits beside a shelf of the caller's
+items, so a count of everyone's would disagree with it. The mock's single-user
+store can't tell the two apart, so these tests pin it. An item nobody watches
+any more stays in the catalog but isn't counted.
 
 Seeding here goes through `db_session` and COMMITS, like test_sites_api.py:
 each request runs on its own session, so uncommitted rows are invisible.
@@ -110,6 +110,18 @@ async def test_item_count_skips_an_item_nobody_watches(client, db_session):
     assert (await _categories_by_name(client))["Cameras"]["item_count"] == 1
 
 
+async def test_item_count_ignores_another_users_items(client, db_session):
+    """The shelf lists only my items, so the chip beside it counts only mine —
+    an item only a stranger watches is not one of them."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        stranger = await sc.other_user()
+        await sc.watch(await sc.item("Mine"))
+        await sc.watch(await sc.item("Theirs"), user=stranger)
+
+    assert (await _categories_by_name(client))["Cameras"]["item_count"] == 1
+
+
 async def test_snagged_count_ignores_a_dip_that_has_since_recovered(client, db_session):
     """Only the latest check per listing counts. A price that fell under target
     once and bounced back is not a snag you can act on today."""
@@ -134,7 +146,7 @@ async def test_snagged_count_ignores_another_users_target(client, db_session):
         await sc.checks(await sc.listing(their_watch, item, "theirs"), (1, "80.00"))
 
     categories = await _categories_by_name(client)
-    assert categories["Cameras"]["item_count"] == 1  # the catalog is shared
+    assert categories["Cameras"]["item_count"] == 1
     assert categories["Cameras"]["snagged_count"] == 0  # their snag, not mine
 
 
