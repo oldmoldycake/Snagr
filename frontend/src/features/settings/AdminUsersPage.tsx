@@ -37,6 +37,7 @@ import { formatDate } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useSession } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
+import { accountStatusReceipt } from '@/features/settings/accountStatus'
 
 function inviteUrl(invite: Invite): string {
   return `${window.location.origin}/invite/${invite.token}`
@@ -150,6 +151,7 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 export function AdminUsersPage() {
   usePageTitle('Users · Settings')
   const [inviteOpen, setInviteOpen] = useState(false)
+  const [deactivating, setDeactivating] = useState<AdminUser | null>(null)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)
   const queryClient = useQueryClient()
   const { data: me } = useSession()
@@ -157,9 +159,23 @@ export function AdminUsersPage() {
   const users = useQuery({ queryKey: qk.adminUsers, queryFn: listUsers })
   const invites = useQuery({ queryKey: qk.adminInvites, queryFn: listInvites })
 
-  const patchUser = useMutation({
-    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) => updateUser(id, { is_active }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: qk.adminUsers }),
+  const onStatusChanged = (user: AdminUser) => {
+    void queryClient.invalidateQueries({ queryKey: qk.adminUsers })
+    toast.success(accountStatusReceipt(user.email, user.is_active))
+  }
+
+  const deactivate = useMutation({
+    mutationFn: (id: number) => updateUser(id, { is_active: false }),
+    meta: { inlineError: true },
+    onSuccess: (user) => {
+      onStatusChanged(user)
+      setDeactivating(null)
+    },
+  })
+
+  const reactivate = useMutation({
+    mutationFn: (id: number) => updateUser(id, { is_active: true }),
+    onSuccess: onStatusChanged,
   })
 
   const removeUser = useMutation({
@@ -237,7 +253,7 @@ export function AdminUsersPage() {
                               </span>
                             </DropdownMenuLabel>
                             <DropdownMenuItem
-                              onSelect={() => patchUser.mutate({ id: user.id, is_active: !user.is_active })}
+                              onSelect={() => (user.is_active ? setDeactivating(user) : reactivate.mutate(user.id))}
                             >
                               {user.is_active ? (
                                 <>
@@ -317,6 +333,26 @@ export function AdminUsersPage() {
       </Card>
 
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      <ConfirmDialog
+        open={deactivating != null}
+        onOpenChange={(open) => {
+          if (open) return
+          setDeactivating(null)
+          deactivate.reset()
+        }}
+        title="Deactivate user"
+        description={
+          deactivating
+            ? `This signs ${deactivating.email} out everywhere and stops them signing back in until you reactivate the account. Their items are kept.`
+            : ''
+        }
+        confirmLabel="Deactivate"
+        pending={deactivate.isPending}
+        error={deactivate.error instanceof ApiError ? deactivate.error.message : null}
+        onConfirm={() => {
+          if (deactivating) deactivate.mutate(deactivating.id)
+        }}
+      />
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {
