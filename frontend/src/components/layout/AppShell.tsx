@@ -7,8 +7,10 @@ import { ActivitySheet } from '@/features/activity/ActivitySheet'
 export function AppShell({ children }: { children: ReactNode }) {
   const mainRef = useMainScrollRestoration()
   useFocusOnNavigation(mainRef)
+  // dvh, not vh: only <main> scrolls, so Safari's toolbar never collapses, and
+  // a 100vh shell would leave the end of every page behind it
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="flex h-dvh flex-col overflow-hidden">
       <Masthead />
       <main ref={mainRef} tabIndex={-1} className="flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-[1040px] px-6 py-8 md:py-10">{children}</div>

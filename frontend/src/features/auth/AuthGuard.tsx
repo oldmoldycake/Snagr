@@ -15,7 +15,7 @@ export function AuthGuard() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-dvh items-center justify-center">
         <Loader2 className="size-5 animate-spin text-ink-3" />
       </div>
     )
