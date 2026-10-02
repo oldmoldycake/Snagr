@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
@@ -34,28 +34,38 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { RelativeTime } from '@/components/ui/relative-time'
+import { cn } from '@/lib/cn'
+import { clockTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HuntButton } from '@/features/activity/HuntButton'
+import { useTick } from '@/features/activity/useTick'
 import { useSession } from '@/features/auth/useSession'
+import { defaultSiteName, findDuplicate, isPlausibleUrl, normalizeBaseUrl } from './siteUrl'
 
 function SiteDialog({
   site,
+  sites,
   open,
   onOpenChange,
 }: {
   site: Site | null
+  sites: Site[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const [name, setName] = useState(site?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(site?.base_url ?? '')
+  // a new site is named after its host until a name is typed; an existing one keeps its own
+  const [nameTouched, setNameTouched] = useState(site != null)
+  const [urlProblem, setUrlProblem] = useState<string | null>(null)
+  const urlRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
   const save = useMutation({
-    mutationFn: () =>
-      site
-        ? updateSite(site.id, { name: name.trim(), base_url: baseUrl.trim() })
-        : createSite({ name: name.trim(), base_url: baseUrl.trim() }),
+    mutationFn: () => {
+      const body = { name: name.trim() || defaultSiteName(baseUrl), base_url: normalizeBaseUrl(baseUrl) }
+      return site ? updateSite(site.id, body) : createSite(body)
+    },
     meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
@@ -74,6 +84,21 @@ function SiteDialog({
       ? (save.error.fields?.name ?? save.error.fields?.base_url ?? save.error.message)
       : null
 
+  const submit = () => {
+    if (!isPlausibleUrl(baseUrl)) {
+      setUrlProblem("⚠ That doesn't look like a URL.")
+      urlRef.current?.focus()
+      return
+    }
+    const duplicate = findDuplicate(baseUrl, sites, site?.id)
+    if (duplicate) {
+      setUrlProblem(`⚠ ${duplicate.name} is already listed.`)
+      urlRef.current?.focus()
+      return
+    }
+    save.mutate()
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -87,7 +112,7 @@ function SiteDialog({
           className="contents"
           onSubmit={(e) => {
             e.preventDefault()
-            save.mutate()
+            submit()
           }}
         >
           <DialogBody className="space-y-3">
@@ -97,24 +122,39 @@ function SiteDialog({
               </p>
             ) : null}
             <div>
+              <Label htmlFor="site-url">Base URL</Label>
+              <Input
+                ref={urlRef}
+                id="site-url"
+                required
+                inputMode="url"
+                autoComplete="off"
+                placeholder="newegg.com"
+                aria-invalid={urlProblem != null || undefined}
+                className="aria-invalid:border-rise/60"
+                value={baseUrl}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value)
+                  setUrlProblem(null)
+                  if (!nameTouched) setName(defaultSiteName(e.target.value))
+                }}
+              />
+              {urlProblem ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  {urlProblem}
+                </p>
+              ) : null}
+            </div>
+            <div>
               <Label htmlFor="site-name">Name</Label>
               <Input
                 id="site-name"
-                required
-                placeholder="newegg.com"
+                autoComplete="off"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="site-url">Base URL</Label>
-              <Input
-                id="site-url"
-                type="url"
-                required
-                placeholder="https://www.newegg.com"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setNameTouched(true)
+                }}
               />
             </div>
           </DialogBody>
@@ -122,7 +162,7 @@ function SiteDialog({
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !name.trim() || !baseUrl.trim()}>
+            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !baseUrl.trim()}>
               {save.isPending ? <Loader2 className="animate-spin" /> : null}
               {site ? 'Save changes' : 'Add site'}
             </Button>
@@ -130,6 +170,38 @@ function SiteDialog({
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * A paused site, said on its row: the circuit breaker stopped reading it after
+ * it kept failing, and nothing on it is checked or hunted until the pause
+ * lifts. Sites are shared, so only an admin can lift the pause early.
+ */
+function SitePause({ site, isAdmin, className }: { site: Site; isAdmin: boolean; className?: string }) {
+  const queryClient = useQueryClient()
+  const resume = useMutation({
+    mutationFn: () => updateSite(site.id, { paused_until: null }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      void queryClient.invalidateQueries({ queryKey: ['sites'] })
+    },
+  })
+
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5', className)}>
+      <Badge variant="warn" className="font-mono whitespace-nowrap">
+        <span aria-hidden>⚠</span> paused until {clockTime(site.paused_until)}
+      </Badge>
+      <p className="min-w-0 flex-1 basis-48 text-xs leading-relaxed text-ink-2">
+        {site.paused_reason ? `${site.paused_reason}. ` : null}Its checks and hunts wait until then.
+      </p>
+      {isAdmin ? (
+        <Button variant="warn" size="sm" disabled={resume.isPending} onClick={() => resume.mutate()}>
+          Resume now
+        </Button>
+      ) : null}
+    </div>
   )
 }
 
@@ -149,7 +221,14 @@ function SiteActions({
 }) {
   return (
     <div className="flex items-center justify-end gap-1">
-      <HuntButton scope="site" scopeId={site.id} label="Hunt" variant="ghost" size="sm" />
+      <HuntButton
+        scope="site"
+        scopeId={site.id}
+        label="Hunt"
+        unavailable={isPaused(site) ? `${site.name} is paused until ${clockTime(site.paused_until)}` : undefined}
+        variant="ghost"
+        size="sm"
+      />
       {isAdmin ? (
         <DropdownMenu>
           <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
@@ -222,6 +301,8 @@ export function SitesPage() {
   const categoryById = (id: number) => categories.data?.data.find((c) => c.id === id)
   const categoryName = (id: number) => categoryById(id)?.name ?? '…'
   const rows = sites.data?.data ?? []
+  // a pause lifts on its own, and the row should stop saying paused when it does
+  useTick(rows.some((site) => isPaused(site)))
   const openEdit = (site: Site) => {
     setEditing(site)
     setDialogSession((n) => n + 1)
@@ -304,6 +385,7 @@ export function SitesPage() {
                           'never checked'
                         )}
                       </p>
+                      {isPaused(site) ? <SitePause site={site} isAdmin={isAdmin} className="mt-1.5" /> : null}
                     </div>
                     <SiteActions
                       site={site}
@@ -328,53 +410,62 @@ export function SitesPage() {
                 </THead>
                 <TBody>
                   {rows.map((site) => (
-                    <TR key={site.id}>
-                      <TD className="font-medium text-ink">{site.name}</TD>
-                      <TD>
-                        <a
-                          href={site.base_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={site.base_url}
-                          className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
-                        >
-                          {site.base_url}
-                        </a>
-                      </TD>
-                      <TD>
-                        <span className="flex flex-wrap gap-1">
-                          {site.category_ids.length === 0 ? (
-                            <span className="text-xs text-ink-3">not linked</span>
-                          ) : (
-                            site.category_ids.map((cid) => {
-                              const category = categoryById(cid)
-                              return category ? (
-                                <Link key={cid} to={`/categories/${category.slug}`} className="rounded-sm">
-                                  <Badge variant="muted" className="transition-colors hover:border-lume/40 hover:text-lume">
-                                    {category.name}
+                    <Fragment key={site.id}>
+                      <TR className={cn(isPaused(site) && 'border-b-0')}>
+                        <TD className="font-medium text-ink">{site.name}</TD>
+                        <TD>
+                          <a
+                            href={site.base_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={site.base_url}
+                            className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
+                          >
+                            {site.base_url}
+                          </a>
+                        </TD>
+                        <TD>
+                          <span className="flex flex-wrap gap-1">
+                            {site.category_ids.length === 0 ? (
+                              <span className="text-xs text-ink-3">not linked</span>
+                            ) : (
+                              site.category_ids.map((cid) => {
+                                const category = categoryById(cid)
+                                return category ? (
+                                  <Link key={cid} to={`/categories/${category.slug}`} className="rounded-sm">
+                                    <Badge variant="muted" className="transition-colors hover:border-lume/40 hover:text-lume">
+                                      {category.name}
+                                    </Badge>
+                                  </Link>
+                                ) : (
+                                  <Badge key={cid} variant="muted">
+                                    …
                                   </Badge>
-                                </Link>
-                              ) : (
-                                <Badge key={cid} variant="muted">
-                                  …
-                                </Badge>
-                              )
-                            })
-                          )}
-                        </span>
-                      </TD>
-                      <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
-                      <TD className="text-xs whitespace-nowrap text-ink-3"><RelativeTime iso={site.last_checked_at} /></TD>
-                      <TD>
-                        <SiteActions
-                          site={site}
-                          categoryName={categoryName}
-                          isAdmin={isAdmin}
-                          onEdit={() => openEdit(site)}
-                          onDelete={() => openDelete(site)}
-                        />
-                      </TD>
-                    </TR>
+                                )
+                              })
+                            )}
+                          </span>
+                        </TD>
+                        <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
+                        <TD className="text-xs whitespace-nowrap text-ink-3"><RelativeTime iso={site.last_checked_at} /></TD>
+                        <TD>
+                          <SiteActions
+                            site={site}
+                            categoryName={categoryName}
+                            isAdmin={isAdmin}
+                            onEdit={() => openEdit(site)}
+                            onDelete={() => openDelete(site)}
+                          />
+                        </TD>
+                      </TR>
+                      {isPaused(site) ? (
+                        <TR>
+                          <TD colSpan={6} className="pt-0 pb-2.5">
+                            <SitePause site={site} isAdmin={isAdmin} />
+                          </TD>
+                        </TR>
+                      ) : null}
+                    </Fragment>
                   ))}
                 </TBody>
               </Table>
@@ -383,7 +474,7 @@ export function SitesPage() {
         </CardBody>
       </Card>
 
-      <SiteDialog key={`site-${dialogSession}`} site={editing} open={dialogOpen} onOpenChange={setDialogOpen} />
+      <SiteDialog key={`site-${dialogSession}`} site={editing} sites={rows} open={dialogOpen} onOpenChange={setDialogOpen} />
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {
