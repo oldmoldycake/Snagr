@@ -27,3 +27,14 @@ export function titleDifference(title: string | null, sharedPrefix: string): str
     .trim()
   return rest.match(/^\(([^()]*)\)$/)?.[1] ?? rest
 }
+
+/**
+ * A chart series' name, read the way its listing row reads: site first, then
+ * what sets the listing apart — "amazon.com · Renewed". The difference is cut
+ * short rather than the label, so the site always survives.
+ */
+export function seriesLabel(siteName: string, title: string | null, sharedPrefix: string): string {
+  const difference = titleDifference(title, sharedPrefix)
+  if (!difference) return siteName
+  return `${siteName} · ${difference.length > 26 ? `${difference.slice(0, 25).trimEnd()}…` : difference}`
+}

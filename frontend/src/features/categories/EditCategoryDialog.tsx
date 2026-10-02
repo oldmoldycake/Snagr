@@ -76,11 +76,7 @@ export function EditCategoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* with unsaved edits, Escape and clicks outside do nothing: only Cancel or ✕ throws them away */}
-      <DialogContent
-        onEscapeKeyDown={(e) => changed && e.preventDefault()}
-        onInteractOutside={(e) => changed && e.preventDefault()}
-      >
+      <DialogContent dirty={changed}>
         <DialogHeader>
           <DialogTitle>Edit category</DialogTitle>
           <DialogDescription>
@@ -131,8 +127,8 @@ export function EditCategoryDialog({
               {confirmingDelete ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-rise">
-                    Delete “{category.name}” and its {category.item_count} item
-                    {category.item_count === 1 ? '' : 's'}? This cannot be undone.
+                    Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be
+                    undone.
                   </p>
                   <Button
                     variant="destructive"

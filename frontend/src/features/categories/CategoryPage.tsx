@@ -269,7 +269,7 @@ function CategoryView({ slug }: { slug: string }) {
         />
       </div>
 
-      <Card className="busy-edge" aria-busy={items.isFetching}>
+      <Card className="busy-edge" aria-busy={items.isPlaceholderData}>
         {items.isLoading ? (
           <div className="space-y-2 p-4">
             <Skeleton className="h-6" />
@@ -325,7 +325,7 @@ function CategoryView({ slug }: { slug: string }) {
       </Card>
 
       {rows.length > 0 ? (
-        <Card className="busy-edge" aria-busy={change.isFetching}>
+        <Card className="busy-edge" aria-busy={change.isPlaceholderData}>
           <CardHeader>
             <CardTitle>Price change</CardTitle>
             <span className="font-mono text-[12px] text-ink-3">

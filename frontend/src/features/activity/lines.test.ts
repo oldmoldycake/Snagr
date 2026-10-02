@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job } from '@/api/types'
-import { huntReceipt, resultText, runningWork } from './lines'
+import { checkReceipt, huntReceipt, resultText, runningWork } from './lines'
 
 function job(kind: Job['kind'], status: Job['status'] = 'running'): Job {
   return { kind, status } as Job
@@ -83,5 +83,15 @@ describe('resultText', () => {
     expect(resultText(finished({ listings_checked: 2 }, 'cancelled')).text).toBe(
       'cancelled · 2 looked at',
     )
+  })
+})
+
+describe('checkReceipt', () => {
+  it('counts the checks it queued', () => {
+    expect(checkReceipt(3)).toBe('Queued 3')
+  })
+
+  it('says when there was nothing to check rather than queuing none', () => {
+    expect(checkReceipt(0)).toBe('Nothing to check')
   })
 })

@@ -117,6 +117,14 @@ export function huntReceipt(jobs: Job[]): string {
   return `Queued ${hunts}`
 }
 
+/**
+ * What one press of Check prices asked for. A scope with no tracked listings
+ * queues nothing, and "Queued 0" would read as a success that did nothing.
+ */
+export function checkReceipt(queued: number): string {
+  return queued === 0 ? 'Nothing to check' : `Queued ${queued}`
+}
+
 /** One recheck, as the checks tail says it. The method tag is shown only when
  *  a model was not involved (see priceMethodLabel). */
 export function checkLine(check: ListingChecked, index: number): LogLine {

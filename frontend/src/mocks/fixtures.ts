@@ -219,6 +219,14 @@ export interface MockInvite {
   created_at: number
 }
 
+/** An admin-issued link for a user to choose a new password. */
+export interface MockPasswordReset {
+  token: string
+  user_id: number
+  expires_at: number
+  used_at: number | null
+}
+
 /** Where a user's alerts are pushed; `events` null means every event. */
 export interface MockNotificationChannel {
   id: number
@@ -268,6 +276,7 @@ export const store = {
   jobs: [] as MockJob[],
   jobEvents: [] as MockJobEvent[],
   invites: [] as MockInvite[],
+  passwordResets: [] as MockPasswordReset[],
   notificationChannels: [] as MockNotificationChannel[],
   tokens: [] as MockApiToken[],
   references: [] as MockReference[],
