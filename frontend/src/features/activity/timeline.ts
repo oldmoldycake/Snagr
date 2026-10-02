@@ -1,5 +1,5 @@
-import type { Job } from '@/api/types'
-import { formatClock } from '@/lib/time'
+import type { Job, JobsSummary, PausedSite } from '@/api/types'
+import { formatClock, isOverdue } from '@/lib/time'
 
 /** How far back a failed hunt still asks for attention. */
 export const FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000
@@ -54,4 +54,75 @@ export function recentFailures(jobs: Job[], now: Date = new Date()): Job[] {
     if (job.status !== 'failed' || job.finished_at == null) return false
     return now.getTime() - new Date(job.finished_at).getTime() <= FAILURE_WINDOW_MS
   })
+}
+
+/**
+ * Where queued work stands. The hunter runs a fixed number of each kind of job
+ * at once and wakes at least every 30 s, so work that is due waits `in-line`
+ * behind a running job of its kind, and with none running is `overdue` once a
+ * minute has passed. Until then, and until it is due at all, it is `scheduled`.
+ */
+export type DueState = 'scheduled' | 'in-line' | 'overdue'
+
+/** Where work due at `iso` stands, given whether work of its kind is running now. */
+export function dueState(iso: string, running: boolean, now: number = Date.now()): DueState {
+  if (Date.parse(iso) > now) return 'scheduled'
+  if (running) return 'in-line'
+  return isOverdue(iso, now) ? 'overdue' : 'scheduled'
+}
+
+/** Where the soonest price check stands; with no summary yet, on schedule. */
+export function checksDue(summary: JobsSummary | undefined, now: number = Date.now()): DueState {
+  if (!summary?.next_check_at) return 'scheduled'
+  return dueState(summary.next_check_at, summary.checks_running > 0, now)
+}
+
+/**
+ * Why a queued job hasn't started, which its row says in place of a bare
+ * countdown: the hunter's own schedule (DueState), a paused site, whose jobs
+ * it skips until the pause lifts, or hunting switched off on this server.
+ */
+export type QueuedWait =
+  | { state: DueState }
+  | { state: 'site-paused'; until: string }
+  | { state: 'hunting-off' }
+
+interface QueueContext {
+  pausedSites: PausedSite[]
+  huntEnabled: boolean
+  /** whether a job of this kind is running now */
+  running: boolean
+}
+
+/** Why `job` is still in the queue (see QueuedWait). */
+export function queuedWait(job: Job, context: QueueContext, now: number = Date.now()): QueuedWait {
+  const paused = context.pausedSites.find(
+    (site) => site.site_id === job.site_id && Date.parse(site.paused_until) > now,
+  )
+  if (paused) {
+    // the later of the two, as the summary's next_hunt_at counts it
+    const until =
+      Date.parse(job.run_after) > Date.parse(paused.paused_until)
+        ? job.run_after
+        : paused.paused_until
+    return { state: 'site-paused', until }
+  }
+  if (job.kind === 'hunt' && !context.huntEnabled) return { state: 'hunting-off' }
+  return { state: dueState(job.run_after, context.running, now) }
+}
+
+/**
+ * True when no hunt or price check is running though work is overdue — when
+ * "idle" would contradict the queue. Hunts held while hunting is off are not
+ * late; they are waiting on the operator.
+ */
+export function behindSchedule(
+  summary: JobsSummary,
+  huntEnabled: boolean,
+  now: number = Date.now(),
+): boolean {
+  if (summary.hunts_running + summary.checks_running > 0) return false
+  return (
+    isOverdue(summary.next_check_at, now) || (huntEnabled && isOverdue(summary.next_hunt_at, now))
+  )
 }
