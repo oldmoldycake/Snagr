@@ -115,6 +115,9 @@ export function tickFormatterFor(range: TimeRange): (ts: number) => string {
   }
 }
 
+/** How long past due work can be before it is late rather than about to start. */
+const OVERDUE_AFTER_SECS = 60
+
 /**
  * How long until something happens, the way the Activity page says it:
  * under a minute `in 0:42`, under an hour `in 12m`, under a day `in 2h` or
@@ -128,7 +131,7 @@ export function countdown(iso: string | null | undefined): string {
   const then = new Date(iso).getTime()
   if (!Number.isFinite(then)) return '—'
   const secs = Math.round((then - Date.now()) / 1000)
-  if (secs < -60) return 'overdue'
+  if (secs < -OVERDUE_AFTER_SECS) return 'overdue'
   if (secs <= 0) return 'now'
   if (secs < 60) return `in 0:${String(secs).padStart(2, '0')}`
   const mins = Math.floor(secs / 60)
@@ -137,6 +140,12 @@ export function countdown(iso: string | null | undefined): string {
   if (hours >= 24) return clockTime(iso)
   const rest = mins % 60
   return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`
+}
+
+/** Whether work due at `iso` should have started by now — what `countdown` calls `overdue`. */
+export function isOverdue(iso: string | null | undefined, now: number = Date.now()): boolean {
+  if (!iso) return false
+  return Math.round((new Date(iso).getTime() - now) / 1000) < -OVERDUE_AFTER_SECS
 }
 
 /** `3:04 PM` / `15:04`, or `yesterday` / `Sep 18` once it is not today's clock. */

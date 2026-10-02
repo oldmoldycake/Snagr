@@ -10,6 +10,7 @@ import { ErrorState } from '@/components/ui/error-state'
 import { Pagination } from '@/components/ui/pagination'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useInstance, useSession } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { priceMethodLabel } from '@/lib/priceMethod'
 import { clockTime, countdown, formatMillis, formatTokens } from '@/lib/time'
@@ -17,9 +18,16 @@ import { CheckPricesButton } from './CheckPricesButton'
 import { ChecksTail } from './ChecksTail'
 import { JobStatusDot } from './JobStatusDot'
 import { LiveHuntRow } from './LiveHunts'
-import { reasonText, resultText } from './lines'
+import { reasonText, resultText, waitingForSite } from './lines'
 import { useJobs } from './JobsProvider'
-import { foldQueue, groupByHour, rowTime } from './timeline'
+import {
+  checksDue,
+  groupByHour,
+  queuedWait,
+  rowTime,
+  type DueState,
+  type QueuedWait,
+} from './timeline'
 import { useTick } from './useTick'
 
 type Filter = 'hunt' | 'ground' | 'recheck' | 'failed' | 'all'
@@ -102,6 +110,7 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
   })
 
   const { live } = useJobs()
+  const huntEnabled = useInstance().data?.hunt_enabled !== false
   const nothingAtAll =
     summary != null &&
     summary.listings_watched === 0 &&
@@ -118,7 +127,17 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
     )
   }
 
-  const upcoming = foldQueue(queued.data?.data ?? [], queueOpen)
+  // furthest first, so the soonest job sits right above the "now" line
+  const upcoming = [...(queued.data?.data ?? [])].reverse().map((job) => ({
+    job,
+    wait: queuedWait(job, {
+      pausedSites: summary?.paused_sites ?? [],
+      huntEnabled,
+      running: live.some((running) => running.kind === job.kind),
+    }),
+  }))
+  const checksWait = checksDue(summary)
+  const late = checksWait === 'overdue' || upcoming.some(({ wait }) => wait.state === 'overdue')
   const groups = groupByHour(history.data?.data ?? [])
 
   return (
@@ -137,26 +156,11 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
             />
           </Row>
         ) : (
-          <>
-            {upcoming.shown.map((job) => <QueuedRow key={job.id} job={job} />)}
-            {upcoming.folded > 0 ? (
-              <Row>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-expanded={queueOpen}
-                  onClick={() => setQueueOpen((v) => !v)}
-                  className="-ml-2"
-                >
-                  {queueOpen ? 'Show fewer' : `Show ${upcoming.folded} more`}
-                </Button>
-              </Row>
-            ) : null}
-          </>
+          upcoming.map(({ job, wait }) => <QueuedRow key={job.id} job={job} wait={wait} />)
         )}
-        <QueuedChecks summary={summary} />
+        <QueuedChecks summary={summary} wait={checksWait} />
 
-        <NowBlock summary={summary} />
+        <NowBlock summary={summary} late={late} />
 
         <Heading label="Earlier">
           <Segmented
@@ -264,11 +268,11 @@ function Who({ job }: { job: Job }) {
   )
 }
 
-function QueuedRow({ job }: { job: Job }) {
-  const blocked = job.reason === 'paused'
+function QueuedRow({ job, wait }: { job: Job; wait: QueuedWait }) {
+  const blocked = wait.state === 'site-paused'
   return (
     <Row
-      time={blocked ? clockTime(job.run_after) : countdown(job.run_after)}
+      time={queuedTime(job, wait)}
       marker={
         blocked ? (
           <span aria-hidden className="font-mono text-xs text-warn">
@@ -291,19 +295,44 @@ function QueuedRow({ job }: { job: Job }) {
           )}
         >
           {job.kind === 'ground' ? '' : 'hunt · '}
-          {reasonText(job)}
+          {queuedText(job, wait)}
         </span>
       </p>
     </Row>
   )
 }
 
+/** A queued row's time: when it runs, or where it stands once that has passed. */
+function queuedTime(job: Job, wait: QueuedWait): string {
+  switch (wait.state) {
+    case 'site-paused':
+      return clockTime(wait.until)
+    case 'hunting-off':
+      return 'on hold'
+    case 'in-line':
+      return 'in line'
+    default:
+      return countdown(job.run_after)
+  }
+}
+
+/** Why it was queued, and what holds it when that isn't the hunter's own schedule. */
+function queuedText(job: Job, wait: QueuedWait): string {
+  if (wait.state === 'hunting-off') return 'hunting is off on this server'
+  if (wait.state === 'site-paused' && job.reason !== 'paused') {
+    return `${reasonText(job)} · ${waitingForSite(job)}`
+  }
+  return reasonText(job)
+}
+
 /** Forty-four checks are a cadence, not a list: one row, and the lever to pull them all in. */
-function QueuedChecks({ summary }: { summary?: JobsSummary }) {
+function QueuedChecks({ summary, wait }: { summary?: JobsSummary; wait: DueState }) {
   const pending = summary?.checks_pending ?? 0
   return (
     <Row
-      time={pending > 0 ? countdown(summary?.next_check_at) : null}
+      time={
+        pending > 0 ? (wait === 'in-line' ? 'in line' : countdown(summary?.next_check_at)) : null
+      }
       marker={<JobStatusDot status="pending" />}
       className="py-1.5"
     >
@@ -311,8 +340,8 @@ function QueuedChecks({ summary }: { summary?: JobsSummary }) {
         <p className="min-w-0 flex-1 font-mono text-[12px] text-ink-3">
           {pending > 0 ? (
             <>
-              <span className="text-ink">{pending} price checks</span> spread over the coming half
-              hour
+              <span className="text-ink">{pending} price checks</span>{' '}
+              {wait === 'scheduled' ? 'spread over the coming half hour' : 'waiting'}
             </>
           ) : (
             'No price checks queued'
@@ -324,8 +353,10 @@ function QueuedChecks({ summary }: { summary?: JobsSummary }) {
   )
 }
 
-function NowBlock({ summary }: { summary?: JobsSummary }) {
+function NowBlock({ summary, late }: { summary?: JobsSummary; late: boolean }) {
   const { live } = useJobs()
+  const isAdmin = useSession().data?.role === 'admin'
+  const huntEnabled = useInstance().data?.hunt_enabled !== false
   useTick(true)
   const busy = live.length > 0 || (summary?.checks_running ?? 0) > 0
   const now = new Date().toISOString()
@@ -377,10 +408,19 @@ function NowBlock({ summary }: { summary?: JobsSummary }) {
             </div>
           ))}
           <ChecksTail summary={summary} />
-          {!busy ? (
+          {late ? (
+            <p className="font-mono text-[12px] text-warn">
+              <span aria-hidden>⚠</span>{' '}
+              {isAdmin
+                ? "Overdue work hasn't started: Snagr may be stopped or waiting out an error. Its log says which."
+                : "Overdue work hasn't started: Snagr may be busy with other people's work, waiting out an error, or stopped."}
+            </p>
+          ) : !busy ? (
             <p className="font-mono text-[12px] text-ink-3">
               Idle
-              {summary?.next_hunt_at ? ` — next hunt ${nextHunt(summary.next_hunt_at)}` : null}
+              {huntEnabled && summary?.next_hunt_at
+                ? ` — next hunt ${nextHunt(summary.next_hunt_at)}`
+                : null}
             </p>
           ) : null}
         </div>
