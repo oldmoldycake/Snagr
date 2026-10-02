@@ -14,8 +14,9 @@ const MOCKS_ON = import.meta.env.VITE_USE_MOCKS === 'true'
 
 /**
  * Sign-in page: email and password, plus the SSO button when the instance has
- * an OIDC provider. Already signed-in visitors go straight to where they were
- * headed (the dashboard by default).
+ * an OIDC provider. Either way, signing in returns the visitor to where they
+ * were headed (the dashboard by default); one already signed in goes straight
+ * there.
  */
 export function LoginPage() {
   usePageTitle('Sign in')
@@ -117,7 +118,7 @@ export function LoginPage() {
             <span className="h-px flex-1 bg-hairline" />
           </div>
           <a
-            href="/api/auth/oidc/login"
+            href={`/api/auth/oidc/login?next=${encodeURIComponent(returnTo)}`}
             className={cn(buttonVariants({ variant: 'default' }), 'mt-3 w-full')}
           >
             Sign in with {instance.oidc_provider_name}

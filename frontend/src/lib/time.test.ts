@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { countdown, dayPhrase, formatDate, formatDateTime, formatTokens } from './time'
+import { countdown, formatDate, formatDateTime, formatTokens, isOverdue } from './time'
 
 describe('formatTokens', () => {
   it('shows small counts as they are', () => {
@@ -44,6 +44,13 @@ describe('countdown', () => {
   it('says "overdue" rather than "now" for a time long past', () => {
     expect(countdown(at(-61))).toBe('overdue')
     expect(countdown(at(-50 * 60))).toBe('overdue')
+  })
+
+  it('agrees with isOverdue on where "now" ends', () => {
+    expect(isOverdue(at(-60))).toBe(false)
+    expect(isOverdue(at(-61))).toBe(true)
+    expect(isOverdue(at(30))).toBe(false)
+    expect(isOverdue(null)).toBe(false)
   })
 })
 

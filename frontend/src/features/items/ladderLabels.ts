@@ -1,20 +1,29 @@
 import { LABEL_CLEARANCE_PX, labelPx } from './rail'
 
 /**
- * Whether the Ladder's in-range ⌖ label joins "now" in one right-anchored
- * phrase instead of ending at its notch (never left of 42%). Past 55% it would
- * overprint "now"; near the left end, where a target at or above the range
- * high sits, it would overprint the high label. Until the row is measured
- * only the 55% rule applies.
+ * Whether the Ladder's positioned label joins its right-hand neighbour in one
+ * right-anchored phrase instead: in range, ⌖ ending at its notch joins "now";
+ * while hunting, "now" centred on its marker joins "⌖ target". `pos` is where
+ * the label is anchored, in % of the row. Past 55% it would crowd the
+ * right-hand label. Once the row is measured it also joins wherever it would
+ * overprint a neighbour: the high label (a target at or above the range high
+ * sits beside it) or the right-hand label (long prices on a phone-width row).
+ * Until then only the 55% rule applies.
  */
-export function ladderTargetJoinsNow(
-  targetPos: number,
-  targetLabel: string,
+export function ladderLabelJoins(
+  pos: number,
+  align: 'end' | 'center',
+  label: string,
   highLabel: string,
+  rightLabel: string,
   rowPx: number,
 ): boolean {
-  if (targetPos > 55) return true
+  if (pos > 55) return true
   if (rowPx <= 0) return false
-  const end = (Math.max(targetPos, 42) / 100) * rowPx
-  return end - labelPx(targetLabel) < labelPx(highLabel) + LABEL_CLEARANCE_PX
+  const width = labelPx(label)
+  const end = (pos / 100) * rowPx + (align === 'center' ? width / 2 : 0)
+  return (
+    end - width < labelPx(highLabel) + LABEL_CLEARANCE_PX ||
+    end + LABEL_CLEARANCE_PX > rowPx - labelPx(rightLabel)
+  )
 }

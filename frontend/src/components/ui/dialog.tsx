@@ -1,6 +1,7 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import { useRef, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
+import { swipeCloses } from '@/components/ui/sheetSwipe'
 import { cn } from '@/lib/cn'
 import { focusMovedElsewhere } from '@/lib/focus'
 
@@ -16,11 +17,11 @@ export const DialogClose = DialogPrimitive.Close
  * Dialog.Content in a portal. Lay it out as DialogHeader → DialogBody →
  * DialogFooter: only the body scrolls, so the footer's buttons stay in view.
  * Anchored near the top rather than centred, so a growing body only pushes
- * downward; under `sm` it becomes a bottom sheet.
+ * downward; under `sm` it becomes a bottom sheet that its grab handle swipes closed.
  *
  * Pass `dismissible={false}` while it shows something that can't be shown
  * again, like a new API token: Escape and clicks outside then do nothing and
- * the ✕ is hidden, so the only way out is the dialog's own button.
+ * the ✕ and the handle are hidden, so the only way out is the dialog's own button.
  */
 export function DialogContent({
   className,
@@ -37,6 +38,9 @@ export function DialogContent({
   // on open and hand it back on close. A menu item unmounts with its menu, so
   // stand in the button that opened the menu (it names the menu in aria-controls).
   const returnFocusTo = useRef<HTMLElement | null>(null)
+  // The open state lives in Radix's Root, out of reach here, so a swipe on the
+  // handle closes the sheet by pressing the ✕.
+  const close = useRef<HTMLButtonElement>(null)
 
   return (
     <DialogPrimitive.Portal>
@@ -48,6 +52,7 @@ export function DialogContent({
           'data-[state=closed]:animate-dialog-out data-[state=open]:animate-dialog-in',
           'max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[92dvh] max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:grid-rows-[auto_auto_minmax(0,1fr)_auto] max-sm:rounded-t-xl max-sm:rounded-b-none',
           'max-sm:data-[state=closed]:animate-sheet-down max-sm:data-[state=open]:animate-sheet-up',
+          'max-sm:transition-[translate] max-sm:duration-200 max-sm:ease-sheet',
           className,
         )}
         onOpenAutoFocus={(event) => {
@@ -75,10 +80,11 @@ export function DialogContent({
         }}
         {...props}
       >
-        <div aria-hidden className="mx-auto mt-2 h-1 w-8 rounded-full bg-hairline-strong sm:hidden" />
+        <SheetHandle onSwipe={dismissible ? () => close.current?.click() : undefined} />
         {children}
         {dismissible ? (
           <DialogPrimitive.Close
+            ref={close}
             className="tap-target absolute top-3.5 right-3.5 grid size-7 place-items-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
             aria-label="Close"
           >
@@ -90,9 +96,63 @@ export function DialogContent({
   )
 }
 
-/** Top band holding the eyebrow, title and description; its right padding clears the close button. */
+/**
+ * A sheet's grab handle, on a strip across the sheet's top. Dragging the strip
+ * pulls the sheet down under the finger through its `translate`, which the
+ * enter and exit animations leave alone, so a sheet that closes slides out from
+ * where it was let go. Letting go calls `onSwipe` when `swipeCloses` judges the
+ * swipe meant to close, or springs the sheet back. Without `onSwipe` the strip
+ * keeps its room but shows no handle.
+ */
+function SheetHandle({ onSwipe }: { onSwipe?: () => void }) {
+  const press = useRef<{ id: number; sheet: HTMLElement; y: number; at: number } | null>(null)
+  const springBack = (sheet: HTMLElement) => {
+    sheet.style.transition = ''
+    sheet.style.translate = ''
+  }
+
+  return (
+    <div
+      aria-hidden
+      className="touch-none pt-2 pb-3 sm:hidden"
+      onPointerDown={(event) => {
+        const sheet = event.currentTarget.parentElement
+        if (!onSwipe || !sheet || press.current || event.button !== 0) return
+        event.currentTarget.setPointerCapture(event.pointerId)
+        sheet.style.transition = 'none'
+        press.current = { id: event.pointerId, sheet, y: event.clientY, at: event.timeStamp }
+      }}
+      onPointerMove={(event) => {
+        const p = press.current
+        if (p?.id !== event.pointerId) return
+        p.sheet.style.translate = `0 ${Math.max(0, event.clientY - p.y)}px`
+      }}
+      onPointerUp={(event) => {
+        const p = press.current
+        if (p?.id !== event.pointerId) return
+        press.current = null
+        if (onSwipe && swipeCloses(event.clientY - p.y, event.timeStamp - p.at, p.sheet.offsetHeight)) onSwipe()
+        else springBack(p.sheet)
+      }}
+      onPointerCancel={(event) => {
+        const p = press.current
+        if (p?.id !== event.pointerId) return
+        press.current = null
+        springBack(p.sheet)
+      }}
+    >
+      <div className={cn('mx-auto h-1 w-8 rounded-full bg-hairline-strong', !onSwipe && 'invisible')} />
+    </div>
+  )
+}
+
+/**
+ * Top band holding the eyebrow, title and description; its right padding
+ * clears the close button. On a sheet the grab handle's strip above it takes
+ * most of its top padding, so the handle is a bigger target for a thumb.
+ */
 export function DialogHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('relative border-b border-hairline px-5 pt-[18px] pr-12 pb-3.5', className)} {...props} />
+  return <div className={cn('relative border-b border-hairline px-5 pt-[18px] pr-12 pb-3.5 max-sm:pt-1.5', className)} {...props} />
 }
 
 /** Small mono label above the title, naming what the dialog acts on. */
@@ -135,7 +195,7 @@ export function DialogDescription({
 }
 
 /** The dialog's fields — the one part that scrolls when the dialog is taller than the screen. */
-export function DialogBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DialogBody({ className, ...props }: ComponentProps<'div'>) {
   return <div className={cn('overflow-y-auto overscroll-contain px-5 py-4', className)} {...props} />
 }
 
