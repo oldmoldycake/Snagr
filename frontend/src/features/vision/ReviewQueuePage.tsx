@@ -15,10 +15,12 @@ import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SimpleTooltip } from '@/components/ui/tooltip'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
+import { suggestionText } from './review'
 
 const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   looks_authentic: 'looks authentic',
@@ -70,12 +72,21 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           >
             {entry.item_name}
           </Link>
-          <Badge
-            variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
-            className="shrink-0 font-mono text-[12px] tnum"
+          <SimpleTooltip
+            content={
+              <span className="max-w-64">
+                How strongly this photo matches {entry.item_name}'s {entry.suggested_label} reference photos
+                over its {entry.suggested_label === 'fake' ? 'real' : 'fake'} ones. A suggestion only: you decide.
+              </span>
+            }
           >
-            {entry.suggested_label === 'fake' ? '✗' : '✓'} {entry.suggested_label} {entry.confidence}
-          </Badge>
+            <Badge
+              variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
+              className="shrink-0 font-mono text-[12px] tnum"
+            >
+              {entry.suggested_label === 'fake' ? '✗' : '✓'} {suggestionText(entry.suggested_label, entry.confidence)}
+            </Badge>
+          </SimpleTooltip>
         </div>
         <p className="font-mono text-[12px] text-ink-3">
           {entry.llm_authenticity_read
@@ -97,7 +108,11 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           placeholder="Variant tag (optional)"
           className="h-7 sm:text-xs"
           aria-label="Variant tag"
+          aria-describedby={`variant-hint-${entry.id}`}
         />
+        <p id={`variant-hint-${entry.id}`} className="-mt-1 text-[12px] text-ink-3">
+          Only for a legitimate variant (alternate art, regional box), so photos like it count as real.
+        </p>
         <div className="mt-auto flex items-center gap-2">
           <Segmented
             options={LABEL_OPTIONS}
@@ -146,15 +161,22 @@ export function ReviewQueuePage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline gap-3">
-        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
-          Photo review
-        </h1>
-        {queue.data ? (
-          <span className="font-mono text-[12px] text-ink-3 tnum">
-            {queue.data.meta.total} {queue.data.meta.total === 1 ? 'photo' : 'photos'} waiting
-          </span>
-        ) : null}
+      <div>
+        <div className="flex items-baseline gap-3">
+          <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
+            Photo review
+          </h1>
+          {queue.data ? (
+            <span className="font-mono text-[12px] text-ink-3 tnum">
+              {queue.data.meta.total} {queue.data.meta.total === 1 ? 'photo' : 'photos'} waiting
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1.5 max-w-[64ch] text-[14px] text-ink-2">
+          Listing photos Snagr captured while hunting that closely match an item's reference photos.
+          Mark each one real or fake to add it to that item's references, which every later photo
+          check compares against, or discard it.
+        </p>
       </div>
 
       {instance && !instance.vision_enabled ? (

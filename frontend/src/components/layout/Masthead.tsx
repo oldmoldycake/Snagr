@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type FormEvent, type RefObject } from 'rea
 import { NavLink, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, KeyRound, LogOut, Menu, Plus, Search, SlidersHorizontal, User as UserIcon, Users } from 'lucide-react'
-import { getJobsSummary, listCategories } from '@/api/endpoints'
+import { getJobsSummary, listCategories, listReviewQueue } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
 import { countdown } from '@/lib/time'
@@ -33,10 +33,34 @@ const NAV_ITEMS: readonly { to: string; label: string; end?: boolean; visionOnly
   { to: '/settings', label: 'Settings' },
 ]
 
-/** The nav list, with the vision review queue hidden unless the sidecar is configured. */
+/**
+ * The nav list, with the vision review queue hidden unless the sidecar is
+ * configured, and its tab carrying how many photos wait there. The count
+ * reads the queue's first page, the same query the page opens on.
+ */
 function useNavItems() {
   const { data: instance } = useInstance()
-  return NAV_ITEMS.filter((item) => !item.visionOnly || instance?.vision_enabled)
+  const visionEnabled = instance?.vision_enabled === true
+  const queue = useQuery({
+    queryKey: qk.visionQueue({ page: 1 }),
+    queryFn: () => listReviewQueue({ page: 1 }),
+    enabled: visionEnabled,
+  })
+  const waiting = queue.data?.meta.total ?? 0
+  return NAV_ITEMS.filter((item) => !item.visionOnly || visionEnabled).map((item) => ({
+    ...item,
+    count: item.to === '/review' && waiting > 0 ? waiting : null,
+  }))
+}
+
+/** A tab's count, read out as "N waiting". */
+function NavCount({ count }: { count: number }) {
+  return (
+    <span className="ml-1.5 font-mono text-[12px] tracking-normal text-lume tnum">
+      {count}
+      <span className="sr-only"> waiting</span>
+    </span>
+  )
 }
 
 function Wordmark() {
@@ -115,6 +139,7 @@ function MobileNav({ onNavigate }: { onNavigate: () => void }) {
           }
         >
           {item.label}
+          {item.count ? <NavCount count={item.count} /> : null}
         </NavLink>
       ))}
 
@@ -358,6 +383,7 @@ export function Masthead() {
               }
             >
               {item.label}
+              {item.count ? <NavCount count={item.count} /> : null}
             </NavLink>
           ))}
           <span ref={lumeRef} aria-hidden className="nav-lume" />
