@@ -38,12 +38,6 @@ export const DEFAULT_TRACKING: TrackingValue = {
   siteIds: null,
 }
 
-const INTERVAL_PRESETS = [15, 30, 60, 360]
-const INTERVAL_OPTIONS = [
-  ...INTERVAL_PRESETS.map((m) => ({ value: String(m), label: formatInterval(m) })),
-  { value: 'custom', label: 'Custom' },
-]
-
 /** The tracking fields of a create/update item request; blank criteria is sent as null. */
 export function trackingPayload(value: TrackingValue) {
   return {
@@ -85,11 +79,11 @@ export function TrackingFields({
   const [modeSwitched, setModeSwitched] = useState(false)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
+  const defaultInterval = useInstance().data?.recheck_interval_default
   // a stored interval that is not a preset opens on the custom field
   const [customInterval, setCustomInterval] = useState(
-    value.recheckIntervalMinutes != null && !INTERVAL_PRESETS.includes(value.recheckIntervalMinutes),
+    value.recheckIntervalMinutes != null && !intervalPresets(defaultInterval).includes(value.recheckIntervalMinutes),
   )
-  const defaultInterval = useInstance().data?.recheck_interval_default
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
@@ -132,7 +126,10 @@ export function TrackingFields({
       return
     }
     setCustomInterval(false)
-    onChange({ ...value, recheckIntervalMinutes: Number(choice) })
+    // picking the default's option stores null, so the item keeps following
+    // the instance default rather than pinning today's value
+    const minutes = Number(choice)
+    onChange({ ...value, recheckIntervalMinutes: minutes === defaultInterval ? null : minutes })
   }
 
   const interval = value.recheckIntervalMinutes ?? defaultInterval
@@ -252,14 +249,8 @@ export function TrackingFields({
             <div>
               <Label>Check every</Label>
               <Segmented
-                options={INTERVAL_OPTIONS}
-                value={
-                  customInterval
-                    ? 'custom'
-                    : value.recheckIntervalMinutes != null
-                      ? String(value.recheckIntervalMinutes)
-                      : null
-                }
+                options={intervalOptions(defaultInterval)}
+                value={customInterval ? 'custom' : interval != null ? String(interval) : null}
                 onChange={setIntervalChoice}
                 ariaLabel="Check interval"
               />
