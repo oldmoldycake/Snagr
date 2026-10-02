@@ -19,6 +19,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
+import { referenceFileError } from './upload'
 
 const LABEL_OPTIONS = [
   { value: 'real', label: 'Real' },
@@ -39,6 +40,7 @@ export function UploadReferenceDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const [file, setFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
   const [label, setLabel] = useState<ReferenceLabel>('real')
   const [variantTag, setVariantTag] = useState('')
   const queryClient = useQueryClient()
@@ -61,6 +63,7 @@ export function UploadReferenceDialog({
 
   const error = upload.error instanceof ApiError ? upload.error : null
   const fieldError = error?.fields?.file ?? error?.fields?.label
+  const message = fileError ?? (error ? (fieldError ?? error.message) : null)
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -80,7 +83,7 @@ export function UploadReferenceDialog({
           }}
         >
           <DialogBody className="space-y-3">
-            {error ? <p className="text-xs text-rise">{fieldError ?? error.message}</p> : null}
+            {message ? <p className="text-xs text-rise">{message}</p> : null}
             <div>
               <Label htmlFor="reference-file">Photo (max 10 MB)</Label>
               <Input
@@ -89,7 +92,13 @@ export function UploadReferenceDialog({
                 accept="image/*"
                 required
                 className="h-auto py-1.5 text-xs file:mr-2 file:rounded-sm file:border-0 file:bg-raised file:px-2 file:py-0.5 file:font-mono file:text-[12px] file:text-ink-2"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                onChange={(e) => {
+                  const picked = e.target.files?.[0] ?? null
+                  const pickError = picked ? referenceFileError(picked) : null
+                  setFile(pickError ? null : picked)
+                  setFileError(pickError)
+                  upload.reset()
+                }}
               />
             </div>
             <div>

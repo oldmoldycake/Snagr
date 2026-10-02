@@ -18,6 +18,7 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { PhotoCompareDialog } from './PhotoCompareDialog'
+import { pageInRange } from './queue'
 
 const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   looks_authentic: 'looks authentic',
@@ -147,6 +148,10 @@ export function ReviewQueuePage() {
   })
 
   const entries = queue.data?.data ?? []
+  const meta = queue.data?.meta
+  // An emptied later page steps back rather than reading as an empty queue,
+  // which is why "Nothing to review" below keys off the total.
+  if (meta && pageInRange(page, meta) !== page) setPage(pageInRange(page, meta))
 
   return (
     <div className="space-y-5">
@@ -179,7 +184,7 @@ export function ReviewQueuePage() {
           onRetry={() => void queue.refetch()}
           retrying={queue.isFetching}
         />
-      ) : entries.length === 0 ? (
+      ) : meta?.total === 0 ? (
         <EmptyState
           title="Nothing to review"
           description="When Snagr finds a listing photo that closely matches an item's reference photos, it shows up here for you to confirm. Each one you confirm makes future photo checks more accurate."
