@@ -16,6 +16,7 @@ import type {
   LoginRequest,
   MeUpdateRequest,
   NotificationChannelCreateRequest,
+  NotificationChannelTestRequest,
   NotificationChannelUpdateRequest,
   NotificationEvent,
   PasswordChangeRequest,
@@ -473,6 +474,44 @@ interface ChannelFields {
 }
 
 /**
+ * Validate where a channel of this kind sends, clearing the field its kind
+ * doesn't use. Saves and the unsaved test share it, so a test never reaches a
+ * destination a save would refuse.
+ */
+function validateDestination(
+  kind: MockNotificationChannel['kind'],
+  url: string | null,
+  topic: string | null,
+): Pick<ChannelFields, 'url' | 'topic'> | HttpResponse<DefaultBodyType> {
+  if (kind === 'ntfy') {
+    if (!topic) {
+      return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
+    }
+    if (!NTFY_TOPIC.test(topic)) {
+      return err(422, 'validation_error', 'Not a valid ntfy topic', {
+        fields: { topic: 'Use 1-64 letters, digits, - or _' },
+      })
+    }
+    return { url: null, topic }
+  }
+  if (!url || !/^https?:\/\//.test(url)) {
+    return err(422, 'validation_error', 'A valid URL is required', { fields: { url: 'Must be an http(s) URL' } })
+  }
+  if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
+    return err(422, 'validation_error', 'Not a Discord webhook URL', {
+      fields: { url: 'Must be a Discord incoming-webhook URL' },
+    })
+  }
+  const problem = privateUrlProblem(url)
+  if (problem) {
+    return err(422, 'validation_error', 'Notifications can only be sent to a public address', {
+      fields: { url: problem },
+    })
+  }
+  return { url, topic: null }
+}
+
+/**
  * Normalize + validate the channel fields shared by create/update. `existing`
  * supplies defaults on PATCH; kind is immutable, so it always comes from the
  * existing row there. events must be a subset of the known events; empty/full
@@ -488,35 +527,12 @@ function validateChannel(
     return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
   }
 
-  let url = body.url !== undefined ? body.url.trim() || null : (existing?.url ?? null)
-  let topic = body.topic !== undefined ? body.topic.trim() || null : (existing?.topic ?? null)
-  if (kind === 'ntfy') {
-    url = null
-    if (!topic) {
-      return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
-    }
-    if (!NTFY_TOPIC.test(topic)) {
-      return err(422, 'validation_error', 'Not a valid ntfy topic', {
-        fields: { topic: 'Use 1-64 letters, digits, - or _' },
-      })
-    }
-  } else {
-    topic = null
-    if (!url || !/^https?:\/\//.test(url)) {
-      return err(422, 'validation_error', 'A valid URL is required', { fields: { url: 'Must be an http(s) URL' } })
-    }
-    if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
-      return err(422, 'validation_error', 'Not a Discord webhook URL', {
-        fields: { url: 'Must be a Discord incoming-webhook URL' },
-      })
-    }
-    const problem = privateUrlProblem(url)
-    if (problem) {
-      return err(422, 'validation_error', 'Notifications can only be sent to a public address', {
-        fields: { url: problem },
-      })
-    }
-  }
+  const destination = validateDestination(
+    kind,
+    body.url !== undefined ? body.url.trim() || null : (existing?.url ?? null),
+    body.topic !== undefined ? body.topic.trim() || null : (existing?.topic ?? null),
+  )
+  if (destination instanceof HttpResponse) return destination
 
   let events = body.events !== undefined ? body.events : (existing?.events ?? null)
   if (events != null) {
@@ -528,7 +544,7 @@ function validateChannel(
     if (events.length === 0 || events.length === KNOWN_EVENTS.length) events = null
   }
 
-  return { name, url, topic, events }
+  return { name, ...destination, events }
 }
 
 /** Every mock route — the behavioral oracle for the backend's status codes and `error.code`s. */
@@ -738,6 +754,20 @@ export const handlers = [
     const channel = store.notificationChannels.find((c) => c.id === id && c.user_id === user.id)
     if (!channel) return err(404, 'not_found', `Channel ${id} does not exist`)
     store.notificationChannels = store.notificationChannels.filter((c) => c.id !== id)
+    return new HttpResponse(null, { status: 204 })
+  }),
+
+  // mock-parity gap: the mock sends nothing, so the 502 channel_failed of a
+  // destination that refuses the test is backend-only — as is no_server
+  http.post('/api/me/channels/test', async ({ request }) => {
+    requireUser()
+    await wait()
+    const body = (await request.json()) as NotificationChannelTestRequest
+    if (body.kind !== 'ntfy' && body.kind !== 'webhook' && body.kind !== 'discord') {
+      return err(422, 'validation_error', 'Unknown channel kind', { fields: { kind: 'Unknown channel kind' } })
+    }
+    const destination = validateDestination(body.kind, body.url?.trim() || null, body.topic?.trim() || null)
+    if (destination instanceof HttpResponse) return destination
     return new HttpResponse(null, { status: 204 })
   }),
 
