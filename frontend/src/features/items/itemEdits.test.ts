@@ -10,6 +10,7 @@ const opened: ItemForm = {
     maxListings: 5,
     recheckIntervalMinutes: null,
     hunt: true,
+    allowReproductions: false,
     siteIds: [1, 3],
   },
 }
@@ -37,6 +38,7 @@ describe('hasItemEdits', () => {
     expect(hasItemEdits(opened, withTracking({ maxListings: 6 }))).toBe(true)
     expect(hasItemEdits(opened, withTracking({ recheckIntervalMinutes: 30 }))).toBe(true)
     expect(hasItemEdits(opened, withTracking({ hunt: false }))).toBe(true)
+    expect(hasItemEdits(opened, withTracking({ allowReproductions: true }))).toBe(true)
   })
 
   it('sees a different set of sites, but not the same set picked again', () => {
