@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { isNotFound } from '@/api/client'
@@ -17,7 +17,7 @@ import { cn } from '@/lib/cn'
 import { formatDateTime, formatDuration, formatTokens } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { JobStatusDot } from './JobStatusDot'
-import { eventLine, resultText } from './lines'
+import { eventLine, failureDetail, resultText } from './lines'
 import { useJobs } from './JobsProvider'
 
 const LIVE_POLL_MS = 4000
@@ -160,14 +160,7 @@ export function JobPage() {
         ) : null}
       </div>
 
-      {detail.error ? (
-        <p
-          role="alert"
-          className="rounded-sm border border-rise/40 bg-rise/10 px-3 py-2 text-[14px] text-rise"
-        >
-          <span aria-hidden>✗</span> {detail.error}
-        </p>
-      ) : null}
+      {detail.error ? <Failure error={detail.error} detail={failureDetail(events)} /> : null}
 
       {detail.stats ? <Tiles job={detail} /> : null}
 
@@ -191,6 +184,43 @@ export function JobPage() {
           <TerminalLog lines={events.map(eventLine)} />
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Why the job failed, in the sentence Snagr wrote for it. The error it raised is
+ * for whoever runs Snagr, so it waits behind Details rather than reaching the
+ * screen as it is.
+ */
+function Failure({ error, detail }: { error: string; detail: string | null }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-sm border border-rise/40 bg-rise/10 px-3 py-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p role="alert" className="min-w-0 flex-1 text-[14px] text-rise">
+          <span aria-hidden>✗</span> {error}
+        </p>
+        {detail ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls="failure-detail"
+            onClick={() => setOpen((v) => !v)}
+            className="font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase hover:text-ink-2"
+          >
+            {open ? 'Hide ▴' : 'Details ▾'}
+          </button>
+        ) : null}
+      </div>
+      {detail && open ? (
+        <p
+          id="failure-detail"
+          className="mt-2 font-mono text-[12px] break-words whitespace-pre-wrap text-ink-2"
+        >
+          {detail}
+        </p>
+      ) : null}
     </div>
   )
 }

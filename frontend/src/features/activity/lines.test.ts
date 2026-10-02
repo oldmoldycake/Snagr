@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Job } from '@/api/types'
-import { huntReceipt, runningWork } from './lines'
+import type { Job, JobEvent } from '@/api/types'
+import { failureDetail, huntReceipt, runningWork } from './lines'
 
 function job(kind: Job['kind'], status: Job['status'] = 'running'): Job {
   return { kind, status } as Job
@@ -63,5 +63,33 @@ describe('huntReceipt', () => {
 
   it('says when there was nowhere to search', () => {
     expect(huntReceipt([])).toBe('No sites to search, so nothing was queued')
+  })
+})
+
+function event(seq: number, event_type: JobEvent['event_type'], payload: JobEvent['payload'] = null): JobEvent {
+  return { job_id: 1, seq, ts: '', level: 'error', event_type, message: '', payload }
+}
+
+describe('failureDetail', () => {
+  it('reads the raw error of the last failed attempt', () => {
+    const events = [
+      event(1, 'job_started'),
+      event(2, 'error', { detail: 'unit exceeded the 900s budget' }),
+      event(3, 'job_started'),
+      event(4, 'error', { detail: 'Error code: 401 - invalid x-api-key' }),
+      event(5, 'site_paused', { detail: 'not an error' }),
+    ]
+    expect(failureDetail(events)).toBe('Error code: 401 - invalid x-api-key')
+  })
+
+  it('skips error lines that carry no detail, like a deferred search', () => {
+    expect(failureDetail([event(1, 'error', { detail: 'page.goto: net::ERR' }), event(2, 'error')])).toBe(
+      'page.goto: net::ERR',
+    )
+  })
+
+  it('is null when nothing was kept', () => {
+    expect(failureDetail([])).toBeNull()
+    expect(failureDetail([event(1, 'error')])).toBeNull()
   })
 })

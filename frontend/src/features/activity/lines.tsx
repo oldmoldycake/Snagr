@@ -76,6 +76,17 @@ export function resultText(job: Job): { text: string; tone: string } {
   return { text: `nothing new · ${seen} seen`, tone: 'text-ink-2' }
 }
 
+/**
+ * The raw text behind a failed job's sentence: what its last failed attempt
+ * raised, kept on that attempt's error event. It is for whoever runs Snagr,
+ * so the job page shows it only on request. Null when there is none.
+ */
+export function failureDetail(events: JobEvent[]): string | null {
+  const detail = events.findLast((event) => event.event_type === 'error' && event.payload?.detail)
+    ?.payload?.detail
+  return typeof detail === 'string' ? detail : null
+}
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
 /**
