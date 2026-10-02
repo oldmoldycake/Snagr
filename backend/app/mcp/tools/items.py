@@ -185,9 +185,10 @@ def register(mcp: FastMCP) -> None:
         recheck_interval_minutes="default" to go back to the instance default.
 
         The name belongs to the shared catalog. If other users watch this item
-        too (and you're not admin), renaming moves only this user's watch, with
-        its listings, to the category's item of the new name, so the returned
-        item has a different id: use that id from then on."""
+        too (watcher_count above 1) and you're not admin, renaming moves only
+        this user's watch, with its listings, to the category's item of the
+        new name, so the returned item has a different id: use that id from
+        then on."""
         async with caller_session() as (db, user):
             # null already means "unchanged" here, so clearing the interval
             # needs a word of its own; the REST PATCH says it with null

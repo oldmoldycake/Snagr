@@ -18,30 +18,31 @@ const none = new Map<number, number>()
 describe('makeRail', () => {
   const rail = makeRail(rows(ITEM_3), none, 2000)!
 
-  it('runs pricier → cheaper, left to right', () => {
-    const pcts = [...new Set(ITEM_3)].sort((a, b) => b - a).map((c) => rail.place(c).pct)
+  it('runs cheaper → pricier, left to right', () => {
+    const pcts = [...new Set(ITEM_3)].sort((a, b) => a - b).map((c) => rail.place(c).pct)
     for (let i = 1; i < pcts.length; i++) expect(pcts[i]).toBeGreaterThan(pcts[i - 1])
   })
 
   it('puts the target mid-rail and spreads the cheap cluster', () => {
-    expect(rail.targetPct).toBeCloseTo(49.5, 1)
-    expect(rail.place(600).pct - rail.place(1000).pct).toBeGreaterThanOrEqual(15)
+    expect(rail.targetPct).toBeCloseTo(50.5, 1)
+    expect(rail.place(1000).pct - rail.place(600).pct).toBeGreaterThanOrEqual(15)
   })
 
   it('ticks at 1-2-5 × 10ⁿ inside the domain', () => {
-    expect(rail.ticks.map((t) => t.cents)).toEqual([5000, 2000, 1000])
+    expect(rail.ticks.map((t) => t.cents)).toEqual([1000, 2000, 5000])
   })
 
   it('falls back to even round steps in a tight band', () => {
     // the mock GPU: every listing between $550 and $647
     const tight = makeRail(rows([55065, 59572, 60739, 61537, 62555, 64657]), none, 55000)!
-    expect(tight.ticks.map((t) => t.cents)).toEqual([65000, 60000, 55000])
+    expect(tight.ticks.map((t) => t.cents)).toEqual([55000, 60000, 65000])
   })
 
   it('clamps folded rows outside the domain', () => {
-    expect(rail.place(7999).clamp).toBe('«')
-    expect(rail.place(125).clamp).toBe('»')
-    expect(rail.place(125).pct).toBe(100)
+    expect(rail.place(7999).clamp).toBe('»')
+    expect(rail.place(7999).pct).toBe(100)
+    expect(rail.place(125).clamp).toBe('«')
+    expect(rail.place(125).pct).toBe(0)
   })
 
   it('includes range-start prices in the domain', () => {
@@ -73,7 +74,7 @@ describe('makeRail', () => {
 describe('labeledTicks', () => {
   it('lets the ⌖ label name its own spot', () => {
     const rail = makeRail(rows(ITEM_3), none, 2000)!
-    expect(labeledTicks(rail, 330)).toEqual([5000, 1000])
+    expect(labeledTicks(rail, 330)).toEqual([1000, 5000])
   })
 
   it('drops the 2s when labels would collide', () => {
@@ -116,9 +117,9 @@ describe('axisLabels', () => {
     expect(axisLabels(98, '⌖ $20.00', 'drift 30d', 330, 82)).toEqual({ target: 'right', caption: 'left' })
   })
 
-  it('pins a target pricier than every listing to the left and moves the caption right', () => {
-    const rail = makeRail(rows(ITEM_3), none, 9_999_999_999)!
-    expect(axisLabels(rail.targetPct!, '⌖ $99,999,999.99', 'drift 30d', 330, 82)).toEqual({
+  it('pins a target cheaper than every listing to the left and moves the caption right', () => {
+    const rail = makeRail(rows(ITEM_3), none, 100)!
+    expect(axisLabels(rail.targetPct!, '⌖ $1.00', 'drift 30d', 330, 82)).toEqual({
       target: 'left',
       caption: 'right',
     })
@@ -126,6 +127,11 @@ describe('axisLabels', () => {
 
   it('moves the caption when a centred ⌖ still covers it', () => {
     expect(axisLabels(15, '⌖ $650.00', 'drift 30d', 330, 82)).toEqual({ target: 'center', caption: 'right' })
+  })
+
+  it('moves the caption off a centred ⌖ it would touch at 12px', () => {
+    // the mock RTX 4060 Ti board at desktop width
+    expect(axisLabels(37.6, '⌖ $465.00', '30d change', 263, 82)).toEqual({ target: 'center', caption: 'right' })
   })
 
   it('drops the caption when the line cannot hold both', () => {

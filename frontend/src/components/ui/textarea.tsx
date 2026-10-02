@@ -8,7 +8,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
       ref={ref}
       rows={rows}
       className={cn(
-        'w-full resize-y rounded-sm border border-hairline-field bg-well px-2.5 py-1.5 text-base sm:text-[14px] text-ink placeholder:text-ink-3',
+        'w-full resize-y rounded-sm border border-hairline-field bg-well px-2.5 py-1.5 text-base sm:text-[14px] text-ink placeholder:text-ink-placeholder',
         'focus:border-lume/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-lume/60',
         className,
       )}

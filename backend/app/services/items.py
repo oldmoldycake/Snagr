@@ -68,6 +68,11 @@ _UNIQUE_VIOLATION = "23505"
 # --- serializers --------------------------------------------------------------
 
 
+async def _watcher_count(db: AsyncSession, item_id: int) -> int:
+    """How many users watch the item — one watch each (uq_item_user)."""
+    return await db.scalar(select(func.count(Watches.id)).where(Watches.item_id == item_id))
+
+
 async def build_item_summary(
     watch: Watches, item: Items, category: Categories, db: AsyncSession, range: str = "30d"
 ) -> ItemSummary:
@@ -101,6 +106,7 @@ async def build_item_summary(
         site_ids=list(site_ids) or None,
         **await item_rollups(db, watch.user_id, item, watch, range),
         created_at=item.created_at.isoformat(),
+        watcher_count=await _watcher_count(db, item.id),
         watch=Watch(id=watch.id, notify=watch.notify, target_price=target_price),
     )
 
@@ -617,10 +623,7 @@ async def _rename(
     to move to, so on a shared item only an admin may make it."""
     if name == item.name:
         return item
-    owns_name = (
-        is_admin
-        or await db.scalar(select(func.count(Watches.id)).where(Watches.item_id == item.id)) == 1
-    )
+    owns_name = is_admin or await _watcher_count(db, item.id) == 1
     named = await _item_named(db, item.category_id, name)
     if named is None and owns_name:
         item.name = name
@@ -720,6 +723,15 @@ async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
     ).scalar_one_or_none()
     if watch is None:
         raise err(404, "not_found", f"Item {item_id} does not exist")
+    await delete_watch(db, watch)
+    await db.commit()
+
+
+async def delete_watch(db: AsyncSession, watch: Watches) -> None:
+    """Delete one watch and everything hanging off it, in the caller's
+    transaction — removing an item, or deleting the user who watches it. The
+    shared items row stays for other watchers; the watch's own jobs go by FK
+    cascade."""
     listing_ids = select(Listings.id).where(Listings.watch_id == watch.id)
 
     await db.execute(delete(ListingChecks).where(ListingChecks.watch_id == watch.id))
@@ -727,9 +739,7 @@ async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
     await db.execute(delete(Listings).where(Listings.watch_id == watch.id))
     await db.execute(delete(WatchSites).where(WatchSites.watch_id == watch.id))
     await db.execute(delete(Watches).where(Watches.id == watch.id))
-    await jobs_service.cancel_unwatched_ground(db, item_id)
-
-    await db.commit()
+    await jobs_service.cancel_unwatched_ground(db, watch.item_id)
 
 
 async def update_watch(
