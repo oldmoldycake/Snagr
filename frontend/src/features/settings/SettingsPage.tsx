@@ -33,6 +33,7 @@ export function SettingsPage() {
 
   const saveProfile = useMutation({
     mutationFn: () => updateMe({ email: email.trim() }),
+    meta: { inlineError: true },
     onSuccess: (updated) => {
       queryClient.setQueryData(qk.session, updated)
       toast.success('Profile saved')
@@ -66,6 +67,7 @@ export function SettingsPage() {
     },
   })
 
+  const profileError = saveProfile.error instanceof ApiError ? saveProfile.error.message : null
   const passwordError = password.error instanceof ApiError ? password.error.message : null
   const thresholdError = saveThresholds.error instanceof ApiError ? saveThresholds.error : null
   const thresholdFields = thresholdError?.fields ?? {}
@@ -86,20 +88,30 @@ export function SettingsPage() {
           <CardTitle>Profile</CardTitle>
         </CardHeader>
         <CardBody className="space-y-3">
-          <div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              saveProfile.mutate()
+            }}
+          >
             <Label htmlFor="settings-email">Email</Label>
             <div className="flex gap-2">
-              <Input id="settings-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input id="settings-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
               <Button
+                type="submit"
                 variant="default"
                 disabled={saveProfile.isPending || email.trim() === user?.email}
-                onClick={() => saveProfile.mutate()}
               >
                 {saveProfile.isPending ? <Loader2 className="animate-spin" /> : null}
                 Save
               </Button>
             </div>
-          </div>
+            {profileError ? (
+              <p role="alert" className="mt-1.5 text-xs text-rise">
+                {profileError}
+              </p>
+            ) : null}
+          </form>
 
           <form
             className="space-y-3 border-t border-hairline pt-3"
