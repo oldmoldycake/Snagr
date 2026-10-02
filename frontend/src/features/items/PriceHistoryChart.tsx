@@ -20,6 +20,7 @@ import {
 } from '@/components/charts/pricePlot'
 import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
+import { sharedTitlePrefix } from './listingTitles'
 import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
 const HEIGHT = 256
@@ -31,15 +32,7 @@ const END_LABEL_GAP = 13
  * then append the site. Falls back to the site name alone.
  */
 function seriesLabels(plotted: PreparedSeries[]): Map<number, string> {
-  const titles = plotted.map((s) => s.listing.title).filter((t): t is string => t != null)
-  let prefix = ''
-  if (titles.length >= 2) {
-    prefix = titles[0]
-    for (const t of titles) while (!t.startsWith(prefix)) prefix = prefix.slice(0, -1)
-    if (titles.some((t) => t.length > prefix.length && t[prefix.length] !== ' ')) {
-      prefix = prefix.slice(0, prefix.lastIndexOf(' ') + 1)
-    }
-  }
+  const prefix = sharedTitlePrefix(plotted.map((s) => s.listing.title))
   return new Map(
     plotted.map((s) => {
       const raw = s.listing.title?.slice(prefix.length).trim() ?? ''
