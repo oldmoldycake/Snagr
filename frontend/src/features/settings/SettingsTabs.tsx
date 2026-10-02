@@ -15,6 +15,9 @@ let lastTab: string | null = null
  * control's routed twin so the page reads as one system. Tabs the viewer can't
  * use drop out (Users is admin-only; MCP & API goes when the operator turned
  * agent access off), the way the vision link drops out of the masthead.
+ *
+ * Every settings page sets it under the title in a column of one shared width
+ * (max-w-3xl), so switching tabs moves neither the tabs nor the cards.
  */
 export function SettingsTabs() {
   const { data: user } = useSession()
