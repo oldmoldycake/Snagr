@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
@@ -34,9 +34,13 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { RelativeTime } from '@/components/ui/relative-time'
+import { cn } from '@/lib/cn'
+import { clockTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HuntButton } from '@/features/activity/HuntButton'
+import { useTick } from '@/features/activity/useTick'
 import { useSession } from '@/features/auth/useSession'
+import { isPaused } from './sitePause'
 
 function SiteDialog({
   site,
@@ -133,6 +137,38 @@ function SiteDialog({
   )
 }
 
+/**
+ * A paused site, said on its row: the circuit breaker stopped reading it after
+ * it kept failing, and nothing on it is checked or hunted until the pause
+ * lifts. Sites are shared, so only an admin can lift the pause early.
+ */
+function SitePause({ site, isAdmin, className }: { site: Site; isAdmin: boolean; className?: string }) {
+  const queryClient = useQueryClient()
+  const resume = useMutation({
+    mutationFn: () => updateSite(site.id, { paused_until: null }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+      void queryClient.invalidateQueries({ queryKey: ['sites'] })
+    },
+  })
+
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5', className)}>
+      <Badge variant="warn" className="font-mono whitespace-nowrap">
+        <span aria-hidden>⚠</span> paused until {clockTime(site.paused_until)}
+      </Badge>
+      <p className="min-w-0 flex-1 basis-48 text-xs leading-relaxed text-ink-2">
+        {site.paused_reason ? `${site.paused_reason}. ` : null}Its checks and hunts wait until then.
+      </p>
+      {isAdmin ? (
+        <Button variant="warn" size="sm" disabled={resume.isPending} onClick={() => resume.mutate()}>
+          Resume now
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
 /** A site's row actions: hunt it, and for an admin, the edit/delete menu. */
 function SiteActions({
   site,
@@ -149,7 +185,14 @@ function SiteActions({
 }) {
   return (
     <div className="flex items-center justify-end gap-1">
-      <HuntButton scope="site" scopeId={site.id} label="Hunt" variant="ghost" size="sm" />
+      <HuntButton
+        scope="site"
+        scopeId={site.id}
+        label="Hunt"
+        unavailable={isPaused(site) ? `${site.name} is paused until ${clockTime(site.paused_until)}` : undefined}
+        variant="ghost"
+        size="sm"
+      />
       {isAdmin ? (
         <DropdownMenu>
           <DropdownMenuMoreTrigger label={`Actions for ${site.name}`} />
@@ -222,6 +265,8 @@ export function SitesPage() {
   const categoryById = (id: number) => categories.data?.data.find((c) => c.id === id)
   const categoryName = (id: number) => categoryById(id)?.name ?? '…'
   const rows = sites.data?.data ?? []
+  // a pause lifts on its own, and the row should stop saying paused when it does
+  useTick(rows.some((site) => isPaused(site)))
   const openEdit = (site: Site) => {
     setEditing(site)
     setDialogSession((n) => n + 1)
@@ -304,6 +349,7 @@ export function SitesPage() {
                           'never checked'
                         )}
                       </p>
+                      {isPaused(site) ? <SitePause site={site} isAdmin={isAdmin} className="mt-1.5" /> : null}
                     </div>
                     <SiteActions
                       site={site}
@@ -328,53 +374,62 @@ export function SitesPage() {
                 </THead>
                 <TBody>
                   {rows.map((site) => (
-                    <TR key={site.id}>
-                      <TD className="font-medium text-ink">{site.name}</TD>
-                      <TD>
-                        <a
-                          href={site.base_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          title={site.base_url}
-                          className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
-                        >
-                          {site.base_url}
-                        </a>
-                      </TD>
-                      <TD>
-                        <span className="flex flex-wrap gap-1">
-                          {site.category_ids.length === 0 ? (
-                            <span className="text-xs text-ink-3">not linked</span>
-                          ) : (
-                            site.category_ids.map((cid) => {
-                              const category = categoryById(cid)
-                              return category ? (
-                                <Link key={cid} to={`/categories/${category.slug}`} className="rounded-sm">
-                                  <Badge variant="muted" className="transition-colors hover:border-lume/40 hover:text-lume">
-                                    {category.name}
+                    <Fragment key={site.id}>
+                      <TR className={cn(isPaused(site) && 'border-b-0')}>
+                        <TD className="font-medium text-ink">{site.name}</TD>
+                        <TD>
+                          <a
+                            href={site.base_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            title={site.base_url}
+                            className="inline-block max-w-[40vw] truncate align-middle text-xs text-lume hover:underline"
+                          >
+                            {site.base_url}
+                          </a>
+                        </TD>
+                        <TD>
+                          <span className="flex flex-wrap gap-1">
+                            {site.category_ids.length === 0 ? (
+                              <span className="text-xs text-ink-3">not linked</span>
+                            ) : (
+                              site.category_ids.map((cid) => {
+                                const category = categoryById(cid)
+                                return category ? (
+                                  <Link key={cid} to={`/categories/${category.slug}`} className="rounded-sm">
+                                    <Badge variant="muted" className="transition-colors hover:border-lume/40 hover:text-lume">
+                                      {category.name}
+                                    </Badge>
+                                  </Link>
+                                ) : (
+                                  <Badge key={cid} variant="muted">
+                                    …
                                   </Badge>
-                                </Link>
-                              ) : (
-                                <Badge key={cid} variant="muted">
-                                  …
-                                </Badge>
-                              )
-                            })
-                          )}
-                        </span>
-                      </TD>
-                      <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
-                      <TD className="text-xs whitespace-nowrap text-ink-3"><RelativeTime iso={site.last_checked_at} /></TD>
-                      <TD>
-                        <SiteActions
-                          site={site}
-                          categoryName={categoryName}
-                          isAdmin={isAdmin}
-                          onEdit={() => openEdit(site)}
-                          onDelete={() => openDelete(site)}
-                        />
-                      </TD>
-                    </TR>
+                                )
+                              })
+                            )}
+                          </span>
+                        </TD>
+                        <TD className="text-right font-mono text-ink-2 tnum">{site.listing_count}</TD>
+                        <TD className="text-xs whitespace-nowrap text-ink-3"><RelativeTime iso={site.last_checked_at} /></TD>
+                        <TD>
+                          <SiteActions
+                            site={site}
+                            categoryName={categoryName}
+                            isAdmin={isAdmin}
+                            onEdit={() => openEdit(site)}
+                            onDelete={() => openDelete(site)}
+                          />
+                        </TD>
+                      </TR>
+                      {isPaused(site) ? (
+                        <TR>
+                          <TD colSpan={6} className="pt-0 pb-2.5">
+                            <SitePause site={site} isAdmin={isAdmin} />
+                          </TD>
+                        </TR>
+                      ) : null}
+                    </Fragment>
                   ))}
                 </TBody>
               </Table>
