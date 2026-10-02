@@ -68,6 +68,11 @@ _UNIQUE_VIOLATION = "23505"
 # --- serializers --------------------------------------------------------------
 
 
+async def _watcher_count(db: AsyncSession, item_id: int) -> int:
+    """How many users watch the item — one watch each (uq_item_user)."""
+    return await db.scalar(select(func.count(Watches.id)).where(Watches.item_id == item_id))
+
+
 async def build_item_summary(
     watch: Watches, item: Items, category: Categories, db: AsyncSession, range: str = "30d"
 ) -> ItemSummary:
@@ -101,6 +106,7 @@ async def build_item_summary(
         site_ids=list(site_ids) or None,
         **await item_rollups(db, watch.user_id, item, watch, range),
         created_at=item.created_at.isoformat(),
+        watcher_count=await _watcher_count(db, item.id),
         watch=Watch(id=watch.id, notify=watch.notify, target_price=target_price),
     )
 
@@ -617,10 +623,7 @@ async def _rename(
     to move to, so on a shared item only an admin may make it."""
     if name == item.name:
         return item
-    owns_name = (
-        is_admin
-        or await db.scalar(select(func.count(Watches.id)).where(Watches.item_id == item.id)) == 1
-    )
+    owns_name = is_admin or await _watcher_count(db, item.id) == 1
     named = await _item_named(db, item.category_id, name)
     if named is None and owns_name:
         item.name = name

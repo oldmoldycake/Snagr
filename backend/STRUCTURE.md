@@ -133,7 +133,8 @@ Find any `endpoints.ts` function here:
    A name is unique per category ignoring case (`uq_items_category_name`), and
    renaming an item other people watch moves only the caller's watch (with its
    listings, jobs and scans) to the item of the new name — unless the caller
-   is an admin — so a PATCH can answer under a different id.
+   is an admin — so a PATCH can answer under a different id. `watcher_count`
+   on every item tells the edit dialog which of the two a rename will be.
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
    `spark`, `pct_change_range`, `item_count`, `listing_count`, `last_checked_at`, the

@@ -149,6 +149,7 @@ export function toItemSummary(item: MockItem, range: TimeRange = '30d'): ItemSum
     pct_change_range: pct,
     last_checked_at: iso(lastChecked),
     created_at: iso(item.created_at)!,
+    watcher_count: store.watches.filter((w) => w.item_id === item.id).length,
     watch: { id: watch.id, notify: watch.notify, target_price: cents(watch.target_cents) },
     spark: sparkline(item.id, rangeMs).map((c) => (c == null ? null : (c / 100).toFixed(2))),
   }

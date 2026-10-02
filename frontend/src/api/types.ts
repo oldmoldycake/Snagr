@@ -219,6 +219,9 @@ export interface ItemSummary {
   pct_change_range: string | null
   last_checked_at: string | null
   created_at: string
+  /** how many users track this item, the caller included. Above 1 the name is
+   *  not the caller's alone: see ItemUpdateRequest.name */
+  watcher_count: number
   watch: Watch
   /** ≤30 bucketed best-price points over the requested range; null = no data in bucket */
   spark: (string | null)[]

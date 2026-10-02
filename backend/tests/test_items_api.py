@@ -1364,6 +1364,21 @@ async def test_recasing_a_shared_item_is_for_an_admin(client, db_session):
     assert (await client.get(f"/api/items/{item_id}")).json()["name"] == "Alpha"
 
 
+async def test_an_item_says_how_many_watch_it(client, db_session):
+    """The edit dialog reads it to say whether a rename reaches anyone else."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        shared = await sc.item("Alpha")
+        await sc.watch(shared)
+        await sc.watch(shared, user=await sc.other_user())
+        await sc.watch(await sc.item("Beta"))
+
+    listed = (await client.get("/api/items")).json()["data"]
+
+    assert {row["name"]: row["watcher_count"] for row in listed} == {"Alpha": 2, "Beta": 1}
+    assert (await client.get(f"/api/items/{shared.id}")).json()["watcher_count"] == 2
+
+
 # --- the last watcher leaving ----------------------------------------------------
 
 
