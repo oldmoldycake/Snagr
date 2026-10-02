@@ -80,7 +80,8 @@ function SiteDialog({
         <DialogHeader>
           <DialogTitle>{site ? 'Edit site' : 'Add site'}</DialogTitle>
           <DialogDescription>
-            Snagr searches this site for items in the categories it's linked to.
+            Snagr searches this site for items in the categories it's linked to.{' '}
+            {site ? 'Changes apply for everyone on this instance.' : 'Added sites are shared with everyone on this instance.'}
           </DialogDescription>
         </DialogHeader>
         <form
