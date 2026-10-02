@@ -200,8 +200,6 @@ export function DashboardPage() {
           category={renameDialog.category}
           open={renameDialog.open}
           onOpenChange={(open) => setRenameDialog((prev) => prev && { ...prev, open })}
-          // renaming from a shelf stays on the dashboard
-          onSaved={() => undefined}
         />
       ) : null}
     </>

@@ -95,7 +95,7 @@ values, not CSS vars — change both together). Dark-only, by design.
   sentence that names the items at target and the closest one still above, plus one line of
   tonight's totals (counts only; every other per-item fact appears once, on the shelves); `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into one log-scale price rail
-  per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
+  per listing (cheapest left → range-high right, a ⌖ notch on each row, a labeled price
   ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.
 - **Dialogs are field cards** (`components/ui/dialog.tsx`): `DialogHeader` (optional

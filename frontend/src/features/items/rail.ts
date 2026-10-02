@@ -2,15 +2,16 @@ import type { Listing } from '@/api/types'
 import { toCents } from '@/lib/money'
 
 /**
- * The listings board's price rail: range-high on the left → cheapest on the
- * right, on a log scale. Log because listing prices spread multiplicatively —
+ * The listings board's price rail: cheapest on the left → range-high on the
+ * right, so a price that rises moves right, as it climbs on the charts above
+ * the board. On a log scale, because listing prices spread multiplicatively —
  * a linear rail lets a $40–$65 tail own the width and crush the under-target
  * cluster (item 3: thirteen $6–$10 listings in 6% of the rail) into one spot.
  */
 export interface Rail {
   place: (cents: number) => { pct: number; clamp: '«' | '»' | null }
   targetPct: number | null
-  /** Round prices inside the domain, cheapest last; `thin` ones lose their label when crowded. */
+  /** Round prices inside the domain, cheapest first; `thin` ones lose their label when crowded. */
   ticks: { cents: number; thin: boolean }[]
 }
 
@@ -53,18 +54,18 @@ export function makeRail(
   const hi = lg(Math.max(...cents))
   const lo = lg(Math.min(...cents))
   const pad = Math.max((hi - lo) * 0.04, Math.log(1.02))
-  const left = hi + pad
-  const right = lo - pad
+  const left = lo - pad
+  const right = hi + pad
   const place = (c: number) => {
-    const raw = ((left - lg(c)) / (left - right)) * 100
+    const raw = ((lg(c) - left) / (right - left)) * 100
     return {
       pct: Math.max(0, Math.min(100, raw)),
       clamp: raw < 0 ? ('«' as const) : raw > 100 ? ('»' as const) : null,
     }
   }
 
-  const loC = Math.exp(right)
-  const hiC = Math.exp(left)
+  const loC = Math.exp(left)
+  const hiC = Math.exp(right)
   let ticks: Rail['ticks'] = []
   for (let d = Math.floor(Math.log10(loC)); d <= Math.ceil(Math.log10(hiC)); d++) {
     for (const m of [1, 2, 5]) {
@@ -79,7 +80,6 @@ export function makeRail(
     ticks = []
     for (let k = Math.ceil(loC / step); k * step <= hiC; k++) ticks.push({ cents: k * step, thin: k % 2 === 1 })
   }
-  ticks.sort((a, b) => b.cents - a.cents)
 
   return { place, targetPct: targetC != null && targetC > 0 ? place(targetC).pct : null, ticks }
 }
@@ -125,7 +125,7 @@ export function labelFlipsLeft(
 /**
  * The axis strip's top line: the ⌖ label centres on its notch unless that
  * would spill out of the column, then pins to the edge it would cross. The
- * drift caption keeps the left end unless ⌖ covers it (a target pricier than
+ * drift caption keeps the left end unless ⌖ covers it (a target cheaper than
  * every listing sits there), then moves to the right end, or drops out when
  * the two can't share the line. Before the rail is measured, ⌖ right-anchors
  * past `fallbackRightPct` and the caption stays put.
