@@ -4,6 +4,7 @@ import { formatClock } from '@/lib/time'
 import {
   behindSchedule,
   dueState,
+  foldQueue,
   groupByHour,
   nextCheckText,
   pausedSiteOf,
@@ -24,6 +25,29 @@ function job(id: number, finished: Date, status: Job['status'] = 'done'): Job {
     created_at: finished.toISOString(),
   } as Job
 }
+
+describe('foldQueue', () => {
+  // queued job ids, soonest first as the API sends them
+  const queue = (n: number) => Array.from({ length: n }, (_, i) => i + 1)
+
+  it('shows the next three, soonest first, and folds the rest', () => {
+    expect(foldQueue(queue(8), false)).toEqual({ shown: [1, 2, 3], folded: 5 })
+  })
+
+  it('shows the whole queue once opened, still counting the fold', () => {
+    expect(foldQueue(queue(8), true)).toEqual({ shown: queue(8), folded: 5 })
+  })
+
+  it('never folds away a single row', () => {
+    expect(foldQueue(queue(4), false)).toEqual({ shown: [1, 2, 3, 4], folded: 0 })
+    expect(foldQueue(queue(5), false)).toEqual({ shown: [1, 2, 3], folded: 2 })
+  })
+
+  it('has nothing to fold in a short or empty queue', () => {
+    expect(foldQueue(queue(2), false)).toEqual({ shown: [1, 2], folded: 0 })
+    expect(foldQueue([], false)).toEqual({ shown: [], folded: 0 })
+  })
+})
 
 describe('groupByHour', () => {
   it('starts a group each time the hour changes, keeping arrival order', () => {
