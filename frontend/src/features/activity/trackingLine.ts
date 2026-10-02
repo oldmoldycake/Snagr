@@ -34,8 +34,9 @@ export function trackingLine(detail: ItemDetail, tracked: number, huntingOff: bo
   const open = detail.max_listings - tracked
   const parts = [count]
   if (open <= 0) {
-    // a full watch is never hunted on its own; a person's hunt is a swap
-    parts.push('Hunt for better swaps out the weakest')
+    // a full watch is never hunted on its own; what Hunt for better does is
+    // said under the button
+    parts.push('automatic hunts wait until you stop tracking one')
   } else if (!hunt.enabled) {
     // a switched-off watch has nothing queued on its own, so there is no "next"
     parts.push('hunting off — only when you press Hunt now')

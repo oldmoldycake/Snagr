@@ -27,6 +27,8 @@
   --color-ink: #e9f1e9;
   --color-ink-2: #a6b5a7;
   --color-ink-3: #8f9f94; /* ≥4.5:1 up to overlay, the lightest surface it sits on */
+  /* a field's placeholder: under ink-3 so it never passes for a typed value; ≥4.5:1 on well, every field's ground */
+  --color-ink-placeholder: #748279;
 
   /* Identity — "lume", the illuminated reticle. Active/live/primary, never semantic. */
   --color-lume: #ffb454;

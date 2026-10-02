@@ -219,6 +219,9 @@ export interface ItemSummary {
   pct_change_range: string | null
   last_checked_at: string | null
   created_at: string
+  /** how many users track this item, the caller included. Above 1 the name is
+   *  not the caller's alone: see ItemUpdateRequest.name */
+  watcher_count: number
   watch: Watch
   /** ≤30 bucketed best-price points over the requested range; null = no data in bucket */
   spark: (string | null)[]
@@ -809,6 +812,20 @@ export interface NotificationChannelCreateRequest {
   events?: NotificationEvent[] | null
   /** default true */
   enabled?: boolean
+}
+
+/**
+ * POST /api/me/channels/test body — a destination tried before it is saved, so
+ * only the fields that decide where the test goes. 422 validation_error
+ * (+fields) and 422 no_server exactly as create answers them; 502
+ * channel_failed when the destination can't be reached. A webhook's signing
+ * secret is created with the channel, so a webhook test sent from here is
+ * signed with a one-off key the receiver can't verify.
+ */
+export interface NotificationChannelTestRequest {
+  kind: ChannelKind
+  url?: string
+  topic?: string
 }
 
 /** kind is immutable — delete and recreate to change a channel's kind. */

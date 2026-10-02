@@ -54,15 +54,15 @@ describe('trackingLine', () => {
     )
   })
 
-  it('points a full watch at Hunt for better, and judges its last hunt by that', () => {
+  it('says a full watch waits for room, and judges its last hunt by that', () => {
     expect(trackingLine(detail({ last_at: at(-60), last_result: 'nothing' }), 5, false)).toBe(
-      'tracking 5 of 5 listings · Hunt for better swaps out the weakest · last hunt 1h ago, nothing better',
+      'tracking 5 of 5 listings · automatic hunts wait until you stop tracking one · last hunt 1h ago, nothing better',
     )
   })
 
   it('treats a watch over its limit as full', () => {
     expect(trackingLine(detail({ next_at: at(12) }), 6, false)).toBe(
-      'tracking 6 of 5 listings · 1 over the limit · Hunt for better swaps out the weakest',
+      'tracking 6 of 5 listings · 1 over the limit · automatic hunts wait until you stop tracking one',
     )
   })
 

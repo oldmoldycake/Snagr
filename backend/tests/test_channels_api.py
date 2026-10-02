@@ -73,9 +73,16 @@ async def test_channels_require_a_session(client):
     res = await client.post("/api/me/channels", json={"kind": "discord"}, headers=CSRF)
     assert res.status_code == 401
 
+    res = await client.post("/api/me/channels/test", json={"kind": "discord"}, headers=CSRF)
+    assert res.status_code == 401
+
 
 async def test_channel_mutations_require_the_csrf_header(client):
     res = await client.post("/api/me/channels", json={"kind": "discord"})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "csrf"
+
+    res = await client.post("/api/me/channels/test", json={"kind": "discord"})
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "csrf"
 
@@ -430,6 +437,95 @@ async def test_a_url_httpx_cannot_parse_is_not_a_500(client, db_session, outboun
     channel_id = await _saved_before_the_guard(db_session, user_id, "https://example.com/a\x01b")
 
     res = await client.post(f"/api/me/channels/{channel_id}/test", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert outbound == []
+
+
+# --- test sends before saving -------------------------------------------------
+
+
+async def _test_unsaved(client, **body):
+    return await client.post("/api/me/channels/test", json=body, headers=CSRF)
+
+
+async def test_an_unsaved_channel_is_tested_without_saving_it(client, ntfy_server, outbound):
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="ntfy", topic=" my-topic ")
+    assert res.status_code == 204, res.text
+    (request,) = outbound
+    assert str(request.url) == "https://ntfy.test/my-topic"
+    assert request.headers["Title"] == "Snagr"
+    assert (await client.get("/api/me/channels")).json() == {"data": []}
+
+
+async def test_an_unsaved_webhook_test_carries_every_delivery_header(client, outbound):
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="webhook", url="https://example.com/hook")
+    assert res.status_code == 204, res.text
+    (request,) = outbound
+    assert str(request.url) == "https://example.com/hook"
+    assert request.headers["X-Snagr-Event"] == "test"
+    assert request.headers["X-Snagr-Delivery"] == "test"
+    assert request.headers["X-Snagr-Signature"].startswith("sha256=")
+
+
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"kind": "carrier-pigeon"}, "kind"),
+        ({"kind": "ntfy"}, "topic"),
+        ({"kind": "ntfy", "topic": "a/../v1/account"}, "topic"),
+        ({"kind": "webhook"}, "url"),
+        ({"kind": "webhook", "url": "ftp://nope"}, "url"),
+        ({"kind": "discord", "url": "https://example.com/hook"}, "url"),
+        ({"kind": "webhook", "url": "http://vision:8100/rescore"}, "url"),
+        ({"kind": "webhook", "url": "http://127.1/"}, "url"),
+        ({"kind": "webhook", "url": "http://169.254.169.254/latest/meta-data/"}, "url"),
+        ({"kind": "webhook", "url": "https://user:pass@example.com/hook"}, "url"),
+    ],
+)
+async def test_an_unsaved_test_refuses_what_create_would(
+    client, ntfy_server, outbound, body, field
+):
+    await _sign_in(client)
+    res = await _test_unsaved(client, **body)
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert field in error["fields"]
+    assert outbound == []
+
+
+async def test_an_unsaved_ntfy_test_without_a_server_is_no_server(client, monkeypatch, outbound):
+    monkeypatch.setattr(settings, "NTFY_SERVER_URL", None)
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="ntfy", topic="t")
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "no_server"
+    assert outbound == []
+
+
+async def test_an_unsaved_test_the_destination_refuses_is_channel_failed(client, monkeypatch):
+    await _sign_in(client)
+    real_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # what Discord answers a webhook URL with a mistyped token
+        return httpx.Response(401)
+
+    def factory(**kwargs):
+        return real_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(notifications_service.httpx, "AsyncClient", factory)
+    res = await _test_unsaved(client, kind="discord", url="https://discord.com/api/webhooks/1/t")
+    assert res.status_code == 502
+    assert res.json()["error"]["code"] == "channel_failed"
+
+
+async def test_an_unsaved_url_httpx_cannot_parse_is_not_a_500(client, outbound):
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="webhook", url="https://example.com/a\x01b")
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "validation_error"
     assert outbound == []

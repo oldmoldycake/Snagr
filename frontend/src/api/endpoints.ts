@@ -33,6 +33,7 @@ import type {
   NotificationChannel,
   NotificationChannelCreateRequest,
   NotificationChannelCreated,
+  NotificationChannelTestRequest,
   NotificationChannelUpdateRequest,
   Paginated,
   PasswordChangeRequest,
@@ -103,6 +104,10 @@ export const deleteChannel = (id: number) =>
 /** Send a test notification through a channel; 502 channel_failed when the destination is unreachable. */
 export const testChannel = (id: number) =>
   api<void>(`/api/me/channels/${id}/test`, { method: 'POST' })
+
+/** Send a test notification to a channel before it's saved: refused as createChannel would refuse it, 502 channel_failed when unreachable. */
+export const testNewChannel = (body: NotificationChannelTestRequest) =>
+  api<void>('/api/me/channels/test', { method: 'POST', body })
 
 /** The caller's API tokens, without their raw values. */
 export const listTokens = () => api<{ data: ApiToken[] }>('/api/me/tokens')
