@@ -73,7 +73,7 @@ Every Python suite redirects `DATABASE_URL` to a throwaway database on the same 
 
 There is no separate API spec — the frontend defines the exact contract the backend must satisfy:
 
-- `frontend/src/api/endpoints.ts` — the route list: 58 functions covering 58 of the backend's 63 REST routes. The other five are never `fetch`ed — `/api/auth/refresh` (`client.ts`), `/api/events` (`EventSource`), `/api/vision/images/{key}` (`<img src>`), and the OIDC pair `/api/auth/oidc/login` + `/api/auth/oidc/callback` (plain browser navigation). `POST /api/mcp` sits outside the REST surface entirely (bearer-only, for agents).
+- `frontend/src/api/endpoints.ts` — the route list: 59 functions covering 59 of the backend's 64 REST routes. The other five are never `fetch`ed — `/api/auth/refresh` (`client.ts`), `/api/events` (`EventSource`), `/api/vision/images/{key}` (`<img src>`), and the OIDC pair `/api/auth/oidc/login` + `/api/auth/oidc/callback` (plain browser navigation). `POST /api/mcp` sits outside the REST surface entirely (bearer-only, for agents).
 - `frontend/src/api/types.ts` — exact request/response JSON shapes; Pydantic schemas in `backend/app/schemas/` mirror these field-for-field.
 - `frontend/src/mocks/handlers.ts` — the behavioral oracle: status codes and `error.code` for every case. When in doubt about behavior, match what the mock does.
 
