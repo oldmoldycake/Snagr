@@ -363,8 +363,8 @@ export function ApiSettingsPage() {
   })
 
   return (
-    <div className="max-w-2xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="max-w-3xl space-y-5">
+      <div className="flex flex-col items-start gap-3">
         <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Settings</h1>
         <SettingsTabs />
       </div>
