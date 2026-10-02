@@ -27,6 +27,7 @@ import {
   DropdownMenuMoreTrigger,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -151,6 +152,7 @@ export function AdminUsersPage() {
   usePageTitle('Users · Settings')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)
+  const [revoking, setRevoking] = useState<Invite | null>(null)
   const queryClient = useQueryClient()
   const { data: me } = useSession()
 
@@ -173,7 +175,11 @@ export function AdminUsersPage() {
 
   const revoke = useMutation({
     mutationFn: (id: number) => revokeInvite(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: qk.adminInvites }),
+    meta: { inlineError: true },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: qk.adminInvites })
+      setRevoking(null)
+    },
   })
 
   return (
@@ -273,7 +279,19 @@ export function AdminUsersPage() {
           </Button>
         </CardHeader>
         <CardBody className="px-0 py-1">
-          {(invites.data?.data.length ?? 0) === 0 ? (
+          {invites.isPending ? (
+            <div className="space-y-2 p-4">
+              <Skeleton className="h-6" />
+            </div>
+          ) : invites.isError ? (
+            <ErrorState
+              className="m-4 border-0 py-6"
+              title="Couldn't load invites"
+              error={invites.error}
+              onRetry={() => void invites.refetch()}
+              retrying={invites.isFetching}
+            />
+          ) : invites.data.data.length === 0 ? (
             <p className="px-4 pb-3 text-[14px] text-ink-3">No pending invites.</p>
           ) : (
             <Table>
@@ -285,7 +303,7 @@ export function AdminUsersPage() {
                 </TR>
               </THead>
               <TBody>
-                {invites.data!.data.map((invite) => (
+                {invites.data.data.map((invite) => (
                   <TR key={invite.id}>
                     <TD className="text-ink-2">{invite.email ?? <span className="text-ink-3">anyone with the link</span>}</TD>
                     <TD className="text-xs whitespace-nowrap text-ink-3">
@@ -303,7 +321,7 @@ export function AdminUsersPage() {
                         >
                           <Copy /> Copy link
                         </Button>
-                        <Button variant="ghost" size="sm" className="text-rise" onClick={() => revoke.mutate(invite.id)}>
+                        <Button variant="ghost" size="sm" className="text-rise" onClick={() => setRevoking(invite)}>
                           Revoke
                         </Button>
                       </div>
@@ -335,6 +353,22 @@ export function AdminUsersPage() {
         error={removeUser.error instanceof ApiError ? removeUser.error.message : null}
         onConfirm={() => {
           if (deleting) removeUser.mutate(deleting.id)
+        }}
+      />
+      <ConfirmDialog
+        open={revoking != null}
+        onOpenChange={(open) => {
+          if (open) return
+          setRevoking(null)
+          revoke.reset()
+        }}
+        title="Revoke invite"
+        description={`${revoking?.email ? `The invite for ${revoking.email}` : 'This invite link'} stops working immediately. This can't be undone.`}
+        confirmLabel="Revoke"
+        pending={revoke.isPending}
+        error={revoke.error instanceof ApiError ? revoke.error.message : null}
+        onConfirm={() => {
+          if (revoking) revoke.mutate(revoking.id)
         }}
       />
     </div>
