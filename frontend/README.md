@@ -106,7 +106,10 @@ values, not CSS vars — change both together). Dark-only, by design.
   Enter and exit are keyframe animations (`animate-dialog-in/out`, `animate-sheet-up/down`)
   because Radix waits for `animationend` before unmounting; keep a dialog mounted after
   close rather than rendering it conditionally, or the exit never plays. A two-step dialog
-  shows `StepPips` in its eyebrow (a finished step is ✓ in ink-2, never drop-green).
+  shows `StepPips` in its eyebrow (a finished step is ✓ in ink-2, never drop-green). A
+  dialog showing a secret that is shown only once (a new API token, a webhook's signing
+  secret) passes `dismissible={false}` while it's on screen, so only **I've saved it**
+  closes it.
 - **Sites are picked, not typed**: every place a category's sites are chosen (New
   category, Edit sites, Edit category) uses `features/sites/SitePicker`, a checklist whose
   last row adds a site inline and picks it (`siteUrl.ts` normalizes the address and catches

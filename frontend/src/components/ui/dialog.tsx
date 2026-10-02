@@ -17,14 +17,21 @@ export const DialogClose = DialogPrimitive.Close
  * DialogFooter: only the body scrolls, so the footer's buttons stay in view.
  * Anchored near the top rather than centred, so a growing body only pushes
  * downward; under `sm` it becomes a bottom sheet.
+ *
+ * Pass `dismissible={false}` while it shows something that can't be shown
+ * again, like a new API token: Escape and clicks outside then do nothing and
+ * the ✕ is hidden, so the only way out is the dialog's own button.
  */
 export function DialogContent({
   className,
   children,
+  dismissible = true,
   onOpenAutoFocus,
   onCloseAutoFocus,
+  onEscapeKeyDown,
+  onInteractOutside,
   ...props
-}: ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
+}: ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { dismissible?: boolean }) {
   // Radix only returns focus to a DialogTrigger, but most dialogs here are
   // opened from state by a plain button or a menu item. Remember what had focus
   // on open and hand it back on close. A menu item unmounts with its menu, so
@@ -58,16 +65,26 @@ export function DialogContent({
           event.preventDefault()
           returnFocusTo.current.focus()
         }}
+        onEscapeKeyDown={(event) => {
+          onEscapeKeyDown?.(event)
+          if (!dismissible) event.preventDefault()
+        }}
+        onInteractOutside={(event) => {
+          onInteractOutside?.(event)
+          if (!dismissible) event.preventDefault()
+        }}
         {...props}
       >
         <div aria-hidden className="mx-auto mt-2 h-1 w-8 rounded-full bg-hairline-strong sm:hidden" />
         {children}
-        <DialogPrimitive.Close
-          className="tap-target absolute top-3.5 right-3.5 grid size-7 place-items-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
-          aria-label="Close"
-        >
-          <X className="size-4" />
-        </DialogPrimitive.Close>
+        {dismissible ? (
+          <DialogPrimitive.Close
+            className="tap-target absolute top-3.5 right-3.5 grid size-7 place-items-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
+            aria-label="Close"
+          >
+            <X className="size-4" />
+          </DialogPrimitive.Close>
+        ) : null}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   )

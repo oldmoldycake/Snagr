@@ -118,7 +118,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent>
+      <DialogContent dismissible={secret == null}>
         <DialogHeader>
           <DialogTitle>Add a channel</DialogTitle>
           <DialogDescription>
@@ -144,7 +144,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             </DialogBody>
             <DialogFooter>
               <Button variant="primary" onClick={() => close(false)}>
-                Done
+                I've saved it
               </Button>
             </DialogFooter>
           </>
