@@ -73,7 +73,7 @@ Every Python suite redirects `DATABASE_URL` to a throwaway database on the same 
 
 There is no separate API spec — the frontend defines the exact contract the backend must satisfy:
 
-- `frontend/src/api/endpoints.ts` — the route list: 59 functions covering 59 of the backend's 64 REST routes. The other five are never `fetch`ed — `/api/auth/refresh` (`client.ts`), `/api/events` (`EventSource`), `/api/vision/images/{key}` (`<img src>`), and the OIDC pair `/api/auth/oidc/login` + `/api/auth/oidc/callback` (plain browser navigation). `POST /api/mcp` sits outside the REST surface entirely (bearer-only, for agents).
+- `frontend/src/api/endpoints.ts` — the route list: 62 functions covering 62 of the backend's 67 REST routes. The other five are never `fetch`ed — `/api/auth/refresh` (`client.ts`), `/api/events` (`EventSource`), `/api/vision/images/{key}` (`<img src>`), and the OIDC pair `/api/auth/oidc/login` + `/api/auth/oidc/callback` (plain browser navigation). `POST /api/mcp` sits outside the REST surface entirely (bearer-only, for agents).
 - `frontend/src/api/types.ts` — exact request/response JSON shapes; Pydantic schemas in `backend/app/schemas/` mirror these field-for-field.
 - `frontend/src/mocks/handlers.ts` — the behavioral oracle: status codes and `error.code` for every case. When in doubt about behavior, match what the mock does.
 
@@ -98,7 +98,7 @@ Invariants that hold everywhere (details in STRUCTURE.md → Conventions):
 
 ## Schema ownership
 
-The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`, a linear chain currently ending at 022). The agent (`agent/database.py`) and the vision sidecar (`vision/db.py`) each keep a **column-compatible subset** of the same ORM models — don't restructure them, and never run `Base.metadata.create_all()` from either against the live DB. Schema changes go through a new Alembic revision (and, if it adds triggers, the two conftests — see Testing model). `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema. Migration 009 needs the **pgvector** extension and prechecks `pg_extension`, failing with instructions rather than running `CREATE EXTENSION` itself (superuser-only).
+The **backend owns the canonical schema and all Alembic migrations** (`backend/app/models.py` + `backend/migrations/`, a linear chain currently ending at 023). The agent (`agent/database.py`) and the vision sidecar (`vision/db.py`) each keep a **column-compatible subset** of the same ORM models — don't restructure them, and never run `Base.metadata.create_all()` from either against the live DB. Schema changes go through a new Alembic revision (and, if it adds triggers, the two conftests — see Testing model). `# + api` comments in `models.py` mark columns the backend added on top of the agent's original schema. Migration 009 needs the **pgvector** extension and prechecks `pg_extension`, failing with instructions rather than running `CREATE EXTENSION` itself (superuser-only).
 
 ## The agent in one screen
 

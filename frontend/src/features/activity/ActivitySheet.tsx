@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDown, ExternalLink } from 'lucide-react'
@@ -27,7 +27,10 @@ export function ActivitySheet() {
     enabled: panelOpen,
   })
 
-  useEffect(() => {
+  // Before paint, not after: checks arrive in bursts, and a scroll event from
+  // one line's follow that lands after the next line renders reads as the
+  // reader scrolling up, which would switch following off.
+  useLayoutEffect(() => {
     if (following && logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
@@ -65,11 +68,11 @@ export function ActivitySheet() {
           </SheetDescription>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={logRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
           <div className="p-4">
             <LiveHunts onOpen={() => setPanelOpen(false)} />
           </div>
-          <div ref={logRef} onScroll={onScroll} className="relative bg-well px-4 py-3">
+          <div className="relative bg-well px-4 py-3">
             {checks.length === 0 ? (
               <p className="font-mono text-xs text-ink-3">
                 Nothing checked while this page has been open.

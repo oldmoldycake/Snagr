@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, JobEvent } from '@/api/types'
-import { failureDetail, huntReceipt, runningWork } from './lines'
+import { checkReceipt, failureDetail, huntReceipt, runningWork } from './lines'
 
 function job(kind: Job['kind'], status: Job['status'] = 'running'): Job {
   return { kind, status } as Job
@@ -91,5 +91,15 @@ describe('failureDetail', () => {
   it('is null when nothing was kept', () => {
     expect(failureDetail([])).toBeNull()
     expect(failureDetail([event(1, 'error')])).toBeNull()
+  })
+})
+
+describe('checkReceipt', () => {
+  it('counts the checks it queued', () => {
+    expect(checkReceipt(3)).toBe('Queued 3')
+  })
+
+  it('says when there was nothing to check rather than queuing none', () => {
+    expect(checkReceipt(0)).toBe('Nothing to check')
   })
 })
