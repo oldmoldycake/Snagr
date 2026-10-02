@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { isNotFound } from '@/api/client'
-import { cancelJob, getJob, getJobEvents } from '@/api/endpoints'
+import { cancelJob, getJob, getJobEvents, listUsers } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { Job, JobEvent } from '@/api/types'
+import type { AdminUser, Job, JobEvent, JobKind, User } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
@@ -21,6 +21,13 @@ import { eventLine, resultText } from './lines'
 import { useJobs } from './JobsProvider'
 
 const LIVE_POLL_MS = 4000
+
+/** What the breadcrumb calls each kind of job. */
+const KIND_NAMES: Record<JobKind, string> = {
+  hunt: 'Hunt',
+  ground: 'Market price',
+  recheck: 'Check',
+}
 
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
   return (
@@ -58,6 +65,14 @@ export function JobPage() {
     queryKey: qk.jobEvents(jobId),
     queryFn: () => getJobEvents(jobId),
     enabled: !isLive,
+  })
+
+  // an admin sees everyone's jobs, and one someone else asked for names them
+  const askerId = job.data?.user_id
+  const users = useQuery({
+    queryKey: qk.adminUsers,
+    queryFn: listUsers,
+    enabled: me?.role === 'admin' && askerId != null && askerId !== me.id,
   })
 
   usePageTitle(job.data ? title(job.data, isLive) : isNotFound(job.error) ? 'Job not found' : undefined)
@@ -110,20 +125,23 @@ export function JobPage() {
   const detail = job.data
   if (detail.kind === 'recheck') {
     return (
-      <EmptyState
-        title="Checks have no page"
-        description="A price check's whole output is the price it read, which is on the item."
-        action={
-          detail.item_id ? (
-            <Link
-              to={`/items/${detail.item_id}`}
-              className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
-            >
-              Open the item →
-            </Link>
-          ) : undefined
-        }
-      />
+      <div className="space-y-5">
+        <Breadcrumb job={detail} />
+        <EmptyState
+          title="Checks have no page"
+          description="A price check's whole output is the price it read, which is on the item."
+          action={
+            detail.item_id ? (
+              <Link
+                to={`/items/${detail.item_id}`}
+                className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+              >
+                Open the item →
+              </Link>
+            ) : undefined
+          }
+        />
+      </div>
     )
   }
 
@@ -133,6 +151,7 @@ export function JobPage() {
 
   return (
     <div className="space-y-5">
+      <Breadcrumb job={detail} />
       <div className="flex items-center gap-4">
         {isLive ? <Radar size={44} glyph /> : null}
         <div className="min-w-0 flex-1">
@@ -141,7 +160,7 @@ export function JobPage() {
             <span aria-hidden>·</span>
             <span className="tnum">{formatDateTime(detail.created_at)}</span>
             <span aria-hidden>·</span>
-            <span>{detail.user_id === null ? 'system' : 'you'}</span>
+            <span>{askedBy(detail, me, users.data?.data)}</span>
           </p>
           <h1
             className={cn(
@@ -149,7 +168,7 @@ export function JobPage() {
               isLive ? 'text-lume' : 'text-ink',
             )}
           >
-            {title(detail, isLive)}
+            <Heading job={detail} isLive={isLive} />
           </h1>
           <p className="mt-0.5 font-mono text-xs text-ink-3 tnum">{subline(detail, isLive)}</p>
         </div>
@@ -185,10 +204,12 @@ export function JobPage() {
           />
         ) : events.length === 0 ? (
           <p className="py-2 font-mono text-xs text-ink-3">
-            {isLive ? 'Waiting for Snagr…' : 'Nothing was recorded for this job.'}
+            {isLive || detail.status === 'pending'
+              ? 'Waiting for Snagr…'
+              : 'Nothing was recorded for this job.'}
           </p>
         ) : (
-          <TerminalLog lines={events.map(eventLine)} />
+          <TerminalLog lines={events.map((event) => eventLine(event, detail.item_id))} />
         )}
       </div>
     </div>
@@ -222,11 +243,57 @@ function Tiles({ job }: { job: Job }) {
   )
 }
 
+/** Which job this is, and the way back to the rest of Snagr's work. */
+function Breadcrumb({ job }: { job: Job }) {
+  return (
+    <p className="font-mono text-[12px] tracking-[0.06em] text-ink-3 uppercase">
+      <Link to="/activity" className="hover:text-lume">
+        Activity
+      </Link>{' '}
+      / {KIND_NAMES[job.kind]} #{job.id}
+    </p>
+  )
+}
+
+/** What the job did, ahead of what it did it for; nothing for a hunt that
+ *  hasn't run or didn't finish. */
+function verb(job: Job, isLive: boolean): string | null {
+  if (job.kind === 'ground') return 'Market price'
+  if (isLive) return 'Hunting'
+  if (job.status === 'done') return 'Hunted'
+  return null
+}
+
+/** The tab title: the heading, as plain text. */
 function title(job: Job, isLive: boolean): string {
-  if (job.kind === 'ground') return `Market price — ${job.item_name}`
-  if (isLive) return `Hunting — ${job.label}`
-  if (job.status === 'done') return `Hunted — ${job.label}`
-  return job.label
+  const lead = verb(job, isLive)
+  if (lead == null) return job.label
+  return `${lead} — ${job.kind === 'ground' ? job.item_name : job.label}`
+}
+
+/** The heading, with the item linked to its page. */
+function Heading({ job, isLive }: { job: Job; isLive: boolean }) {
+  if (job.item_id == null) return title(job, isLive)
+  const lead = verb(job, isLive)
+  return (
+    <>
+      {lead ? `${lead} — ` : null}
+      <Link to={`/items/${job.item_id}`} className="hover:text-lume hover:underline">
+        {job.item_name}
+      </Link>
+      {job.kind === 'hunt' && job.site_name ? ` × ${job.site_name}` : null}
+    </>
+  )
+}
+
+/** Who asked for the job, as the status line says it. Anyone else's is
+ *  either another person's work in an admin's view, named by email once the
+ *  user list arrives, or a market price someone else watching the item set
+ *  going. */
+function askedBy(job: Job, me: User | undefined, users: AdminUser[] | undefined): string {
+  if (job.user_id === null) return 'system'
+  if (job.user_id === me?.id) return 'you'
+  return users?.find((user) => user.id === job.user_id)?.email ?? 'another user'
 }
 
 function subline(job: Job, isLive: boolean): string {

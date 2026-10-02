@@ -279,9 +279,11 @@ function QueuedRow({ job, wait }: { job: Job; wait: QueuedWait }) {
           <JobStatusDot status="pending" />
         )
       }
-      className="py-1.5"
     >
-      <p className="flex flex-wrap items-baseline gap-x-2 text-[14px]">
+      <Link
+        to={`/activity/${job.id}`}
+        className="flex flex-wrap items-baseline gap-x-2 rounded-md py-1.5 pl-2 -ml-2 text-[14px] hover:bg-raised"
+      >
         <span className={cn(blocked && 'ink-muted')}>
           <Who job={job} />
         </span>
@@ -294,7 +296,7 @@ function QueuedRow({ job, wait }: { job: Job; wait: QueuedWait }) {
           {job.kind === 'ground' ? '' : 'hunt · '}
           {queuedText(job, wait)}
         </span>
-      </p>
+      </Link>
     </Row>
   )
 }
