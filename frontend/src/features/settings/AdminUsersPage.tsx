@@ -508,7 +508,7 @@ export function AdminUsersPage() {
         title="Delete user"
         description={
           deleting
-            ? `This permanently deletes ${deleting.email}'s account. You can only delete users who have no items; for anyone else, deactivate the account instead.`
+            ? `This permanently deletes ${deleting.email}'s account and ${deleting.item_count} ${deleting.item_count === 1 ? 'item' : 'items'}, with the listings and price history Snagr found for them. Anyone else watching the same items keeps theirs. To lock the account but keep its data, deactivate it instead.`
             : ''
         }
         confirmLabel="Delete user"

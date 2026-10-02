@@ -65,7 +65,7 @@ export function toAdminUser(u: MockUser): AdminUser {
     role: u.role,
     is_active: u.is_active,
     created_at: iso(u.created_at)!,
-    item_count: store.items.length, // single-user mock: all items belong to the demo user
+    item_count: store.watches.filter((w) => w.user_id === u.id).length,
   }
 }
 
