@@ -12,24 +12,30 @@ import { useHuntNow } from './useHuntNow'
  * already live the button says so and opens the sheet instead of queueing
  * another — the queue would dedupe it anyway, and "Hunting…" is the honest
  * answer to "hunt now". With hunting switched off for the instance it is
- * disabled and says why: the backend would answer 409 hunting_disabled. It is
- * aria-disabled rather than disabled, because a disabled button takes no
+ * disabled and says why: the backend would answer 409 hunting_disabled. A
+ * caller disables it the same way with `unavailable`, for a scope the hunter
+ * won't search yet: a paused site's hunts would only queue behind the pause. It
+ * is aria-disabled rather than disabled, because a disabled button takes no
  * pointer or focus events and its reason could never be shown.
  */
 export function HuntButton({
   scope,
   scopeId,
   label,
+  unavailable,
   ...buttonProps
 }: {
   scope: JobScope
   scopeId?: number
   label?: string
+  /** why this scope can't be hunted now, if it can't */
+  unavailable?: string
 } & Omit<ButtonProps, 'onClick' | 'children'>) {
   const { setPanelOpen, liveHuntFor } = useJobs()
   const huntNow = useHuntNow()
   const live = liveHuntFor(scope, scopeId)
   const huntingOff = useInstance().data?.hunt_enabled === false
+  const blocked = huntingOff ? 'Hunting is turned off on this server' : unavailable
 
   if (live) {
     return (
@@ -40,9 +46,9 @@ export function HuntButton({
     )
   }
 
-  if (huntingOff) {
+  if (blocked) {
     return (
-      <SimpleTooltip content="Hunting is turned off on this server" asChild>
+      <SimpleTooltip content={blocked} asChild>
         <Button {...buttonProps} aria-disabled>
           <Search />
           {label ?? 'Hunt now'}
