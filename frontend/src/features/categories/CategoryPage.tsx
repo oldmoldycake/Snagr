@@ -208,7 +208,7 @@ function CategoryView({ slug }: { slug: string }) {
                     type="button"
                     aria-pressed={active}
                     title={`Show only items with a listing on ${site.name}`}
-                    onClick={() => setSiteFilter(active ? undefined : site.id)}
+                    onClick={() => setFilters({ siteId: active ? undefined : site.id })}
                     className={cn(
                       'relative min-w-0 rounded-sm border px-1.5 py-0.5 font-mono text-[12px] leading-4 wrap-anywhere transition-colors focus-visible:-outline-offset-2',
                       // the item form's site toggles, badge-sized: a lume bar under the site the list is filtered to
