@@ -15,7 +15,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSession } from '@/features/auth/useSession'
+import { cn } from '@/lib/cn'
 import { currencySign } from '@/lib/money'
+import { renameNote } from './renameNote'
 import { parseTargetPrice } from './targetPrice'
 import { TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
@@ -40,6 +43,8 @@ export function EditItemDialog({
   const [targetError, setTargetError] = useState<string | null>(null)
   const targetRef = useRef<HTMLInputElement>(null)
   const sign = currencySign(item.currency)
+  const isAdmin = useSession().data?.role === 'admin'
+  const nameNote = renameNote(item.watcher_count, isAdmin)
   const [tracking, setTracking] = useState<TrackingValue>({
     criteria: item.criteria ?? '',
     selectionMode: item.selection_mode,
@@ -91,6 +96,9 @@ export function EditItemDialog({
             <div>
               <Label htmlFor="edit-item-name">Name</Label>
               <Input id="edit-item-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              {nameNote ? (
+                <p className={cn('mt-1.5 text-xs', isAdmin ? 'text-warn' : 'text-ink-3')}>{nameNote}</p>
+              ) : null}
             </div>
             <div>
               <Label htmlFor="edit-item-target">Target price</Label>
