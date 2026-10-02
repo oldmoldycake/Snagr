@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/oldmoldycake/Snagr/compare/v0.9.0...v0.9.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **frontend:** keep masthead tabs and hunt pill on one line ([4a8dbdf](https://github.com/oldmoldycake/Snagr/commit/4a8dbdf6b9f6c27c6d16b00ea1a051f8ba993ce1))
+* **frontend:** keep masthead tabs and hunt pill on one line ([125bd3e](https://github.com/oldmoldycake/Snagr/commit/125bd3ed627edc475ec2c3224c1d3809badd8587))
+
 ## [0.9.0](https://github.com/oldmoldycake/Snagr/compare/v0.8.0...v0.9.0) (2026-10-02)
 
 
