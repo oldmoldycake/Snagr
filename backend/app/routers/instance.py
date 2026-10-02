@@ -31,5 +31,6 @@ async def get_instance(db: AsyncSession = Depends(get_db)) -> InstanceInfo:
         vision_enabled=settings.vision_enabled,
         mcp_enabled=settings.MCP_ENABLED,
         recheck_interval_default=settings.RECHECK_INTERVAL_MINUTES,
+        recheck_interval_floor=settings.RECHECK_INTERVAL_FLOOR_MINUTES,
         hunt_enabled=settings.HUNT_ENABLED,
     )

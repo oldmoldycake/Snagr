@@ -128,7 +128,7 @@ export function CreateCategoryDialog({
           {trigger}
         </Button>
       </DialogTrigger>
-      <DialogContent onInteractOutside={(e) => dirty && e.preventDefault()}>
+      <DialogContent dirty={dirty}>
         <DialogHeader>
           <DialogEyebrow>
             <StepPips steps={['Name', 'Sites']} current={step} />

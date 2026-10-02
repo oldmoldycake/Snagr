@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ZoomIn } from 'lucide-react'
 import { toast } from 'sonner'
 import { confirmReviewEntry, discardReviewEntry, listReviewQueue } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -19,6 +19,7 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
+import { PhotoCompareDialog } from './PhotoCompareDialog'
 import { pageInRange } from './queue'
 
 const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
@@ -36,6 +37,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
   const queryClient = useQueryClient()
   const [label, setLabel] = useState<ReferenceLabel>(entry.suggested_label)
   const [variantTag, setVariantTag] = useState('')
+  const [compareOpen, setCompareOpen] = useState(false)
 
   const confirm = useMutation({
     mutationFn: () => confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
@@ -55,14 +57,26 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
 
   return (
     <Card className="flex flex-col">
-      <a href={entry.listing_url} target="_blank" rel="noreferrer" className="block">
+      <button
+        type="button"
+        onClick={() => setCompareOpen(true)}
+        aria-label={`Look closer at the photo of ${entry.item_name}`}
+        className="group relative block cursor-zoom-in"
+      >
         <img
           src={entry.image_url}
           alt={`Captured listing photo of ${entry.item_name}`}
           loading="lazy"
           className="aspect-[4/3] w-full border-b border-hairline bg-well object-cover"
         />
-      </a>
+        <span
+          aria-hidden
+          className="absolute right-2 bottom-2 grid size-7 place-items-center rounded-sm bg-black/60 text-ink-2 group-hover:text-lume"
+        >
+          <ZoomIn className="size-4" />
+        </span>
+      </button>
+      <PhotoCompareDialog entry={entry} open={compareOpen} onOpenChange={setCompareOpen} />
       <CardBody className="flex flex-1 flex-col gap-2.5 pt-3">
         <div className="flex items-center justify-between gap-2">
           <Link

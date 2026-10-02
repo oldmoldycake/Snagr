@@ -4,6 +4,7 @@ import { enqueueJobs } from '@/api/endpoints'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { JobScope } from '@/api/types'
 import { Button, type ButtonProps } from '@/components/ui/button'
+import { checkReceipt } from './lines'
 
 /** How long the button holds its receipt before going back to being a button. */
 const CONFIRM_MS = 3000
@@ -44,10 +45,12 @@ export function CheckPricesButton({
   if (queued != null) {
     return (
       <Button {...buttonProps} disabled>
-        <span aria-hidden className="text-drop">
-          ✓
-        </span>
-        Queued {queued}
+        {queued > 0 ? (
+          <span aria-hidden className="text-drop">
+            ✓
+          </span>
+        ) : null}
+        {checkReceipt(queued)}
       </Button>
     )
   }
