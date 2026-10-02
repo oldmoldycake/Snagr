@@ -1,6 +1,7 @@
 import { type RefObject, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { getPriceHistory, updateListing } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, Listing } from '@/api/types'
@@ -13,15 +14,16 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { formatDateTime, RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
+import { useInstance } from '@/features/auth/useSession'
 import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
+import { foldListings } from './listingFold'
 import { sharedTitlePrefix, titleDifference } from './listingTitles'
 import { axisLabels, labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
 import { prepareSeries } from './seriesPrep'
 
-// Fold threshold, sub-$1 dot threshold, stale age, the label-flip and ⌖-label
-// right-anchor positions used before the rail has been measured, and the shared grid.
-const FOLD_SCORE = 70
+// Sub-$1 dot threshold, stale age, the label-flip and ⌖-label right-anchor
+// positions used before the rail has been measured, and the shared grid.
 const UNCHANGED_CENTS = 100
 const STALE_MS = 24 * 3_600_000
 const LABEL_FLIP_PCT = 78
@@ -287,44 +289,22 @@ function ExpandedRow({
   detail,
   startC,
   range,
+  onTrack,
 }: {
   listing: Listing
   detail: ItemDetail
   startC: number | null
   range: TimeRange
+  onTrack: (active: boolean) => void
 }) {
-  const queryClient = useQueryClient()
-  const toggle = useMutation({
-    mutationFn: (active: boolean) => updateListing(listing.id, { active }),
-    // optimistic: flip immediately, roll back on error
-    onMutate: async (active) => {
-      await queryClient.cancelQueries({ queryKey: qk.item(detail.id) })
-      const prev = queryClient.getQueryData<ItemDetail>(qk.item(detail.id))
-      if (prev) {
-        queryClient.setQueryData<ItemDetail>(qk.item(detail.id), {
-          ...prev,
-          listings: prev.listings.map((l) => (l.id === listing.id ? { ...l, active } : l)),
-        })
-      }
-      return { prev }
-    },
-    onError: (_err, _active, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(qk.item(detail.id), ctx.prev)
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ['items'] })
-      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-      // pausing a listing cancels its re-check; resuming queues one
-      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
-    },
-  })
-
+  // the slot an untracked listing frees is hunted for at once, unless hunting is off
+  const huntingOff = useInstance().data?.hunt_enabled === false
   const nowC = toCents(listing.latest_price)
   const moved = startC != null && nowC != null && Math.abs(nowC - startC) >= UNCHANGED_CENTS
   const fell = moved && nowC != null && startC != null && nowC < startC
 
   return (
-    <div className="flex items-start gap-4 border-t border-hairline bg-well py-3 pr-4 pl-10">
+    <div className="flex flex-col gap-3 border-t border-hairline bg-well py-3 pr-4 pl-10 sm:flex-row sm:items-start sm:gap-4">
       <p className="min-w-0 flex-1 font-mono text-[12px] leading-relaxed text-ink-3">
         {listing.title ? (
           <>
@@ -379,14 +359,24 @@ function ExpandedRow({
           open listing ↗
         </a>
       </p>
-      <label className="flex shrink-0 items-center gap-2 font-mono text-[12px] text-ink-3">
-        Track
-        <Switch
-          checked={listing.active}
-          onCheckedChange={(active) => toggle.mutate(active)}
-          aria-label={`${listing.active ? 'Stop tracking' : 'Track'} this ${listing.site_name} listing`}
-        />
-      </label>
+      <div className="shrink-0 sm:w-60">
+        <label className="flex items-center gap-2 text-[12px] text-ink-2">
+          <Switch
+            checked={listing.active}
+            onCheckedChange={onTrack}
+            aria-label={`Track this ${listing.site_name} listing`}
+            aria-describedby={`track-hint-${listing.id}`}
+          />
+          Track this listing
+        </label>
+        <p id={`track-hint-${listing.id}`} className="mt-1 text-[12px] leading-snug text-ink-3">
+          {!listing.active
+            ? "Snagr doesn't check its price. Switch on to resume."
+            : detail.hunt.enabled && !huntingOff
+              ? 'Snagr checks its price. Switch off to stop, and Snagr hunts for another listing to take its slot.'
+              : 'Snagr checks its price. Switch off to stop and free its slot.'}
+        </p>
+      </div>
     </div>
   )
 }
@@ -404,6 +394,7 @@ function BoardRow({
   dimmed,
   expanded,
   onToggle,
+  onTrack,
   range,
 }: {
   listing: Listing
@@ -418,6 +409,7 @@ function BoardRow({
   dimmed: boolean
   expanded: boolean
   onToggle: () => void
+  onTrack: (active: boolean) => void
   range: TimeRange
 }) {
   const soldOrEnded =
@@ -506,7 +498,7 @@ function BoardRow({
         <MatchPill score={listing.match_score} summary={listing.match_summary} quietMid />
       </div>
       <CollapsibleContent className="row-detail">
-        <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} />
+        <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} onTrack={onTrack} />
       </CollapsibleContent>
     </Collapsible>
   )
@@ -521,6 +513,8 @@ function BoardRow({
 export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: TimeRange }) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [foldOpen, setFoldOpen] = useState(false)
+  // rows whose tracking was switched on this visit, and whether each was on show then
+  const [placed, setPlaced] = useState<ReadonlyMap<number, boolean>>(new Map())
   // The strip's rail cell shares GRID_COLS with every row, so its width is every row's rail width.
   const { ref: railRef, width: railPx } = useMeasuredWidth()
 
@@ -549,31 +543,47 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
     return m
   }, [history.data])
 
+  const queryClient = useQueryClient()
+  const track = useMutation({
+    mutationFn: ({ listing, active }: { listing: Listing; active: boolean }) =>
+      updateListing(listing.id, { active }),
+    // optimistic: flip immediately, roll back on error
+    onMutate: async ({ listing, active }) => {
+      await queryClient.cancelQueries({ queryKey: qk.item(detail.id) })
+      const prev = queryClient.getQueryData<ItemDetail>(qk.item(detail.id))
+      if (prev) {
+        queryClient.setQueryData<ItemDetail>(qk.item(detail.id), {
+          ...prev,
+          listings: prev.listings.map((l) => (l.id === listing.id ? { ...l, active } : l)),
+        })
+      }
+      return { prev }
+    },
+    onSuccess: (_listing, { listing, active }) => {
+      if (active) return
+      toast(`Stopped tracking the ${listing.site_name} listing`, {
+        action: { label: 'Undo', onClick: () => track.mutate({ listing, active: true }) },
+      })
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(qk.item(detail.id), ctx.prev)
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['items'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // pausing a listing cancels its re-check; resuming queues one
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+    },
+  })
+
   const target = detail.watch.target_price ?? detail.target_price
   const targetC = toCents(target)
   const mode = detail.selection_mode
 
-  const byMode = (a: Listing, b: Listing) => {
-    const priceDiff = Number(a.latest_price ?? Infinity) - Number(b.latest_price ?? Infinity)
-    if (mode !== 'best_match') return priceDiff
-    return (b.match_score ?? -1) - (a.match_score ?? -1) || priceDiff
-  }
-  const active = [...detail.listings].filter((l) => l.active).sort(byMode)
-  const inactive = [...detail.listings].filter((l) => !l.active).sort(byMode)
+  const { main, folded, lowMatch, inactive } = foldListings(detail.listings, mode, placed)
 
-  // best-match mode folds the low-scoring tail — but never the whole list
-  let main = active
-  let lowMatch: Listing[] = []
-  if (mode === 'best_match') {
-    const cleared = active.filter((l) => (l.match_score ?? -1) >= FOLD_SCORE)
-    if (cleared.length > 0 && cleared.length < active.length) {
-      main = cleared
-      lowMatch = active.filter((l) => (l.match_score ?? -1) < FOLD_SCORE)
-    }
-  }
-  const folded = [...lowMatch, ...inactive]
-
-  const bestMatchId = mode === 'best_match' ? (active.find((l) => l.match_score != null)?.id ?? null) : null
+  const bestMatchId =
+    mode === 'best_match' ? (main.find((l) => l.active && l.match_score != null)?.id ?? null) : null
 
   const rail = makeRail(main, startCents, targetC)
   const titlePrefix = sharedTitlePrefix(detail.listings.map((l) => l.title))
@@ -605,6 +615,11 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
       dimmed={dimmed}
       expanded={expandedId === listing.id}
       onToggle={() => setExpandedId((id) => (id === listing.id ? null : listing.id))}
+      onTrack={(active) => {
+        const shown = main.includes(listing)
+        setPlaced((m) => (m.has(listing.id) ? m : new Map(m).set(listing.id, shown)))
+        track.mutate({ listing, active })
+      }}
       range={range}
     />
   )
@@ -620,7 +635,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
         range={range}
       />
       <div className="divide-y divide-hairline border-t border-hairline">
-        {main.map((l) => row(l, false))}
+        {main.map((l) => row(l, !l.active))}
       </div>
       {folded.length > 0 ? (
         <Collapsible open={foldOpen} onOpenChange={setFoldOpen}>
