@@ -40,7 +40,8 @@ export function HunterTicker({ className }: { className?: string }) {
 
   const instance = useInstance().data
   const huntingOff = instance?.hunt_enabled === false
-  const hunt = live.find((job) => job.kind === 'hunt')
+  const hunts = live.filter((job) => job.kind === 'hunt')
+  const hunt = hunts.at(0)
   const elapsed = useElapsed(hunt?.started_at, hunt != null)
   const checksRunning = summary.data?.checks_running ?? 0
 
@@ -60,7 +61,7 @@ export function HunterTicker({ className }: { className?: string }) {
       >
         <Radar size={24} />
         <span className="shrink-0 tracking-[0.12em] text-lume uppercase">
-          Hunting · {live.length} running
+          Hunting · {hunts.length} running
           {checksRunning > 0 ? ` · ${checksRunning} price checks` : ''}
         </span>
         <span aria-hidden className="shrink-0 text-ink-3">

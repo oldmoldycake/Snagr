@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Job } from '@/api/types'
+import type { Job, JobsSummary, PausedSite } from '@/api/types'
 import { formatClock } from '@/lib/time'
-import { groupByHour, recentFailures } from './timeline'
+import { behindSchedule, dueState, groupByHour, queuedWait, recentFailures } from './timeline'
 
 // local-time constructors, and clocks through formatClock, so the
 // expectations hold in any time zone and locale
@@ -58,5 +58,112 @@ describe('recentFailures', () => {
       job(3, new Date(2026, 8, 25, 13, 0), 'done'),
     ]
     expect(recentFailures(jobs, NOW).map((j) => j.id)).toEqual([1])
+  })
+})
+
+describe('dueState', () => {
+  const at = (secs: number) => new Date(NOW.getTime() + secs * 1000).toISOString()
+  const now = NOW.getTime()
+
+  it('counts down to work that is not due yet, whatever is running', () => {
+    expect(dueState(at(30), false, now)).toBe('scheduled')
+    expect(dueState(at(30), true, now)).toBe('scheduled')
+  })
+
+  it('puts due work in line behind running work of its kind', () => {
+    expect(dueState(at(-5), true, now)).toBe('in-line')
+    expect(dueState(at(-30 * 60), true, now)).toBe('in-line')
+  })
+
+  it('gives the hunter a minute to wake before due work is overdue', () => {
+    expect(dueState(at(-60), false, now)).toBe('scheduled')
+    expect(dueState(at(-61), false, now)).toBe('overdue')
+  })
+})
+
+describe('queuedWait', () => {
+  const at = (mins: number) => new Date(NOW.getTime() + mins * 60_000).toISOString()
+  const now = NOW.getTime()
+  const hunt = (over: Partial<Job> = {}) =>
+    ({ id: 1, kind: 'hunt', site_id: 7, reason: 'sweep', run_after: at(-10), ...over }) as Job
+  const pause = (until: string): PausedSite => ({
+    site_id: 7,
+    site_name: 'ebay.com',
+    paused_until: until,
+    paused_reason: '5 consecutive read errors',
+  })
+  const open = { pausedSites: [], huntEnabled: true, running: false }
+
+  it('reads a due job with nothing of its kind running as overdue', () => {
+    expect(queuedWait(hunt(), open, now)).toEqual({ state: 'overdue' })
+  })
+
+  it('reads a due job behind running work as in line', () => {
+    expect(queuedWait(hunt(), { ...open, running: true }, now)).toEqual({ state: 'in-line' })
+  })
+
+  it('holds a job on a paused site until the pause lifts, however it was queued', () => {
+    const paused = { ...open, pausedSites: [pause(at(40))] }
+    expect(queuedWait(hunt({ reason: 'user' }), paused, now)).toEqual({
+      state: 'site-paused',
+      until: at(40),
+    })
+  })
+
+  it('waits for whichever is later, the pause lifting or the job coming due', () => {
+    const job = hunt({ run_after: at(90) })
+    expect(queuedWait(job, { ...open, pausedSites: [pause(at(40))] }, now)).toEqual({
+      state: 'site-paused',
+      until: at(90),
+    })
+  })
+
+  it('ignores a pause that has already lifted', () => {
+    expect(queuedWait(hunt(), { ...open, pausedSites: [pause(at(-1))] }, now)).toEqual({
+      state: 'overdue',
+    })
+  })
+
+  it('holds hunts, and only hunts, while hunting is off', () => {
+    const off = { ...open, huntEnabled: false }
+    expect(queuedWait(hunt(), off, now)).toEqual({ state: 'hunting-off' })
+    expect(queuedWait(hunt({ kind: 'ground', site_id: null }), off, now)).toEqual({
+      state: 'overdue',
+    })
+  })
+})
+
+describe('behindSchedule', () => {
+  const at = (mins: number) => new Date(NOW.getTime() + mins * 60_000).toISOString()
+  const now = NOW.getTime()
+  const summary = (over: Partial<JobsSummary> = {}) =>
+    ({
+      hunts_running: 0,
+      checks_running: 0,
+      next_check_at: at(5),
+      next_hunt_at: at(20),
+      ...over,
+    }) as JobsSummary
+
+  it('is idle, not behind, while everything is on schedule', () => {
+    expect(behindSchedule(summary(), true, now)).toBe(false)
+  })
+
+  it('is behind when a check or a hunt is overdue and nothing is running', () => {
+    expect(behindSchedule(summary({ next_check_at: at(-5) }), true, now)).toBe(true)
+    expect(behindSchedule(summary({ next_hunt_at: at(-5) }), true, now)).toBe(true)
+  })
+
+  it('is not behind while work is running — the overdue work is in line', () => {
+    expect(behindSchedule(summary({ next_hunt_at: at(-5), hunts_running: 1 }), true, now)).toBe(
+      false,
+    )
+    expect(behindSchedule(summary({ next_check_at: at(-5), checks_running: 3 }), true, now)).toBe(
+      false,
+    )
+  })
+
+  it('does not count hunts held while hunting is off', () => {
+    expect(behindSchedule(summary({ next_hunt_at: at(-5) }), false, now)).toBe(false)
   })
 })
