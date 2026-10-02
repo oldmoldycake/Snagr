@@ -216,6 +216,7 @@ async def test_account_routes_are_cookie_only(client, make_client):
         await agent.get("/api/me/channels", headers=_bearer(token)),
         await agent.get("/api/auth/me", headers=_bearer(token)),
         await agent.get("/api/admin/users", headers=_bearer(token)),
+        await agent.post("/api/admin/users/1/password-reset", headers=_bearer(token)),
     ):
         assert res.status_code == 403, res.text
         assert res.json()["error"]["code"] == "forbidden"
