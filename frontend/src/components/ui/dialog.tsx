@@ -1,6 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import { useRef, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
+import { useRef, type ComponentProps, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
 import { swipeCloses } from '@/components/ui/sheetSwipe'
 import { cn } from '@/lib/cn'
 import { focusMovedElsewhere } from '@/lib/focus'
@@ -22,17 +22,22 @@ export const DialogClose = DialogPrimitive.Close
  * Pass `dismissible={false}` while it shows something that can't be shown
  * again, like a new API token: Escape and clicks outside then do nothing and
  * the ✕ and the handle are hidden, so the only way out is the dialog's own button.
+ *
+ * Pass `dirty` while it holds input that closing would throw away: Escape and
+ * clicks outside then do nothing and the handle is hidden, so only Cancel or
+ * the ✕ discards it.
  */
 export function DialogContent({
   className,
   children,
   dismissible = true,
+  dirty = false,
   onOpenAutoFocus,
   onCloseAutoFocus,
   onEscapeKeyDown,
   onInteractOutside,
   ...props
-}: ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { dismissible?: boolean }) {
+}: ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { dismissible?: boolean; dirty?: boolean }) {
   // Radix only returns focus to a DialogTrigger, but most dialogs here are
   // opened from state by a plain button or a menu item. Remember what had focus
   // on open and hand it back on close. A menu item unmounts with its menu, so
@@ -72,15 +77,15 @@ export function DialogContent({
         }}
         onEscapeKeyDown={(event) => {
           onEscapeKeyDown?.(event)
-          if (!dismissible) event.preventDefault()
+          if (!dismissible || dirty) event.preventDefault()
         }}
         onInteractOutside={(event) => {
           onInteractOutside?.(event)
-          if (!dismissible) event.preventDefault()
+          if (!dismissible || dirty) event.preventDefault()
         }}
         {...props}
       >
-        <SheetHandle onSwipe={dismissible ? () => close.current?.click() : undefined} />
+        <SheetHandle onSwipe={dismissible && !dirty ? () => close.current?.click() : undefined} />
         {children}
         {dismissible ? (
           <DialogPrimitive.Close

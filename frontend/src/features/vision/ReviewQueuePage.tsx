@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ZoomIn } from 'lucide-react'
 import { toast } from 'sonner'
 import { confirmReviewEntry, discardReviewEntry, listReviewQueue } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -13,12 +13,11 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
-import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RelativeTime } from '@/components/ui/relative-time'
-import { cn } from '@/lib/cn'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
+import { PhotoCompareDialog } from './PhotoCompareDialog'
 
 const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   looks_authentic: 'looks authentic',
@@ -26,19 +25,17 @@ const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   unsure: 'unsure',
 }
 
-const LABEL_OPTIONS = [
-  { value: 'real', label: 'Real' },
-  { value: 'fake', label: 'Fake' },
-] as const
+const LABELS: readonly ReferenceLabel[] = ['real', 'fake']
 
 function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
   const queryClient = useQueryClient()
-  const [label, setLabel] = useState<ReferenceLabel>(entry.suggested_label)
   const [variantTag, setVariantTag] = useState('')
+  const [compareOpen, setCompareOpen] = useState(false)
 
   const confirm = useMutation({
-    mutationFn: () => confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
-    onSuccess: () => {
+    mutationFn: (label: ReferenceLabel) =>
+      confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
+    onSuccess: (_, label) => {
       toast.success(`Added to ${entry.item_name}'s ${label} references`)
       void queryClient.invalidateQueries({ queryKey: ['items'] })
     },
@@ -54,14 +51,26 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
 
   return (
     <Card className="flex flex-col">
-      <a href={entry.listing_url} target="_blank" rel="noreferrer" className="block">
+      <button
+        type="button"
+        onClick={() => setCompareOpen(true)}
+        aria-label={`Look closer at the photo of ${entry.item_name}`}
+        className="group relative block cursor-zoom-in"
+      >
         <img
           src={entry.image_url}
           alt={`Captured listing photo of ${entry.item_name}`}
           loading="lazy"
           className="aspect-[4/3] w-full border-b border-hairline bg-well object-cover"
         />
-      </a>
+        <span
+          aria-hidden
+          className="absolute right-2 bottom-2 grid size-7 place-items-center rounded-sm bg-black/60 text-ink-2 group-hover:text-lume"
+        >
+          <ZoomIn className="size-4" />
+        </span>
+      </button>
+      <PhotoCompareDialog entry={entry} open={compareOpen} onOpenChange={setCompareOpen} />
       <CardBody className="flex flex-1 flex-col gap-2.5 pt-3">
         <div className="flex items-center justify-between gap-2">
           <Link
@@ -74,7 +83,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
             variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
             className="shrink-0 font-mono text-[12px] tnum"
           >
-            {entry.suggested_label === 'fake' ? '✗' : '✓'} {entry.suggested_label} {entry.confidence}
+            suggested {entry.suggested_label} {entry.confidence}
           </Badge>
         </div>
         <p className="font-mono text-[12px] text-ink-3">
@@ -98,28 +107,23 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           className="h-7 sm:text-xs"
           aria-label="Variant tag"
         />
+        {/* Neither answer is preset or styled as the default: the suggestion
+            above is a hint, and a reference filed under the wrong label
+            skews every later photo check for this item. */}
         <div className="mt-auto flex items-center gap-2">
-          <Segmented
-            options={LABEL_OPTIONS}
-            value={label}
-            onChange={setLabel}
-            ariaLabel="Reference label"
-          />
-          <span className="flex-1" />
           <Button variant="ghost" size="sm" disabled={pending} onClick={() => discard.mutate()}>
             {discard.isPending ? <Loader2 className="animate-spin" /> : null}
             Discard
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={pending}
-            onClick={() => confirm.mutate()}
-            className={cn(label === 'fake' && 'bg-rise/80 hover:bg-rise')}
-          >
-            {confirm.isPending ? <Loader2 className="animate-spin" /> : null}
-            Confirm {label}
-          </Button>
+          <span className="flex-1" />
+          {LABELS.map((label) => (
+            <Button key={label} size="sm" disabled={pending} onClick={() => confirm.mutate(label)}>
+              {confirm.isPending && confirm.variables === label ? (
+                <Loader2 className="animate-spin" />
+              ) : null}
+              It's {label}
+            </Button>
+          ))}
         </div>
       </CardBody>
     </Card>
