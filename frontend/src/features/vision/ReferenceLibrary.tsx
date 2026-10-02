@@ -117,6 +117,9 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
   const autoCount = live.filter((r) => r.provenance === 'auto').length
   const realCount = live.filter((r) => r.label === 'real').length
   const fakeCount = live.filter((r) => r.label === 'fake').length
+  // The empty state explains what references are for and carries its own Add
+  // button, so the header's would only repeat it.
+  const empty = !references.isLoading && rows.length === 0
 
   return (
     <Card>
@@ -133,9 +136,11 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
               Revoke auto ×{autoCount}
             </Button>
           ) : null}
-          <Button size="sm" onClick={openUpload}>
-            Add photo
-          </Button>
+          {empty ? null : (
+            <Button size="sm" onClick={openUpload}>
+              Add photo
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardBody>
@@ -145,7 +150,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
             <Skeleton className="h-40" />
             <Skeleton className="h-40" />
           </div>
-        ) : rows.length === 0 ? (
+        ) : empty ? (
           <EmptyState
             className="border-0 py-8"
             title="No reference photos yet"

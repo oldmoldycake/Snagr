@@ -57,6 +57,7 @@ export function EditItemDialog({
     maxListings: item.max_listings,
     recheckIntervalMinutes: item.recheck_interval_minutes,
     hunt: item.hunt,
+    allowReproductions: item.allow_reproductions,
     siteIds: item.site_ids,
   })
   // useState keeps its first value: the form as it opened, to tell edits from it

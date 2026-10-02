@@ -42,7 +42,7 @@ describe('groupShelves', () => {
     expect(rows.map((c) => c.name)).toEqual(['Camera lenses', 'Keyboards'])
   })
 
-  it("counts your items, not the category's instance-wide item_count", () => {
+  it("counts the items it is given, not the category's item_count", () => {
     const [gpuShelf] = groupShelves(items, [gpus]).shelves
     expect(gpuShelf.items).toHaveLength(2)
     expect(gpuShelf.hits).toBe(1)

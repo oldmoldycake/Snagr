@@ -90,8 +90,8 @@ export function orderShelves(shelves: Shelf[]): Shelf[] {
 
 /**
  * Splits categories into shelves (holding at least one of the caller's items)
- * and one-line rows (holding none). Counts come from the caller's items, never
- * from Category.item_count, which counts every user's items on the instance.
+ * and one-line rows (holding none). Counts come from the items passed in, never
+ * from Category.item_count, so a search's matches are counted the same way.
  */
 export function groupShelves(
   items: ItemSummary[],

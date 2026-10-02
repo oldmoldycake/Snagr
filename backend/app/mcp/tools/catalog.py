@@ -19,9 +19,9 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_categories() -> list[Category]:
         """Every category (video games, trading cards, …) with its slug, the
-        ids of the sites linked to it, how many items it holds, and how many of
-        those YOU are currently watching at or below your target ("snagged").
-        The catalog itself is shared by every user of the instance."""
+        ids of the sites linked to it, how many of YOUR items it holds, and how
+        many of those are currently at or below your target ("snagged"). The
+        catalog itself is shared by every user of the instance."""
         async with caller_session() as (db, user):
             return await catalog_service.list_categories(db, user.id)
 

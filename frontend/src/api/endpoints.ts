@@ -285,8 +285,8 @@ export const updateUser = (id: number, body: AdminUserUpdateRequest) =>
   api<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body })
 
 /**
- * Delete a user (admin only); 409 user_has_items while they still watch anything,
- * 422 cannot_delete_self for the caller.
+ * Delete a user (admin only) with their items, listings, price history, channels
+ * and tokens; shared catalog items stay. 422 cannot_delete_self for the caller.
  */
 export const deleteUser = (id: number) => api<void>(`/api/admin/users/${id}`, { method: 'DELETE' })
 
