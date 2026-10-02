@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError } from './client'
+import { api, ApiError, isSignedOut } from './client'
 
 const unauthenticated = () =>
   new Response(JSON.stringify({ error: { code: 'unauthenticated', message: 'Not signed in' } }), {
@@ -55,4 +55,31 @@ describe('api', () => {
       expect(paths(fetchMock)).toEqual([path])
     },
   )
+})
+
+describe('isSignedOut', () => {
+  const failure = (path: string) => api(path).catch((error: unknown) => error)
+
+  it('reads a 401 that outlived the refresh as signed out', async () => {
+    stubFetch({ '/api/auth/me': [unauthenticated], '/api/auth/refresh': [unauthenticated] })
+
+    expect(isSignedOut(await failure('/api/auth/me'))).toBe(true)
+  })
+
+  it.each([500, 502, 503])('never reads a %i as signed out', async (status) => {
+    stubFetch({ '/api/auth/me': [() => new Response('upstream down', { status })] })
+
+    expect(isSignedOut(await failure('/api/auth/me'))).toBe(false)
+  })
+
+  it('never reads a request that never reached Snagr as signed out', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+
+    expect(isSignedOut(await failure('/api/auth/me'))).toBe(false)
+  })
 })
