@@ -61,6 +61,9 @@ export interface InstanceInfo {
   /** minutes between rechecks for a watch with no interval of its own
    *  (RECHECK_INTERVAL_MINUTES) — the item form's placeholder */
   recheck_interval_default: number
+  /** the shortest interval a watch may be given (RECHECK_INTERVAL_FLOOR_MINUTES) —
+   *  the item form's least custom interval */
+  recheck_interval_floor: number
   /** false when the operator switched hunting off (HUNT_ENABLED): nothing is hunted,
    *  "hunt now" answers 409 hunting_disabled, and prices are still rechecked */
   hunt_enabled: boolean
@@ -106,6 +109,17 @@ export interface InviteValidation {
 /** POST /api/auth/invites/{token}/accept body; an invite pinned to an email ignores this one. */
 export interface InviteAcceptRequest {
   email: string
+  password: string
+}
+
+/** GET /api/auth/password-resets/{token} — 404 invalid, 410 expired/used */
+export interface PasswordResetValidation {
+  email: string
+  expires_at: string
+}
+
+/** POST /api/auth/password-resets/{token} body. */
+export interface PasswordResetRequest {
   password: string
 }
 
@@ -896,6 +910,16 @@ export interface Invite {
   email: string | null
   expires_at: string
   created_at: string
+}
+
+/**
+ * POST /api/admin/users/{id}/password-reset — a single-use link for the user to
+ * choose a new password. Only its hash is stored, so this is the one time the
+ * token is ever shown.
+ */
+export interface PasswordReset {
+  token: string
+  expires_at: string
 }
 
 /** POST /api/admin/invites body; no email makes an invite anyone can accept. */

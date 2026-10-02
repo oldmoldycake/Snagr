@@ -83,6 +83,11 @@ describe('findDuplicate', () => {
   it('treats another subdomain as a different site', () => {
     expect(findDuplicate('pages.ebay.com', sites)).toBeUndefined()
   })
+
+  it('skips the site being edited, but not the others', () => {
+    expect(findDuplicate('https://www.ebay.com', sites, 1)).toBeUndefined()
+    expect(findDuplicate('newegg.com', sites, 1)?.id).toBe(2)
+  })
 })
 
 describe('defaultSiteName', () => {
