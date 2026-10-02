@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { Pencil } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import {
@@ -10,7 +10,7 @@ import {
   listSites,
 } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { ItemStatusFilter, ItemSummary } from '@/api/types'
+import type { ItemSummary } from '@/api/types'
 import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,15 +33,12 @@ import { useSession } from '@/features/auth/useSession'
 import { useJobs } from '@/features/activity/JobsProvider'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
+import { type CategoryFilters, readCategoryFilters, STATUS_FILTERS, withCategoryFilters } from './categoryFilters'
 import { EditCategoryDialog } from './EditCategoryDialog'
 import { EditSitesDialog } from './EditSitesDialog'
 
-const STATUS_FILTERS = [
-  { value: 'all', label: 'All' },
-  { value: 'snagged', label: 'At target' },
-  { value: 'above_target', label: 'Above target' },
-  { value: 'no_listings', label: 'No listings' },
-] as const satisfies readonly { value: ItemStatusFilter; label: string }[]
+/** How long the filter box waits after the last keystroke before the list follows. */
+const SEARCH_DEBOUNCE_MS = 300
 
 /**
  * One category's page: its change chart and the watches in it, filterable by
@@ -49,17 +46,18 @@ const STATUS_FILTERS = [
  */
 export function CategoryPage() {
   const { slug = '' } = useParams()
-  // The router reuses this element across /categories/:slug, so without the
-  // key one category's filters would apply to the next — hiding its watches,
-  // and unclearable when the site picker isn't shown.
+  // Filters live in the URL, which a link to another category leaves bare. The
+  // router reuses this element across /categories/:slug, so the key also starts
+  // each category afresh, or a search still being typed would land on the next.
   return <CategoryView key={slug} slug={slug} />
 }
 
 function CategoryView({ slug }: { slug: string }) {
   const [range, setRange] = useRangeParam()
-  const [status, setStatus] = useState<ItemStatusFilter>('all')
-  const [siteFilter, setSiteFilter] = useState<number | undefined>(undefined)
-  const [search, setSearch] = useState('')
+  const [params, setParams] = useSearchParams()
+  // what's typed in the filter box ahead of the URL, which takes it once
+  // typing pauses; null when the box just shows the URL's search
+  const [searchDraft, setSearchDraft] = useState<string | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [editSession, setEditSession] = useState(0)
   const [editSitesOpen, setEditSitesOpen] = useState(false)
@@ -85,6 +83,18 @@ function CategoryView({ slug }: { slug: string }) {
     () => sites.data?.data.filter((s) => category?.site_ids.includes(s.id)) ?? [],
     [sites.data, category],
   )
+
+  const { status, siteId: siteFilter, search } = readCategoryFilters(params, category?.site_ids ?? [])
+  const setFilters = useCallback(
+    (change: Partial<CategoryFilters>) => setParams((prev) => withCategoryFilters(prev, change), { replace: true }),
+    [setParams],
+  )
+  if (searchDraft != null && searchDraft === search) setSearchDraft(null)
+  useEffect(() => {
+    if (searchDraft == null) return
+    const t = window.setTimeout(() => setFilters({ search: searchDraft }), SEARCH_DEBOUNCE_MS)
+    return () => window.clearTimeout(t)
+  }, [searchDraft, setFilters])
 
   const items = useQuery({
     queryKey: qk.items({
@@ -212,7 +222,7 @@ function CategoryView({ slug }: { slug: string }) {
         <Segmented
           options={STATUS_FILTERS}
           value={status}
-          onChange={setStatus}
+          onChange={(next) => setFilters({ status: next })}
           ariaLabel="Status filter"
         />
         {linkedSites.length > 1 ? (
@@ -220,7 +230,7 @@ function CategoryView({ slug }: { slug: string }) {
             ariaLabel="Filter by site"
             className="h-7 text-xs"
             value={siteFilter != null ? String(siteFilter) : 'all'}
-            onValueChange={(v) => setSiteFilter(v === 'all' ? undefined : Number(v))}
+            onValueChange={(v) => setFilters({ siteId: v === 'all' ? undefined : Number(v) })}
             options={[
               { value: 'all', label: 'All sites' },
               ...linkedSites.map((site) => ({ value: String(site.id), label: site.name })),
@@ -228,8 +238,8 @@ function CategoryView({ slug }: { slug: string }) {
           />
         ) : null}
         <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchDraft ?? search}
+          onChange={(e) => setSearchDraft(e.target.value)}
           placeholder="Filter items…"
           className="h-7 max-w-44 sm:text-xs"
           aria-label="Filter items"
@@ -320,6 +330,8 @@ function CategoryView({ slug }: { slug: string }) {
         category={category}
         open={editOpen}
         onOpenChange={setEditOpen}
+        // the slug survives a rename, so the page stays put, filters and all
+        onSaved={() => undefined}
       />
       {editingItem ? (
         <EditItemDialog key={`item-${editItemSession}`} item={editingItem} open={editItemOpen} onOpenChange={setEditItemOpen} />
