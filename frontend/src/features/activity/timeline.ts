@@ -94,11 +94,20 @@ interface QueueContext {
   running: boolean
 }
 
-/** Why `job` is still in the queue (see QueuedWait). */
-export function queuedWait(job: Job, context: QueueContext, now: number = Date.now()): QueuedWait {
-  const paused = context.pausedSites.find(
+/** The pause holding `job`'s site now, if one is: the hunter won't run the job until it lifts. */
+export function pausedSiteOf(
+  job: Job,
+  pausedSites: PausedSite[],
+  now: number = Date.now(),
+): PausedSite | undefined {
+  return pausedSites.find(
     (site) => site.site_id === job.site_id && Date.parse(site.paused_until) > now,
   )
+}
+
+/** Why `job` is still in the queue (see QueuedWait). */
+export function queuedWait(job: Job, context: QueueContext, now: number = Date.now()): QueuedWait {
+  const paused = pausedSiteOf(job, context.pausedSites, now)
   if (paused) {
     // the later of the two, as the summary's next_hunt_at counts it
     const until =

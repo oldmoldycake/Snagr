@@ -6,6 +6,7 @@ import {
   dueState,
   groupByHour,
   nextCheckText,
+  pausedSiteOf,
   queuedWait,
   recentFailures,
 } from './timeline'
@@ -85,6 +86,28 @@ describe('dueState', () => {
   it('gives the hunter a minute to wake before due work is overdue', () => {
     expect(dueState(at(-60), false, now)).toBe('scheduled')
     expect(dueState(at(-61), false, now)).toBe('overdue')
+  })
+})
+
+describe('pausedSiteOf', () => {
+  const now = NOW.getTime()
+  const at = (mins: number) => new Date(now + mins * 60_000).toISOString()
+  const failed = { id: 1, kind: 'hunt', status: 'failed', site_id: 7 } as Job
+  const pause = (site_id: number, until: string): PausedSite => ({
+    site_id,
+    site_name: 'ebay.com',
+    paused_until: until,
+    paused_reason: '5 consecutive read errors',
+  })
+
+  it("finds the pause holding a job's site", () => {
+    const held = pause(7, at(39))
+    expect(pausedSiteOf(failed, [pause(8, at(10)), held], now)).toBe(held)
+  })
+
+  it('lets a job go once its pause has passed, or when its site was never paused', () => {
+    expect(pausedSiteOf(failed, [pause(7, at(-1))], now)).toBeUndefined()
+    expect(pausedSiteOf(failed, [pause(8, at(39))], now)).toBeUndefined()
   })
 })
 
