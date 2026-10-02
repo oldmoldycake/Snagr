@@ -149,7 +149,9 @@ export function EditCategoryDialog({
             className="max-sm:flex-[2]"
             disabled={save.isPending || !name.trim()}
             onClick={() => {
-              if (siteIds.length === 0) {
+              // only a selection emptied here is refused: an untouched picker
+              // leaves the links as they are, even when there are none
+              if (pickedSiteIds?.length === 0) {
                 setSitesMissing(true)
                 return
               }
