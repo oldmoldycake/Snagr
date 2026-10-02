@@ -83,6 +83,19 @@ class InviteAcceptRequest(BaseModel):
     password: str
 
 
+class PasswordResetValidation(BaseModel):
+    """GET /api/auth/password-resets/{token} — 404 invalid, 410 expired/used."""
+
+    email: str
+    expires_at: str
+
+
+class PasswordResetRequest(BaseModel):
+    """POST /api/auth/password-resets/{token} body."""
+
+    password: str
+
+
 # --- me ---------------------------------------------------------------------
 
 
@@ -123,6 +136,13 @@ class AdminUserUpdateRequest(BaseModel):
 
     is_active: bool | None = None
     role: UserRole | None = None
+
+
+class PasswordReset(BaseModel):
+    """POST /api/admin/users/{id}/password-reset — the one time the token is shown."""
+
+    token: str
+    expires_at: str
 
 
 class Invite(BaseModel):

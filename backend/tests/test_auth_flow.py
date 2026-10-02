@@ -10,8 +10,8 @@ from datetime import timedelta
 
 from app.config import settings
 from app.core import ratelimit
-from app.core.security import hash_password, hash_refresh
-from app.models import Sessions, User
+from app.core.security import hash_password, hash_refresh, hash_reset_token
+from app.models import PasswordResets, Sessions, User
 from argon2 import PasswordHasher
 from sqlalchemy import select, update
 
@@ -631,6 +631,100 @@ async def test_admin_delete_user_and_watch_guard(client, make_client, monkeypatc
     assert (await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)).status_code == 204
     users = (await client.get("/api/admin/users")).json()["data"]
     assert [u["email"] for u in users] == [ADMIN["email"]]
+
+
+async def _guest_with_reset(client, make_client, monkeypatch):
+    """The admin signed in on `client`, a guest signed in on the returned client,
+    and a fresh reset link for the guest."""
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    guest = await make_client()
+    guest_id = (await _register(guest, GUEST)).json()["user"]["id"]
+    res = await client.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)
+    assert res.status_code == 201, res.text
+    return guest, guest_id, res.json()
+
+
+async def test_password_reset_sets_a_new_password_and_signs_out(client, make_client, monkeypatch):
+    guest, _, reset = await _guest_with_reset(client, make_client, monkeypatch)
+    anyone = await make_client()
+    url = f"/api/auth/password-resets/{reset['token']}"
+
+    res = await anyone.get(url)
+    assert res.status_code == 200
+    assert res.json() == {"email": GUEST["email"], "expires_at": reset["expires_at"]}
+
+    res = await anyone.post(url, json={"password": "a-brand-new-one"}, headers=CSRF)
+    assert res.status_code == 204
+    # every sign-in the account had is over, and no new one was started
+    assert (await guest.get("/api/auth/me")).status_code == 401
+    assert (await anyone.get("/api/auth/me")).status_code == 401
+    fresh = await make_client()
+    assert (await fresh.post("/api/auth/login", json=GUEST, headers=CSRF)).status_code == 401
+    new_creds = {"email": GUEST["email"], "password": "a-brand-new-one"}
+    assert (await fresh.post("/api/auth/login", json=new_creds, headers=CSRF)).status_code == 200
+
+    # single-use
+    for res in (
+        await anyone.get(url),
+        await anyone.post(url, json={"password": "and-another-one"}, headers=CSRF),
+    ):
+        assert res.status_code == 410
+        assert res.json()["error"]["code"] == "reset_expired"
+
+
+async def test_password_reset_link_errors(client, make_client, monkeypatch, db_session):
+    _, guest_id, first = await _guest_with_reset(client, make_client, monkeypatch)
+    anyone = await make_client()
+
+    res = await anyone.post(
+        f"/api/auth/password-resets/{first['token']}", json={"password": "short"}, headers=CSRF
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "password" in res.json()["error"]["fields"]
+
+    # a new link replaces the old one — the refused attempt above didn't burn it
+    second = (await client.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)).json()
+    for token in (first["token"], "not-a-token"):
+        res = await anyone.get(f"/api/auth/password-resets/{token}")
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "not_found"
+
+    async with db_session() as s:
+        # only the hash is stored
+        row = await s.scalar(select(PasswordResets))
+        assert row.token_hash == hash_reset_token(second["token"])
+        await s.execute(
+            update(PasswordResets).values(expires_at=PasswordResets.expires_at - timedelta(days=2))
+        )
+        await s.commit()
+    res = await anyone.get(f"/api/auth/password-resets/{second['token']}")
+    assert res.status_code == 410
+    assert res.json()["error"]["code"] == "reset_expired"
+
+
+async def test_admin_password_reset_errors(client, make_client, monkeypatch, db_session):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    plain = await make_client()
+    guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
+
+    res = await plain.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "forbidden"
+    res = await client.post(f"/api/admin/users/{guest_id}/password-reset")
+    assert res.status_code == 403  # no CSRF header
+    res = await client.post("/api/admin/users/999/password-reset", headers=CSRF)
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
+
+    async with db_session() as s:
+        await s.execute(update(User).where(User.id == guest_id).values(password_hash=None))
+        await s.commit()
+    res = await client.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "sso_account"
 
 
 async def test_deleting_a_user_degrades_their_jobs_to_system(

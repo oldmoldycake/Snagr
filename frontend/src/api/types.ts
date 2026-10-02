@@ -109,6 +109,17 @@ export interface InviteAcceptRequest {
   password: string
 }
 
+/** GET /api/auth/password-resets/{token} — 404 invalid, 410 expired/used */
+export interface PasswordResetValidation {
+  email: string
+  expires_at: string
+}
+
+/** POST /api/auth/password-resets/{token} body. */
+export interface PasswordResetRequest {
+  password: string
+}
+
 // ---------------------------------------------------------------------------
 // Categories
 
@@ -896,6 +907,16 @@ export interface Invite {
   email: string | null
   expires_at: string
   created_at: string
+}
+
+/**
+ * POST /api/admin/users/{id}/password-reset — a single-use link for the user to
+ * choose a new password. Only its hash is stored, so this is the one time the
+ * token is ever shown.
+ */
+export interface PasswordReset {
+  token: string
+  expires_at: string
 }
 
 /** POST /api/admin/invites body; no email makes an invite anyone can accept. */
