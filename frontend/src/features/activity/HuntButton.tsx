@@ -4,6 +4,7 @@ import { Button, type ButtonProps } from '@/components/ui/button'
 import { SimpleTooltip } from '@/components/ui/tooltip'
 import { useInstance } from '@/features/auth/useSession'
 import { useJobs } from './JobsProvider'
+import { useHuntNow } from './useHuntNow'
 
 /**
  * Ask the hunter to look for listings, scoped. While a hunt for that scope is
@@ -24,7 +25,8 @@ export function HuntButton({
   scopeId?: number
   label?: string
 } & Omit<ButtonProps, 'onClick' | 'children'>) {
-  const { enqueue, isEnqueuing, setPanelOpen, liveHuntFor } = useJobs()
+  const { setPanelOpen, liveHuntFor } = useJobs()
+  const huntNow = useHuntNow()
   const live = liveHuntFor(scope, scopeId)
   const huntingOff = useInstance().data?.hunt_enabled === false
 
@@ -51,10 +53,10 @@ export function HuntButton({
   return (
     <Button
       {...buttonProps}
-      disabled={isEnqueuing || buttonProps.disabled}
-      onClick={() => enqueue({ kind: 'hunt', scope, scope_id: scopeId })}
+      disabled={huntNow.isPending || buttonProps.disabled}
+      onClick={() => huntNow.mutate({ scope, scope_id: scopeId })}
     >
-      {isEnqueuing ? <Loader2 className="animate-spin" /> : <Search />}
+      {huntNow.isPending ? <Loader2 className="animate-spin" /> : <Search />}
       {label ?? 'Hunt now'}
     </Button>
   )
