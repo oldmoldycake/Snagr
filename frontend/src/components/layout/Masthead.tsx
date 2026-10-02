@@ -209,7 +209,7 @@ function AccountMenu() {
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger className="tap-target relative flex size-7 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[12px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
+      <DropdownMenuTrigger className="tap-target relative flex size-7 shrink-0 items-center justify-center rounded-full border border-hairline-strong bg-raised font-mono text-[12px] text-ink-2 transition-colors hover:text-ink data-[state=open]:border-lume data-[state=open]:bg-lume-glow data-[state=open]:text-lume">
         {user?.email ? user.email[0].toUpperCase() : <UserIcon className="size-3.5" />}
         <span className="sr-only">Account menu</span>
         <svg viewBox="0 0 40 40" aria-hidden className="avatar-ticks size-10">
@@ -327,7 +327,7 @@ export function Masthead() {
 
   return (
     <header className="shrink-0 border-b border-hairline">
-      <div className="mx-auto flex h-14 w-full max-w-[1040px] items-center gap-7 px-6">
+      <div className="mx-auto flex h-14 w-full max-w-[1040px] items-center gap-3 px-6 lg:gap-7">
         <Sheet open={navOpen} onOpenChange={setNavOpen}>
           <SheetTrigger
             className="-ml-2 flex size-10 shrink-0 items-center justify-center rounded-sm text-ink-2 hover:text-ink md:hidden"
@@ -355,13 +355,13 @@ export function Masthead() {
             <div className="px-4 pt-4 pb-5">
               <Wordmark />
             </div>
-            {/* below sm the header has no room for the box */}
+            {/* the header has no room for the box below sm, nor beside the tabs below lg */}
             <SearchForm
               inputRef={drawerSearchRef}
               value={search}
               onChange={setSearch}
               onSubmit={submitSearch}
-              className="mx-4 mb-4 sm:hidden"
+              className="mx-4 mb-4 sm:hidden md:block lg:hidden"
             />
             <MobileNav onNavigate={() => setNavOpen(false)} />
           </SheetContent>
@@ -369,7 +369,7 @@ export function Masthead() {
 
         <Wordmark />
 
-        <nav ref={navRef} className="relative hidden h-full items-center gap-1 md:flex" aria-label="Main">
+        <nav ref={navRef} className="relative hidden h-full shrink-0 items-center md:flex lg:gap-1" aria-label="Main">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -377,7 +377,7 @@ export function Masthead() {
               end={item.end}
               className={({ isActive }) =>
                 cn(
-                  'nav-tab relative flex h-full items-center px-3 font-mono text-[12px] tracking-[0.11em] text-ink-3 uppercase transition-colors hover:text-ink-2 focus-visible:-outline-offset-2',
+                  'nav-tab relative flex h-full items-center px-2 font-mono text-[12px] tracking-[0.11em] whitespace-nowrap text-ink-3 uppercase transition-colors hover:text-ink-2 focus-visible:-outline-offset-2 lg:px-3',
                   isActive && 'text-ink hover:text-ink',
                 )
               }
@@ -389,13 +389,13 @@ export function Masthead() {
           <span ref={lumeRef} aria-hidden className="nav-lume" />
         </nav>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex min-w-0 items-center gap-3">
           <SearchForm
             inputRef={searchRef}
             value={search}
             onChange={setSearch}
             onSubmit={submitSearch}
-            className="hidden w-44 sm:block lg:w-52"
+            className="hidden w-44 min-w-0 sm:block md:hidden lg:block lg:w-52"
             shortcutHint
           />
           <button
@@ -404,7 +404,7 @@ export function Masthead() {
               setNavForSearch(true)
               setNavOpen(true)
             }}
-            className="tap-target relative flex size-8 items-center justify-center rounded-sm text-ink-2 hover:text-ink sm:hidden"
+            className="tap-target relative flex size-8 items-center justify-center rounded-sm text-ink-2 hover:text-ink sm:hidden md:flex lg:hidden"
             aria-label="Search items"
           >
             <Search className="size-4" />
@@ -421,7 +421,7 @@ export function Masthead() {
             <button
               type="button"
               onClick={() => setPanelOpen(true)}
-              className="flex items-center gap-1.5 rounded-full border border-lume/40 bg-lume-glow px-2.5 py-1 font-mono text-[12px] tracking-[0.06em] text-lume uppercase hover:bg-lume/20"
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-lume/40 bg-lume-glow px-2.5 py-1 font-mono text-[12px] tracking-[0.06em] whitespace-nowrap text-lume uppercase hover:bg-lume/20"
             >
               <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-lume" />
               {runningWork(hunts)}
