@@ -13,6 +13,7 @@ import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
 import { settleMaxListings } from './settleMaxListings'
+import { siteIdsAfterToggle } from './siteIdsAfterToggle'
 
 /** Form state for the tracking options; trackingPayload turns it into the API fields. */
 export interface TrackingValue {
@@ -69,6 +70,7 @@ export function TrackingFields({
   onChange: (value: TrackingValue) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [siteError, setSiteError] = useState<string | null>(null)
   // "Track up to" while it's being typed in: the text as typed, so clearing it
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
@@ -103,14 +105,13 @@ export function TrackingFields({
   }
 
   const toggleSite = (id: number) => {
-    const next = effectiveSiteIds.includes(id)
-      ? effectiveSiteIds.filter((s) => s !== id)
-      : [...effectiveSiteIds, id]
-    // all (or none) selected = no restriction
-    onChange({
-      ...value,
-      siteIds: next.length === 0 || next.length === categorySites.length ? null : next,
-    })
+    const toggled = siteIdsAfterToggle(effectiveSiteIds, id, categorySites.length)
+    if ('error' in toggled) {
+      setSiteError(toggled.error)
+      return
+    }
+    setSiteError(null)
+    onChange({ ...value, siteIds: toggled.siteIds })
   }
 
   const setIntervalChoice = (choice: string) => {
@@ -321,6 +322,11 @@ export function TrackingFields({
                   })}
                 </div>
               )}
+              {siteError ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {siteError}
+                </p>
+              ) : null}
             </div>
           </div>
         </CollapsibleContent>
