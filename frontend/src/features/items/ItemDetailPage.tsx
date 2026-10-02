@@ -28,6 +28,7 @@ import { useInstance } from '@/features/auth/useSession'
 import { CheckPricesButton } from '@/features/activity/CheckPricesButton'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { HunterLine } from '@/features/activity/HunterLine'
+import { useTargetAlertGap } from '@/features/settings/alertGap'
 import { ReferenceLibrary } from '@/features/vision/ReferenceLibrary'
 import { ChartPanel } from './ChartPanel'
 import { EditItemDialog } from './EditItemDialog'
@@ -111,6 +112,7 @@ export function ItemDetailPage() {
     queryFn: () => listPriceChecks(itemId, 50),
   })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
+  const alertGap = useTargetAlertGap()
   usePageTitle(item.data?.name ?? (isNotFound(item.error) ? 'Item not found' : undefined))
 
   const notifyToggle = useMutation({
@@ -172,6 +174,8 @@ export function ItemDetailPage() {
 
   const detail = item.data
   const target = detail.watch.target_price ?? detail.target_price
+  // Notify looks just as on when no channel would carry the alert, so the page says so beside it
+  const notifyGoesNowhere = detail.watch.notify && alertGap != null
   const bestListing = detail.listings.find((l) => l.id === detail.best_listing_id) ?? null
 
   const trackedCount = detail.listings.filter((l) => l.active).length
@@ -362,15 +366,27 @@ export function ItemDetailPage() {
                   </dd>
                 </div>
               ))}
-              <div className="flex items-center justify-between gap-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2">
                 <dt className="font-mono text-[12px] text-ink-3">Notify at target</dt>
                 <dd>
                   <Switch
                     checked={detail.watch.notify}
                     onCheckedChange={(v) => notifyToggle.mutate(v)}
                     aria-label="Notify me when this item reaches its target"
+                    aria-describedby={notifyGoesNowhere ? 'notify-gap' : undefined}
                   />
                 </dd>
+                {notifyGoesNowhere ? (
+                  <dd id="notify-gap" className="basis-full font-mono text-[12px] text-warn">
+                    ⚠{' '}
+                    {alertGap === 'no-channels'
+                      ? 'No channel yet, so this alert goes nowhere.'
+                      : 'No channel is on for at-target alerts.'}{' '}
+                    <Link to="/settings" className="text-ink-2 underline underline-offset-2 hover:text-ink">
+                      Choose where alerts go
+                    </Link>
+                  </dd>
+                ) : null}
               </div>
             </dl>
             {detail.criteria ? (

@@ -16,8 +16,10 @@ const CTA = 'h-[38px] px-4 text-xs'
 
 /**
  * The dashboard's hero until the caller has an item: it walks them through
- * ① a category → ② items in it. "Ready" is only known to the page that just ran
- * New category (categories have no owner), so after a reload it reads "shared".
+ * ① a category → ② items in it → ③ where alerts go, the step AlertsNudge
+ * carries on once the first item replaces this hero. "Ready" is only known to
+ * the page that just ran New category (categories have no owner), so after a
+ * reload it reads "shared".
  * Categories are shared, so only an admin creates one: everyone else is walked
  * to an existing category, or told to ask an admin when there is none.
  */
@@ -83,6 +85,7 @@ export function GuideHero({
                 ? 'Create a category'
                 : 'Get a category from an admin',
             'Add items to it',
+            'Choose where alerts go',
           ]}
           current={state.kind === 'ready' ? 2 : 1}
         />

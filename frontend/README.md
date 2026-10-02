@@ -122,4 +122,6 @@ values, not CSS vars — change both together). Dark-only, by design.
   none of your items are one-line `CategoryRow`s. The rules live in
   `features/dashboard/shelves.ts`; collapse state is per browser and per user
   (`useShelfState`), and a new strike always reopens a collapsed shelf. Until you have an
-  item, `GuideHero` replaces the verdict hero and walks you through ① a category → ② items.
+  item, `GuideHero` replaces the verdict hero and walks you through ① a category → ② items →
+  ③ where alerts go; after that, `AlertsNudge` sits under the ticker while no channel would carry
+  an at-target alert, until dismissed.
