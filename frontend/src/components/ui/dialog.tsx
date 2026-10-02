@@ -195,7 +195,7 @@ export function DialogDescription({
 }
 
 /** The dialog's fields — the one part that scrolls when the dialog is taller than the screen. */
-export function DialogBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DialogBody({ className, ...props }: ComponentProps<'div'>) {
   return <div className={cn('overflow-y-auto overscroll-contain px-5 py-4', className)} {...props} />
 }
 

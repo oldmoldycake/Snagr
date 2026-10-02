@@ -101,7 +101,8 @@ export function ItemDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [range, setRange] = useRangeParam()
-  const [editOpen, setEditOpen] = useState(false)
+  // Edit tracking opens the same editor, on its tracking options
+  const [editing, setEditing] = useState<'item' | 'tracking' | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [allChecks, setAllChecks] = useState(false)
 
@@ -217,7 +218,7 @@ export function ItemDetailPage() {
           size="sm"
         />
         <CheckPricesButton scope="item" scopeId={detail.id} size="sm" />
-        <Button size="sm" onClick={() => setEditOpen(true)}>
+        <Button size="sm" onClick={() => setEditing('item')}>
           Edit
         </Button>
       </div>
@@ -394,7 +395,7 @@ export function ItemDetailPage() {
                 “{detail.criteria}”
               </blockquote>
             ) : null}
-            <Button className="mt-4 w-full" onClick={() => setEditOpen(true)}>
+            <Button className="mt-4 w-full" onClick={() => setEditing('tracking')}>
               Edit tracking
             </Button>
             <button
@@ -430,8 +431,11 @@ export function ItemDetailPage() {
         key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${detail.hunt.enabled}-${(detail.site_ids ?? []).join(',')}`}
         // the detail carries the watch's switch as hunt.enabled
         item={{ ...detail, hunt: detail.hunt.enabled }}
-        open={editOpen}
-        onOpenChange={setEditOpen}
+        open={editing != null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null)
+        }}
+        focusTracking={editing === 'tracking'}
         onSaved={(saved) => {
           if (saved.id !== detail.id) navigate(`/items/${saved.id}`, { replace: true })
         }}
