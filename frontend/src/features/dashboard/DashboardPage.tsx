@@ -19,6 +19,7 @@ import { EditCategoryDialog } from '@/features/categories/EditCategoryDialog'
 import { EditSitesDialog } from '@/features/categories/EditSitesDialog'
 import { listAllItems } from '@/features/items/allItems'
 import { WatchListLabels } from '@/features/items/WatchList'
+import { AlertsNudge } from './AlertsNudge'
 import { CategoryRow } from './CategoryRow'
 import { CategoryShelf } from './CategoryShelf'
 import { GuideHero, type GuideState } from './GuideHero'
@@ -40,10 +41,10 @@ const CASCADE_MAX_STEPS = 4
 type CategoryDialog = { category: Category; open: boolean; session: number }
 
 /**
- * Home page. With items: the verdict hero, the hunter ticker, then one shelf
- * per category you track something in, most urgent first, and one line for
- * each category you don't. Without: a guide hero that walks you to your first
- * category and item.
+ * Home page. With items: the verdict hero, the hunter ticker, a nudge while
+ * your alerts have nowhere to go, then one shelf per category you track
+ * something in, most urgent first, and one line for each category you don't.
+ * Without: a guide hero that walks you to your first category and item.
  */
 export function DashboardPage() {
   const [range, setRange] = useRangeParam()
@@ -314,6 +315,9 @@ export function DashboardPage() {
     <div>
       <VerdictHero items={myItems} drops={dropsByItem} />
       <HunterTicker className="mt-2" />
+      {userId != null && myItems.some((i) => i.watch.notify) ? (
+        <AlertsNudge userId={userId} className="mt-2" />
+      ) : null}
 
       <section className="mt-[26px]">
         <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
