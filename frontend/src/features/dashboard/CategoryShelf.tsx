@@ -6,6 +6,7 @@ import { ApiError } from '@/api/client'
 import { deleteCategory } from '@/api/endpoints'
 import type { Category, PriceDrop } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -415,7 +416,7 @@ export function ShelfMenu({
         ) : (
           <DropdownMenuItem
             disabled={noSites || lead == null || huntingOff || huntNow.isPending}
-            onSelect={() => huntNow.mutate({ scope: 'category', scope_id: category.id })}
+            onSelect={() => huntNow.ask({ scope: 'category', scope_id: category.id })}
           >
             <Search />
             {noSites ? (
@@ -506,6 +507,8 @@ export function ShelfMenu({
           </>
         )}
       </DropdownMenuContent>
+      {/* outside the content, so it outlives the menu closing on the press that opened it */}
+      <ConfirmDialog {...huntNow.confirm} />
     </DropdownMenu>
   )
 }
