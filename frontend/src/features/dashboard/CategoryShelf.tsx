@@ -5,6 +5,7 @@ import { ArrowRight, Globe, Pencil, Search, Trash2 } from 'lucide-react'
 import { deleteCategory } from '@/api/endpoints'
 import type { Category, PriceDrop } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -396,7 +397,7 @@ function ShelfMenu({
         ) : (
           <DropdownMenuItem
             disabled={noSites || huntingOff || huntNow.isPending}
-            onSelect={() => huntNow.mutate({ scope: 'category', scope_id: category.id })}
+            onSelect={() => huntNow.ask({ scope: 'category', scope_id: category.id })}
           >
             <Search />
             {noSites ? (
@@ -475,6 +476,8 @@ function ShelfMenu({
           </>
         )}
       </DropdownMenuContent>
+      {/* outside the content, so it outlives the menu closing on the press that opened it */}
+      <ConfirmDialog {...huntNow.confirm} />
     </DropdownMenu>
   )
 }

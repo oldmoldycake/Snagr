@@ -1,6 +1,7 @@
 import { Loader2, Search } from 'lucide-react'
 import type { JobScope } from '@/api/types'
 import { Button, type ButtonProps } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SimpleTooltip } from '@/components/ui/tooltip'
 import { useInstance } from '@/features/auth/useSession'
 import { useJobs } from './JobsProvider'
@@ -51,13 +52,16 @@ export function HuntButton({
   }
 
   return (
-    <Button
-      {...buttonProps}
-      disabled={huntNow.isPending || buttonProps.disabled}
-      onClick={() => huntNow.mutate({ scope, scope_id: scopeId })}
-    >
-      {huntNow.isPending ? <Loader2 className="animate-spin" /> : <Search />}
-      {label ?? 'Hunt now'}
-    </Button>
+    <>
+      <Button
+        {...buttonProps}
+        disabled={huntNow.isPending || buttonProps.disabled}
+        onClick={() => huntNow.ask({ scope, scope_id: scopeId })}
+      >
+        {huntNow.isPending ? <Loader2 className="animate-spin" /> : <Search />}
+        {label ?? 'Hunt now'}
+      </Button>
+      <ConfirmDialog {...huntNow.confirm} />
+    </>
   )
 }
