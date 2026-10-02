@@ -15,7 +15,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSession } from '@/features/auth/useSession'
+import { cn } from '@/lib/cn'
 import { currencySign } from '@/lib/money'
+import { renameNote } from './renameNote'
 import { parseTargetPrice } from './targetPrice'
 import { TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
@@ -28,18 +31,23 @@ export function EditItemDialog({
   open,
   onOpenChange,
   onSaved,
+  focusTracking = false,
 }: {
   item: ItemSummary
   open: boolean
   onOpenChange: (open: boolean) => void
   /** a rename of an item others watch too moves the watch, so `saved.id` can differ from `item.id` */
   onSaved?: (saved: ItemDetail) => void
+  /** open on the tracking options, expanded and in view, rather than on the name */
+  focusTracking?: boolean
 }) {
   const [name, setName] = useState(item.name)
   const [target, setTarget] = useState(item.target_price ?? '')
   const [targetError, setTargetError] = useState<string | null>(null)
   const targetRef = useRef<HTMLInputElement>(null)
   const sign = currencySign(item.currency)
+  const isAdmin = useSession().data?.role === 'admin'
+  const nameNote = renameNote(item.watcher_count, isAdmin)
   const [tracking, setTracking] = useState<TrackingValue>({
     criteria: item.criteria ?? '',
     selectionMode: item.selection_mode,
@@ -48,6 +56,8 @@ export function EditItemDialog({
     hunt: item.hunt,
     siteIds: item.site_ids,
   })
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const trackingToggleRef = useRef<HTMLButtonElement>(null)
   const queryClient = useQueryClient()
 
   const save = useMutation({
@@ -69,7 +79,19 @@ export function EditItemDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent
+        onOpenAutoFocus={(e) => {
+          const body = bodyRef.current
+          const toggle = trackingToggleRef.current
+          if (!focusTracking || !body || !toggle) return
+          e.preventDefault()
+          toggle.focus({ preventScroll: true })
+          // Bring the toggle to the top of the body, or as near as the body scrolls, so
+          // the options below it are in view. Set by hand: scrollIntoView scrolls every
+          // ancestor, and can slide the dialog's header out of sight.
+          body.scrollTop += toggle.getBoundingClientRect().top - body.getBoundingClientRect().top
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Edit item</DialogTitle>
         </DialogHeader>
@@ -86,11 +108,14 @@ export function EditItemDialog({
             save.mutate(parsed.price)
           }}
         >
-          <DialogBody className="space-y-3">
+          <DialogBody ref={bodyRef} className="space-y-3">
             {errorMessage ? <p className="text-xs text-rise">{errorMessage}</p> : null}
             <div>
               <Label htmlFor="edit-item-name">Name</Label>
               <Input id="edit-item-name" required value={name} onChange={(e) => setName(e.target.value)} />
+              {nameNote ? (
+                <p className={cn('mt-1.5 text-xs', isAdmin ? 'text-warn' : 'text-ink-3')}>{nameNote}</p>
+              ) : null}
             </div>
             <div>
               <Label htmlFor="edit-item-target">Target price</Label>
@@ -118,9 +143,27 @@ export function EditItemDialog({
                   ⚠ {targetError}
                 </p>
               ) : null}
+              <p className="mt-1.5 text-xs text-ink-3">
+                {target.trim() ? (
+                  <>
+                    You'll see <span className="text-drop">⌖ at target</span> when the best price is at or below this.
+                  </>
+                ) : (
+                  <>
+                    Without a target, Snagr can't mark the item <span className="text-drop">⌖ at target</span> or
+                    alert you when its price is low enough.
+                  </>
+                )}
+              </p>
             </div>
 
-            <TrackingFields categoryId={item.category_id} value={tracking} onChange={setTracking} />
+            <TrackingFields
+              categoryId={item.category_id}
+              value={tracking}
+              onChange={setTracking}
+              defaultOpen={focusTracking}
+              toggleRef={trackingToggleRef}
+            />
           </DialogBody>
 
           <DialogFooter>

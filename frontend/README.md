@@ -95,13 +95,14 @@ values, not CSS vars — change both together). Dark-only, by design.
   sentence that names the items at target and the closest one still above, plus one line of
   tonight's totals (counts only; every other per-item fact appears once, on the shelves); `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into one log-scale price rail
-  per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
+  per listing (cheapest left → range-high right, a ⌖ notch on each row, a labeled price
   ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice
   for agent/check logs; `Segmented` is the one segmented control.
 - **Dialogs are field cards** (`components/ui/dialog.tsx`): `DialogHeader` (optional
   `DialogEyebrow`, title, description) → `DialogBody` → `DialogFooter`. Only the body
   scrolls, so the footer's buttons never leave the screen; under `sm` the card becomes a
-  bottom sheet. A form wraps body and footer in `<form className="contents">` so both stay
+  bottom sheet whose grab handle swipes it closed (pulled a quarter of its height, or
+  flicked; the rule is `components/ui/sheetSwipe.ts`). A form wraps body and footer in `<form className="contents">` so both stay
   grid rows. Footer order is Back (`mr-auto`), Cancel, then the primary, always rightmost.
   Enter and exit are keyframe animations (`animate-dialog-in/out`, `animate-sheet-up/down`)
   because Radix waits for `animationend` before unmounting; keep a dialog mounted after
@@ -122,4 +123,6 @@ values, not CSS vars — change both together). Dark-only, by design.
   none of your items are one-line `CategoryRow`s. The rules live in
   `features/dashboard/shelves.ts`; collapse state is per browser and per user
   (`useShelfState`), and a new strike always reopens a collapsed shelf. Until you have an
-  item, `GuideHero` replaces the verdict hero and walks you through ① a category → ② items.
+  item, `GuideHero` replaces the verdict hero and walks you through ① a category → ② items →
+  ③ where alerts go; after that, `AlertsNudge` sits under the ticker while no channel would carry
+  an at-target alert, until dismissed.

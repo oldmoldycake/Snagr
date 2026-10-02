@@ -44,6 +44,15 @@ class NotificationChannelCreateRequest(BaseModel):
     enabled: bool = True
 
 
+class NotificationChannelTestRequest(BaseModel):
+    """POST /api/me/channels/test body — only what decides where an unsaved
+    channel's test goes."""
+
+    kind: str | None = None
+    url: str | None = None
+    topic: str | None = None
+
+
 class NotificationChannelUpdateRequest(BaseModel):
     """kind is immutable — delete and recreate to change a channel's kind."""
 

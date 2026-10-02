@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/cn'
 import { useJobs } from '@/features/activity/JobsProvider'
+import { useHuntNow } from '@/features/activity/useHuntNow'
 import { useInstance, useSession } from '@/features/auth/useSession'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { WatchList } from '@/features/items/WatchList'
@@ -313,7 +314,8 @@ function ShelfMenu({
 }) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const { enqueue, isEnqueuing, setPanelOpen, liveHuntFor } = useJobs()
+  const { setPanelOpen, liveHuntFor } = useJobs()
+  const huntNow = useHuntNow()
   const huntingOff = useInstance().data?.hunt_enabled === false
   const live = liveHuntFor('category', category.id)
   // categories are shared, so only an admin edits or deletes one
@@ -393,8 +395,8 @@ function ShelfMenu({
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
-            disabled={noSites || huntingOff || isEnqueuing}
-            onSelect={() => enqueue({ kind: 'hunt', scope: 'category', scope_id: category.id })}
+            disabled={noSites || huntingOff || huntNow.isPending}
+            onSelect={() => huntNow.mutate({ scope: 'category', scope_id: category.id })}
           >
             <Search />
             {noSites ? (
@@ -416,7 +418,7 @@ function ShelfMenu({
               {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onRename(category)}>
-              <Pencil /> Rename
+              <Pencil /> Edit category…
             </DropdownMenuItem>
           </>
         ) : null}

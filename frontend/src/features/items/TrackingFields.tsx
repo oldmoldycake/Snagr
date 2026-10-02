@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type Ref } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listCategories, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
+import { modeForCriteria } from './modeForCriteria'
 import { settleMaxListings } from './settleMaxListings'
 import { siteIdsAfterToggle } from './siteIdsAfterToggle'
 
@@ -38,12 +39,6 @@ export const DEFAULT_TRACKING: TrackingValue = {
   siteIds: null,
 }
 
-const INTERVAL_PRESETS = [15, 30, 60, 360]
-const INTERVAL_OPTIONS = [
-  ...INTERVAL_PRESETS.map((m) => ({ value: String(m), label: formatInterval(m) })),
-  { value: 'custom', label: 'Custom' },
-]
-
 /** The tracking fields of a create/update item request; blank criteria is sent as null. */
 export function trackingPayload(value: TrackingValue) {
   return {
@@ -64,24 +59,32 @@ export function TrackingFields({
   categoryId,
   value,
   onChange,
+  defaultOpen = false,
+  toggleRef,
 }: {
   categoryId: number
   value: TrackingValue
   onChange: (value: TrackingValue) => void
+  /** start with the options expanded rather than collapsed */
+  defaultOpen?: boolean
+  /** the button that expands the options, for a dialog opened on them to focus */
+  toggleRef?: Ref<HTMLButtonElement>
 }) {
-  const [open, setOpen] = useState(false)
-  const [siteError, setSiteError] = useState<string | null>(null)
+  const [open, setOpen] = useState(defaultOpen)
   // "Track up to" while it's being typed in: the text as typed, so clearing it
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
   const [maxListingsEdit, setMaxListingsEdit] = useState<{ text: string; from: number } | null>(null)
+  // the mode is Best match only because criteria were typed; that happens out of
+  // sight (Tracking starts collapsed), so a note under the criteria says so
+  const [modeSwitched, setModeSwitched] = useState(false)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
+  const defaultInterval = useInstance().data?.recheck_interval_default
   // a stored interval that is not a preset opens on the custom field
   const [customInterval, setCustomInterval] = useState(
-    value.recheckIntervalMinutes != null && !INTERVAL_PRESETS.includes(value.recheckIntervalMinutes),
+    value.recheckIntervalMinutes != null && !intervalPresets(defaultInterval).includes(value.recheckIntervalMinutes),
   )
-  const defaultInterval = useInstance().data?.recheck_interval_default
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
@@ -93,14 +96,17 @@ export function TrackingFields({
   const setCriteria = (criteria: string) => {
     const next = { ...value, criteria }
     // typing criteria implies best-match ranking unless the user said otherwise
-    if (!modeTouched.current && value.criteria.trim() === '' && criteria.trim() !== '') {
-      next.selectionMode = 'best_match'
+    if (!modeTouched.current) {
+      const followed = modeForCriteria({ mode: value.selectionMode, switched: modeSwitched }, value.criteria, criteria)
+      next.selectionMode = followed.mode
+      setModeSwitched(followed.switched)
     }
     onChange(next)
   }
 
   const setMode = (selectionMode: SelectionMode) => {
     modeTouched.current = true
+    setModeSwitched(false)
     onChange({ ...value, selectionMode })
   }
 
@@ -120,7 +126,10 @@ export function TrackingFields({
       return
     }
     setCustomInterval(false)
-    onChange({ ...value, recheckIntervalMinutes: Number(choice) })
+    // picking the default's option stores null, so the item keeps following
+    // the instance default rather than pinning today's value
+    const minutes = Number(choice)
+    onChange({ ...value, recheckIntervalMinutes: minutes === defaultInterval ? null : minutes })
   }
 
   const interval = value.recheckIntervalMinutes ?? defaultInterval
@@ -149,10 +158,19 @@ export function TrackingFields({
           Snagr reads this when choosing listings: condition, completeness, anything you'd check
           yourself.
         </p>
+        {modeSwitched ? (
+          <p role="status" className="mt-1.5 text-xs text-ink-2">
+            Switched to Best match to use this: listings are ranked by how well they fit, and poor matches
+            are skipped even when there's room for more.{' '}
+            <button type="button" className="text-lume hover:underline" onClick={() => setMode('cheapest')}>
+              Use Cheapest instead
+            </button>
+          </p>
+        ) : null}
       </div>
 
       <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border border-hairline-strong bg-well">
-        <CollapsibleTrigger className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[12px] text-ink-2 focus-visible:-outline-offset-2">
+        <CollapsibleTrigger ref={toggleRef} className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[12px] text-ink-2 focus-visible:-outline-offset-2">
           <span className="text-[12px] text-ink-3">Tracking</span>
           <span className="min-w-0 flex-1 truncate">
             {value.selectionMode === 'best_match' ? 'Best match' : 'Cheapest'} · up to {value.maxListings} ·{' '}
@@ -231,14 +249,8 @@ export function TrackingFields({
             <div>
               <Label>Check every</Label>
               <Segmented
-                options={INTERVAL_OPTIONS}
-                value={
-                  customInterval
-                    ? 'custom'
-                    : value.recheckIntervalMinutes != null
-                      ? String(value.recheckIntervalMinutes)
-                      : null
-                }
+                options={intervalOptions(defaultInterval)}
+                value={customInterval ? 'custom' : interval != null ? String(interval) : null}
                 onChange={setIntervalChoice}
                 ariaLabel="Check interval"
               />

@@ -30,15 +30,14 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { enqueueJobs, getJobEvents } from '@/api/endpoints'
+import { useQueryClient } from '@tanstack/react-query'
+import { getJobEvents } from '@/api/endpoints'
 import { itemCategories } from './huntScope'
 import { eventsForLive } from './jobEvents'
 import { openLiveStream, type Connection } from './liveStream'
 import { throttle } from './throttle'
 import type {
   Job,
-  JobCreateRequest,
   JobEvent,
   JobScope,
   JobSnapshotData,
@@ -63,8 +62,6 @@ interface JobsContextValue {
   connection: Connection
   panelOpen: boolean
   setPanelOpen: (open: boolean) => void
-  enqueue: (body: JobCreateRequest) => void
-  isEnqueuing: boolean
   /** the live hunt covering a scope, if one is already running */
   liveHuntFor: (scope: JobScope, scopeId?: number) => Job | undefined
 }
@@ -180,11 +177,6 @@ export function JobsProvider({ children }: { children: ReactNode }) {
     }
   }, [mergeEvents, queryClient])
 
-  const enqueueMutation = useMutation({
-    mutationFn: enqueueJobs,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['jobs'] }),
-  })
-
   const liveHuntFor = useCallback(
     (scope: JobScope, scopeId?: number) => {
       const hunts = live.filter((job) => job.kind === 'hunt')
@@ -207,11 +199,9 @@ export function JobsProvider({ children }: { children: ReactNode }) {
       connection,
       panelOpen,
       setPanelOpen,
-      enqueue: (body) => enqueueMutation.mutate(body),
-      isEnqueuing: enqueueMutation.isPending,
       liveHuntFor,
     }),
-    [live, events, checks, connection, panelOpen, enqueueMutation, liveHuntFor],
+    [live, events, checks, connection, panelOpen, liveHuntFor],
   )
 
   return <JobsContext.Provider value={value}>{children}</JobsContext.Provider>

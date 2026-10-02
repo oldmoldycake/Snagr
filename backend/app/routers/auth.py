@@ -144,13 +144,23 @@ async def _insert_user(db: AsyncSession, user: User) -> None:
 
 log = logging.getLogger(__name__)
 
-FLOW_COOKIE = "snagr_oidc_flow"  # carries state+nonce+PKCE verifier between the two hops
+FLOW_COOKIE = "snagr_oidc_flow"  # state+nonce+PKCE verifier+return path, between the two hops
 FLOW_PATH = "/api/auth/oidc"
 
 
 def _redirect_uri(request: Request) -> str:
     # behind a proxy the request-derived host can be wrong — the setting overrides
     return settings.OIDC_REDIRECT_URI or str(request.url_for("oidc_callback"))
+
+
+def _return_path(path: object) -> str:
+    """The page SSO was started from (the login page's `next`), else the
+    dashboard. Only an in-app path is honoured: a browser reads `//host` and
+    `/\\host` alike as another site, so either would send the newly signed-in
+    visitor off-site."""
+    if isinstance(path, str) and path.startswith("/") and not path.startswith(("//", "/\\")):
+        return path
+    return "/"
 
 
 def _sso_failed() -> RedirectResponse:
@@ -162,10 +172,12 @@ def _sso_failed() -> RedirectResponse:
 
 @router.get("/oidc/login")
 async def oidc_login(request: Request):
-    """Kick off SSO: stash the flow secrets in a cookie, bounce to the IdP."""
+    """Kick off SSO: stash the flow secrets and the page to come back to
+    (`?next=`) in a cookie, bounce to the IdP."""
     if not settings.oidc_enabled:
         raise err(404, "not_found", "SSO is not configured")
     flow = oidc.new_flow()
+    flow["next"] = request.query_params.get("next")
     try:
         url = await oidc.build_authorize_url(_redirect_uri(request), flow)
     except oidc.OidcError as exc:
@@ -205,7 +217,8 @@ async def oidc_callback(request: Request, db: AsyncSession = Depends(get_db)):
     except (oidc.OidcError, KeyError) as exc:
         log.warning("OIDC callback failed: %s", exc)
         return _sso_failed()
-    response = RedirectResponse("/", status_code=302)
+    # Checked here rather than at /oidc/login: the cookie came back from the browser.
+    response = RedirectResponse(_return_path(flow.get("next")), status_code=302)
     response.delete_cookie(FLOW_COOKIE, path=FLOW_PATH)
     await _start_session(db, response, user)
     await db.commit()

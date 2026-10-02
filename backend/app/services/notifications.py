@@ -29,9 +29,9 @@ wedging the loop. Single-worker assumption: the Dockerfile and compose run
 one uvicorn worker, so exactly one dispatcher exists; the SKIP LOCKED
 claims make an accidental second instance safe, not supported.
 
-Test sends (POST /api/me/channels/{id}/test) reuse the same adapters via
-send_test(), which is what keeps the test button honest — it exercises the
-exact path a real event takes.
+Test sends (POST /api/me/channels/{id}/test, and /api/me/channels/test for a
+channel not saved yet) reuse the same adapters via send_test(), which is what
+keeps the test button honest — it exercises the exact path a real event takes.
 """
 
 import asyncio
