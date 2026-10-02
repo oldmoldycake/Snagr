@@ -3,6 +3,7 @@ import { AdminGuard, AuthGuard } from '@/features/auth/AuthGuard'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { RegisterPage } from '@/features/auth/RegisterPage'
 import { InvitePage } from '@/features/auth/InvitePage'
+import { ResetPasswordPage } from '@/features/auth/ResetPasswordPage'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
 import { CategoryPage } from '@/features/categories/CategoryPage'
 import { ItemDetailPage } from '@/features/items/ItemDetailPage'
@@ -29,6 +30,7 @@ export const router = createBrowserRouter([
       { path: '/login', element: <LoginPage /> },
       { path: '/register', element: <RegisterPage /> },
       { path: '/invite/:token', element: <InvitePage /> },
+      { path: '/reset/:token', element: <ResetPasswordPage /> },
       {
         element: <AuthGuard />,
         children: [

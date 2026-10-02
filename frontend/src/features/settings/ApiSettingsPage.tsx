@@ -185,7 +185,7 @@ function accessLabels(scopes: readonly ApiTokenScope[]): string[] {
 const ACCESS_HINT: Record<Access, string> = {
   read: 'Browse items, prices, activity and the photo review queue.',
   write: 'Also add and edit categories, sites, items, listings and photo reviews.',
-  full: 'Also queue hunts and price checks, and cancel jobs.',
+  full: "Also queue hunts and price checks, and cancel jobs. Hunts use AI, so an agent with this access can add to your AI provider's bill.",
 }
 
 type Expiry = 'never' | '30' | '90' | '365'

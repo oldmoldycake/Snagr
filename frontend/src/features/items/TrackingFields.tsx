@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
+import { intervalOptions, intervalPresets } from './intervalOptions'
 import { modeForCriteria } from './modeForCriteria'
 import { settleMaxListings } from './settleMaxListings'
 import { siteIdsAfterToggle } from './siteIdsAfterToggle'
@@ -51,6 +52,11 @@ export function trackingPayload(value: TrackingValue) {
   }
 }
 
+/** Scrolls an error into view as it appears: one inside the options can open below the dialog's fold. */
+function revealError(el: HTMLElement | null) {
+  el?.scrollIntoView({ block: 'nearest' })
+}
+
 /**
  * Criteria textarea + collapsed "Tracking options" (mode, slots, hunting,
  * check interval, sites), shared by the add and edit item dialogs.
@@ -61,6 +67,7 @@ export function TrackingFields({
   onChange,
   defaultOpen = false,
   toggleRef,
+  intervalError,
 }: {
   categoryId: number
   value: TrackingValue
@@ -69,8 +76,11 @@ export function TrackingFields({
   defaultOpen?: boolean
   /** the button that expands the options, for a dialog opened on them to focus */
   toggleRef?: Ref<HTMLButtonElement>
+  /** why the server refused the check interval, shown under "Check every" */
+  intervalError?: string | null
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const [siteError, setSiteError] = useState<string | null>(null)
   // "Track up to" while it's being typed in: the text as typed, so clearing it
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
@@ -80,11 +90,20 @@ export function TrackingFields({
   const [modeSwitched, setModeSwitched] = useState(false)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
-  const defaultInterval = useInstance().data?.recheck_interval_default
+  const instance = useInstance().data
+  const defaultInterval = instance?.recheck_interval_default
+  const intervalFloor = instance?.recheck_interval_floor
   // a stored interval that is not a preset opens on the custom field
   const [customInterval, setCustomInterval] = useState(
     value.recheckIntervalMinutes != null && !intervalPresets(defaultInterval).includes(value.recheckIntervalMinutes),
   )
+
+  // a refused interval is shown inside the options, so open them as it arrives
+  const [lastIntervalError, setLastIntervalError] = useState(intervalError)
+  if (intervalError !== lastIntervalError) {
+    setLastIntervalError(intervalError)
+    if (intervalError) setOpen(true)
+  }
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
@@ -259,12 +278,13 @@ export function TrackingFields({
                   <Input
                     id="item-recheck-interval"
                     type="number"
-                    min={1}
+                    min={intervalFloor}
                     max={1440}
                     step={1}
                     aria-label="Check interval in minutes"
+                    aria-invalid={!!intervalError || undefined}
                     placeholder={defaultInterval != null ? String(defaultInterval) : undefined}
-                    className="w-20 font-mono tnum"
+                    className="w-20 font-mono tnum aria-invalid:border-rise/60"
                     value={value.recheckIntervalMinutes ?? ''}
                     onChange={(e) => {
                       // kept as typed, not rounded: a fractional value fails the
@@ -276,8 +296,15 @@ export function TrackingFields({
                       })
                     }}
                   />
-                  <span className="text-xs text-ink-3">minutes</span>
+                  <span className="text-xs text-ink-3">
+                    minutes{intervalFloor != null ? `, at least ${intervalFloor}` : ''}
+                  </span>
                 </div>
+              ) : null}
+              {intervalError ? (
+                <p ref={revealError} role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {intervalError}
+                </p>
               ) : null}
               <p className="mt-1.5 text-xs text-ink-3">
                 {value.recheckIntervalMinutes == null ? (

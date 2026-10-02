@@ -178,6 +178,8 @@ export function ItemDetailPage() {
   // Notify looks just as on when no channel would carry the alert, so the page says so beside it
   const notifyGoesNowhere = detail.watch.notify && alertGap != null
   const bestListing = detail.listings.find((l) => l.id === detail.best_listing_id) ?? null
+  // with hunting off on the server the Hunt button says so itself, and no swap will run
+  const swapHint = detail.hunt.slots_open === 0 && instance?.hunt_enabled !== false
 
   const trackedCount = detail.listings.filter((l) => l.active).length
   const siteNames =
@@ -210,18 +212,29 @@ export function ItemDetailPage() {
         {detail.target_met ? <SnaggedBadge /> : null}
         <span className="flex-1" />
         {/* a full watch is never hunted on its own; asking is a swap hunt,
-            which trades its weakest listing for something better (HunterLine says so) */}
+            which trades its weakest listing for something better */}
         <HuntButton
           scope="item"
           scopeId={detail.id}
           label={detail.hunt.slots_open === 0 ? 'Hunt for better' : 'Hunt now'}
           size="sm"
+          aria-describedby={swapHint ? 'swap-hint' : undefined}
         />
         <CheckPricesButton scope="item" scopeId={detail.id} size="sm" />
         <Button size="sm" onClick={() => setEditing('item')}>
           Edit
         </Button>
       </div>
+      {swapHint ? (
+        // a relabelled button reads as a different action, and a swap sounds
+        // like losing a listing unless it says it may not happen at all
+        <p id="swap-hint" className="mt-1.5 font-mono text-[12px] text-ink-3 sm:text-right">
+          No room for more listings, so a hunt replaces{' '}
+          {detail.selection_mode === 'best_match'
+            ? 'the weakest match only if it finds a better one'
+            : 'the priciest only if it finds a cheaper one'}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-end gap-x-7 gap-y-4">
         <div
