@@ -30,7 +30,7 @@ import { EditItemDialog } from '@/features/items/EditItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { useSession } from '@/features/auth/useSession'
-import { useJobs } from '@/features/activity/JobsProvider'
+import { useHuntNow } from '@/features/activity/useHuntNow'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
 import { EditCategoryDialog } from './EditCategoryDialog'
@@ -72,7 +72,7 @@ function CategoryView({ slug }: { slug: string }) {
   const [editItemSession, setEditItemSession] = useState(0)
   const [deletingItem, setDeletingItem] = useState<ItemSummary | null>(null)
   const queryClient = useQueryClient()
-  const { enqueue } = useJobs()
+  const huntNow = useHuntNow()
   // categories are shared, so only an admin renames one or links its sites
   const isAdmin = useSession().data?.role === 'admin'
 
@@ -282,7 +282,7 @@ function CategoryView({ slug }: { slug: string }) {
                 setEditItemOpen(true)
               }}
               onDelete={(item) => setDeletingItem(item)}
-              onHunt={(item) => enqueue({ kind: 'hunt', scope: 'item', scope_id: item.id })}
+              onHunt={(item) => huntNow.mutate({ scope: 'item', scope_id: item.id })}
             />
             <div className="border-t border-hairline bg-well px-4 py-2 font-mono text-[12px] text-ink-3">
               {rows.length} {rows.length === 1 ? 'item' : 'items'} · sorted by distance to target
