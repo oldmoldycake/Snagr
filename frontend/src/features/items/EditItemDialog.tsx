@@ -118,6 +118,18 @@ export function EditItemDialog({
                   ⚠ {targetError}
                 </p>
               ) : null}
+              <p className="mt-1.5 text-xs text-ink-3">
+                {target.trim() ? (
+                  <>
+                    You'll see <span className="text-drop">⌖ at target</span> when the best price is at or below this.
+                  </>
+                ) : (
+                  <>
+                    Without a target, Snagr can't mark the item <span className="text-drop">⌖ at target</span> or
+                    alert you when its price is low enough.
+                  </>
+                )}
+              </p>
             </div>
 
             <TrackingFields categoryId={item.category_id} value={tracking} onChange={setTracking} />
