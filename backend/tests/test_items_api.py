@@ -362,6 +362,27 @@ async def test_an_interval_outside_the_floor_and_a_day_is_refused(client, db_ses
         assert error["fields"] == {"recheck_interval_minutes": "Must be between 5 and 1440 minutes"}
 
 
+async def test_the_instance_says_the_floor_an_interval_is_held_to(client, db_session, monkeypatch):
+    """The item form takes it as its least custom interval, so the floor it
+    shows is the one a save is refused under."""
+    assert (await client.get("/api/instance")).json()["recheck_interval_floor"] == 5
+    monkeypatch.setattr(settings, "RECHECK_INTERVAL_FLOOR_MINUTES", 15)
+    assert (await client.get("/api/instance")).json()["recheck_interval_floor"] == 15
+
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    body = {"category_id": category_id, "name": "Beta", "target_price": None}
+    res = await client.post(
+        "/api/items", json=body | {"recheck_interval_minutes": 10}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    assert res.json()["error"]["fields"] == {
+        "recheck_interval_minutes": "Must be between 15 and 1440 minutes"
+    }
+
+
 @pytest.mark.parametrize("count", [0, 11, 10_000_000_000])
 async def test_max_listings_outside_one_to_ten_is_refused(client, db_session, count):
     owner_id = await _sign_in(client)

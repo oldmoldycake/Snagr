@@ -61,6 +61,9 @@ export interface InstanceInfo {
   /** minutes between rechecks for a watch with no interval of its own
    *  (RECHECK_INTERVAL_MINUTES) — the item form's placeholder */
   recheck_interval_default: number
+  /** the shortest interval a watch may be given (RECHECK_INTERVAL_FLOOR_MINUTES) —
+   *  the item form's least custom interval */
+  recheck_interval_floor: number
   /** false when the operator switched hunting off (HUNT_ENABLED): nothing is hunted,
    *  "hunt now" answers 409 hunting_disabled, and prices are still rechecked */
   hunt_enabled: boolean
