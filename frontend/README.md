@@ -92,8 +92,8 @@ values, not CSS vars — change both together). Dark-only, by design.
   All-caps is for eyebrows, buttons, nav tabs and badges; form labels, table headers and other
   small labels are sentence case, without letter-spacing.
 - **Signature components**: the dashboard's verdict hero (`VerdictHero`) states the hunt in a
-  sentence plus one line of tonight's totals — aggregates only, since per-item facts appear
-  exactly once, on the shelves; `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
+  sentence that names the items at target and the closest one still above, plus one line of
+  tonight's totals (counts only; every other per-item fact appears once, on the shelves); `Radar` sweeps only while the hunter is working; `MeterToTarget`/`Ladder` draw distance to
   target (lume within 5%); `ListingsBoard` extends the ladder into one log-scale price rail
   per listing (range-high left → cheapest right, a ⌖ notch on each row, a labeled price
   ruler, drift marks from the chart's range; the scale math is `features/items/rail.ts`); `TerminalLog` is the one voice

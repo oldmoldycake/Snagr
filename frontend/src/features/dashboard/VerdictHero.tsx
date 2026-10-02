@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { getJobsSummary } from '@/api/endpoints'
@@ -6,11 +7,12 @@ import type { ItemSummary, PriceDrop } from '@/api/types'
 import { effectiveTarget, isFreshDrop } from '@/features/items/WatchList'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { formatToday } from '@/lib/time'
+import { namedHits } from './verdict'
 
 /**
  * Beat one of the dashboard: the app states the hunt's status in a sentence,
- * then one line of tonight's totals. Aggregates only — per-item facts live in
- * the table, so nothing here can repeat a row (the "once only" rule).
+ * then one line of tonight's totals. The sentence names the items at target,
+ * linked, so nobody has to scan the shelves to find what the count counted.
  */
 export function VerdictHero({
   items,
@@ -23,6 +25,7 @@ export function VerdictHero({
   className?: string
 }) {
   const snagged = items.filter((item) => item.target_met)
+  const { named, more } = namedHits(items)
 
   let closest: { item: ItemSummary; gapCents: number; ratio: number } | null = null
   for (const item of items) {
@@ -53,6 +56,24 @@ export function VerdictHero({
           Nothing at target yet
         </h1>
       )}
+
+      {named.length > 0 ? (
+        <p className="mt-2.5 text-base text-ink-2">
+          {named.map((item, i) => (
+            <Fragment key={item.id}>
+              {i === 0 ? null : i === named.length - 1 && more === 0 ? ' and ' : ', '}
+              <Link to={`/items/${item.id}`} className="font-semibold text-ink hover:text-lume">
+                {item.name}
+              </Link>
+              {i === 0 ? ' is at ' : ' at '}
+              <span className="font-mono text-[15px] font-semibold text-drop tnum">
+                {formatMoney(item.best_price, item.currency)}
+              </span>
+            </Fragment>
+          ))}
+          {more > 0 ? ` and ${more} more` : null}.
+        </p>
+      ) : null}
 
       {closest ? (
         <p className="mt-2.5 text-base text-ink-2">
