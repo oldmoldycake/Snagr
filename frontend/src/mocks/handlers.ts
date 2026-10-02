@@ -1862,9 +1862,22 @@ export const handlers = [
     const id = Number(params.id)
     if (id === admin.id) return err(422, 'cannot_delete_self', 'You cannot delete your own account')
     if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
-    if (store.watches.some((w) => w.user_id === id)) {
-      return err(409, 'user_has_items', 'This user still has tracked items — deactivate the account instead')
-    }
+    // everything that is theirs goes with them; catalog items stay, and the
+    // listings and history of an item only they watched go with their watch
+    const theirs = store.watches.filter((w) => w.user_id === id)
+    const watchIds = new Set(theirs.map((w) => w.id))
+    store.watches = store.watches.filter((w) => w.user_id !== id)
+    const orphaned = new Set(
+      theirs.map((w) => w.item_id).filter((itemId) => !store.watches.some((w) => w.item_id === itemId)),
+    )
+    const listingIds = new Set(store.listings.filter((l) => orphaned.has(l.item_id)).map((l) => l.id))
+    store.listings = store.listings.filter((l) => !listingIds.has(l.id))
+    store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
+    store.jobs = store.jobs.filter((j) => j.watch_id == null || !watchIds.has(j.watch_id))
+    for (const job of store.jobs) if (job.user_id === id) job.user_id = null
+    store.notificationChannels = store.notificationChannels.filter((c) => c.user_id !== id)
+    store.tokens = store.tokens.filter((t) => t.user_id !== id)
+    store.visionQueue = store.visionQueue.filter((q) => q.user_id !== id)
     store.users = store.users.filter((u) => u.id !== id)
     return new HttpResponse(null, { status: 204 })
   }),
