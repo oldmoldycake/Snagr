@@ -7,9 +7,10 @@ import { Radar } from '@/components/ui/radar'
 import { LogGlyph } from '@/components/ui/terminal-log'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
-import { countdown, formatDuration, formatInterval, relativeTime } from '@/lib/time'
+import { formatDuration, formatInterval, relativeTime } from '@/lib/time'
 import { checkLine, glyphFor, resultText } from './lines'
 import { useJobs } from './JobsProvider'
+import { behindSchedule, nextCheckText } from './timeline'
 
 const SUMMARY_POLL_MS = 30_000
 
@@ -90,11 +91,20 @@ export function HunterTicker({ className }: { className?: string }) {
   }
 
   const lastCheck = checks.at(-1)
+  // overdue work with nothing running contradicts "Idle", and outranks
+  // "Hunting off": checks are still meant to run then
+  const behind = summary.data != null && behindSchedule(summary.data, !huntingOff)
+  let label = 'Idle'
+  if (checksRunning > 0) label = `Checking ${checksRunning} ${checksRunning === 1 ? 'price' : 'prices'}`
+  else if (behind) label = 'Behind schedule'
+  else if (huntingOff) label = 'Hunting off'
   return (
     <div className={barClass}>
       <Radar size={24} animate={checksRunning > 0} />
-      <span className={cn(labelClass, checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
-        {checksRunning > 0 ? `Checking ${checksRunning} ${checksRunning === 1 ? 'price' : 'prices'}` : huntingOff ? 'Hunting off' : 'Idle'}
+      <span
+        className={cn(labelClass, checksRunning > 0 ? 'text-lume' : behind ? 'text-warn' : 'text-ink-3')}
+      >
+        {label}
       </span>
       <span aria-hidden className="shrink-0 text-ink-3 max-sm:hidden">
         │
@@ -102,7 +112,7 @@ export function HunterTicker({ className }: { className?: string }) {
       <span className={messageClass}>
         {checksRunning > 0 && lastCheck ? (
           <TickerCheck check={lastCheck} />
-        ) : huntingOff ? (
+        ) : huntingOff && !behind ? (
           <>
             <span className="max-sm:hidden">off on this server · </span>
             prices are still checked every {formatInterval(instance.recheck_interval_default)}
@@ -154,7 +164,7 @@ function IdleMessage({
       </>,
     )
   }
-  if (summary.next_check_at) parts.push(`next check ${countdown(summary.next_check_at)}`)
+  if (summary.next_check_at) parts.push(nextCheckText(summary.next_check_at))
   if (summary.last_hunt?.finished_at) {
     parts.push(
       `last hunt ${relativeTime(summary.last_hunt.finished_at)}, ${resultText(summary.last_hunt).text.replace(/^✚ /, '')}`,
