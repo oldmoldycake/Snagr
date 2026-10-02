@@ -330,8 +330,6 @@ function CategoryView({ slug }: { slug: string }) {
         category={category}
         open={editOpen}
         onOpenChange={setEditOpen}
-        // the slug survives a rename, so the page stays put, filters and all
-        onSaved={() => undefined}
       />
       {editingItem ? (
         <EditItemDialog key={`item-${editItemSession}`} item={editingItem} open={editItemOpen} onOpenChange={setEditItemOpen} />
