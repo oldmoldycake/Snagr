@@ -234,7 +234,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent>
+      <DialogContent dismissible={created == null}>
         <DialogHeader>
           <DialogTitle>New API token</DialogTitle>
           <DialogDescription>
@@ -256,7 +256,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             </DialogBody>
             <DialogFooter>
               <Button variant="primary" onClick={() => close(false)}>
-                Done
+                I've saved it
               </Button>
             </DialogFooter>
           </>
