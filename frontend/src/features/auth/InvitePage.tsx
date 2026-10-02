@@ -3,9 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { acceptInvite, validateInvite } from '@/api/endpoints'
-import { ApiError } from '@/api/client'
+import { ApiError, isNotFound } from '@/api/client'
 import { qk } from '@/api/queries'
 import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { usePageTitle } from '@/lib/usePageTitle'
@@ -51,6 +52,21 @@ export function InvitePage() {
 
   if (invite.isError) {
     const expired = invite.error instanceof ApiError && invite.error.status === 410
+    // Only a 404 or 410 is the server's verdict on the link: a dropped
+    // connection or a 500 says nothing about it, so it is never "not valid".
+    if (!expired && !isNotFound(invite.error)) {
+      return (
+        <AuthLayout>
+          <ErrorState
+            title="Couldn't check this invite"
+            error={invite.error}
+            onRetry={() => void invite.refetch()}
+            retrying={invite.isFetching}
+            className="border-0 px-0 py-4"
+          />
+        </AuthLayout>
+      )
+    }
     return (
       <AuthLayout>
         <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">
