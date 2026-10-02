@@ -2,11 +2,11 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { listJobs, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { Job, JobsSummary, Site } from '@/api/types'
+import type { Job, JobsSummary, PausedSite, Site } from '@/api/types'
 import { clockTime } from '@/lib/time'
 import { HuntButton } from './HuntButton'
 import { PausedSiteCard } from './PausedSiteCard'
-import { recentFailures } from './timeline'
+import { pausedSiteOf, recentFailures } from './timeline'
 
 const FAILED = { status: 'failed', kind: 'hunt', per_page: 5 } as const
 
@@ -52,7 +52,7 @@ export function NeedsYou({ summary }: { summary?: JobsSummary }) {
         <PausedSiteCard key={site.site_id} site={site} />
       ))}
       {failures.map((job) => (
-        <FailureCard key={job.id} job={job} />
+        <FailureCard key={job.id} job={job} pause={pausedSiteOf(job, paused)} />
       ))}
 
       <SiteHealth />
@@ -60,7 +60,9 @@ export function NeedsYou({ summary }: { summary?: JobsSummary }) {
   )
 }
 
-function FailureCard({ job }: { job: Job }) {
+/** A failed hunt, with Retry. While its site is paused a retry would only queue behind the
+ *  pause, so Retry is held and says until when. */
+function FailureCard({ job, pause }: { job: Job; pause?: PausedSite }) {
   return (
     <div className="space-y-2.5 rounded-lg border border-rise/35 bg-rise/[0.06] p-4">
       <div className="flex items-baseline gap-2">
@@ -80,7 +82,15 @@ function FailureCard({ job }: { job: Job }) {
       </p>
       <div className="flex items-center gap-3">
         {job.item_id != null ? (
-          <HuntButton scope="item" scopeId={job.item_id} label="Retry" size="sm" />
+          <HuntButton
+            scope="item"
+            scopeId={job.item_id}
+            label="Retry"
+            size="sm"
+            unavailable={
+              pause ? `${pause.site_name} is paused until ${clockTime(pause.paused_until)}` : undefined
+            }
+          />
         ) : null}
         <Link
           to={`/activity/${job.id}`}
