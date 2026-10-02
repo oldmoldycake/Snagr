@@ -418,7 +418,7 @@ function ShelfMenu({
               {noSites ? null : <DropdownMenuHint>{category.site_ids.length} linked</DropdownMenuHint>}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => onRename(category)}>
-              <Pencil /> Rename
+              <Pencil /> Edit category…
             </DropdownMenuItem>
           </>
         ) : null}
