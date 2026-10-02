@@ -164,7 +164,7 @@ export function startDemoHunt(job: MockJob, claimMs = 400) {
 
   clock += 900
   at(clock, () =>
-    emit(job, 'info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 6 results, 2 already tracked`),
+    emit(job, 'info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 5 results, 2 already tracked`),
   )
 
   const REJECTED = [
@@ -274,8 +274,8 @@ export function startDemoHunt(job: MockJob, claimMs = 400) {
       'success',
       'job_finished',
       stats.new_listings > 0
-        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} seen · room for ${left} more`
-        : `Hunt complete — nothing new · ${stats.listings_checked} seen`,
+        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} looked at · room for ${left} more`
+        : `Hunt complete — nothing new · ${stats.listings_checked} looked at`,
     )
     broadcastJob('job.finished', job)
     timers.delete(job.id)

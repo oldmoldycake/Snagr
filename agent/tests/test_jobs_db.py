@@ -1687,6 +1687,21 @@ class TestUnitTally:
         assert counted["listings_checked"] == 1
         assert counted["prices_found"] == 0
 
+    def test_a_rejected_candidate_tallies_as_looked_at(self):
+        # the hunt's log lists every rejection, so its summary has to count them
+        async def scenario():
+            ids = await seed_scope_graph()
+            runtime = unit_a(ids)
+            result = await tools.log_listing_check(
+                "https://gamebay.test/nope", "poor_fit", runtime=runtime
+            )
+            return result, tally(runtime)
+
+        result, counted = db(scenario())
+        assert result.startswith("Logged rejected listing")
+        assert counted["listings_checked"] == 1
+        assert counted["new_listings"] == 0
+
     def test_save_listing_tallies_only_genuinely_new_rows(self):
         async def scenario():
             ids = await seed_scope_graph()

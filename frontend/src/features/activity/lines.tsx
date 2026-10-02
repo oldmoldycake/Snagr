@@ -67,13 +67,13 @@ export function resultText(job: Job): { text: string; tone: string } {
   const stats = job.stats
   const seen = stats?.listings_checked ?? 0
   if (job.status === 'cancelled') {
-    return { text: `cancelled · ${seen} seen`, tone: 'text-ink-3' }
+    return { text: `cancelled · ${seen} looked at`, tone: 'text-ink-3' }
   }
   const found = stats?.new_listings ?? 0
   if (found > 0) {
-    return { text: `✚ ${found} new · ${seen} seen`, tone: 'text-lume' }
+    return { text: `✚ ${found} new · ${seen} looked at`, tone: 'text-lume' }
   }
-  return { text: `nothing new · ${seen} seen`, tone: 'text-ink-2' }
+  return { text: `nothing new · ${seen} looked at`, tone: 'text-ink-2' }
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Job, JobEvent } from '@/api/types'
-import { checkReceipt, failureDetail, huntReceipt, runningWork } from './lines'
+import { checkReceipt, failureDetail, huntReceipt, resultText, runningWork } from './lines'
 
 function job(kind: Job['kind'], status: Job['status'] = 'running'): Job {
   return { kind, status } as Job
@@ -91,6 +91,26 @@ describe('failureDetail', () => {
   it('is null when nothing was kept', () => {
     expect(failureDetail([])).toBeNull()
     expect(failureDetail([event(1, 'error')])).toBeNull()
+  })
+})
+
+function finished(stats: Partial<NonNullable<Job['stats']>>, status: Job['status'] = 'done'): Job {
+  return { kind: 'hunt', status, stats } as Job
+}
+
+describe('resultText', () => {
+  // the job page's "Listings looked at" tile counts the same thing, so the row
+  // and the page it opens say it in the same words
+  it('says what the count of candidates is', () => {
+    expect(resultText(finished({ new_listings: 1, listings_checked: 3 })).text).toBe(
+      '✚ 1 new · 3 looked at',
+    )
+    expect(resultText(finished({ new_listings: 0, listings_checked: 3 })).text).toBe(
+      'nothing new · 3 looked at',
+    )
+    expect(resultText(finished({ listings_checked: 2 }, 'cancelled')).text).toBe(
+      'cancelled · 2 looked at',
+    )
   })
 })
 

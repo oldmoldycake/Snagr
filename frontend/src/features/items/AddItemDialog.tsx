@@ -1,6 +1,8 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2, Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { toast } from 'sonner'
 import { createItem, listCategories, listSites } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
@@ -19,8 +21,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useInstance } from '@/features/auth/useSession'
 import { currencySign } from '@/lib/money'
 import { siteList } from '@/features/sites/siteList'
+import { addedNote } from './addedNote'
 import { hasItemEdits } from './itemEdits'
 import { itemSaveErrors } from './itemSaveErrors'
 import { parseTargetPrice } from './targetPrice'
@@ -59,6 +63,8 @@ export function AddItemDialog({
   // second click of a double-click lands before it: this is set at once
   const submitting = useRef(false)
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const serverHunts = useInstance().data?.hunt_enabled !== false
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories, enabled: open })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites, enabled: open })
@@ -81,6 +87,11 @@ export function AddItemDialog({
       // creating a watch queues its hunts and a grounding
       void queryClient.invalidateQueries({ queryKey: ['jobs'] })
       setOpen(false)
+      // the new row can land far down a long list, so the toast says it worked and links to it
+      toast.success(`Added ${item.name}`, {
+        description: addedNote(item.hunt, serverHunts),
+        action: { label: 'View', onClick: () => navigate(`/items/${item.id}`) },
+      })
       onAdded?.(item)
     },
     onError: (error) => {
