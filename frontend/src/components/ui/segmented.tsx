@@ -8,7 +8,8 @@ const STEP: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -
  * The one segmented control: mono caps on a well, with one raised plate that
  * tracks the checked option (the nav's "Reticle Track" motion). Used for time
  * ranges, chart tabs, status filters, and the selection-mode picker. A null
- * value checks nothing — the check-interval picker's "instance default".
+ * value checks nothing — the check-interval picker until the instance default
+ * it marks has loaded.
  *
  * A radio group: the checked option is the one Tab stop, and the arrow keys
  * (Home, End) move and select. The root scrolls sideways, so a picker wider
