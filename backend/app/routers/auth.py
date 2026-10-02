@@ -1,4 +1,4 @@
-"""Authentication, SSO and invite signup — /api/auth/*. Public except /me.
+"""Authentication, SSO, invite signup and password resets — /api/auth/*. Public except /me.
 
 THE WHOLE LOGIN FLOW, in one file. Read it top-to-bottom once and it'll click:
 
@@ -56,17 +56,20 @@ from app.core.security import (
     FIRST_USER_LOCK,
     hash_password,
     hash_refresh,
+    hash_reset_token,
     make_access_jwt,
     new_refresh_token,
     password_error,
     verify_password,
 )
 from app.database import get_db
-from app.models import Invites, Sessions, User
+from app.models import Invites, PasswordResets, Sessions, User
 from app.schemas.auth import (
     InviteAcceptRequest,
     InviteValidation,
     LoginRequest,
+    PasswordResetRequest,
+    PasswordResetValidation,
     RegisterRequest,
     UserEnvelope,
     user_out,
@@ -453,3 +456,66 @@ async def accept_invite(
     await _start_session(db, response, user)
     await db.commit()
     return UserEnvelope(user=user_out(user))
+
+
+# --- password resets (admin-issued links) -----------------------------------
+
+
+async def _live_reset(db: AsyncSession, token: str) -> PasswordResets:
+    """Look up a reset token, or raise the contract's 404/410."""
+    reset = await db.scalar(
+        select(PasswordResets).where(PasswordResets.token_hash == hash_reset_token(token))
+    )
+    if reset is None:
+        raise err(404, "not_found", "This reset link is not valid")
+    if reset.used_at is not None or reset.expires_at < datetime.now(UTC):
+        raise err(410, "reset_expired", "This reset link has expired or was already used")
+    return reset
+
+
+@router.get("/password-resets/{token}", response_model=PasswordResetValidation)
+async def validate_password_reset(token: str, db: AsyncSession = Depends(get_db)):
+    """Check a reset link before showing the new-password form.
+
+    404 not_found for an unknown token; 410 reset_expired once used or expired."""
+    reset = await _live_reset(db, token)
+    user = await db.get(User, reset.user_id)
+    return PasswordResetValidation(email=user.email, expires_at=reset.expires_at.isoformat())
+
+
+@router.post(
+    "/password-resets/{token}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(csrf_guard)],
+)
+async def complete_password_reset(
+    token: str, body: PasswordResetRequest, db: AsyncSession = Depends(get_db)
+):
+    """Set a new password from a reset link and end every sign-in the account
+    has: whoever lost the password may not be the only one holding a session.
+    Starts no session — the user signs in with the new password, which also
+    keeps a deactivated account locked out. API tokens are untouched, as on a
+    password change.
+
+    404/410 as for validating the link; 422 validation_error for a password
+    under 8 characters."""
+    reset = await _live_reset(db, token)
+    _check_new_password(body.password)
+    now = datetime.now(UTC)
+    # single-use: burn it in one statement, as accept_invite burns an invite
+    burned = await db.scalar(
+        update(PasswordResets)
+        .where(PasswordResets.id == reset.id, PasswordResets.used_at.is_(None))
+        .values(used_at=now)
+        .returning(PasswordResets.id)
+    )
+    if burned is None:
+        raise err(410, "reset_expired", "This reset link has expired or was already used")
+    user = await db.get(User, reset.user_id)
+    user.password_hash = await hash_password(body.password)
+    await db.execute(
+        update(Sessions)
+        .where(Sessions.user_id == user.id, Sessions.revoked_at.is_(None))
+        .values(revoked_at=now)
+    )
+    await db.commit()

@@ -12,6 +12,7 @@ import {
   priceDomain,
   priceSummary,
   SweepBeam,
+  TargetKey,
   timeTicks,
   useMeasuredWidth,
   useSweep,
@@ -20,7 +21,7 @@ import {
 } from '@/components/charts/pricePlot'
 import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
-import { sharedTitlePrefix } from './listingTitles'
+import { seriesLabel, sharedTitlePrefix } from './listingTitles'
 import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
 const HEIGHT = 256
@@ -28,20 +29,11 @@ const END_LABEL_GAP = 13
 
 /**
  * Legend labels: strip the longest shared title prefix (whole words) among the
- * plotted listings so six near-identical titles read by their differences,
- * then append the site. Falls back to the site name alone.
+ * plotted listings so six near-identical titles read by their differences.
  */
 function seriesLabels(plotted: PreparedSeries[]): Map<number, string> {
   const prefix = sharedTitlePrefix(plotted.map((s) => s.listing.title))
-  return new Map(
-    plotted.map((s) => {
-      const raw = s.listing.title?.slice(prefix.length).trim() ?? ''
-      // truncate the fragment, not the label — the site must survive
-      const fragment = raw.length > 26 ? `${raw.slice(0, 25).trimEnd()}…` : raw
-      const label = fragment ? `${fragment} · ${s.listing.site_name}` : s.listing.site_name
-      return [s.listing.listing_id, label]
-    }),
-  )
+  return new Map(plotted.map((s) => [s.listing.listing_id, seriesLabel(s.listing.site_name, s.listing.title, prefix)]))
 }
 
 /** Latest price at-or-before ts, step semantics (price holds until next check). */
@@ -100,8 +92,8 @@ function buildTrace(series: PreparedSeries, plot: Plot, nowTs: number): Trace {
 /**
  * Each line's legend number, in the plot's right margin beside its end dot —
  * lines told apart by hue alone fail anyone who can't tell the hues apart.
- * Outside the well, so the target label never covers one; pushed apart
- * top-down so lines ending at near-equal prices stay legible.
+ * Outside the well, clear of the traces; pushed apart top-down so lines
+ * ending at near-equal prices stay legible.
  */
 function EndLabels({ traces, plot, numbers }: { traces: Trace[]; plot: Plot; numbers: Map<number, number> }) {
   const placed = [...traces].sort((a, b) => a.now.y - b.now.y)
@@ -214,7 +206,6 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
               yMax={geom.domain[1]}
               xTicks={geom.xTicks}
               target={target}
-              targetLabel={`⌖ TARGET ${formatMoney(data.target_price, data.currency)}`}
               beamX={struck.length > 0 ? sweep.pos!.x : null}
             />
             {geom.traces.map((tr) => (
@@ -268,7 +259,7 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
           : ''}
       </p>
 
-      {plotted.length > 1 || foldedCount > 0 ? (
+      {plotted.length > 1 || foldedCount > 0 || data.target_price != null ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
           {plotted.map((s) => (
             <span key={s.listing.listing_id} className="flex items-center gap-1.5 text-xs text-ink-2">
@@ -285,6 +276,7 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
               Others ({foldedCount}) — see listings below
             </span>
           ) : null}
+          {data.target_price != null ? <TargetKey price={data.target_price} currency={data.currency} /> : null}
         </div>
       ) : null}
     </div>

@@ -1,7 +1,14 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Job, JobsSummary, PausedSite } from '@/api/types'
 import { formatClock } from '@/lib/time'
-import { behindSchedule, dueState, groupByHour, queuedWait, recentFailures } from './timeline'
+import {
+  behindSchedule,
+  dueState,
+  groupByHour,
+  nextCheckText,
+  queuedWait,
+  recentFailures,
+} from './timeline'
 
 // local-time constructors, and clocks through formatClock, so the
 // expectations hold in any time zone and locale
@@ -165,5 +172,29 @@ describe('behindSchedule', () => {
 
   it('does not count hunts held while hunting is off', () => {
     expect(behindSchedule(summary({ next_hunt_at: at(-5) }), false, now)).toBe(false)
+  })
+})
+
+describe('nextCheckText', () => {
+  const at = (secs: number) => new Date(NOW.getTime() + secs * 1000).toISOString()
+  const now = NOW.getTime()
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('counts down to a check still ahead', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    expect(nextCheckText(at(12 * 60), now)).toBe('next check in 12m')
+  })
+
+  it('says a due check is starting, never a bare "now" beside "Idle"', () => {
+    expect(nextCheckText(at(0), now)).toBe('next check starting')
+    expect(nextCheckText(at(-60), now)).toBe('next check starting')
+  })
+
+  it('says a late check is overdue', () => {
+    expect(nextCheckText(at(-61), now)).toBe('next check overdue')
   })
 })

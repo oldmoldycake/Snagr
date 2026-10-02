@@ -28,11 +28,14 @@ export function isPlausibleUrl(input: string): boolean {
   return host != null && /^[^.]+(\.[^.]+)+$/.test(host)
 }
 
-/** The listed site on the same host as the typed address, so adding it again picks that one instead. */
-export function findDuplicate(input: string, sites: Site[]): Site | undefined {
+/**
+ * The listed site on the same host as the typed address, which adding that address would list twice.
+ * `exceptId` is the site being edited, which is never a duplicate of itself.
+ */
+export function findDuplicate(input: string, sites: Site[], exceptId?: number): Site | undefined {
   const host = hostOf(input)
   if (host == null) return undefined
-  return sites.find((site) => hostOf(site.base_url) === host)
+  return sites.find((site) => site.id !== exceptId && hostOf(site.base_url) === host)
 }
 
 /** A new site's name until the user types one: its host, matching how existing sites are named. */

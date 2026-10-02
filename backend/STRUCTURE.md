@@ -23,7 +23,7 @@ backend/
 │   ├── models.py          # ALL ORM models (owns the schema; mirrors agent/database.py + new tables)
 │   ├── core/
 │   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handlers (ApiError, database errors)  ← raise err(404, ...)
-│   │   ├── security.py     # password rules + hashing (argon2, on a thread pool) + JWT/refresh/API-token minting + webhook secret & HMAC signing (no DB, no FastAPI)
+│   │   ├── security.py     # password rules + hashing (argon2, on a thread pool) + JWT/refresh/API-token/reset-link minting + webhook secret & HMAC signing (no DB, no FastAPI)
 │   │   ├── ratelimit.py    # sign-in attempt limits per client address and per account (in-process) → 429 rate_limited
 │   │   ├── cookies.py      # the two auth cookie names + set/clear helpers (httpOnly, SameSite=Lax, Path=/)
 │   │   └── deps.py         # FastAPI deps: current_user (cookie OR bearer), reject_bearer, require_scope, require_admin, csrf_guard
@@ -39,7 +39,7 @@ backend/
 │   │   └── vision.py       # ReviewQueueEntry, ReferenceImage, AuthenticityRead + requests
 │   ├── routers/           # one file per section of endpoints.ts — HTTP layer only
 │   │   ├── instance.py     # GET /api/instance — public, no auth (the frontend's first call on boot)
-│   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, oidc login/callback)
+│   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, password resets, oidc login/callback)
 │   │   ├── me.py           # /api/me, /api/me/password, /api/me/channels[/{id}][/test], /api/me/tokens[/{id}] — cookie-only
 │   │   ├── categories.py   # /api/categories[/{id}][/sites]
 │   │   ├── sites.py        # /api/sites[/{id}]
@@ -47,7 +47,7 @@ backend/
 │   │   ├── charts.py       # /api/items/{id}/price-*, /api/categories/{id}/price-change, /api/dashboard/*
 │   │   ├── jobs.py         # /api/jobs[/summary|/{id}][/events|/cancel]
 │   │   ├── events.py       # GET /api/events (SSE) — opened via EventSource, not in endpoints.ts
-│   │   ├── admin.py        # /api/admin/users, /api/admin/invites
+│   │   ├── admin.py        # /api/admin/users (+ password-reset links), /api/admin/invites
 │   │   └── vision.py       # /api/vision/* (review queue, references, image proxy) + /api/items/{id}/references*
 │   ├── mcp/               # the MCP endpoint (POST /api/mcp): Snagr as tools for agents
 │   │   ├── server.py       # FastMCP instance, bearer verifier, the error-envelope conversion, app factory
@@ -68,7 +68,7 @@ backend/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–022 (linear chain); the backend owns the canonical schema
+├── migrations/            # Alembic revisions 001–023 (linear chain); the backend owns the canonical schema
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -107,9 +107,9 @@ Find any `endpoints.ts` function here:
 | endpoints.ts function | Router file | Phase |
 |---|---|---|
 | `getInstance` | `instance.py` | 0 |
-| `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` (+ refresh) | `auth.py` | 2 |
+| `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` `validatePasswordReset` `completePasswordReset` (+ refresh) | `auth.py` | 2 |
 | `updateMe` `changePassword` | `me.py` | 2 |
-| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` | `me.py` | notifications |
+| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` `testNewChannel` | `me.py` | notifications |
 | `listTokens` `createToken` `revokeToken` | `me.py` | mcp |
 | `listCategories` `createCategory` `updateCategory` `deleteCategory` `setCategorySites` | `categories.py` | 1 / 3 |
 | `listSites` `createSite` `updateSite` `deleteSite` | `sites.py` | 1 / 3 |
@@ -117,7 +117,7 @@ Find any `endpoints.ts` function here:
 | `getPriceHistory` `getPriceSummary` `getCategoryPriceChange` `getDashboardStats` `getPriceDrops` | `charts.py` | 1 |
 | `enqueueJobs` `listJobs` `getJobsSummary` `getJob` `getJobEvents` `cancelJob` | `jobs.py` | 3 |
 | *(EventSource `/api/events`)* | `events.py` | 3 |
-| `listUsers` `updateUser` `deleteUser` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
+| `listUsers` `updateUser` `deleteUser` `createPasswordReset` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
 | `listReviewQueue` `confirmReviewEntry` `discardReviewEntry` `listReferences` `uploadReference` `revokeReference` `revokeAutoReferences` | `vision.py` | vision |
 | *(`<img src>` `/api/vision/images/{key}`)* | `vision.py` | vision |
 | *(MCP tools over `POST /api/mcp` — same services, same shapes)* | `mcp/tools/*.py` | mcp |
@@ -133,7 +133,8 @@ Find any `endpoints.ts` function here:
    A name is unique per category ignoring case (`uq_items_category_name`), and
    renaming an item other people watch moves only the caller's watch (with its
    listings, jobs and scans) to the item of the new name — unless the caller
-   is an admin — so a PATCH can answer under a different id.
+   is an admin — so a PATCH can answer under a different id. `watcher_count`
+   on every item tells the edit dialog which of the two a rename will be.
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
    `spark`, `pct_change_range`, `item_count`, `listing_count`, `last_checked_at`, the

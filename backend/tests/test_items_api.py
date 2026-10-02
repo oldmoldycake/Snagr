@@ -362,6 +362,27 @@ async def test_an_interval_outside_the_floor_and_a_day_is_refused(client, db_ses
         assert error["fields"] == {"recheck_interval_minutes": "Must be between 5 and 1440 minutes"}
 
 
+async def test_the_instance_says_the_floor_an_interval_is_held_to(client, db_session, monkeypatch):
+    """The item form takes it as its least custom interval, so the floor it
+    shows is the one a save is refused under."""
+    assert (await client.get("/api/instance")).json()["recheck_interval_floor"] == 5
+    monkeypatch.setattr(settings, "RECHECK_INTERVAL_FLOOR_MINUTES", 15)
+    assert (await client.get("/api/instance")).json()["recheck_interval_floor"] == 15
+
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    body = {"category_id": category_id, "name": "Beta", "target_price": None}
+    res = await client.post(
+        "/api/items", json=body | {"recheck_interval_minutes": 10}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    assert res.json()["error"]["fields"] == {
+        "recheck_interval_minutes": "Must be between 15 and 1440 minutes"
+    }
+
+
 @pytest.mark.parametrize("count", [0, 11, 10_000_000_000])
 async def test_max_listings_outside_one_to_ten_is_refused(client, db_session, count):
     owner_id = await _sign_in(client)
@@ -1362,6 +1383,21 @@ async def test_recasing_a_shared_item_is_for_an_admin(client, db_session):
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "forbidden"
     assert (await client.get(f"/api/items/{item_id}")).json()["name"] == "Alpha"
+
+
+async def test_an_item_says_how_many_watch_it(client, db_session):
+    """The edit dialog reads it to say whether a rename reaches anyone else."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        shared = await sc.item("Alpha")
+        await sc.watch(shared)
+        await sc.watch(shared, user=await sc.other_user())
+        await sc.watch(await sc.item("Beta"))
+
+    listed = (await client.get("/api/items")).json()["data"]
+
+    assert {row["name"]: row["watcher_count"] for row in listed} == {"Alpha": 2, "Beta": 1}
+    assert (await client.get(f"/api/items/{shared.id}")).json()["watcher_count"] == 2
 
 
 # --- the last watcher leaving ----------------------------------------------------

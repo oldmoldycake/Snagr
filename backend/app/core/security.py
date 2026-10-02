@@ -147,6 +147,22 @@ def hash_api_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+# --- password reset links ---------------------------------------------------
+
+
+def new_reset_token() -> tuple[str, str]:
+    """Return (raw_token_for_the_link, sha256_for_password_resets.token_hash).
+    The refresh-token scheme: only the hash is ever persisted."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_reset_token(raw)
+
+
+def hash_reset_token(raw: str) -> str:
+    """sha256 of a raw reset token — the lookup key into password_resets.token_hash.
+    A fast hash for the reason hash_api_token gives: 256 random bits."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 # --- webhook signing --------------------------------------------------------
 
 
