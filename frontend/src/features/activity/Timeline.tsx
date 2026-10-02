@@ -22,6 +22,7 @@ import { reasonText, resultText, waitingForSite } from './lines'
 import { useJobs } from './JobsProvider'
 import {
   checksDue,
+  foldQueue,
   groupByHour,
   queuedWait,
   rowTime,
@@ -127,8 +128,7 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
     )
   }
 
-  // furthest first, so the soonest job sits right above the "now" line
-  const upcoming = [...(queued.data?.data ?? [])].reverse().map((job) => ({
+  const queue = (queued.data?.data ?? []).map((job) => ({
     job,
     wait: queuedWait(job, {
       pausedSites: summary?.paused_sites ?? [],
@@ -137,7 +137,8 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
     }),
   }))
   const checksWait = checksDue(summary)
-  const late = checksWait === 'overdue' || upcoming.some(({ wait }) => wait.state === 'overdue')
+  const late = checksWait === 'overdue' || queue.some(({ wait }) => wait.state === 'overdue')
+  const upcoming = foldQueue(queue, queueOpen)
   const groups = groupByHour(history.data?.data ?? [])
 
   return (
@@ -156,7 +157,24 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
             />
           </Row>
         ) : (
-          upcoming.map(({ job, wait }) => <QueuedRow key={job.id} job={job} wait={wait} />)
+          <>
+            {upcoming.shown.map(({ job, wait }) => (
+              <QueuedRow key={job.id} job={job} wait={wait} />
+            ))}
+            {upcoming.folded > 0 ? (
+              <Row>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={queueOpen}
+                  onClick={() => setQueueOpen((v) => !v)}
+                  className="-ml-2"
+                >
+                  {queueOpen ? 'Show fewer' : `Show ${upcoming.folded} more`}
+                </Button>
+              </Row>
+            ) : null}
+          </>
         )}
         <QueuedChecks summary={summary} wait={checksWait} />
 

@@ -45,7 +45,7 @@ export function ChartPanel({
   const active = tab === 'listings' ? history : summary
 
   return (
-    <Card className="busy-edge" aria-busy={active.isFetching}>
+    <Card className="busy-edge" aria-busy={active.isPlaceholderData}>
       <CardHeader className="flex-wrap gap-x-4 gap-y-2.5 border-b border-hairline pb-3">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
           <CardTitle>Price history</CardTitle>

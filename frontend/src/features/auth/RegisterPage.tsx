@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
+import { NewPasswordInput } from './NewPasswordInput'
 import { useInstance, useRegister } from './useSession'
 
 /** Self-registration page; redirects to /login when the instance has registration closed. */
@@ -26,9 +27,7 @@ export function RegisterPage() {
   return (
     <AuthLayout>
       <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">Create your account</h1>
-      <p className="mt-1 text-xs text-ink-2">
-        Sign up with your email and a password of at least 8 characters.
-      </p>
+      <p className="mt-1 text-xs text-ink-2">Sign up with your email and a password.</p>
 
       <form
         className="mt-4 space-y-3"
@@ -56,15 +55,7 @@ export function RegisterPage() {
         </div>
         <div>
           <Label htmlFor="password">Password</Label>
-          <Input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <NewPasswordInput id="password" value={password} onChange={setPassword} />
         </div>
 
         <Button type="submit" variant="primary" className="w-full" disabled={register.isPending}>

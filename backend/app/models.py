@@ -295,6 +295,21 @@ class Invites(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PasswordResets(Base):
+    """+ api. Admin-issued link for a user to choose a new password. Only the
+    sha256 is stored, like sessions.refresh_hash; the raw token is shown once,
+    to the admin who issued it. A user has at most one: issuing replaces it."""
+
+    __tablename__ = "password_resets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Sessions(Base):
     """+ api. Refresh-token store; the raw token lives only in the httpOnly
     cookie, we persist its sha256. Rotated on every /api/auth/refresh.

@@ -28,28 +28,22 @@ import { useInstance } from '@/features/auth/useSession'
 import { CheckPricesButton } from '@/features/activity/CheckPricesButton'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { HunterLine } from '@/features/activity/HunterLine'
+import { useTargetAlertGap } from '@/features/settings/alertGap'
 import { ReferenceLibrary } from '@/features/vision/ReferenceLibrary'
 import { ChartPanel } from './ChartPanel'
+import { checkLevel } from './checkLevel'
 import { EditItemDialog } from './EditItemDialog'
 import { Ladder } from './Ladder'
 import { ListingsBoard } from './ListingsBoard'
 
 /**
- * Only the exceptions are marked. A price the model read looks exactly as it
- * always has; a price code read off the listing's stored locator carries a dim
- * tag saying where from, and a reading the plausibility bands rejected dims
- * the whole row and says so — it is shown, but it counts for nothing until a
- * later reading agrees with it.
+ * Only the exceptions are marked. A reading the plausibility bands rejected
+ * dims the whole row and says so — it is shown, but it counts for nothing
+ * until a later reading agrees with it. How code rather than the model read a
+ * price is a detail most people never need, so its tag shows only on request.
  */
-function checkLine(check: PriceCheck): LogLine {
-  const level =
-    check.status === 'ok'
-      ? 'success'
-      : check.status === 'error'
-        ? 'warn'
-        : check.status === 'sold' || check.status === 'ended'
-          ? 'error'
-          : 'info'
+function checkLine(check: PriceCheck, showMethod: boolean): LogLine {
+  const level = checkLevel(check)
   const text =
     check.status === 'sold' || check.status === 'ended'
       ? `${check.status} · ${check.site_name}`
@@ -59,7 +53,7 @@ function checkLine(check: PriceCheck): LogLine {
             check.in_stock == null ? 'stock unknown' : check.in_stock ? 'in stock' : 'out of stock'
           } · ${check.site_name}`
   const marks = [
-    priceMethodLabel(check.method),
+    showMethod ? priceMethodLabel(check.method) : null,
     check.confirmed ? null : 'unconfirmed',
   ].filter(Boolean)
   const message = (
@@ -100,9 +94,11 @@ export function ItemDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [range, setRange] = useRangeParam()
-  const [editOpen, setEditOpen] = useState(false)
+  // Edit tracking opens the same editor, on its tracking options
+  const [editing, setEditing] = useState<'item' | 'tracking' | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [allChecks, setAllChecks] = useState(false)
+  const [checkMethods, setCheckMethods] = useState(false)
 
   const { data: instance } = useInstance()
   const item = useQuery({ queryKey: qk.item(itemId), queryFn: () => getItem(itemId) })
@@ -111,6 +107,7 @@ export function ItemDetailPage() {
     queryFn: () => listPriceChecks(itemId, 50),
   })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
+  const alertGap = useTargetAlertGap()
   usePageTitle(item.data?.name ?? (isNotFound(item.error) ? 'Item not found' : undefined))
 
   const notifyToggle = useMutation({
@@ -136,12 +133,13 @@ export function ItemDetailPage() {
     mutationFn: () => deleteItem(itemId),
     meta: { inlineError: true },
     onSuccess: () => {
-      // removed, not invalidated: Back would otherwise paint the cached page, live buttons and all
+      // removed, not invalidated: an older history entry for the item would otherwise paint the cached page, live buttons and all
       queryClient.removeQueries({ queryKey: qk.item(itemId) })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
       void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
-      navigate(`/categories/${item.data?.category_slug ?? ''}`)
+      // replace: Back from the category skips the page of the item that no longer exists
+      navigate(`/categories/${item.data?.category_slug ?? ''}`, { replace: true })
     },
   })
 
@@ -172,7 +170,11 @@ export function ItemDetailPage() {
 
   const detail = item.data
   const target = detail.watch.target_price ?? detail.target_price
+  // Notify looks just as on when no channel would carry the alert, so the page says so beside it
+  const notifyGoesNowhere = detail.watch.notify && alertGap != null
   const bestListing = detail.listings.find((l) => l.id === detail.best_listing_id) ?? null
+  // with hunting off on the server the Hunt button says so itself, and no swap will run
+  const swapHint = detail.hunt.slots_open === 0 && instance?.hunt_enabled !== false
 
   const trackedCount = detail.listings.filter((l) => l.active).length
   const siteNames =
@@ -205,18 +207,29 @@ export function ItemDetailPage() {
         {detail.target_met ? <SnaggedBadge /> : null}
         <span className="flex-1" />
         {/* a full watch is never hunted on its own; asking is a swap hunt,
-            which trades its weakest listing for something better (HunterLine says so) */}
+            which trades its weakest listing for something better */}
         <HuntButton
           scope="item"
           scopeId={detail.id}
           label={detail.hunt.slots_open === 0 ? 'Hunt for better' : 'Hunt now'}
           size="sm"
+          aria-describedby={swapHint ? 'swap-hint' : undefined}
         />
         <CheckPricesButton scope="item" scopeId={detail.id} size="sm" />
-        <Button size="sm" onClick={() => setEditOpen(true)}>
+        <Button size="sm" onClick={() => setEditing('item')}>
           Edit
         </Button>
       </div>
+      {swapHint ? (
+        // a relabelled button reads as a different action, and a swap sounds
+        // like losing a listing unless it says it may not happen at all
+        <p id="swap-hint" className="mt-1.5 font-mono text-[12px] text-ink-3 sm:text-right">
+          No room for more listings, so a hunt replaces{' '}
+          {detail.selection_mode === 'best_match'
+            ? 'the weakest match only if it finds a better one'
+            : 'the priciest only if it finds a cheaper one'}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-end gap-x-7 gap-y-4">
         <div
@@ -299,9 +312,14 @@ export function ItemDetailPage() {
             <CardHeader>
               <CardTitle>Recent checks</CardTitle>
               <div className="flex items-center gap-3">
-                <span className="font-mono text-[12px] text-ink-3 tnum">
+                <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                   {shownChecks.length} of {checkRows.length}
                 </span>
+                {checkRows.some((check) => priceMethodLabel(check.method)) ? (
+                  <Button variant="ghost" size="sm" onClick={() => setCheckMethods((v) => !v)}>
+                    {checkMethods ? 'Hide details' : 'Show details'}
+                  </Button>
+                ) : null}
                 {checkRows.length > CHECKS_PREVIEW ? (
                   <Button variant="ghost" size="sm" onClick={() => setAllChecks((v) => !v)}>
                     {allChecks ? 'Show fewer' : 'Show all'}
@@ -328,7 +346,7 @@ export function ItemDetailPage() {
                   No price checks yet. They appear once Snagr is tracking a listing.
                 </p>
               ) : (
-                <TerminalLog lines={shownChecks.map(checkLine)} />
+                <TerminalLog lines={shownChecks.map((check) => checkLine(check, checkMethods))} />
               )}
             </div>
           </Card>
@@ -362,15 +380,27 @@ export function ItemDetailPage() {
                   </dd>
                 </div>
               ))}
-              <div className="flex items-center justify-between gap-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2">
                 <dt className="font-mono text-[12px] text-ink-3">Notify at target</dt>
                 <dd>
                   <Switch
                     checked={detail.watch.notify}
                     onCheckedChange={(v) => notifyToggle.mutate(v)}
                     aria-label="Notify me when this item reaches its target"
+                    aria-describedby={notifyGoesNowhere ? 'notify-gap' : undefined}
                   />
                 </dd>
+                {notifyGoesNowhere ? (
+                  <dd id="notify-gap" className="basis-full font-mono text-[12px] text-warn">
+                    ⚠{' '}
+                    {alertGap === 'no-channels'
+                      ? 'No channel yet, so this alert goes nowhere.'
+                      : 'No channel is on for at-target alerts.'}{' '}
+                    <Link to="/settings" className="text-ink-2 underline underline-offset-2 hover:text-ink">
+                      Choose where alerts go
+                    </Link>
+                  </dd>
+                ) : null}
               </div>
             </dl>
             {detail.criteria ? (
@@ -378,7 +408,7 @@ export function ItemDetailPage() {
                 “{detail.criteria}”
               </blockquote>
             ) : null}
-            <Button className="mt-4 w-full" onClick={() => setEditOpen(true)}>
+            <Button className="mt-4 w-full" onClick={() => setEditing('tracking')}>
               Edit tracking
             </Button>
             <button
@@ -414,8 +444,11 @@ export function ItemDetailPage() {
         key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${detail.hunt.enabled}-${(detail.site_ids ?? []).join(',')}`}
         // the detail carries the watch's switch as hunt.enabled
         item={{ ...detail, hunt: detail.hunt.enabled }}
-        open={editOpen}
-        onOpenChange={setEditOpen}
+        open={editing != null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null)
+        }}
+        focusTracking={editing === 'tracking'}
         onSaved={(saved) => {
           if (saved.id !== detail.id) navigate(`/items/${saved.id}`, { replace: true })
         }}
