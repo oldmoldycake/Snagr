@@ -723,6 +723,15 @@ async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
     ).scalar_one_or_none()
     if watch is None:
         raise err(404, "not_found", f"Item {item_id} does not exist")
+    await delete_watch(db, watch)
+    await db.commit()
+
+
+async def delete_watch(db: AsyncSession, watch: Watches) -> None:
+    """Delete one watch and everything hanging off it, in the caller's
+    transaction — removing an item, or deleting the user who watches it. The
+    shared items row stays for other watchers; the watch's own jobs go by FK
+    cascade."""
     listing_ids = select(Listings.id).where(Listings.watch_id == watch.id)
 
     await db.execute(delete(ListingChecks).where(ListingChecks.watch_id == watch.id))
@@ -730,9 +739,7 @@ async def delete_item(db: AsyncSession, user_id: int, item_id: int) -> None:
     await db.execute(delete(Listings).where(Listings.watch_id == watch.id))
     await db.execute(delete(WatchSites).where(WatchSites.watch_id == watch.id))
     await db.execute(delete(Watches).where(Watches.id == watch.id))
-    await jobs_service.cancel_unwatched_ground(db, item_id)
-
-    await db.commit()
+    await jobs_service.cancel_unwatched_ground(db, watch.item_id)
 
 
 async def update_watch(

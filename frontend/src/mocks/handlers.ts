@@ -20,6 +20,7 @@ import type {
   NotificationChannelUpdateRequest,
   NotificationEvent,
   PasswordChangeRequest,
+  PasswordResetRequest,
   ReviewConfirmRequest,
   SiteCreateRequest,
   SiteUpdateRequest,
@@ -559,6 +560,7 @@ export const handlers = [
       vision_enabled: true,
       mcp_enabled: true,
       recheck_interval_default: RECHECK_INTERVAL_MINUTES,
+      recheck_interval_floor: RECHECK_INTERVAL_FLOOR_MINUTES,
       hunt_enabled: HUNT_ENABLED,
     })
   }),
@@ -651,6 +653,35 @@ export const handlers = [
     invite.accepted_at = Date.now()
     localStorage.setItem(SESSION_KEY, String(user.id))
     return HttpResponse.json({ user: toUser(user) }, { status: 201 })
+  }),
+
+  http.get('/api/auth/password-resets/:token', async ({ params }) => {
+    await wait()
+    const reset = store.passwordResets.find((r) => r.token === params.token)
+    const user = store.users.find((u) => u.id === reset?.user_id)
+    if (!reset || !user) return err(404, 'not_found', 'This reset link is not valid')
+    if (reset.used_at || reset.expires_at < Date.now()) {
+      return err(410, 'reset_expired', 'This reset link has expired or was already used')
+    }
+    return HttpResponse.json({ email: user.email, expires_at: new Date(reset.expires_at).toISOString() })
+  }),
+
+  http.post('/api/auth/password-resets/:token', async ({ params, request }) => {
+    await wait()
+    const reset = store.passwordResets.find((r) => r.token === params.token)
+    const user = store.users.find((u) => u.id === reset?.user_id)
+    if (!reset || !user) return err(404, 'not_found', 'This reset link is not valid')
+    if (reset.used_at || reset.expires_at < Date.now()) {
+      return err(410, 'reset_expired', 'This reset link has expired or was already used')
+    }
+    const body = (await request.json()) as PasswordResetRequest
+    const weak = weakPassword(body.password, 'password')
+    if (weak) return weak
+    user.password = body.password
+    reset.used_at = Date.now()
+    // the backend signs the account out everywhere; the mock's one session is this browser's
+    if (localStorage.getItem(SESSION_KEY) === String(user.id)) localStorage.removeItem(SESSION_KEY)
+    return new HttpResponse(null, { status: 204 })
   }),
 
   http.patch('/api/me', async ({ request }) => {
@@ -1831,11 +1862,40 @@ export const handlers = [
     const id = Number(params.id)
     if (id === admin.id) return err(422, 'cannot_delete_self', 'You cannot delete your own account')
     if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
-    if (store.watches.some((w) => w.user_id === id)) {
-      return err(409, 'user_has_items', 'This user still has tracked items — deactivate the account instead')
-    }
+    // everything that is theirs goes with them; catalog items stay, and the
+    // listings and history of an item only they watched go with their watch
+    const theirs = store.watches.filter((w) => w.user_id === id)
+    const watchIds = new Set(theirs.map((w) => w.id))
+    store.watches = store.watches.filter((w) => w.user_id !== id)
+    const orphaned = new Set(
+      theirs.map((w) => w.item_id).filter((itemId) => !store.watches.some((w) => w.item_id === itemId)),
+    )
+    const listingIds = new Set(store.listings.filter((l) => orphaned.has(l.item_id)).map((l) => l.id))
+    store.listings = store.listings.filter((l) => !listingIds.has(l.id))
+    store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
+    store.jobs = store.jobs.filter((j) => j.watch_id == null || !watchIds.has(j.watch_id))
+    for (const job of store.jobs) if (job.user_id === id) job.user_id = null
+    store.notificationChannels = store.notificationChannels.filter((c) => c.user_id !== id)
+    store.tokens = store.tokens.filter((t) => t.user_id !== id)
+    store.visionQueue = store.visionQueue.filter((q) => q.user_id !== id)
     store.users = store.users.filter((u) => u.id !== id)
     return new HttpResponse(null, { status: 204 })
+  }),
+
+  http.post('/api/admin/users/:id/password-reset', async ({ params }) => {
+    requireAdmin()
+    const id = Number(params.id)
+    if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
+    // a new link replaces any earlier one, so only the newest works
+    store.passwordResets = store.passwordResets.filter((r) => r.user_id !== id)
+    const reset = {
+      token: crypto.randomUUID().replace(/-/g, ''),
+      user_id: id,
+      expires_at: Date.now() + DAY,
+      used_at: null,
+    }
+    store.passwordResets.push(reset)
+    return HttpResponse.json({ token: reset.token, expires_at: new Date(reset.expires_at).toISOString() }, { status: 201 })
   }),
 
   http.get('/api/admin/invites', async () => {

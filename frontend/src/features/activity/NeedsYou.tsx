@@ -2,7 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { listJobs, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { Job, JobsSummary, PausedSite, Site } from '@/api/types'
+import type { Job, JobsSummary, PausedSite } from '@/api/types'
+import { isPaused } from '@/features/sites/sitePause'
 import { clockTime } from '@/lib/time'
 import { HuntButton } from './HuntButton'
 import { PausedSiteCard } from './PausedSiteCard'
@@ -148,8 +149,4 @@ function SiteHealth() {
       </ul>
     </section>
   )
-}
-
-function isPaused(site: Site): boolean {
-  return site.paused_until != null && new Date(site.paused_until).getTime() > Date.now()
 }
