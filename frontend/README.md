@@ -101,7 +101,8 @@ values, not CSS vars — change both together). Dark-only, by design.
 - **Dialogs are field cards** (`components/ui/dialog.tsx`): `DialogHeader` (optional
   `DialogEyebrow`, title, description) → `DialogBody` → `DialogFooter`. Only the body
   scrolls, so the footer's buttons never leave the screen; under `sm` the card becomes a
-  bottom sheet. A form wraps body and footer in `<form className="contents">` so both stay
+  bottom sheet whose grab handle swipes it closed (pulled a quarter of its height, or
+  flicked; the rule is `components/ui/sheetSwipe.ts`). A form wraps body and footer in `<form className="contents">` so both stay
   grid rows. Footer order is Back (`mr-auto`), Cancel, then the primary, always rightmost.
   Enter and exit are keyframe animations (`animate-dialog-in/out`, `animate-sheet-up/down`)
   because Radix waits for `animationend` before unmounting; keep a dialog mounted after
