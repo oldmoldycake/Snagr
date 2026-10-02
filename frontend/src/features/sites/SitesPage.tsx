@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { createSite, deleteSite, listCategories, listSites, updateSite } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
@@ -218,7 +219,8 @@ export function SitesPage() {
   })
 
   const removeError = remove.error instanceof ApiError ? remove.error.message : null
-  const categoryName = (id: number) => categories.data?.data.find((c) => c.id === id)?.name ?? '…'
+  const categoryById = (id: number) => categories.data?.data.find((c) => c.id === id)
+  const categoryName = (id: number) => categoryById(id)?.name ?? '…'
   const rows = sites.data?.data ?? []
   const openEdit = (site: Site) => {
     setEditing(site)
@@ -344,11 +346,20 @@ export function SitesPage() {
                           {site.category_ids.length === 0 ? (
                             <span className="text-xs text-ink-3">not linked</span>
                           ) : (
-                            site.category_ids.map((cid) => (
-                              <Badge key={cid} variant="muted">
-                                {categoryName(cid)}
-                              </Badge>
-                            ))
+                            site.category_ids.map((cid) => {
+                              const category = categoryById(cid)
+                              return category ? (
+                                <Link key={cid} to={`/categories/${category.slug}`} className="rounded-sm">
+                                  <Badge variant="muted" className="transition-colors hover:border-lume/40 hover:text-lume">
+                                    {category.name}
+                                  </Badge>
+                                </Link>
+                              ) : (
+                                <Badge key={cid} variant="muted">
+                                  …
+                                </Badge>
+                              )
+                            })
                           )}
                         </span>
                       </TD>
