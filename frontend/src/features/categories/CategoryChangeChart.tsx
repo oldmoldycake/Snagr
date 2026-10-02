@@ -14,9 +14,13 @@ import { axisTickStyle, chart } from '@/components/charts/chartTheme'
 import { TooltipFrame, TooltipRow } from '@/components/charts/ChartTooltip'
 import { formatMoney } from '@/lib/money'
 import { useMediaQuery } from '@/lib/useMediaQuery'
+import { biggestMovers } from './movers'
 
 const MAX_BARS = 15
 const NARROW_TICK_CHARS = 14
+
+const formatPctLabel = (v: unknown) => `${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}%`
+const pctLabelStyle = { fill: chart.inkSecondary, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }
 
 /**
  * Diverging horizontal bars: % change of best price over the range, centered
@@ -27,8 +31,7 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
   const data = items
     .filter((i) => i.pct_change != null)
     .map((i) => ({ ...i, pct: Number(i.pct_change) }))
-    .sort((a, b) => a.pct - b.pct)
-  const shown = data.slice(0, MAX_BARS)
+  const shown = biggestMovers(data, MAX_BARS)
 
   if (shown.length === 0) {
     return <p className="px-4 py-6 text-[14px] text-ink-3">Not enough price history in this range yet.</p>
@@ -59,7 +62,8 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
             axisLine={false}
             tickLine={false}
           />
-          <ReferenceLine x={0} stroke={chart.grid} />
+          {/* extendDomain keeps zero on the axis when every bar points one way, so bars measure from it */}
+          <ReferenceLine x={0} stroke={chart.grid} ifOverflow="extendDomain" />
           <Tooltip
             cursor={{ fill: 'rgba(255,255,255,0.03)' }}
             content={({ active, payload }) => {
@@ -80,11 +84,19 @@ export function CategoryChangeChart({ items }: { items: CategoryItemChange[] }) 
             {shown.map((row) => (
               <Cell key={row.item_id} fill={row.pct <= 0 ? chart.drop : chart.rise} fillOpacity={0.85} />
             ))}
+            {/* a rise is labelled past its tip, but past a drop's tip are the item names, so a drop is
+                labelled just across the zero line instead (Recharts' "left" is a bar's base side) */}
             <LabelList
-              dataKey="pct"
+              dataKey={(row: (typeof shown)[number]) => (row.pct < 0 ? null : row.pct)}
               position="right"
-              formatter={(v: unknown) => `${Number(v) > 0 ? '+' : ''}${Number(v).toFixed(1)}%`}
-              style={{ fill: chart.inkSecondary, fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" }}
+              formatter={formatPctLabel}
+              style={pctLabelStyle}
+            />
+            <LabelList
+              dataKey={(row: (typeof shown)[number]) => (row.pct < 0 ? row.pct : null)}
+              position="left"
+              formatter={formatPctLabel}
+              style={pctLabelStyle}
             />
           </Bar>
         </BarChart>

@@ -43,7 +43,8 @@ export function HunterTicker({ className }: { className?: string }) {
 
   const instance = useInstance().data
   const huntingOff = instance?.hunt_enabled === false
-  const hunt = live.find((job) => job.kind === 'hunt')
+  const hunts = live.filter((job) => job.kind === 'hunt')
+  const hunt = hunts.at(0)
   const elapsed = useElapsed(hunt?.started_at, hunt != null)
   const checksRunning = summary.data?.checks_running ?? 0
 

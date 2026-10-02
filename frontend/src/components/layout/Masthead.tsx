@@ -10,6 +10,7 @@ import { useTrack } from '@/lib/useTrack'
 import { useInstance, useLogout, useSession } from '@/features/auth/useSession'
 import { MastheadConnection } from '@/features/activity/ConnectionStatus'
 import { useJobs } from '@/features/activity/JobsProvider'
+import { runningWork } from '@/features/activity/lines'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { Input } from '@/components/ui/input'
 import { Radar } from '@/components/ui/radar'
@@ -174,9 +175,8 @@ function AccountMenu() {
   const summary = useQuery({ queryKey: qk.jobsSummary, queryFn: getJobsSummary, enabled: open })
 
   const checksRunning = summary.data?.checks_running ?? 0
-  const hunts = live.filter((job) => job.kind === 'hunt').length
   let status: string
-  if (hunts > 0) status = `${hunts} ${hunts === 1 ? 'hunt' : 'hunts'} running`
+  if (live.length > 0) status = `${runningWork(live)} running`
   else if (checksRunning > 0) status = `checking · ${checksRunning} live`
   else if (instance?.hunt_enabled === false) status = 'Hunting is off on this server · prices are still checked'
   else if (summary.data?.next_check_at) status = `idle · next check ${countdown(summary.data.next_check_at)}`
@@ -212,10 +212,10 @@ function AccountMenu() {
           </span>
         </DropdownMenuLabel>
         <DropdownMenuItem onSelect={() => setPanelOpen(true)}>
-          <Radar size={16} animate={hunts + checksRunning > 0} />
+          <Radar size={16} animate={live.length + checksRunning > 0} />
           <span className="grid min-w-0 flex-1 gap-px">
             <span>Activity</span>
-            <span className={cn('font-mono text-[12px]', hunts + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
+            <span className={cn('font-mono text-[12px]', live.length + checksRunning > 0 ? 'text-lume' : 'text-ink-3')}>
               {status}
             </span>
           </span>
@@ -257,6 +257,7 @@ function AccountMenu() {
 export function Masthead() {
   const navigate = useNavigate()
   const { live, connection, setPanelOpen } = useJobs()
+  const hunts = live.filter((job) => job.kind === 'hunt')
   const [navOpen, setNavOpen] = useState(false)
   // opened from the phone header's search button: the drawer focuses its search box
   const [navForSearch, setNavForSearch] = useState(false)
@@ -387,16 +388,17 @@ export function Masthead() {
               word once it isn't */}
           <MastheadConnection connection={connection} />
 
-          {/* a pill while something is running. There is no button — the
-              hunter is already hunting. */}
-          {live.length > 0 ? (
+          {/* a pill while a hunt is running. It has room for one count, so a
+              market-price refresh is left to the account menu and the sheet,
+              which name it. There is no button — Snagr is already hunting. */}
+          {hunts.length > 0 ? (
             <button
               type="button"
               onClick={() => setPanelOpen(true)}
               className="flex items-center gap-1.5 rounded-full border border-lume/40 bg-lume-glow px-2.5 py-1 font-mono text-[12px] tracking-[0.06em] text-lume uppercase hover:bg-lume/20"
             >
               <span aria-hidden className="size-1.5 animate-pulse rounded-full bg-lume" />
-              {live.length} {live.length === 1 ? 'hunt' : 'hunts'}
+              {runningWork(hunts)}
             </button>
           ) : null}
 

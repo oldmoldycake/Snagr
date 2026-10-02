@@ -23,6 +23,7 @@ import { NotFound } from '@/components/ui/not-found'
 import { Segmented } from '@/components/ui/segmented'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { cn } from '@/lib/cn'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { listAllItems } from '@/features/items/allItems'
@@ -30,7 +31,7 @@ import { EditItemDialog } from '@/features/items/EditItemDialog'
 import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { useSession } from '@/features/auth/useSession'
-import { useJobs } from '@/features/activity/JobsProvider'
+import { useHuntNow } from '@/features/activity/useHuntNow'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
 import { EditCategoryDialog } from './EditCategoryDialog'
@@ -72,7 +73,7 @@ function CategoryView({ slug }: { slug: string }) {
   const [editItemSession, setEditItemSession] = useState(0)
   const [deletingItem, setDeletingItem] = useState<ItemSummary | null>(null)
   const queryClient = useQueryClient()
-  const { enqueue } = useJobs()
+  const huntNow = useHuntNow()
   // categories are shared, so only an admin renames one or links its sites
   const isAdmin = useSession().data?.role === 'admin'
 
@@ -183,12 +184,34 @@ function CategoryView({ slug }: { slug: string }) {
                 <span aria-hidden>⚠</span> No sites linked, so Snagr has nowhere to search.{' '}
                 {isAdmin ? 'Edit the category to link sites.' : 'Ask an admin to link sites.'}
               </span>
+            ) : linkedSites.length === 1 ? (
+              // a lone site leaves nothing to filter by (the site picker hides too), so it stays a label
+              <Badge variant="muted" className="min-w-0 font-mono wrap-anywhere">
+                {linkedSites[0].name}
+              </Badge>
             ) : (
-              linkedSites.map((site) => (
-                <Badge key={site.id} variant="muted" className="min-w-0 font-mono wrap-anywhere">
-                  {site.name}
-                </Badge>
-              ))
+              linkedSites.map((site) => {
+                const active = siteFilter === site.id
+                return (
+                  <button
+                    key={site.id}
+                    type="button"
+                    aria-pressed={active}
+                    title={`Show only items with a listing on ${site.name}`}
+                    onClick={() => setSiteFilter(active ? undefined : site.id)}
+                    className={cn(
+                      'relative min-w-0 rounded-sm border px-1.5 py-0.5 font-mono text-[12px] leading-4 wrap-anywhere transition-colors focus-visible:-outline-offset-2',
+                      // the item form's site toggles, badge-sized: a lume bar under the site the list is filtered to
+                      'after:absolute after:inset-x-1 after:bottom-0 after:h-0.5 after:scale-x-0 after:rounded-[1px] after:bg-lume after:transition-transform after:duration-150 after:ease-shelf aria-pressed:after:scale-x-100',
+                      active
+                        ? 'border-hairline-strong bg-raised text-ink'
+                        : 'border-hairline text-ink-3 hover:border-hairline-strong hover:text-ink-2',
+                    )}
+                  >
+                    {site.name}
+                  </button>
+                )
+              })
             )}
           </div>
         </div>
@@ -282,7 +305,7 @@ function CategoryView({ slug }: { slug: string }) {
                 setEditItemOpen(true)
               }}
               onDelete={(item) => setDeletingItem(item)}
-              onHunt={(item) => enqueue({ kind: 'hunt', scope: 'item', scope_id: item.id })}
+              onHunt={(item) => huntNow.mutate({ scope: 'item', scope_id: item.id })}
             />
             <div className="border-t border-hairline bg-well px-4 py-2 font-mono text-[12px] text-ink-3">
               {rows.length} {rows.length === 1 ? 'item' : 'items'} · sorted by distance to target
