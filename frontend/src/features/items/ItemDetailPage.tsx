@@ -31,26 +31,19 @@ import { HunterLine } from '@/features/activity/HunterLine'
 import { useTargetAlertGap } from '@/features/settings/alertGap'
 import { ReferenceLibrary } from '@/features/vision/ReferenceLibrary'
 import { ChartPanel } from './ChartPanel'
+import { checkLevel } from './checkLevel'
 import { EditItemDialog } from './EditItemDialog'
 import { Ladder } from './Ladder'
 import { ListingsBoard } from './ListingsBoard'
 
 /**
- * Only the exceptions are marked. A price the model read looks exactly as it
- * always has; a price code read off the listing's stored locator carries a dim
- * tag saying where from, and a reading the plausibility bands rejected dims
- * the whole row and says so — it is shown, but it counts for nothing until a
- * later reading agrees with it.
+ * Only the exceptions are marked. A reading the plausibility bands rejected
+ * dims the whole row and says so — it is shown, but it counts for nothing
+ * until a later reading agrees with it. How code rather than the model read a
+ * price is a detail most people never need, so its tag shows only on request.
  */
-function checkLine(check: PriceCheck): LogLine {
-  const level =
-    check.status === 'ok'
-      ? 'success'
-      : check.status === 'error'
-        ? 'warn'
-        : check.status === 'sold' || check.status === 'ended'
-          ? 'error'
-          : 'info'
+function checkLine(check: PriceCheck, showMethod: boolean): LogLine {
+  const level = checkLevel(check)
   const text =
     check.status === 'sold' || check.status === 'ended'
       ? `${check.status} · ${check.site_name}`
@@ -60,7 +53,7 @@ function checkLine(check: PriceCheck): LogLine {
             check.in_stock == null ? 'stock unknown' : check.in_stock ? 'in stock' : 'out of stock'
           } · ${check.site_name}`
   const marks = [
-    priceMethodLabel(check.method),
+    showMethod ? priceMethodLabel(check.method) : null,
     check.confirmed ? null : 'unconfirmed',
   ].filter(Boolean)
   const message = (
@@ -105,6 +98,7 @@ export function ItemDetailPage() {
   const [editing, setEditing] = useState<'item' | 'tracking' | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [allChecks, setAllChecks] = useState(false)
+  const [checkMethods, setCheckMethods] = useState(false)
 
   const { data: instance } = useInstance()
   const item = useQuery({ queryKey: qk.item(itemId), queryFn: () => getItem(itemId) })
@@ -317,9 +311,14 @@ export function ItemDetailPage() {
             <CardHeader>
               <CardTitle>Recent checks</CardTitle>
               <div className="flex items-center gap-3">
-                <span className="font-mono text-[12px] text-ink-3 tnum">
+                <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                   {shownChecks.length} of {checkRows.length}
                 </span>
+                {checkRows.some((check) => priceMethodLabel(check.method)) ? (
+                  <Button variant="ghost" size="sm" onClick={() => setCheckMethods((v) => !v)}>
+                    {checkMethods ? 'Hide details' : 'Show details'}
+                  </Button>
+                ) : null}
                 {checkRows.length > CHECKS_PREVIEW ? (
                   <Button variant="ghost" size="sm" onClick={() => setAllChecks((v) => !v)}>
                     {allChecks ? 'Show fewer' : 'Show all'}
@@ -346,7 +345,7 @@ export function ItemDetailPage() {
                   No price checks yet. They appear once Snagr is tracking a listing.
                 </p>
               ) : (
-                <TerminalLog lines={shownChecks.map(checkLine)} />
+                <TerminalLog lines={shownChecks.map((check) => checkLine(check, checkMethods))} />
               )}
             </div>
           </Card>
