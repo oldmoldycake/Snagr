@@ -206,13 +206,13 @@ function Track({
           />
           {falling ? (
             <span
-              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-l-[6px] border-l-drop/85"
-              style={{ left: `calc(${now.pct}% - 11px)` }}
+              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-r-[6px] border-r-drop/85"
+              style={{ left: `calc(${now.pct}% + 5px)` }}
             />
           ) : (
             <span
-              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-r-[6px] border-r-rise/85"
-              style={{ left: `calc(${now.pct}% + 5px)` }}
+              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-l-[6px] border-l-rise/85"
+              style={{ left: `calc(${now.pct}% - 11px)` }}
             />
           )}
         </>
@@ -514,7 +514,7 @@ function BoardRow({
 
 /**
  * The listings "target board": one log-scale price rail per listing, running
- * range-high (left) → cheapest (right) with a ⌖ notch per row, and drift marks from the
+ * cheapest (left) → range-high (right) with a ⌖ notch per row, and drift marks from the
  * chart's selected range. Healthy rows stay quiet; the rationale, drift
  * detail, and active switch live in the click-to-expand row.
  */
