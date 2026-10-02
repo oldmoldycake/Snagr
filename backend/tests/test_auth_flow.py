@@ -599,44 +599,74 @@ async def test_admin_deactivate_locks_out(client, make_client, monkeypatch):
     assert (await fresh.post("/api/auth/login", json=GUEST, headers=CSRF)).status_code == 403
 
 
-async def test_admin_delete_user_and_watch_guard(client, make_client, monkeypatch, db_session):
+async def test_admin_delete_user_takes_their_watches_and_keeps_shared_items(
+    client, make_client, monkeypatch, db_session
+):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
-    await _register(client)
+    admin_id = (await _register(client)).json()["user"]["id"]
     plain = await make_client()
     guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
+    token = await plain.post(
+        "/api/me/tokens", json={"name": "laptop", "scopes": ["read"]}, headers=CSRF
+    )
+    assert token.status_code == 201
 
-    # give the guest a watch -> delete must refuse (their data anchors listings)
-    from app.models import Categories, Items, Watches
+    from app.models import (
+        ApiTokens,
+        Items,
+        Jobs,
+        Listings,
+        NotificationChannels,
+        PriceChecks,
+        Watches,
+    )
 
+    from tests.factories import Scenario
+
+    # the guest watches two items, one of which the admin watches too; their
+    # watch has a listing with price history, plus a channel and a pending hunt
     async with db_session() as s:
-        cat = Categories(name="Consoles", slug="consoles")
-        s.add(cat)
-        await s.flush()
-        item = Items(category_id=cat.id, name="PS3 Slim")
-        s.add(item)
-        await s.flush()
-        s.add(Watches(user_id=guest_id, item_id=item.id))
-        await s.commit()
+        sc = Scenario(s)
+        guest = await s.get(User, guest_id)
+        shared = await sc.item("Shared")
+        own = await sc.item("Guest only")
+        guest_watch = await sc.watch(shared, user=guest)
+        await sc.watch(own, user=guest)
+        admin_watch = await sc.watch(shared, user=await s.get(User, admin_id))
+        listing = await sc.listing(guest_watch, shared)
+        await sc.checks(listing, (2, "100.00"), (1, "90.00"))
+        await sc.listing(admin_watch, shared)
+        await sc.channel(user=guest)
+        await sc.job(watch=guest_watch, status="pending", user_id=guest_id)
+        await sc.commit()
 
-    blocked = await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)
-    assert blocked.status_code == 409
-    assert blocked.json()["error"]["code"] == "user_has_items"
-
-    # drop the watch -> delete goes through
-    async with db_session() as s:
-        from sqlalchemy import delete as sa_delete
-
-        await s.execute(sa_delete(Watches).where(Watches.user_id == guest_id))
-        await s.commit()
-    assert (await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)).status_code == 204
+    res = await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)
+    assert res.status_code == 204
     users = (await client.get("/api/admin/users")).json()["data"]
     assert [u["email"] for u in users] == [ADMIN["email"]]
+
+    async with db_session() as s:
+        # the catalog keeps both items; only the admin's watch is left on them
+        assert sorted(await s.scalars(select(Items.name))) == ["Guest only", "Shared"]
+        assert list(await s.scalars(select(Watches.user_id))) == [admin_id]
+        assert list(await s.scalars(select(Listings.watch_id))) == [admin_watch.id]
+        assert list(await s.scalars(select(PriceChecks.id))) == []
+        assert list(await s.scalars(select(Jobs.id))) == []
+        assert list(await s.scalars(select(NotificationChannels.id))) == []
+        assert list(await s.scalars(select(ApiTokens.id))) == []
+
+
+async def test_admin_delete_unknown_user_is_404(client):
+    await _register(client)
+    res = await client.delete("/api/admin/users/999999", headers=CSRF)
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
 
 
 async def test_deleting_a_user_degrades_their_jobs_to_system(
     client, make_client, monkeypatch, db_session
 ):
-    # a job somebody asked for doesn't block deletion the way watches do —
+    # a job somebody asked for on another user's watch outlives them —
     # ON DELETE SET NULL turns it into one the hunter appears to have queued
     # itself (user_id NULL) instead of breaking the hard delete
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
