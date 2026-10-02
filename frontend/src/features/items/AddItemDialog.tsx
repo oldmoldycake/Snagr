@@ -25,6 +25,8 @@ import { useInstance } from '@/features/auth/useSession'
 import { currencySign } from '@/lib/money'
 import { siteList } from '@/features/sites/siteList'
 import { addedNote } from './addedNote'
+import { hasItemEdits } from './itemEdits'
+import { itemSaveErrors } from './itemSaveErrors'
 import { parseTargetPrice } from './targetPrice'
 import { DEFAULT_TRACKING, TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
@@ -92,13 +94,21 @@ export function AddItemDialog({
       })
       onAdded?.(item)
     },
+    onError: (error) => {
+      // bring a refused name or target into view, the way a missing one is
+      const fields = error instanceof ApiError ? error.fields : undefined
+      if (fields?.name) nameRef.current?.focus()
+      else if (fields?.target_price) targetRef.current?.focus()
+    },
     onSettled: () => {
       submitting.current = false
     },
   })
 
-  const errorMessage = create.error instanceof ApiError ? create.error.message : null
-  const dirty = name.trim() !== '' || target.trim() !== '' || tracking.criteria.trim() !== ''
+  const saveErrors = itemSaveErrors(create.error)
+  const nameError = nameMissing ? 'Give it a name.' : saveErrors.fields.name
+  const shownTargetError = targetError ?? saveErrors.fields.target_price
+  const dirty = hasItemEdits({ name: '', target: '', tracking: DEFAULT_TRACKING }, { name, target, tracking })
 
   // Reset when opening rather than closing, so the exit animation shows the dialog as it was.
   const onOpenChange = (next: boolean) => {
@@ -124,7 +134,7 @@ export function AddItemDialog({
           )}
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-[520px]" onInteractOutside={(e) => dirty && e.preventDefault()}>
+      <DialogContent className="max-w-[520px]" dirty={dirty}>
         <DialogHeader>
           <DialogEyebrow>Add item</DialogEyebrow>
           <DialogTitle>{categoryName}</DialogTitle>
@@ -159,9 +169,9 @@ export function AddItemDialog({
           }}
         >
           <DialogBody className="space-y-3">
-            {errorMessage ? (
+            {saveErrors.message ? (
               <p role="alert" className="text-xs text-rise">
-                {errorMessage}
+                {saveErrors.message}
               </p>
             ) : null}
             <div>
@@ -172,7 +182,7 @@ export function AddItemDialog({
                 autoFocus
                 autoComplete="off"
                 placeholder="e.g. Pokémon Sapphire (GBA)"
-                aria-invalid={nameMissing || undefined}
+                aria-invalid={!!nameError || undefined}
                 className="aria-invalid:border-rise/60"
                 value={name}
                 onChange={(e) => {
@@ -180,9 +190,9 @@ export function AddItemDialog({
                   setNameMissing(false)
                 }}
               />
-              {nameMissing ? (
+              {nameError ? (
                 <p role="alert" className="mt-1.5 text-xs text-rise">
-                  ⚠ Give it a name.
+                  ⚠ {nameError}
                 </p>
               ) : null}
             </div>
@@ -197,7 +207,7 @@ export function AddItemDialog({
                   id="item-target"
                   inputMode="decimal"
                   placeholder="120.00"
-                  aria-invalid={!!targetError || undefined}
+                  aria-invalid={!!shownTargetError || undefined}
                   className="font-mono tnum aria-invalid:border-rise/60"
                   // clears a sign of any length (CA$): the input's ch is wider than the sign's
                   style={{ paddingLeft: `calc(${sign.length}ch + 1rem)` }}
@@ -208,9 +218,9 @@ export function AddItemDialog({
                   }}
                 />
               </div>
-              {targetError ? (
+              {shownTargetError ? (
                 <p role="alert" className="mt-1.5 text-xs text-rise">
-                  ⚠ {targetError}
+                  ⚠ {shownTargetError}
                 </p>
               ) : null}
               <p className="mt-1.5 text-xs text-ink-3">
@@ -227,7 +237,12 @@ export function AddItemDialog({
               </p>
             </div>
 
-            <TrackingFields categoryId={categoryId} value={tracking} onChange={setTracking} />
+            <TrackingFields
+              categoryId={categoryId}
+              value={tracking}
+              onChange={setTracking}
+              intervalError={saveErrors.fields.recheck_interval_minutes}
+            />
           </DialogBody>
 
           <DialogFooter>
