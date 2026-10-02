@@ -129,7 +129,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             <DialogBody className="space-y-3">
               <Label>Signing secret — shown once, store it now</Label>
               <div className="flex gap-2">
-                <Input readOnly value={secret} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                <Input readOnly value={secret} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
                 <Button onClick={copy} aria-label="Copy signing secret">
                   {copied ? <Check className="text-drop" /> : <Copy />}
                   {copied ? 'Copied' : 'Copy'}

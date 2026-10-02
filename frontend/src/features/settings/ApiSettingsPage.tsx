@@ -138,7 +138,7 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
         <div>
           <Label htmlFor="mcp-url">MCP endpoint</Label>
           <div className="flex gap-2">
-            <Input id="mcp-url" readOnly value={url} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+            <Input id="mcp-url" readOnly value={url} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
             <CopyButton text={url} label="Copy MCP URL" />
           </div>
         </div>
@@ -248,7 +248,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               <div>
                 <Label>Token — shown once, store it now</Label>
                 <div className="flex gap-2">
-                  <Input readOnly value={created} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                  <Input readOnly value={created} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
                   <CopyButton text={created} label="Copy token" />
                 </div>
               </div>

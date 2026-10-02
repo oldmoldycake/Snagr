@@ -292,7 +292,7 @@ export function Masthead() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search items…"
-              className="h-7 pr-7 pl-8 text-xs"
+              className="h-7 pr-7 pl-8 sm:text-xs"
               aria-label="Search items"
             />
             <kbd

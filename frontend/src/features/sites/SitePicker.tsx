@@ -238,7 +238,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
                     autoComplete="off"
                     placeholder="facebook.com/marketplace"
                     aria-invalid={notice?.kind === 'invalid' || undefined}
-                    className="h-[30px] font-mono text-[14px] aria-invalid:border-rise/60"
+                    className="h-[30px] font-mono aria-invalid:border-rise/60"
                     value={url}
                     onChange={(e) => {
                       setUrl(e.target.value)
@@ -253,7 +253,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
                   <Input
                     id={nameId}
                     autoComplete="off"
-                    className="h-[30px] text-[14px]"
+                    className="h-[30px]"
                     value={name}
                     onChange={(e) => {
                       setName(e.target.value)

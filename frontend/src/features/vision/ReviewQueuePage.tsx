@@ -95,7 +95,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           value={variantTag}
           onChange={(e) => setVariantTag(e.target.value)}
           placeholder="Variant tag (optional)"
-          className="h-7 text-xs"
+          className="h-7 sm:text-xs"
           aria-label="Variant tag"
         />
         <div className="mt-auto flex items-center gap-2">
