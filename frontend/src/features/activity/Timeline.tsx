@@ -462,7 +462,7 @@ function PastRow({ job }: { job: Job }) {
       </p>
       <p className={cn('font-mono text-xs tnum sm:min-w-44', result.tone)}>{result.text}</p>
       <p className="hidden min-w-24 text-right font-mono text-[12px] whitespace-nowrap text-ink-3 sm:block tnum">
-        {took} · {tokens}
+        {took} · {tokens} tokens
       </p>
     </div>
   )

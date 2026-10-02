@@ -492,7 +492,7 @@ class TestTerminalWrites:
         seen = wire(monkeypatch)
         asyncio.run(worker._work_one("w1", job("hunt")))
         finished = [m for _, _, event_type, m in seen["events"] if event_type == "job_finished"]
-        assert finished == ["Hunt complete — 2 new · 4 seen"]
+        assert finished == ["Hunt complete — 2 new · 4 looked at"]
 
     def test_a_check_finishes_in_silence(self, monkeypatch):
         # a recheck writes no events at all: its whole output is the price

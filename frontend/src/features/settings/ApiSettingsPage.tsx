@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, KeyRound, Loader2, Plug, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -148,7 +148,7 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
           <Label className="mb-0">Client config</Label>
           <Segmented options={CLIENT_OPTIONS} value={kind} onChange={setKind} ariaLabel="Client" />
         </div>
-        <pre className="overflow-x-auto rounded-sm border border-hairline-strong bg-well px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre text-ink">
+        <pre className="rounded-sm border border-hairline-strong bg-well px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere text-ink">
           {code}
         </pre>
         <div className="mt-1.5 flex items-start justify-between gap-2">
@@ -157,6 +157,21 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
         </div>
       </div>
     </div>
+  )
+}
+
+/** One numbered step of connecting an agent, its pip drawn like StepPips'. */
+function SetupStep({ step, title, children }: { step: number; title: string; children: ReactNode }) {
+  return (
+    <li>
+      <h4 className="mb-2 flex items-center gap-2 font-mono text-[12px] font-medium tracking-[0.08em] text-ink-2 uppercase">
+        <span className="grid size-5 place-items-center rounded-full border border-hairline-strong tracking-normal">
+          {step}
+        </span>
+        {title}
+      </h4>
+      {children}
+    </li>
   )
 }
 
@@ -380,13 +395,25 @@ export function ApiSettingsPage() {
                 client at the endpoint below with a token, and it can browse your items and prices, add
                 items, and start hunts and price checks. It can do exactly what you can do here, nothing more.
               </p>
-              <ConnectSnippets token={null} />
-              <p className="text-xs text-ink-3">
-                Replace <code className="rounded-sm bg-well px-1 py-0.5 font-mono">{TOKEN_PLACEHOLDER}</code>{' '}
-                with a token from below — the create dialog fills these in for you. claude.ai and Claude
-                Desktop connectors sign in with OAuth, which Snagr doesn't offer yet; use a client that sends
-                a bearer header.
-              </p>
+              <ol className="space-y-4">
+                <SetupStep step={1} title="Create a token">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+                      <Plus /> New token
+                    </Button>
+                    <p className="text-xs text-ink-3">It's shown once, with your config already filled in.</p>
+                  </div>
+                </SetupStep>
+                <SetupStep step={2} title="Copy your config">
+                  <ConnectSnippets token={null} />
+                  <p className="mt-3 text-xs text-ink-3">
+                    Using a token you already have? Replace{' '}
+                    <code className="rounded-sm bg-well px-1 py-0.5 font-mono">{TOKEN_PLACEHOLDER}</code> with it.
+                    claude.ai and Claude Desktop connectors sign in with OAuth, which Snagr doesn't offer yet; use a
+                    client that sends a bearer header.
+                  </p>
+                </SetupStep>
+              </ol>
             </CardBody>
           </Card>
 
@@ -395,9 +422,6 @@ export function ApiSettingsPage() {
               <CardTitle className="flex items-center gap-2">
                 <KeyRound className="size-4 text-ink-3" /> API tokens
               </CardTitle>
-              <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
-                <Plus /> New token
-              </Button>
             </CardHeader>
             <CardBody className="px-0 py-1">
               {tokens.isPending ? (

@@ -788,6 +788,8 @@ async def log_listing_check(
                     {"item_id": unit.item_id, "url": url, "reason": reason, "tracked": False},
                 )
             await session.commit()
+            # a rejection is a candidate looked at, as much as a save is
+            unit.stats["listings_checked"] += 1
 
             log.info(f"Logged rejected listing for watch {watch_id} on site {site_id}: {url}")
             return f"Logged rejected listing for watch {watch_id} on site {site_id}: {url}"
