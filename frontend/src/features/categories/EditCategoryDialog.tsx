@@ -76,11 +76,7 @@ export function EditCategoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* with unsaved edits, Escape and clicks outside do nothing: only Cancel or ✕ throws them away */}
-      <DialogContent
-        onEscapeKeyDown={(e) => changed && e.preventDefault()}
-        onInteractOutside={(e) => changed && e.preventDefault()}
-      >
+      <DialogContent dirty={changed}>
         <DialogHeader>
           <DialogTitle>Edit category</DialogTitle>
           <DialogDescription>

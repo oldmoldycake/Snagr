@@ -112,7 +112,8 @@ values, not CSS vars — change both together). Dark-only, by design.
   shows `StepPips` in its eyebrow (a finished step is ✓ in ink-2, never drop-green). A
   dialog showing a secret that is shown only once (a new API token, a webhook's signing
   secret) passes `dismissible={false}` while it's on screen, so only **I've saved it**
-  closes it.
+  closes it. A form dialog passes `dirty` while it holds input closing would lose, so
+  Escape, a click outside or the handle can't throw it away; Cancel and ✕ still can.
 - **Sites are picked, not typed**: every place a category's sites are chosen (New
   category, Edit sites, Edit category) uses `features/sites/SitePicker`, a checklist whose
   last row adds a site inline and picks it (`siteUrl.ts` normalizes the address and catches

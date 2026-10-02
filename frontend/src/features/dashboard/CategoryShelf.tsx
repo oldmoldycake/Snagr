@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowRight, Globe, Pencil, Search, Trash2 } from 'lucide-react'
+import { ArrowRight, Globe, Loader2, Pencil, Search, Trash2 } from 'lucide-react'
+import { ApiError } from '@/api/client'
 import { deleteCategory } from '@/api/endpoints'
 import type { Category, PriceDrop } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -296,7 +298,7 @@ export function CategoryShelf({
  * A category's ⋯ menu, on its shelf or its one-line row. Its header repeats the
  * category it acts on, so the menu still says which one it is about when the
  * shelf is collapsed; Hunt now has HuntButton's states; Delete confirms inside
- * the menu.
+ * the menu, which stays open until the delete lands or says why it failed.
  */
 export function ShelfMenu({
   category,
@@ -322,6 +324,7 @@ export function ShelfMenu({
   const live = liveHuntFor('category', category.id)
   // categories are shared, so only an admin edits or deletes one
   const isAdmin = useSession().data?.role === 'admin'
+  const [menuOpen, setMenuOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const keepRef = useRef<HTMLDivElement>(null)
   const deleteRef = useRef<HTMLDivElement>(null)
@@ -331,11 +334,14 @@ export function ShelfMenu({
 
   const remove = useMutation({
     mutationFn: () => deleteCategory(category.id),
+    meta: { inlineError: true },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       await queryClient.invalidateQueries({ queryKey: ['items'] })
+      setMenuOpen(false)
     },
   })
+  const removeError = remove.error instanceof ApiError ? remove.error.message : null
 
   // Radix only moves focus on pointer and arrow keys, so the swap into and out
   // of the confirmation hands focus over by hand: to Keep, then back to Delete.
@@ -346,7 +352,17 @@ export function ShelfMenu({
   }, [confirming])
 
   return (
-    <DropdownMenu onOpenChange={(open) => !open && setConfirming(false)}>
+    <DropdownMenu
+      open={menuOpen}
+      onOpenChange={(open) => {
+        // a delete in flight holds the menu open, so its outcome is seen where it was asked for
+        if (!open && remove.isPending) return
+        setMenuOpen(open)
+        if (open) return
+        setConfirming(false)
+        remove.reset()
+      }}
+    >
       <DropdownMenuMoreTrigger label={`More for ${category.name}`} />
       <DropdownMenuContent
         align="end"
@@ -355,7 +371,9 @@ export function ShelfMenu({
           // Esc backs out of the confirmation before it closes the menu
           if (!confirming) return
           e.preventDefault()
+          if (remove.isPending) return
           setConfirming(false)
+          remove.reset()
         }}
       >
         <DropdownMenuLabel
@@ -398,7 +416,7 @@ export function ShelfMenu({
         ) : (
           <DropdownMenuItem
             disabled={noSites || lead == null || huntingOff || huntNow.isPending}
-            onSelect={() => huntNow.mutate({ scope: 'category', scope_id: category.id })}
+            onSelect={() => huntNow.ask({ scope: 'category', scope_id: category.id })}
           >
             <Search />
             {noSites ? (
@@ -440,14 +458,21 @@ export function ShelfMenu({
             <p className="text-xs leading-snug text-rise">
               Delete “{category.name}” and its {plural(category.item_count, 'item', 'items')}? This cannot be undone.
             </p>
+            {removeError ? (
+              <p role="alert" className="text-xs leading-snug text-rise">
+                {removeError}
+              </p>
+            ) : null}
             <div className="flex justify-end gap-1.5">
               <DropdownMenuItem
                 ref={keepRef}
                 data-noplate
+                disabled={remove.isPending}
                 className="min-h-[26px] border border-transparent px-2.5 font-mono text-[12px] font-medium tracking-[0.06em] uppercase data-highlighted:border-hairline-strong data-highlighted:bg-raised"
                 onSelect={(e) => {
                   e.preventDefault()
                   setConfirming(false)
+                  remove.reset()
                 }}
               >
                 Keep
@@ -457,9 +482,12 @@ export function ShelfMenu({
                 tone="danger"
                 disabled={remove.isPending}
                 className="min-h-[26px] border border-rise/40 bg-rise/10 px-2.5 font-mono text-[12px] font-medium tracking-[0.06em] uppercase data-highlighted:bg-rise/20 data-highlighted:outline-2 data-highlighted:outline-offset-1 data-highlighted:outline-rise"
-                onSelect={() => remove.mutate()}
+                onSelect={(e) => {
+                  e.preventDefault()
+                  remove.mutate()
+                }}
               >
-                <Trash2 /> Delete
+                {remove.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />} Delete
               </DropdownMenuItem>
             </div>
           </div>
@@ -479,6 +507,8 @@ export function ShelfMenu({
           </>
         )}
       </DropdownMenuContent>
+      {/* outside the content, so it outlives the menu closing on the press that opened it */}
+      <ConfirmDialog {...huntNow.confirm} />
     </DropdownMenu>
   )
 }

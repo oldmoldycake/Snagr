@@ -1,11 +1,19 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Loader2, Plus, Trash2, UserX, UserCheck } from 'lucide-react'
+import { Check, Copy, KeyRound, Loader2, Plus, Shield, ShieldOff, Trash2, UserX, UserCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { ApiError } from '@/api/client'
-import { createInvite, deleteUser, listInvites, listUsers, revokeInvite, updateUser } from '@/api/endpoints'
+import {
+  createInvite,
+  createPasswordReset,
+  deleteUser,
+  listInvites,
+  listUsers,
+  revokeInvite,
+  updateUser,
+} from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { AdminUser, Invite } from '@/api/types'
+import type { AdminUser, AdminUserUpdateRequest, Invite, PasswordReset } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
@@ -34,7 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { RelativeTime } from '@/components/ui/relative-time'
 import { copyText } from '@/lib/clipboard'
-import { formatDate } from '@/lib/time'
+import { formatDate, formatDateTime } from '@/lib/time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useSession } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
@@ -144,14 +152,104 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
   )
 }
 
+function resetUrl(reset: PasswordReset): string {
+  return `${window.location.origin}/reset/${reset.token}`
+}
+
 /**
- * Admin-only user management: activate, deactivate or delete users, and create
- * or revoke invites.
+ * Issues a password-reset link for one user and shows it, once: only its hash
+ * is kept, so closing the dialog loses it (issuing another replaces it).
+ */
+function ResetPasswordDialog({ user, onOpenChange }: { user: AdminUser | null; onOpenChange: (o: boolean) => void }) {
+  const [created, setCreated] = useState<PasswordReset | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  const create = useMutation({
+    mutationFn: (id: number) => createPasswordReset(id),
+    onSuccess: setCreated,
+  })
+
+  const copy = async () => {
+    if (!created) return
+    if (!(await copyText(resetUrl(created)))) {
+      toast.error("Couldn't copy — select the link and copy it yourself")
+      return
+    }
+    toast.success('Reset link copied')
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+
+  const close = (o: boolean) => {
+    onOpenChange(o)
+    if (!o) {
+      setCreated(null)
+      create.reset()
+    }
+  }
+
+  return (
+    <Dialog open={user != null} onOpenChange={close}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reset password</DialogTitle>
+          <DialogDescription>
+            {created
+              ? 'Send this link to them yourself — Snagr emails nothing. It works once, and this is the only time it is shown.'
+              : `Create a link ${user?.email ?? ''} can use to choose a new password. Using it signs them out everywhere. Their current password keeps working until then.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {created ? (
+          <>
+            <DialogBody className="space-y-3">
+              <Label>Reset link (expires {formatDateTime(created.expires_at)})</Label>
+              <div className="flex gap-2">
+                <Input readOnly value={resetUrl(created)} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
+                <Button onClick={copy} aria-label="Copy reset link">
+                  {copied ? <Check className="text-drop" /> : <Copy />}
+                  {copied ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button variant="primary" onClick={() => close(false)}>
+                Done
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => close(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              className="max-sm:flex-[2]"
+              disabled={create.isPending}
+              onClick={() => {
+                if (user) create.mutate(user.id)
+              }}
+            >
+              {create.isPending ? <Loader2 className="animate-spin" /> : null}
+              Create reset link
+            </Button>
+          </DialogFooter>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * Admin-only user management: activate, deactivate or delete users, change
+ * their role, issue password-reset links, and create or revoke invites.
  */
 export function AdminUsersPage() {
   usePageTitle('Users · Settings')
   const [inviteOpen, setInviteOpen] = useState(false)
   const [deleting, setDeleting] = useState<AdminUser | null>(null)
+  const [resetting, setResetting] = useState<AdminUser | null>(null)
   const [revoking, setRevoking] = useState<Invite | null>(null)
   const queryClient = useQueryClient()
   const { data: me } = useSession()
@@ -160,7 +258,7 @@ export function AdminUsersPage() {
   const invites = useQuery({ queryKey: qk.adminInvites, queryFn: listInvites })
 
   const patchUser = useMutation({
-    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) => updateUser(id, { is_active }),
+    mutationFn: ({ id, ...body }: AdminUserUpdateRequest & { id: number }) => updateUser(id, body),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: qk.adminUsers }),
   })
 
@@ -255,6 +353,24 @@ export function AdminUsersPage() {
                                 </>
                               )}
                             </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() =>
+                                patchUser.mutate({ id: user.id, role: user.role === 'admin' ? 'user' : 'admin' })
+                              }
+                            >
+                              {user.role === 'admin' ? (
+                                <>
+                                  <ShieldOff /> Remove admin
+                                </>
+                              ) : (
+                                <>
+                                  <Shield /> Make admin
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onSelect={() => setResetting(user)}>
+                              <KeyRound /> Reset password
+                            </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem tone="danger" onSelect={() => setDeleting(user)}>
                               <Trash2 /> Delete user
@@ -335,6 +451,12 @@ export function AdminUsersPage() {
       </Card>
 
       <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      <ResetPasswordDialog
+        user={resetting}
+        onOpenChange={(open) => {
+          if (!open) setResetting(null)
+        }}
+      />
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {
