@@ -91,7 +91,7 @@ function InviteDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
             <DialogBody className="space-y-3">
               <Label>Invite link (expires {formatDate(created.expires_at)})</Label>
               <div className="flex gap-2">
-                <Input readOnly value={inviteUrl(created)} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                <Input readOnly value={inviteUrl(created)} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
                 <Button onClick={copy} aria-label="Copy invite link">
                   {copied ? <Check className="text-drop" /> : <Copy />}
                   {copied ? 'Copied' : 'Copy'}

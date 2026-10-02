@@ -226,7 +226,7 @@ function CategoryView({ slug }: { slug: string }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter items…"
-          className="h-7 max-w-44 text-xs"
+          className="h-7 max-w-44 sm:text-xs"
           aria-label="Filter items"
         />
       </div>
