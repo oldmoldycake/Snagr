@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { countdown, formatDate, formatDateTime, formatTokens, isOverdue } from './time'
+import { countdown, dayPhrase, formatDate, formatDateTime, formatTokens, isOverdue } from './time'
 
 describe('formatTokens', () => {
   it('shows small counts as they are', () => {

@@ -1,6 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import { useRef, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
+import { useRef, type ComponentProps, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
 import { swipeCloses } from '@/components/ui/sheetSwipe'
 import { cn } from '@/lib/cn'
 import { focusMovedElsewhere } from '@/lib/focus'
