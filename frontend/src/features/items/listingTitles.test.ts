@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sharedTitlePrefix, titleDifference } from './listingTitles'
+import { seriesLabel, sharedTitlePrefix, titleDifference } from './listingTitles'
 
 const GPU = [
   'RTX 4060 Ti 16GB (Renewed)',
@@ -51,5 +51,25 @@ describe('titleDifference', () => {
 
   it('keeps the whole title when nothing is shared', () => {
     expect(titleDifference('Nintendo GameCube Controller OEM', '')).toBe('Nintendo GameCube Controller OEM')
+  })
+})
+
+describe('seriesLabel', () => {
+  const prefix = sharedTitlePrefix(GPU)
+
+  it('reads site first, then the difference, like the listing row', () => {
+    expect(seriesLabel('amazon.com', 'RTX 4060 Ti 16GB (New)', prefix)).toBe('amazon.com · New')
+    expect(seriesLabel('ebay.com', 'RTX 4060 Ti 16GB — Used, Good', prefix)).toBe('ebay.com · Used, Good')
+  })
+
+  it('is the site alone when the title sets nothing apart', () => {
+    expect(seriesLabel('newegg.com', 'RTX 4060 Ti 16GB', prefix)).toBe('newegg.com')
+    expect(seriesLabel('newegg.com', null, prefix)).toBe('newegg.com')
+  })
+
+  it('cuts a long difference short, never the site', () => {
+    expect(seriesLabel('ebay.com', 'Nintendo GameCube Controller Official OEM Indigo', '')).toBe(
+      'ebay.com · Nintendo GameCube Control…',
+    )
   })
 })
