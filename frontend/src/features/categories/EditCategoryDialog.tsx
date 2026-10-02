@@ -20,7 +20,8 @@ import { Label } from '@/components/ui/label'
 import { SitePicker } from '@/features/sites/SitePicker'
 
 /**
- * Rename a category, choose which sites it searches, or delete it. Saving opens
+ * Rename a category, choose which sites it searches, or delete it. Seeds its
+ * name from props once — remount it (via key) each time it opens. Saving opens
  * the category's page, unless `onSaved` is given (a caller that stays put).
  */
 export function EditCategoryDialog({
@@ -37,15 +38,22 @@ export function EditCategoryDialog({
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [name, setName] = useState(category.name)
-  const [siteIds, setSiteIds] = useState<number[]>(category.site_ids)
+  // Null until the picker is used: until then it shows the category's current
+  // links and saving leaves them alone, so a rename can't undo sites linked
+  // since the dialog opened.
+  const [pickedSiteIds, setPickedSiteIds] = useState<number[] | null>(null)
+  const siteIds = pickedSiteIds ?? category.site_ids
+  const [sitesMissing, setSitesMissing] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const save = useMutation({
     mutationFn: async () => {
-      if (name.trim() !== category.name) await updateCategory(category.id, { name: name.trim() })
       // Navigate to the slug the server reports, never one re-derived from the
       // new name: a rename keeps the original slug, so the derived URL 404s.
-      return (await setCategorySites(category.id, siteIds)).slug
+      let saved = category
+      if (name.trim() !== category.name) saved = await updateCategory(category.id, { name: name.trim() })
+      if (pickedSiteIds) saved = await setCategorySites(category.id, pickedSiteIds)
+      return saved.slug
     },
     meta: { inlineError: true },
     onSuccess: async (slug) => {
@@ -92,7 +100,20 @@ export function EditCategoryDialog({
             ) : null}
           </div>
 
-          <SitePicker selected={siteIds} onChange={setSiteIds} />
+          <div>
+            <SitePicker
+              selected={siteIds}
+              onChange={(ids) => {
+                setPickedSiteIds(ids)
+                if (ids.length > 0) setSitesMissing(false)
+              }}
+            />
+            {sitesMissing ? (
+              <p role="alert" className="mt-2.5 text-xs text-rise">
+                ⚠ Pick at least one site. Snagr needs somewhere to look.
+              </p>
+            ) : null}
+          </div>
 
           <div className="border-t border-hairline pt-3">
             {confirmingDelete ? (
@@ -123,7 +144,20 @@ export function EditCategoryDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
+          <Button
+            variant="primary"
+            className="max-sm:flex-[2]"
+            disabled={save.isPending || !name.trim()}
+            onClick={() => {
+              // only a selection emptied here is refused: an untouched picker
+              // leaves the links as they are, even when there are none
+              if (pickedSiteIds?.length === 0) {
+                setSitesMissing(true)
+                return
+              }
+              save.mutate()
+            }}
+          >
             {save.isPending ? <Loader2 className="animate-spin" /> : null}
             Save changes
           </Button>

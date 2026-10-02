@@ -61,6 +61,7 @@ function CategoryView({ slug }: { slug: string }) {
   const [siteFilter, setSiteFilter] = useState<number | undefined>(undefined)
   const [search, setSearch] = useState('')
   const [editOpen, setEditOpen] = useState(false)
+  const [editSession, setEditSession] = useState(0)
   const [editSitesOpen, setEditSitesOpen] = useState(false)
   const [editSitesSession, setEditSitesSession] = useState(0)
   // The last item picked for editing stays set after close, so the dialog
@@ -151,6 +152,10 @@ function CategoryView({ slug }: { slug: string }) {
   }
 
   const rows = sortByDistanceToTarget(items.data?.data ?? [])
+  const openEdit = () => {
+    setEditSession((n) => n + 1)
+    setEditOpen(true)
+  }
   const openEditSites = () => {
     setEditSitesSession((n) => n + 1)
     setEditSitesOpen(true)
@@ -167,7 +172,7 @@ function CategoryView({ slug }: { slug: string }) {
               {category.name}
             </h1>
             {isAdmin ? (
-              <Button variant="ghost" size="iconSm" aria-label="Edit category" onClick={() => setEditOpen(true)}>
+              <Button variant="ghost" size="iconSm" aria-label="Edit category" onClick={openEdit}>
                 <Pencil />
               </Button>
             ) : null}
@@ -311,7 +316,7 @@ function CategoryView({ slug }: { slug: string }) {
         onOpenChange={setEditSitesOpen}
       />
       <EditCategoryDialog
-        key={category.id}
+        key={`edit-${editSession}`}
         category={category}
         open={editOpen}
         onOpenChange={setEditOpen}
