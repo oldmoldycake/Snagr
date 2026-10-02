@@ -121,7 +121,8 @@ function WatchListHead({
         <TH>Item</TH>
         <TH className={cn('hidden md:table-cell', fixed && 'w-36')}>Trend</TH>
         <TH className={cn('text-right', fixed && 'w-24 max-sm:w-20')}>Best</TH>
-        {showSite ? <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[88px]')}>Site</TH> : null}
+        {/* w-36 fits a 16-character site name (bhphotovideo.com); below lg the Item column can't spare it */}
+        {showSite ? <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[88px] lg:w-36')}>Site</TH> : null}
         <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[92px]')}>Target</TH>
         <TH className={cn('text-right', fixed && 'w-[150px] max-sm:w-[104px]')}>To target</TH>
         <TH className={cn('hidden text-right sm:table-cell', fixed && 'w-[84px]')}>Checked</TH>
