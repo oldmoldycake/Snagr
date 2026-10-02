@@ -366,7 +366,8 @@ async def _work_one(worker: str, job: dict) -> None:
                 job_id,
                 "success",
                 "job_finished",
-                f"Hunt complete — {stats['new_listings']} new · {stats['listings_checked']} seen",
+                f"Hunt complete — {stats['new_listings']} new"
+                f" · {stats['listings_checked']} looked at",
             )
         await job_queue.complete(job_id, stats, worker=worker)
     finally:
