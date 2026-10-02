@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
+import { modeForCriteria } from './modeForCriteria'
 import { settleMaxListings } from './settleMaxListings'
 
 /** Form state for the tracking options; trackingPayload turns it into the API fields. */
@@ -75,6 +76,9 @@ export function TrackingFields({
   const [maxListingsEdit, setMaxListingsEdit] = useState<{ text: string; from: number } | null>(null)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
+  // the mode is Best match only because criteria were typed; that happens out of
+  // sight (Tracking starts collapsed), so a note under the criteria says so
+  const [modeSwitched, setModeSwitched] = useState(false)
   // a stored interval that is not a preset opens on the custom field
   const [customInterval, setCustomInterval] = useState(
     value.recheckIntervalMinutes != null && !INTERVAL_PRESETS.includes(value.recheckIntervalMinutes),
@@ -91,14 +95,17 @@ export function TrackingFields({
   const setCriteria = (criteria: string) => {
     const next = { ...value, criteria }
     // typing criteria implies best-match ranking unless the user said otherwise
-    if (!modeTouched.current && value.criteria.trim() === '' && criteria.trim() !== '') {
-      next.selectionMode = 'best_match'
+    if (!modeTouched.current) {
+      const followed = modeForCriteria({ mode: value.selectionMode, switched: modeSwitched }, value.criteria, criteria)
+      next.selectionMode = followed.mode
+      setModeSwitched(followed.switched)
     }
     onChange(next)
   }
 
   const setMode = (selectionMode: SelectionMode) => {
     modeTouched.current = true
+    setModeSwitched(false)
     onChange({ ...value, selectionMode })
   }
 
@@ -148,6 +155,15 @@ export function TrackingFields({
           Snagr reads this when choosing listings: condition, completeness, anything you'd check
           yourself.
         </p>
+        {modeSwitched ? (
+          <p role="status" className="mt-1.5 text-xs text-ink-2">
+            Switched to Best match to use this: listings are ranked by how well they fit, and poor matches
+            are skipped even when there's room for more.{' '}
+            <button type="button" className="text-lume hover:underline" onClick={() => setMode('cheapest')}>
+              Use Cheapest instead
+            </button>
+          </p>
+        ) : null}
       </div>
 
       <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border border-hairline-strong bg-well">
