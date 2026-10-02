@@ -1,6 +1,6 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
-import { useRef, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
+import { useRef, type ComponentProps, type ComponentPropsWithoutRef, type HTMLAttributes } from 'react'
 import { cn } from '@/lib/cn'
 import { focusMovedElsewhere } from '@/lib/focus'
 
@@ -135,7 +135,7 @@ export function DialogDescription({
 }
 
 /** The dialog's fields — the one part that scrolls when the dialog is taller than the screen. */
-export function DialogBody({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function DialogBody({ className, ...props }: ComponentProps<'div'>) {
   return <div className={cn('overflow-y-auto overscroll-contain px-5 py-4', className)} {...props} />
 }
 

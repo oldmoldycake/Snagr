@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type Ref } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { listCategories, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
@@ -63,12 +63,18 @@ export function TrackingFields({
   categoryId,
   value,
   onChange,
+  defaultOpen = false,
+  toggleRef,
 }: {
   categoryId: number
   value: TrackingValue
   onChange: (value: TrackingValue) => void
+  /** start with the options expanded rather than collapsed */
+  defaultOpen?: boolean
+  /** the button that expands the options, for a dialog opened on them to focus */
+  toggleRef?: Ref<HTMLButtonElement>
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(defaultOpen)
   // "Track up to" while it's being typed in: the text as typed, so clearing it
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
@@ -151,7 +157,7 @@ export function TrackingFields({
       </div>
 
       <Collapsible open={open} onOpenChange={setOpen} className="rounded-md border border-hairline-strong bg-well">
-        <CollapsibleTrigger className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[12px] text-ink-2 focus-visible:-outline-offset-2">
+        <CollapsibleTrigger ref={toggleRef} className="flex w-full items-center gap-2.5 px-3 py-[9px] text-left font-mono text-[12px] text-ink-2 focus-visible:-outline-offset-2">
           <span className="text-[12px] text-ink-3">Tracking</span>
           <span className="min-w-0 flex-1 truncate">
             {value.selectionMode === 'best_match' ? 'Best match' : 'Cheapest'} · up to {value.maxListings} ·{' '}
