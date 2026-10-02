@@ -710,8 +710,10 @@
 
 /*
  * Quieted content never fades with opacity: faded text drops below 4.5:1.
- * A panel refetching in place (aria-busy) shows a lume edge instead, and a
- * row that is no longer live steps its primary ink down to ink-2 (ink-muted).
+ * A panel still showing the previous range or filter while the new one loads
+ * (aria-busy) shows a lume edge instead; a background refetch shows nothing,
+ * since the data on screen is still current. A row that is no longer live
+ * steps its primary ink down to ink-2 (ink-muted).
  */
 @layer components {
   .busy-edge {

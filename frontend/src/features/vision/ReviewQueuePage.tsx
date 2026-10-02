@@ -15,10 +15,8 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
-import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { RelativeTime } from '@/components/ui/relative-time'
-import { cn } from '@/lib/cn'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { PhotoCompareDialog } from './PhotoCompareDialog'
@@ -29,21 +27,18 @@ const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   unsure: 'unsure',
 }
 
-const LABEL_OPTIONS = [
-  { value: 'real', label: 'Real' },
-  { value: 'fake', label: 'Fake' },
-] as const
+const LABELS: readonly ReferenceLabel[] = ['real', 'fake']
 
 function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
   const queryClient = useQueryClient()
-  const [label, setLabel] = useState<ReferenceLabel>(entry.suggested_label)
   const [variantTag, setVariantTag] = useState('')
   const [discardOpen, setDiscardOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
 
   const confirm = useMutation({
-    mutationFn: () => confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
-    onSuccess: () => {
+    mutationFn: (label: ReferenceLabel) =>
+      confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
+    onSuccess: (_, label) => {
       toast.success(`Added to ${entry.item_name}'s ${label} references`)
       void queryClient.invalidateQueries({ queryKey: ['items'] })
     },
@@ -93,7 +88,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
             variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
             className="shrink-0 font-mono text-[12px] tnum"
           >
-            {entry.suggested_label === 'fake' ? '✗' : '✓'} {entry.suggested_label} {entry.confidence}
+            suggested {entry.suggested_label} {entry.confidence}
           </Badge>
         </div>
         <p className="font-mono text-[12px] text-ink-3">
@@ -117,27 +112,22 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           className="h-7 sm:text-xs"
           aria-label="Variant tag"
         />
+        {/* Neither answer is preset or styled as the default: the suggestion
+            above is a hint, and a reference filed under the wrong label
+            skews every later photo check for this item. */}
         <div className="mt-auto flex items-center gap-2">
-          <Segmented
-            options={LABEL_OPTIONS}
-            value={label}
-            onChange={setLabel}
-            ariaLabel="Reference label"
-          />
-          <span className="flex-1" />
           <Button variant="ghost" size="sm" disabled={pending} onClick={() => setDiscardOpen(true)}>
             Discard
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={pending}
-            onClick={() => confirm.mutate()}
-            className={cn(label === 'fake' && 'bg-rise/80 hover:bg-rise')}
-          >
-            {confirm.isPending ? <Loader2 className="animate-spin" /> : null}
-            Confirm {label}
-          </Button>
+          <span className="flex-1" />
+          {LABELS.map((label) => (
+            <Button key={label} size="sm" disabled={pending} onClick={() => confirm.mutate(label)}>
+              {confirm.isPending && confirm.variables === label ? (
+                <Loader2 className="animate-spin" />
+              ) : null}
+              It's {label}
+            </Button>
+          ))}
         </div>
       </CardBody>
 

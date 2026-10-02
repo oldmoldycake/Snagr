@@ -23,6 +23,7 @@ from app.schemas.auth import (
     invite_out,
 )
 from app.schemas.common import DataList
+from app.services import items as items_service
 
 INVITE_TTL_DAYS = 7
 # long enough to hand the link over by hand, short enough that one forgotten
@@ -95,27 +96,20 @@ async def update_user(
 async def delete_user(
     user_id: int, admin=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
-    """Delete a user along with their sessions and the invites they issued.
+    """Delete a user along with everything that is theirs: their watches (with
+    the listings and price history found for them), sessions and the invites
+    they issued. 422 cannot_delete_self for the caller's own account.
 
-    422 cannot_delete_self for the caller's own account; 409 user_has_items while
-    they still have watches, since those anchor listings and price history —
-    deactivating is the way to lock such a user out."""
+    Shared catalog items stay for anyone else watching them. Their API tokens,
+    channels and pending notifications go by FK cascade, and jobs they asked
+    for survive as system jobs (ON DELETE SET NULL). Deactivating is the way to
+    lock someone out and keep their data."""
     if user_id == admin.id:
         raise err(422, "cannot_delete_self", "You cannot delete your own account")
     user = await _get_user(db, user_id)
 
-    # a user's watches anchor real data (listings, price history) — refuse
-    # rather than cascade-delete it. Deactivating keeps the data and locks them out.
-    watch_count = await db.scalar(
-        select(func.count()).select_from(Watches).where(Watches.user_id == user_id)
-    )
-    if watch_count:
-        raise err(
-            409,
-            "user_has_items",
-            "This user still has tracked items — deactivate the account instead",
-        )
-
+    for watch in (await db.scalars(select(Watches).where(Watches.user_id == user_id))).all():
+        await items_service.delete_watch(db, watch)
     # their sessions and issued invites go with them (FKs would block otherwise)
     await db.execute(delete(Sessions).where(Sessions.user_id == user_id))
     await db.execute(delete(Invites).where(Invites.created_by == user_id))

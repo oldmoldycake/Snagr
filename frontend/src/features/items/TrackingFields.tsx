@@ -26,6 +26,8 @@ export interface TrackingValue {
   recheckIntervalMinutes: number | null
   /** false = hunted only when someone presses Hunt now */
   hunt: boolean
+  /** true = reproductions and replicas count as the item, so hunts don't screen them out */
+  allowReproductions: boolean
   /** null = all of the category's sites */
   siteIds: number[] | null
 }
@@ -37,6 +39,7 @@ export const DEFAULT_TRACKING: TrackingValue = {
   maxListings: 5,
   recheckIntervalMinutes: null,
   hunt: true,
+  allowReproductions: false,
   siteIds: null,
 }
 
@@ -48,6 +51,7 @@ export function trackingPayload(value: TrackingValue) {
     max_listings: value.maxListings,
     recheck_interval_minutes: value.recheckIntervalMinutes,
     hunt: value.hunt,
+    allow_reproductions: value.allowReproductions,
     site_ids: value.siteIds,
   }
 }
@@ -59,7 +63,7 @@ function revealError(el: HTMLElement | null) {
 
 /**
  * Criteria textarea + collapsed "Tracking options" (mode, slots, hunting,
- * check interval, sites), shared by the add and edit item dialogs.
+ * replicas, check interval, sites), shared by the add and edit item dialogs.
  */
 export function TrackingFields({
   categoryId,
@@ -196,6 +200,7 @@ export function TrackingFields({
             {interval != null ? `every ${formatInterval(interval)} · ` : ''}
             {siteSummary}
             {value.hunt ? '' : ' · hunting off'}
+            {value.allowReproductions ? ' · replicas accepted' : ''}
           </span>
           <svg
             viewBox="0 0 10 10"
@@ -262,6 +267,23 @@ export function TrackingFields({
                 className="mt-0.5"
                 checked={value.hunt}
                 onCheckedChange={(hunt) => onChange({ ...value, hunt })}
+              />
+            </div>
+
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Label htmlFor="item-replicas">Accept replicas</Label>
+                <p className="text-xs text-ink-3">
+                  {value.allowReproductions
+                    ? 'Reproductions, replicas and other unofficial copies count as this item.'
+                    : 'Listings that look like reproductions or replicas are skipped.'}
+                </p>
+              </div>
+              <Switch
+                id="item-replicas"
+                className="mt-0.5"
+                checked={value.allowReproductions}
+                onCheckedChange={(allowReproductions) => onChange({ ...value, allowReproductions })}
               />
             </div>
 

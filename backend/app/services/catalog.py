@@ -8,7 +8,7 @@ last_checked_at are computed at query time (house pattern #2), never stored.
 import re
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, exists, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -123,10 +123,10 @@ async def unique_slug(db: AsyncSession, name: str) -> str:
 async def build_category(db: AsyncSession, cat: Categories, user_id: int) -> Category:
     """One categories row -> the contract's Category shape (three queries).
 
-    item_count is instance-wide and snagged_count is the caller's, which reads
-    like an inconsistency and isn't: `items` is a shared catalog, but a target
-    price belongs to one watcher. Counting somebody else's snag here would put
-    a ⌖ on a chip whose items all show as un-met underneath.
+    Both counts are the caller's: the chip, drawer and ⋯ menu sit beside the
+    shelf, which lists only the caller's items, and a count of everyone's would
+    disagree with it. `uq_item_user` allows one watch per user and item, so the
+    caller's watches here are the caller's items.
     """
     site_ids = list(
         (
@@ -138,12 +138,12 @@ async def build_category(db: AsyncSession, cat: Categories, user_id: int) -> Cat
         .all()
     )
 
-    # an item nobody watches any more stays in the catalog, but counts for nothing
     item_count = await db.scalar(
         select(func.count())
-        .select_from(Items)
+        .select_from(Watches)
+        .join(Items, Items.id == Watches.item_id)
         .where(Items.category_id == cat.id)
-        .where(exists().where(Watches.item_id == Items.id))
+        .where(Watches.user_id == user_id)
     )
 
     snagged_count = await count_snagged_watches(db, user_id, cat.id)
