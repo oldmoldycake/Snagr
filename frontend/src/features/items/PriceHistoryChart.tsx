@@ -21,7 +21,7 @@ import {
 } from '@/components/charts/pricePlot'
 import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
-import { sharedTitlePrefix } from './listingTitles'
+import { seriesLabel, sharedTitlePrefix } from './listingTitles'
 import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
 const HEIGHT = 256
@@ -29,20 +29,11 @@ const END_LABEL_GAP = 13
 
 /**
  * Legend labels: strip the longest shared title prefix (whole words) among the
- * plotted listings so six near-identical titles read by their differences,
- * then append the site. Falls back to the site name alone.
+ * plotted listings so six near-identical titles read by their differences.
  */
 function seriesLabels(plotted: PreparedSeries[]): Map<number, string> {
   const prefix = sharedTitlePrefix(plotted.map((s) => s.listing.title))
-  return new Map(
-    plotted.map((s) => {
-      const raw = s.listing.title?.slice(prefix.length).trim() ?? ''
-      // truncate the fragment, not the label — the site must survive
-      const fragment = raw.length > 26 ? `${raw.slice(0, 25).trimEnd()}…` : raw
-      const label = fragment ? `${fragment} · ${s.listing.site_name}` : s.listing.site_name
-      return [s.listing.listing_id, label]
-    }),
-  )
+  return new Map(plotted.map((s) => [s.listing.listing_id, seriesLabel(s.listing.site_name, s.listing.title, prefix)]))
 }
 
 /** Latest price at-or-before ts, step semantics (price holds until next check). */

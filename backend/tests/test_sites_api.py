@@ -123,9 +123,9 @@ async def test_listing_count_counts_only_active_listings(client, db_session):
 
 
 async def test_counts_span_all_users(client, db_session):
-    """Sites are shared catalog: the aggregates include other users' watches,
-    like categories' global item_count. handlers.ts runs a single-user store so
-    the mock can't express this either way — pinned on the catalog precedent.
+    """Sites are shared catalog: the aggregates include other users' watches.
+    handlers.ts runs a single-user store so the mock can't express this either
+    way — pinned here.
     """
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:

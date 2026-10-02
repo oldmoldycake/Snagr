@@ -456,7 +456,7 @@ export function ShelfMenu({
             className="relative z-[1] my-0.5 grid animate-menu-row gap-2 rounded-sm border border-rise/30 bg-rise/10 py-2 pr-2 pl-[11px]"
           >
             <p className="text-xs leading-snug text-rise">
-              Delete “{category.name}” and its {plural(category.item_count, 'item', 'items')}? This cannot be undone.
+              Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be undone.
             </p>
             {removeError ? (
               <p role="alert" className="text-xs leading-snug text-rise">

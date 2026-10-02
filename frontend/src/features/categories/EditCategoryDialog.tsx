@@ -127,8 +127,8 @@ export function EditCategoryDialog({
               {confirmingDelete ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-rise">
-                    Delete “{category.name}” and its {category.item_count} item
-                    {category.item_count === 1 ? '' : 's'}? This cannot be undone.
+                    Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be
+                    undone.
                   </p>
                   <Button
                     variant="destructive"
