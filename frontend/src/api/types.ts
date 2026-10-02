@@ -632,7 +632,8 @@ export interface Job {
   attempts: number
   started_at: string | null
   finished_at: string | null
-  /** one sentence for a human, e.g. "eBay answered a challenge page instead of the listing." */
+  /** one sentence for a human naming what kind of failure it was, e.g. "No page on the site
+   *  would load." — the raw error is on the job's last `error` event, as payload.detail */
   error: string | null
   stats: JobStats | null
   /** why it was queued: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | 'backoff'
@@ -701,6 +702,7 @@ export type JobEventType =
   | 'listing_ended'
   /** the breaker tripped on this job's site — payload: site_id, paused_until, paused_reason */
   | 'site_paused'
+  /** a failed attempt's payload: detail (its raw error text, for debugging) */
   | 'error'
   | 'job_finished'
 

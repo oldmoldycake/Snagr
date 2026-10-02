@@ -16,6 +16,8 @@ import pytest
 import worker
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.tools import tool
+from langgraph.errors import GraphRecursionError
 from observations import UnitContext
 from pricing import SearchSuspended
 
@@ -446,26 +448,70 @@ class TestTerminalWrites:
     def test_a_site_that_gave_up_no_page_is_retried_and_counted_against_it(self, monkeypatch):
         seen = wire(monkeypatch, hunt_raises=agent.SiteUnreadable("every browser call failed"))
         asyncio.run(worker._work_one("w1", job("hunt")))
-        assert seen["failed"] == [(1, "every browser call failed")]
+        assert seen["failed"] == [(1, "No page on the site would load.")]
         assert seen["completed"] == []
         assert seen["outcomes"] == [(1, False)]
         assert any(event_type == "error" for _, _, event_type, _ in seen["events"])
         assert worker.backoff.until is None
 
+    def test_a_site_paused_for_giving_up_no_page_says_so_in_plain_words(self, monkeypatch):
+        # the pause reason is shown on the paused-site card as it is
+        wire(monkeypatch, hunt_raises=agent.SiteUnreadable("every browser call failed: net::ERR"))
+        details = []
+
+        async def record_outcome(site_id, ok, **kwargs):
+            details.append(kwargs["detail"])
+
+        monkeypatch.setattr(worker.breaker, "record_outcome", record_outcome)
+        asyncio.run(worker._work_one("w1", job("hunt")))
+        assert details == ["no page would load"]
+
     def test_the_hunters_own_failure_is_retried_but_blames_no_site(self, monkeypatch):
         # an LLM key the provider refuses fails every site's hunt the same way;
         # counting it would pause every marketplace for the length of the outage
-        seen = wire(monkeypatch, hunt_raises=RuntimeError("401 invalid x-api-key"))
+        seen = wire(monkeypatch, hunt_raises=agent.ModelFailed("401 invalid x-api-key"))
         asyncio.run(worker._work_one("w1", job("hunt")))
-        assert seen["failed"] == [(1, "401 invalid x-api-key")]
+        assert seen["failed"] == [(1, "The AI provider returned an error.")]
         assert seen["outcomes"] == []
         assert worker.backoff.until is not None
 
     def test_a_failed_grounding_never_reaches_the_breaker(self, monkeypatch):
         seen = wire(monkeypatch, ground_raises=OSError("connection refused"))
         asyncio.run(worker._work_one("w1", job("ground", site_id=None, listing_id=None)))
-        assert seen["failed"] == [(1, "connection refused")]
+        assert seen["failed"] == [(1, "Snagr ran into an unexpected error.")]
         assert seen["outcomes"] == []
+
+    @pytest.mark.parametrize(
+        "error, reason",
+        [
+            (
+                agent.TimedOut("unit exceeded the 900s budget"),
+                "Took too long, so Snagr stopped it.",
+            ),
+            (agent.SiteUnreadable("every browser call failed"), "No page on the site would load."),
+            (agent.ModelFailed("Error code: 429"), "The AI provider returned an error."),
+            (
+                GraphRecursionError("Recursion limit of 60 reached"),
+                "The AI took too many steps without finishing.",
+            ),
+            (KeyError("site_name"), "Snagr ran into an unexpected error."),
+        ],
+    )
+    def test_a_failure_is_named_in_plain_words_with_its_own_text_kept_as_detail(
+        self, monkeypatch, error, reason
+    ):
+        # the job's error is what every Activity surface shows; the raw text
+        # is for whoever runs Snagr, behind the job page's disclosure
+        payloads = []
+
+        async def append_event(job_id, level, event_type, message, payload=None):
+            payloads.append((level, event_type, message, payload))
+            return 1
+
+        seen = wire(monkeypatch, hunt_raises=error, append_event=append_event)
+        asyncio.run(worker._work_one("w1", job("hunt")))
+        assert seen["failed"] == [(1, reason)]
+        assert payloads[-1] == ("error", "error", reason, {"detail": str(error)})
 
     def test_a_suspended_search_hands_the_job_back_instead_of_holding_its_slot(self, monkeypatch):
         until = datetime(2026, 9, 26, 16, 31, tzinfo=UTC)
@@ -608,7 +654,7 @@ class TestPool:
             task.cancel()
 
         asyncio.run(scenario())
-        assert seen["failed"] == [(1, "the page timed out")]
+        assert seen["failed"] == [(1, "Snagr ran into an unexpected error.")]
         assert [job_id for job_id, _ in seen["completed"]] == [2]
 
     def test_losing_the_database_mid_claim_never_takes_the_pool_down(self, monkeypatch):
@@ -889,7 +935,7 @@ class TestUnitBudgets:
         async def wedged():
             await asyncio.Event().wait()
 
-        with pytest.raises(RuntimeError, match="budget"):
+        with pytest.raises(agent.TimedOut, match="budget"):
             asyncio.run(agent.bounded(wedged()))
 
     def test_a_unit_inside_the_budget_hands_its_value_back(self, monkeypatch):
@@ -909,6 +955,57 @@ class TestUnitBudgets:
             category="video-games",
         )
         assert config["recursion_limit"] == agent.AGENT_MAX_STEPS
+
+
+class ToolCallingFake(GenericFakeChatModel):
+    """A scripted model that accepts tools, so its replies can call them."""
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def run_unit(model, tools) -> None:
+    """Stream a one-prompt agent wrapped the way the units are, to the end."""
+    unit = agent.create_agent(model, tools, middleware=[agent.model_failures])
+
+    async def scenario():
+        async for _ in unit.astream({"messages": [{"role": "user", "content": "go"}]}):
+            pass
+
+    asyncio.run(scenario())
+
+
+class TestModelFailures:
+    """Every provider raises its own types, so the model call is wrapped to
+    say a failure was the model's — and only the model call."""
+
+    def test_a_refused_model_call_is_a_model_failure_with_the_providers_text(self):
+        def refused():
+            raise RuntimeError("Error code: 401 - invalid x-api-key")
+            yield
+
+        with pytest.raises(agent.ModelFailed, match="401 - invalid x-api-key"):
+            run_unit(GenericFakeChatModel(messages=refused()), [])
+
+    def test_a_tool_that_raises_is_not_blamed_on_the_model(self):
+        @tool
+        def explode() -> str:
+            """Fail the way a lost database would."""
+            raise LookupError("the database went away")
+
+        calls = AIMessage(content="", tool_calls=[{"name": "explode", "args": {}, "id": "1"}])
+        with pytest.raises(LookupError):
+            run_unit(ToolCallingFake(messages=iter([calls])), [explode])
+
+    def test_both_units_wrap_only_the_model_call(self, monkeypatch):
+        built = []
+        monkeypatch.setattr(
+            agent, "create_agent", lambda llm, tools, **kwargs: built.append(kwargs["middleware"])
+        )
+        agent.build_recheck_agent("llm", [])
+        agent.build_hunt_agent("llm", [])
+        # the last middleware is the innermost, so nothing else is inside it
+        assert [middleware[-1] for middleware in built] == [agent.model_failures] * 2
 
 
 def unit_config(kind, **unit):
@@ -1031,8 +1128,8 @@ class TestHuntContextTrimming:
 
         monkeypatch.setattr(agent, "create_agent", create)
         agent.build_hunt_agent("llm", [])
-        (middleware,) = built["middleware"]
-        return middleware
+        trim_pages, _ = built["middleware"]
+        return trim_pages
 
     def _transcript(self) -> list:
         messages = []

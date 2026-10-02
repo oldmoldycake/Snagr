@@ -112,7 +112,13 @@ across all of it deciding what is believed and which sites are read at all.
    `JOB_HEARTBEAT_INTERVAL_SECONDS` meanwhile.
 5. **Finish.** `jobs.complete` (done, stats) or `jobs.fail_or_retry` (back to
    `pending`, due at once, until `JOB_MAX_ATTEMPTS` attempts are spent, then
-   `failed`). A job the API cancelled mid-flight keeps `cancelled`. A ground
+   `failed`). A failure's `jobs.error` is one plain sentence naming its kind
+   (`worker.failure_reason`: too slow, site unreadable, the AI provider, the
+   step cap, or unexpected) — it is what the Activity page shows; the
+   exception's own text goes on the job's `error` event as `payload.detail`,
+   which the job page keeps behind a disclosure. `agent.model_failures` wraps
+   the model call so a provider's error, whatever its SDK, is `ModelFailed`.
+   A job the API cancelled mid-flight keeps `cancelled`. A ground
    job that meets a SearXNG suspension is neither: `jobs.defer` puts it back
    to `pending`, due when the suspension should be over, with its attempt
    given back (`pricing.SearchGate` — 15 min, doubling to 4 h while it lasts;

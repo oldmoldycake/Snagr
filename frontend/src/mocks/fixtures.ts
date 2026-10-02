@@ -884,7 +884,7 @@ function seedJobs() {
   // one hunt the breaker killed, and one the owner cancelled mid-flight
   const failedPair = pairs.find((pair) => pair.siteId === paused.id) ?? pairs[0]
   const failedAt = NOW - 75 * MINUTE
-  pushJob({
+  const failed = pushJob({
     id: newId(),
     kind: 'hunt',
     status: 'failed',
@@ -898,12 +898,39 @@ function seedJobs() {
     attempts: 3,
     started_at: failedAt,
     finished_at: failedAt + 12_000,
-    error: `${paused.name} answered a challenge page instead of the listing.`,
+    error: 'No page on the site would load.',
     stats: jobStats({ errors: 1, duration_ms: 12_000 }),
     reason: 'user',
     last_seq: 0,
     created_at: failedAt - MINUTE,
   })
+
+  // what the agent writes for a failed attempt: the job's sentence, with the
+  // error it raised behind it for the job page's Details
+  failed.last_seq = 2
+  store.jobEvents.push(
+    {
+      job_id: failed.id,
+      seq: 1,
+      ts: failedAt,
+      level: 'info',
+      event_type: 'job_started',
+      message: `Hunting ${paused.name} for "${failedPair.item.name}"`,
+      payload: null,
+    },
+    {
+      job_id: failed.id,
+      seq: 2,
+      ts: failedAt + 12_000,
+      level: 'error',
+      event_type: 'error',
+      message: failed.error!,
+      payload: {
+        detail:
+          'every browser call failed: ### Error\nError: page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.ebay.com/sch/i.html',
+      },
+    },
+  )
 
   const cancelledPair = pairs[2]
   const cancelledAt = NOW - 100 * MINUTE

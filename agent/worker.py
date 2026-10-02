@@ -48,6 +48,7 @@ from database import (
     get_hunt_unit,
     get_recheck_unit,
 )
+from langgraph.errors import GraphRecursionError
 from llm import build_llm, count_tokens, flush_traces, job_trace
 from pricing import SearchSuspended, ground_item, select_grounding_work
 from recheck import recheck_deterministic
@@ -55,7 +56,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from agent import Cancelled as JobCancelled
 from agent import (
+    ModelFailed,
     SiteUnreadable,
+    TimedOut,
     bounded,
     build_hunt_agent,
     build_recheck_agent,
@@ -335,6 +338,25 @@ async def _run_ground(job: dict) -> dict | None:
 # --- the pools -------------------------------------------------------------
 
 
+def failure_reason(error: Exception) -> str:
+    """Why a job failed, as the one sentence its owner reads.
+
+    This is jobs.error, which every Activity surface shows, so it names the
+    kind of failure and nothing more. The exception's own text is for whoever
+    runs Snagr: it rides on the job's error event as payload.detail, which
+    the job page keeps behind a disclosure.
+    """
+    if isinstance(error, TimedOut):
+        return "Took too long, so Snagr stopped it."
+    if isinstance(error, SiteUnreadable):
+        return "No page on the site would load."
+    if isinstance(error, ModelFailed):
+        return "The AI provider returned an error."
+    if isinstance(error, GraphRecursionError):
+        return "The AI took too many steps without finishing."
+    return "Snagr ran into an unexpected error."
+
+
 async def _work_one(worker: str, job: dict) -> None:
     """Run one claimed job and write its terminal state, whatever happens."""
     job_id = job["id"]
@@ -354,11 +376,14 @@ async def _work_one(worker: str, job: dict) -> None:
     except Exception as e:
         log.error(f"{job['kind'].title()} job {job_id} failed: {e}")
         if isinstance(e, SiteUnreadable):
-            await breaker.record_outcome(job["site_id"], False, job_id=job_id, detail=str(e)[:120])
+            await breaker.record_outcome(
+                job["site_id"], False, job_id=job_id, detail="no page would load"
+            )
         else:
             backoff.failed(e)
-        await job_queue.append_event(job_id, "error", "error", str(e)[:500])
-        await job_queue.fail_or_retry(job_id, str(e), worker=worker)
+        reason = failure_reason(e)
+        await job_queue.append_event(job_id, "error", "error", reason, {"detail": str(e)[:1000]})
+        await job_queue.fail_or_retry(job_id, reason, worker=worker)
     else:
         backoff.cleared()
         if job["kind"] == "hunt":
