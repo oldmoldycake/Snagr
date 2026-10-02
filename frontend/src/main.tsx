@@ -4,7 +4,7 @@ import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@ta
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { RouterProvider } from 'react-router-dom'
 import { Toaster, toast } from 'sonner'
-import { ApiError } from '@/api/client'
+import { ApiError, isSignedOut } from '@/api/client'
 import { qk } from '@/api/queries'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { router } from '@/router'
@@ -42,7 +42,7 @@ declare module '@tanstack/react-query' {
  * LoginPage doesn't find the old user and bounce straight back.
  */
 function endExpiredSession(error: Error): void {
-  if (!(error instanceof ApiError && error.status === 401)) return
+  if (!isSignedOut(error)) return
   if (queryClient.getQueryData(qk.session) === undefined) return
   const { pathname, search, hash } = router.state.location
   queryClient.clear()

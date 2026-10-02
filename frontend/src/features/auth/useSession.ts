@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { getInstance, getMe, login, logout, register } from '@/api/endpoints'
-import { ApiError } from '@/api/client'
+import { isSignedOut } from '@/api/client'
 import { qk } from '@/api/queries'
 
 /** The signed-in user; a 401 is the answer "signed out", so it is never retried. */
@@ -9,8 +9,7 @@ export function useSession() {
   return useQuery({
     queryKey: qk.session,
     queryFn: getMe,
-    retry: (failureCount, error) =>
-      !(error instanceof ApiError && error.status === 401) && failureCount < 1,
+    retry: (failureCount, error) => !isSignedOut(error) && failureCount < 1,
     staleTime: 5 * 60_000,
   })
 }

@@ -22,6 +22,14 @@ export function isNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.status === 404
 }
 
+/**
+ * True only for a 401, which `api` throws once the refresh is refused too: a 500
+ * or a request that never reached Snagr is an outage to show, never "signed out".
+ */
+export function isSignedOut(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401
+}
+
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
 
 /**
