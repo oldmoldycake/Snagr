@@ -147,7 +147,9 @@ export function JobPage() {
 
   // the hunter's own work (no watch behind it) is admin-only to cancel
   const canCancel =
-    isLive && me != null && (me.role === 'admin' || detail.watch_id != null)
+    (isLive || detail.status === 'pending') &&
+    me != null &&
+    (me.role === 'admin' || detail.watch_id != null)
 
   return (
     <div className="space-y-5">

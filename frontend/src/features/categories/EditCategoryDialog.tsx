@@ -22,19 +22,18 @@ import { hasCategoryEdits } from './categoryEdits'
 
 /**
  * Rename a category, choose which sites it searches, or delete it. Seeds its
- * name from props once — remount it (via key) each time it opens. Saving opens
- * the category's page, unless `onSaved` is given (a caller that stays put).
+ * name from props once — remount it (via key) each time it opens. Saving stays
+ * on the page it was opened from, since a rename keeps the slug; deleting goes
+ * to the dashboard.
  */
 export function EditCategoryDialog({
   category,
   open,
   onOpenChange,
-  onSaved,
 }: {
   category: Category
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSaved?: () => void
 }) {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
@@ -49,21 +48,15 @@ export function EditCategoryDialog({
 
   const save = useMutation({
     mutationFn: async () => {
-      // Navigate to the slug the server reports, never one re-derived from the
-      // new name: a rename keeps the original slug, so the derived URL 404s.
-      let saved = category
-      if (name.trim() !== category.name) saved = await updateCategory(category.id, { name: name.trim() })
-      if (pickedSiteIds) saved = await setCategorySites(category.id, pickedSiteIds)
-      return saved.slug
+      if (name.trim() !== category.name) await updateCategory(category.id, { name: name.trim() })
+      if (pickedSiteIds) await setCategorySites(category.id, pickedSiteIds)
     },
     meta: { inlineError: true },
-    onSuccess: async (slug) => {
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       // item rows carry the category's name
       await queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)
-      if (onSaved) onSaved()
-      else navigate(`/categories/${slug}`, { replace: true })
     },
   })
 
@@ -83,11 +76,7 @@ export function EditCategoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      {/* with unsaved edits, Escape and clicks outside do nothing: only Cancel or ✕ throws them away */}
-      <DialogContent
-        onEscapeKeyDown={(e) => changed && e.preventDefault()}
-        onInteractOutside={(e) => changed && e.preventDefault()}
-      >
+      <DialogContent dirty={changed}>
         <DialogHeader>
           <DialogTitle>Edit category</DialogTitle>
           <DialogDescription>
@@ -138,8 +127,8 @@ export function EditCategoryDialog({
               {confirmingDelete ? (
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-rise">
-                    Delete “{category.name}” and its {category.item_count} item
-                    {category.item_count === 1 ? '' : 's'}? This cannot be undone.
+                    Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be
+                    undone.
                   </p>
                   <Button
                     variant="destructive"

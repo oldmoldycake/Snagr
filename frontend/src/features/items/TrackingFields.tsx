@@ -12,8 +12,10 @@ import { Textarea } from '@/components/ui/textarea'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
+import { intervalOptions, intervalPresets } from './intervalOptions'
 import { modeForCriteria } from './modeForCriteria'
 import { settleMaxListings } from './settleMaxListings'
+import { siteIdsAfterToggle } from './siteIdsAfterToggle'
 
 /** Form state for the tracking options; trackingPayload turns it into the API fields. */
 export interface TrackingValue {
@@ -24,6 +26,8 @@ export interface TrackingValue {
   recheckIntervalMinutes: number | null
   /** false = hunted only when someone presses Hunt now */
   hunt: boolean
+  /** true = reproductions and replicas count as the item, so hunts don't screen them out */
+  allowReproductions: boolean
   /** null = all of the category's sites */
   siteIds: number[] | null
 }
@@ -35,6 +39,7 @@ export const DEFAULT_TRACKING: TrackingValue = {
   maxListings: 5,
   recheckIntervalMinutes: null,
   hunt: true,
+  allowReproductions: false,
   siteIds: null,
 }
 
@@ -46,13 +51,19 @@ export function trackingPayload(value: TrackingValue) {
     max_listings: value.maxListings,
     recheck_interval_minutes: value.recheckIntervalMinutes,
     hunt: value.hunt,
+    allow_reproductions: value.allowReproductions,
     site_ids: value.siteIds,
   }
 }
 
+/** Scrolls an error into view as it appears: one inside the options can open below the dialog's fold. */
+function revealError(el: HTMLElement | null) {
+  el?.scrollIntoView({ block: 'nearest' })
+}
+
 /**
  * Criteria textarea + collapsed "Tracking options" (mode, slots, hunting,
- * check interval, sites), shared by the add and edit item dialogs.
+ * replicas, check interval, sites), shared by the add and edit item dialogs.
  */
 export function TrackingFields({
   categoryId,
@@ -60,6 +71,7 @@ export function TrackingFields({
   onChange,
   defaultOpen = false,
   toggleRef,
+  intervalError,
 }: {
   categoryId: number
   value: TrackingValue
@@ -68,8 +80,11 @@ export function TrackingFields({
   defaultOpen?: boolean
   /** the button that expands the options, for a dialog opened on them to focus */
   toggleRef?: Ref<HTMLButtonElement>
+  /** why the server refused the check interval, shown under "Check every" */
+  intervalError?: string | null
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const [siteError, setSiteError] = useState<string | null>(null)
   // "Track up to" while it's being typed in: the text as typed, so clearing it
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
@@ -79,11 +94,20 @@ export function TrackingFields({
   const [modeSwitched, setModeSwitched] = useState(false)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
-  const defaultInterval = useInstance().data?.recheck_interval_default
+  const instance = useInstance().data
+  const defaultInterval = instance?.recheck_interval_default
+  const intervalFloor = instance?.recheck_interval_floor
   // a stored interval that is not a preset opens on the custom field
   const [customInterval, setCustomInterval] = useState(
     value.recheckIntervalMinutes != null && !intervalPresets(defaultInterval).includes(value.recheckIntervalMinutes),
   )
+
+  // a refused interval is shown inside the options, so open them as it arrives
+  const [lastIntervalError, setLastIntervalError] = useState(intervalError)
+  if (intervalError !== lastIntervalError) {
+    setLastIntervalError(intervalError)
+    if (intervalError) setOpen(true)
+  }
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
@@ -110,14 +134,13 @@ export function TrackingFields({
   }
 
   const toggleSite = (id: number) => {
-    const next = effectiveSiteIds.includes(id)
-      ? effectiveSiteIds.filter((s) => s !== id)
-      : [...effectiveSiteIds, id]
-    // all (or none) selected = no restriction
-    onChange({
-      ...value,
-      siteIds: next.length === 0 || next.length === categorySites.length ? null : next,
-    })
+    const toggled = siteIdsAfterToggle(effectiveSiteIds, id, categorySites.length)
+    if ('error' in toggled) {
+      setSiteError(toggled.error)
+      return
+    }
+    setSiteError(null)
+    onChange({ ...value, siteIds: toggled.siteIds })
   }
 
   const setIntervalChoice = (choice: string) => {
@@ -177,6 +200,7 @@ export function TrackingFields({
             {interval != null ? `every ${formatInterval(interval)} · ` : ''}
             {siteSummary}
             {value.hunt ? '' : ' · hunting off'}
+            {value.allowReproductions ? ' · replicas accepted' : ''}
           </span>
           <svg
             viewBox="0 0 10 10"
@@ -246,6 +270,23 @@ export function TrackingFields({
               />
             </div>
 
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Label htmlFor="item-replicas">Accept replicas</Label>
+                <p className="text-xs text-ink-3">
+                  {value.allowReproductions
+                    ? 'Reproductions, replicas and other unofficial copies count as this item.'
+                    : 'Listings that look like reproductions or replicas are skipped.'}
+                </p>
+              </div>
+              <Switch
+                id="item-replicas"
+                className="mt-0.5"
+                checked={value.allowReproductions}
+                onCheckedChange={(allowReproductions) => onChange({ ...value, allowReproductions })}
+              />
+            </div>
+
             <div>
               <Label>Check every</Label>
               <Segmented
@@ -259,12 +300,13 @@ export function TrackingFields({
                   <Input
                     id="item-recheck-interval"
                     type="number"
-                    min={1}
+                    min={intervalFloor}
                     max={1440}
                     step={1}
                     aria-label="Check interval in minutes"
+                    aria-invalid={!!intervalError || undefined}
                     placeholder={defaultInterval != null ? String(defaultInterval) : undefined}
-                    className="w-20 font-mono tnum"
+                    className="w-20 font-mono tnum aria-invalid:border-rise/60"
                     value={value.recheckIntervalMinutes ?? ''}
                     onChange={(e) => {
                       // kept as typed, not rounded: a fractional value fails the
@@ -276,8 +318,15 @@ export function TrackingFields({
                       })
                     }}
                   />
-                  <span className="text-xs text-ink-3">minutes</span>
+                  <span className="text-xs text-ink-3">
+                    minutes{intervalFloor != null ? `, at least ${intervalFloor}` : ''}
+                  </span>
                 </div>
+              ) : null}
+              {intervalError ? (
+                <p ref={revealError} role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {intervalError}
+                </p>
               ) : null}
               <p className="mt-1.5 text-xs text-ink-3">
                 {value.recheckIntervalMinutes == null ? (
@@ -334,6 +383,11 @@ export function TrackingFields({
                   })}
                 </div>
               )}
+              {siteError ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {siteError}
+                </p>
+              ) : null}
             </div>
           </div>
         </CollapsibleContent>
