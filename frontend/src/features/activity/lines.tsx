@@ -6,10 +6,12 @@
  * it slightly differently is how a UI stops being one voice.
  */
 
+import { Link } from 'react-router-dom'
 import type { Job, JobEvent, JobEventType, ListingChecked } from '@/api/types'
 import type { LogGlyphLevel, LogLine } from '@/components/ui/terminal-log'
 import { priceMethodLabel } from '@/lib/priceMethod'
 import { logTime } from '@/lib/time'
+import { listingMentions } from './jobEvents'
 
 /** Some events mean more than their level does: a save is a find (✚), a
  *  rejection is a skip (○). Everything else reads as its level. */
@@ -24,13 +26,32 @@ export function glyphFor(event: JobEvent): LogGlyphLevel {
   return EVENT_GLYPHS[event.event_type] ?? event.level
 }
 
-/** One job event as a terminal-log line. */
-export function eventLine(event: JobEvent): LogLine {
+/** One job event as a terminal-log line; a listing it names links to the
+ *  page of the job's item, where that item's listings are. */
+export function eventLine(event: JobEvent, itemId: number | null): LogLine {
   return {
     key: `${event.job_id}:${event.seq}`,
     time: logTime(event.ts),
     level: glyphFor(event),
-    message: <span className="break-words">{event.message}</span>,
+    message: (
+      <span className="break-words">
+        {itemId == null
+          ? event.message
+          : listingMentions(event.message).map((part, i) =>
+              part.listing ? (
+                <Link
+                  key={i}
+                  to={`/items/${itemId}`}
+                  className="underline underline-offset-2 hover:text-lume"
+                >
+                  {part.text}
+                </Link>
+              ) : (
+                part.text
+              ),
+            )}
+      </span>
+    ),
   }
 }
 
