@@ -72,6 +72,7 @@ export function TrackingFields({
   toggleRef?: Ref<HTMLButtonElement>
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  const [siteError, setSiteError] = useState<string | null>(null)
   // "Track up to" while it's being typed in: the text as typed, so clearing it
   // to type another number doesn't snap it to 1 first, and the cap it started
   // from, which a blank field keeps. Leaving the field shows the cap to be saved.
