@@ -559,6 +559,7 @@ export const handlers = [
       vision_enabled: true,
       mcp_enabled: true,
       recheck_interval_default: RECHECK_INTERVAL_MINUTES,
+      recheck_interval_floor: RECHECK_INTERVAL_FLOOR_MINUTES,
       hunt_enabled: HUNT_ENABLED,
     })
   }),

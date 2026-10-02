@@ -30,6 +30,7 @@ class InstanceInfo(BaseModel):
     vision_enabled: bool  # true iff the operator set VISION_SIDECAR_URL
     mcp_enabled: bool  # false = the operator turned agent access off (MCP_ENABLED)
     recheck_interval_default: int  # RECHECK_INTERVAL_MINUTES — the item form's placeholder
+    recheck_interval_floor: int  # RECHECK_INTERVAL_FLOOR_MINUTES — the item form's least interval
     hunt_enabled: bool  # false = the operator switched hunting off (HUNT_ENABLED)
 
 
