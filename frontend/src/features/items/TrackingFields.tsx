@@ -12,6 +12,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { useInstance } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
+import { settleMaxListings } from './settleMaxListings'
 
 /** Form state for the tracking options; trackingPayload turns it into the API fields. */
 export interface TrackingValue {
@@ -68,6 +69,10 @@ export function TrackingFields({
   onChange: (value: TrackingValue) => void
 }) {
   const [open, setOpen] = useState(false)
+  // "Track up to" while it's being typed in: the text as typed, so clearing it
+  // to type another number doesn't snap it to 1 first, and the cap it started
+  // from, which a blank field keeps. Leaving the field shows the cap to be saved.
+  const [maxListingsEdit, setMaxListingsEdit] = useState<{ text: string; from: number } | null>(null)
   // once the user picks a mode explicitly, stop auto-switching it
   const modeTouched = useRef(false)
   // a stored interval that is not a preset opens on the custom field
@@ -193,11 +198,13 @@ export function TrackingFields({
                   min={1}
                   max={10}
                   className="w-16 font-mono tnum"
-                  value={value.maxListings}
+                  value={maxListingsEdit?.text ?? value.maxListings}
                   onChange={(e) => {
-                    const n = Math.round(Number(e.target.value))
-                    onChange({ ...value, maxListings: Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : 5 })
+                    const from = maxListingsEdit?.from ?? value.maxListings
+                    setMaxListingsEdit({ text: e.target.value, from })
+                    onChange({ ...value, maxListings: settleMaxListings(e.target.value, from) })
                   }}
+                  onBlur={() => setMaxListingsEdit(null)}
                 />
                 <span className="text-xs text-ink-3">listings at once</span>
               </div>
