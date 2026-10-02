@@ -76,7 +76,7 @@ function SearchForm({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder="Search items…"
-        className={cn('pl-8', shortcutHint ? 'h-7 pr-7 text-xs' : 'h-9')}
+        className={cn('pl-8', shortcutHint ? 'h-7 pr-7 sm:text-xs' : 'h-9')}
         aria-label="Search items"
       />
       {shortcutHint ? (
