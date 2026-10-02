@@ -79,6 +79,9 @@ function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onR
 export function ReferenceLibrary({ itemId }: { itemId: number }) {
   const queryClient = useQueryClient()
   const [uploadOpen, setUploadOpen] = useState(false)
+  // Bumped on every open so the dialog starts without the last file or error,
+  // while staying mounted after close long enough to play its exit animation.
+  const [uploadSession, setUploadSession] = useState(0)
   const [revokeTarget, setRevokeTarget] = useState<ReferenceImage | null>(null)
   const [revokeAutoOpen, setRevokeAutoOpen] = useState(false)
 
@@ -86,6 +89,11 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
     queryKey: qk.itemReferences(itemId),
     queryFn: () => listReferences(itemId),
   })
+
+  const openUpload = () => {
+    setUploadSession((n) => n + 1)
+    setUploadOpen(true)
+  }
 
   const revoke = useMutation({
     mutationFn: (id: number) => revokeReference(id),
@@ -125,7 +133,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
               Revoke auto ×{autoCount}
             </Button>
           ) : null}
-          <Button size="sm" onClick={() => setUploadOpen(true)}>
+          <Button size="sm" onClick={openUpload}>
             Add photo
           </Button>
         </div>
@@ -143,7 +151,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
             title="No reference photos yet"
             description="Photo checks can't reach a verdict until this item has photos of known-real or known-fake copies. Confirm photos on the Photo review page, or upload your own."
             action={
-              <Button size="sm" onClick={() => setUploadOpen(true)}>
+              <Button size="sm" onClick={openUpload}>
                 Add photo
               </Button>
             }
@@ -190,7 +198,7 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
         onConfirm={() => revokeAuto.mutate()}
       />
 
-      <UploadReferenceDialog itemId={itemId} open={uploadOpen} onOpenChange={setUploadOpen} />
+      <UploadReferenceDialog key={`upload-${uploadSession}`} itemId={itemId} open={uploadOpen} onOpenChange={setUploadOpen} />
     </Card>
   )
 }
