@@ -3,12 +3,14 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { Link } from 'react-router-dom'
 import { Loader2, ZoomIn } from 'lucide-react'
 import { toast } from 'sonner'
+import { ApiError } from '@/api/client'
 import { confirmReviewEntry, discardReviewEntry, listReviewQueue } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { LlmAuthenticityRead, ReferenceLabel, ReviewQueueEntry } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
@@ -31,6 +33,7 @@ const LABELS: readonly ReferenceLabel[] = ['real', 'fake']
 function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
   const queryClient = useQueryClient()
   const [variantTag, setVariantTag] = useState('')
+  const [discardOpen, setDiscardOpen] = useState(false)
   const [compareOpen, setCompareOpen] = useState(false)
 
   const confirm = useMutation({
@@ -45,6 +48,8 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
 
   const discard = useMutation({
     mutationFn: () => discardReviewEntry(entry.id),
+    meta: { inlineError: true },
+    onSuccess: () => setDiscardOpen(false),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['vision'] }),
   })
 
@@ -112,8 +117,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
             above is a hint, and a reference filed under the wrong label
             skews every later photo check for this item. */}
         <div className="mt-auto flex items-center gap-2">
-          <Button variant="ghost" size="sm" disabled={pending} onClick={() => discard.mutate()}>
-            {discard.isPending ? <Loader2 className="animate-spin" /> : null}
+          <Button variant="ghost" size="sm" disabled={pending} onClick={() => setDiscardOpen(true)}>
             Discard
           </Button>
           <span className="flex-1" />
@@ -127,6 +131,20 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           ))}
         </div>
       </CardBody>
+
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={(open) => {
+          setDiscardOpen(open)
+          if (!open) discard.reset()
+        }}
+        title="Discard photo"
+        description={`This photo is deleted from the queue and won't become one of ${entry.item_name}'s references. This can't be undone.`}
+        confirmLabel="Discard"
+        pending={discard.isPending}
+        error={discard.error instanceof ApiError ? discard.error.message : null}
+        onConfirm={() => discard.mutate()}
+      />
     </Card>
   )
 }
