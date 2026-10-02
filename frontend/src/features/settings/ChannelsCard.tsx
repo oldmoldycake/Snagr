@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BellRing, Check, Copy, Eye, EyeOff, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import { createChannel, deleteChannel, listChannels, testChannel, updateChannel } from '@/api/endpoints'
+import { createChannel, deleteChannel, listChannels, testChannel, testNewChannel, updateChannel } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
 import type { ChannelKind, NotificationChannel, NotificationEvent } from '@/api/types'
@@ -67,13 +67,24 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
   ]
   const suggestedTopic = suggestedTopicFor(user)
 
+  // shared by the test and the save, so a test goes exactly where the channel would
+  const destination = () => ({
+    kind,
+    url: kind === 'ntfy' ? undefined : url.trim(),
+    topic: kind === 'ntfy' ? topic.trim() || suggestedTopic : undefined,
+  })
+
+  const test = useMutation({
+    mutationFn: () => testNewChannel(destination()),
+    meta: { inlineError: true },
+    onSuccess: () => toast.success('Test notification sent'),
+  })
+
   const create = useMutation({
     mutationFn: () =>
       createChannel({
-        kind,
+        ...destination(),
         name: name.trim(),
-        url: kind === 'ntfy' ? undefined : url.trim(),
-        topic: kind === 'ntfy' ? topic.trim() || suggestedTopic : undefined,
         events: events === 'all' ? null : [events],
       }),
     meta: { inlineError: true },
@@ -109,12 +120,28 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
       setEvents('all')
       setSecret(null)
       setCopied(false)
+      test.reset()
       create.reset()
     }
   }
 
-  const createError = create.error instanceof ApiError ? create.error : null
-  const fieldError = (field: string) => createError?.fields?.[field] ?? null
+  // each request clears the other's error, so the form only ever shows the latest
+  const failed = create.error ?? test.error
+  const formError = failed instanceof ApiError ? failed : null
+  const fieldError = (field: string) => formError?.fields?.[field] ?? null
+
+  const sendTest = (
+    <Button
+      disabled={test.isPending || create.isPending}
+      onClick={() => {
+        create.reset()
+        test.mutate()
+      }}
+    >
+      {test.isPending ? <Loader2 className="animate-spin" /> : <BellRing />}
+      Send test
+    </Button>
+  )
 
   return (
     <Dialog open={open} onOpenChange={close}>
@@ -153,13 +180,14 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
             className="contents"
             onSubmit={(e) => {
               e.preventDefault()
+              test.reset()
               create.mutate()
             }}
           >
             <DialogBody className="space-y-3">
-              {createError && !createError.fields ? (
+              {formError && !formError.fields ? (
                 <p role="alert" className="text-xs text-rise">
-                  {createError.message}
+                  {formError.message}
                 </p>
               ) : null}
               <div>
@@ -188,13 +216,16 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
               {kind === 'ntfy' ? (
                 <div>
                   <Label htmlFor="channel-topic">Topic</Label>
-                  <Input
-                    id="channel-topic"
-                    placeholder={suggestedTopic}
-                    className="font-mono"
-                    value={topic}
-                    onChange={(e) => setTopic(e.target.value)}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="channel-topic"
+                      placeholder={suggestedTopic}
+                      className="font-mono"
+                      value={topic}
+                      onChange={(e) => setTopic(e.target.value)}
+                    />
+                    {sendTest}
+                  </div>
                   {fieldError('topic') ? <p className="mt-1 text-xs text-rise">{fieldError('topic')}</p> : null}
                   <p className="mt-1.5 text-xs text-ink-3">
                     Subscribe to{' '}
@@ -207,15 +238,18 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
               ) : (
                 <div>
                   <Label htmlFor="channel-url">{kind === 'discord' ? 'Discord webhook URL' : 'Webhook URL'}</Label>
-                  <Input
-                    id="channel-url"
-                    placeholder={
-                      kind === 'discord' ? 'https://discord.com/api/webhooks/…' : 'https://example.com/hooks/snagr'
-                    }
-                    className="font-mono"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="channel-url"
+                      placeholder={
+                        kind === 'discord' ? 'https://discord.com/api/webhooks/…' : 'https://example.com/hooks/snagr'
+                      }
+                      className="font-mono"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                    />
+                    {sendTest}
+                  </div>
                   {fieldError('url') ? <p className="mt-1 text-xs text-rise">{fieldError('url')}</p> : null}
                   <p className="mt-1.5 text-xs text-ink-3">
                     {kind === 'discord'

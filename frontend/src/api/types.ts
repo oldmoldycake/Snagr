@@ -811,6 +811,20 @@ export interface NotificationChannelCreateRequest {
   enabled?: boolean
 }
 
+/**
+ * POST /api/me/channels/test body — a destination tried before it is saved, so
+ * only the fields that decide where the test goes. 422 validation_error
+ * (+fields) and 422 no_server exactly as create answers them; 502
+ * channel_failed when the destination can't be reached. A webhook's signing
+ * secret is created with the channel, so a webhook test sent from here is
+ * signed with a one-off key the receiver can't verify.
+ */
+export interface NotificationChannelTestRequest {
+  kind: ChannelKind
+  url?: string
+  topic?: string
+}
+
 /** kind is immutable — delete and recreate to change a channel's kind. */
 export interface NotificationChannelUpdateRequest {
   name?: string

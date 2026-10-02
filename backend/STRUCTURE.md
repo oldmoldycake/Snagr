@@ -109,7 +109,7 @@ Find any `endpoints.ts` function here:
 | `getInstance` | `instance.py` | 0 |
 | `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` (+ refresh) | `auth.py` | 2 |
 | `updateMe` `changePassword` | `me.py` | 2 |
-| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` | `me.py` | notifications |
+| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` `testNewChannel` | `me.py` | notifications |
 | `listTokens` `createToken` `revokeToken` | `me.py` | mcp |
 | `listCategories` `createCategory` `updateCategory` `deleteCategory` `setCategorySites` | `categories.py` | 1 / 3 |
 | `listSites` `createSite` `updateSite` `deleteSite` | `sites.py` | 1 / 3 |

@@ -254,7 +254,9 @@ signature = HMAC_SHA256(secret, "{timestamp}." + raw_body_bytes)
 
 The signing secret is server-generated and shown exactly once, in the create response
 (rotation = delete and recreate). To verify: recompute over the exact bytes you received,
-compare constant-time, and reject when `|now - timestamp| > 300s`. Ignore `event` values
+compare constant-time, and reject when `|now - timestamp| > 300s`. A test sent from the Add
+channel dialog goes out before the secret exists, so it is signed with a one-off key and won't
+verify; the saved channel's **Test** signs with the real one. Ignore `event` values
 you don't recognise — the set grows, and channels subscribed to all events pick up new
 ones automatically. Delivery retries with backoff (30s / 5m / 30m / 2h, 5 attempts).
 
