@@ -14,6 +14,7 @@ import { cn } from '@/lib/cn'
 import { formatInterval } from '@/lib/time'
 import { modeForCriteria } from './modeForCriteria'
 import { settleMaxListings } from './settleMaxListings'
+import { siteIdsAfterToggle } from './siteIdsAfterToggle'
 
 /** Form state for the tracking options; trackingPayload turns it into the API fields. */
 export interface TrackingValue {
@@ -110,14 +111,13 @@ export function TrackingFields({
   }
 
   const toggleSite = (id: number) => {
-    const next = effectiveSiteIds.includes(id)
-      ? effectiveSiteIds.filter((s) => s !== id)
-      : [...effectiveSiteIds, id]
-    // all (or none) selected = no restriction
-    onChange({
-      ...value,
-      siteIds: next.length === 0 || next.length === categorySites.length ? null : next,
-    })
+    const toggled = siteIdsAfterToggle(effectiveSiteIds, id, categorySites.length)
+    if ('error' in toggled) {
+      setSiteError(toggled.error)
+      return
+    }
+    setSiteError(null)
+    onChange({ ...value, siteIds: toggled.siteIds })
   }
 
   const setIntervalChoice = (choice: string) => {
@@ -334,6 +334,11 @@ export function TrackingFields({
                   })}
                 </div>
               )}
+              {siteError ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {siteError}
+                </p>
+              ) : null}
             </div>
           </div>
         </CollapsibleContent>
