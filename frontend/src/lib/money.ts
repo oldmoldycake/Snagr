@@ -10,6 +10,11 @@ const SYMBOLS: Record<string, string> = {
   CAD: 'CA$',
 }
 
+/** The sign formatMoney writes before an amount in `currency` (`$`, `CA$`), or the code when it has none. */
+export function currencySign(currency = 'USD'): string {
+  return SYMBOLS[currency] ?? currency
+}
+
 /** A decimal string as display money (`$1,299.00`); `—` when there is no price. */
 export function formatMoney(price: string | null | undefined, currency = 'USD'): string {
   if (price == null) return '—'

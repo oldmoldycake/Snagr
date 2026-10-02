@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { updateItem } from '@/api/endpoints'
@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { currencySign } from '@/lib/money'
+import { parseTargetPrice } from './targetPrice'
 import { TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
 /**
@@ -35,6 +37,9 @@ export function EditItemDialog({
 }) {
   const [name, setName] = useState(item.name)
   const [target, setTarget] = useState(item.target_price ?? '')
+  const [targetError, setTargetError] = useState<string | null>(null)
+  const targetRef = useRef<HTMLInputElement>(null)
+  const sign = currencySign(item.currency)
   const [tracking, setTracking] = useState<TrackingValue>({
     criteria: item.criteria ?? '',
     selectionMode: item.selection_mode,
@@ -46,10 +51,10 @@ export function EditItemDialog({
   const queryClient = useQueryClient()
 
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (targetPrice: string | null) =>
       updateItem(item.id, {
         name: name.trim(),
-        target_price: String(target).trim() ? Number(target).toFixed(2) : null,
+        target_price: targetPrice,
         ...trackingPayload(tracking),
       }),
     meta: { inlineError: true },
@@ -72,7 +77,13 @@ export function EditItemDialog({
           className="contents"
           onSubmit={(e) => {
             e.preventDefault()
-            save.mutate()
+            const parsed = parseTargetPrice(target, item.currency)
+            if ('error' in parsed) {
+              setTargetError(parsed.error)
+              targetRef.current?.focus()
+              return
+            }
+            save.mutate(parsed.price)
           }}
         >
           <DialogBody className="space-y-3">
@@ -85,19 +96,28 @@ export function EditItemDialog({
               <Label htmlFor="edit-item-target">Target price</Label>
               <div className="relative">
                 <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 font-mono text-xs text-ink-3">
-                  $
+                  {sign}
                 </span>
                 <Input
+                  ref={targetRef}
                   id="edit-item-target"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max="99999999.99"
-                  className="pl-6 font-mono tnum"
+                  inputMode="decimal"
+                  aria-invalid={!!targetError || undefined}
+                  className="font-mono tnum aria-invalid:border-rise/60"
+                  // clears a sign of any length (CA$): the input's ch is wider than the sign's
+                  style={{ paddingLeft: `calc(${sign.length}ch + 1rem)` }}
                   value={target}
-                  onChange={(e) => setTarget(e.target.value)}
+                  onChange={(e) => {
+                    setTarget(e.target.value)
+                    setTargetError(null)
+                  }}
                 />
               </div>
+              {targetError ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {targetError}
+                </p>
+              ) : null}
             </div>
 
             <TrackingFields categoryId={item.category_id} value={tracking} onChange={setTracking} />

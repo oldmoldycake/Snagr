@@ -19,7 +19,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { currencySign } from '@/lib/money'
 import { siteList } from '@/features/sites/siteList'
+import { parseTargetPrice } from './targetPrice'
 import { DEFAULT_TRACKING, TrackingFields, trackingPayload, type TrackingValue } from './TrackingFields'
 
 /** Add an item to one category, whose sites the hunter then searches for it. */
@@ -45,8 +47,12 @@ export function AddItemDialog({
   const [name, setName] = useState('')
   const [nameMissing, setNameMissing] = useState(false)
   const [target, setTarget] = useState('')
+  const [targetError, setTargetError] = useState<string | null>(null)
   const [tracking, setTracking] = useState<TrackingValue>(DEFAULT_TRACKING)
   const nameRef = useRef<HTMLInputElement>(null)
+  const targetRef = useRef<HTMLInputElement>(null)
+  // no item yet to take a currency from: the API prices a new one in USD, the default
+  const sign = currencySign()
   // create.isPending disables the button a render after the click, and the
   // second click of a double-click lands before it: this is set at once
   const submitting = useRef(false)
@@ -58,11 +64,11 @@ export function AddItemDialog({
   const siteNames = (sites.data?.data ?? []).filter((s) => siteIds.includes(s.id)).map((s) => s.name)
 
   const create = useMutation({
-    mutationFn: () =>
+    mutationFn: (targetPrice: string | null) =>
       createItem({
         category_id: categoryId,
         name: name.trim(),
-        target_price: target.trim() ? Number(target).toFixed(2) : null,
+        target_price: targetPrice,
         ...trackingPayload(tracking),
       }),
     meta: { inlineError: true },
@@ -89,6 +95,7 @@ export function AddItemDialog({
       setName('')
       setNameMissing(false)
       setTarget('')
+      setTargetError(null)
       setTracking(DEFAULT_TRACKING)
       create.reset()
     }
@@ -129,9 +136,15 @@ export function AddItemDialog({
               nameRef.current?.focus()
               return
             }
+            const parsed = parseTargetPrice(target)
+            if ('error' in parsed) {
+              setTargetError(parsed.error)
+              targetRef.current?.focus()
+              return
+            }
             if (submitting.current) return
             submitting.current = true
-            create.mutate()
+            create.mutate(parsed.price)
           }}
         >
           <DialogBody className="space-y-3">
@@ -166,20 +179,29 @@ export function AddItemDialog({
               <Label htmlFor="item-target">Target price (optional)</Label>
               <div className="relative">
                 <span className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 font-mono text-xs text-ink-3">
-                  $
+                  {sign}
                 </span>
                 <Input
+                  ref={targetRef}
                   id="item-target"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max="99999999.99"
+                  inputMode="decimal"
                   placeholder="120.00"
-                  className="pl-6 font-mono tnum"
+                  aria-invalid={!!targetError || undefined}
+                  className="font-mono tnum aria-invalid:border-rise/60"
+                  // clears a sign of any length (CA$): the input's ch is wider than the sign's
+                  style={{ paddingLeft: `calc(${sign.length}ch + 1rem)` }}
                   value={target}
-                  onChange={(e) => setTarget(e.target.value)}
+                  onChange={(e) => {
+                    setTarget(e.target.value)
+                    setTargetError(null)
+                  }}
                 />
               </div>
+              {targetError ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  ⚠ {targetError}
+                </p>
+              ) : null}
               <p className="mt-1.5 text-xs text-ink-3">
                 You'll see <span className="text-drop">⌖ at target</span> when the best price is at or below this.
               </p>
