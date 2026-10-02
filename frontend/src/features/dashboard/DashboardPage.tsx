@@ -296,6 +296,7 @@ export function DashboardPage() {
                   isNew={category.id === justCreatedId}
                   edge={edgeIds.has(category.id)}
                   onEditSites={openSites}
+                  onRename={openRename}
                   onAdded={onAdded}
                 />
               ))}
@@ -369,6 +370,7 @@ export function DashboardPage() {
                   isNew={category.id === justCreatedId}
                   edge={edgeIds.has(category.id)}
                   onEditSites={openSites}
+                  onRename={openRename}
                   onAdded={onAdded}
                 />
               ))}

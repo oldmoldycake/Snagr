@@ -293,11 +293,12 @@ export function CategoryShelf({
 }
 
 /**
- * The shelf's ⋯ menu. Its header repeats the shelf it acts on, so the menu
- * still says which category it is about when the shelf is collapsed; Hunt now
- * has HuntButton's states; Delete confirms inside the menu.
+ * A category's ⋯ menu, on its shelf or its one-line row. Its header repeats the
+ * category it acts on, so the menu still says which one it is about when the
+ * shelf is collapsed; Hunt now has HuntButton's states; Delete confirms inside
+ * the menu.
  */
-function ShelfMenu({
+export function ShelfMenu({
   category,
   hits,
   lead,
@@ -307,7 +308,8 @@ function ShelfMenu({
 }: {
   category: Category
   hits: number
-  lead: Lead
+  /** omitted on a row: it holds none of the caller's items, so it has no lead and nothing to hunt yet */
+  lead?: Lead
   siteNames: string[]
   onEditSites: (category: Category) => void
   onRename: (category: Category) => void
@@ -383,7 +385,7 @@ function ShelfMenu({
               ))}
             </span>
           )}
-          {noSites && lead.kind === 'idle' ? null : <LeadLine lead={lead} className="leading-snug" />}
+          {lead == null || (noSites && lead.kind === 'idle') ? null : <LeadLine lead={lead} className="leading-snug" />}
         </DropdownMenuLabel>
 
         {live ? (
@@ -395,12 +397,14 @@ function ShelfMenu({
           </DropdownMenuItem>
         ) : (
           <DropdownMenuItem
-            disabled={noSites || huntingOff || huntNow.isPending}
+            disabled={noSites || lead == null || huntingOff || huntNow.isPending}
             onSelect={() => huntNow.mutate({ scope: 'category', scope_id: category.id })}
           >
             <Search />
             {noSites ? (
               <MenuRowText label="Hunt now" sub="⚠ link a site first" subClassName="text-warn" />
+            ) : lead == null ? (
+              <MenuRowText label="Hunt now" sub="add an item first" />
             ) : huntingOff ? (
               <MenuRowText label="Hunt now" sub="hunting is off on this server" />
             ) : (
