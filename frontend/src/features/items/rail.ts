@@ -18,14 +18,14 @@ export interface Rail {
 const MIN_LABEL_GAP_PX = 40
 /** A tick label this close to ⌖ yields to the ⌖ label, which names the same spot. */
 const TARGET_LABEL_CLEARANCE_PCT = 7
-/** IBM Plex Mono advance at the rail's 10px type (0.6em). */
-const CHAR_PX = 6
+/** IBM Plex Mono advance at the rail's 12px type (0.6em). */
+const CHAR_PX = 7.2
 /** Matches the ±9px dot→label offset in Track. */
 const LABEL_GAP_PX = 9
 /** Room kept between two labels on one line; also absorbs ⌖, which Plex Mono lacks and a fallback font draws wider. */
 export const LABEL_CLEARANCE_PX = 8
 
-/** Estimated width of a label in the rails' 10px mono type. */
+/** Estimated width of a label in the rails' 12px mono type. */
 export function labelPx(label: string): number {
   return label.length * CHAR_PX
 }

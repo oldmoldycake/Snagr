@@ -128,6 +128,11 @@ describe('axisLabels', () => {
     expect(axisLabels(15, '⌖ $650.00', 'drift 30d', 330, 82)).toEqual({ target: 'center', caption: 'right' })
   })
 
+  it('moves the caption off a centred ⌖ it would touch at 12px', () => {
+    // the mock RTX 4060 Ti board at desktop width
+    expect(axisLabels(37.6, '⌖ $465.00', '30d change', 263, 82)).toEqual({ target: 'center', caption: 'right' })
+  })
+
   it('drops the caption when the line cannot hold both', () => {
     expect(axisLabels(4, '⌖ $99,999,999.99', 'drift 30d', 150, 82)).toEqual({ target: 'left', caption: null })
   })
