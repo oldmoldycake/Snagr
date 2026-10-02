@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
+import { NewPasswordInput } from './NewPasswordInput'
 
 /**
  * Accept-invite page at /invite/:token: validates the token, then creates the
@@ -120,15 +121,7 @@ export function InvitePage() {
         </div>
         <div>
           <Label htmlFor="invite-password">Password</Label>
-          <Input
-            id="invite-password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <NewPasswordInput id="invite-password" value={password} onChange={setPassword} />
         </div>
 
         <Button type="submit" variant="primary" className="w-full" disabled={accept.isPending}>

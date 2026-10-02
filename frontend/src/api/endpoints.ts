@@ -37,6 +37,9 @@ import type {
   NotificationChannelUpdateRequest,
   Paginated,
   PasswordChangeRequest,
+  PasswordReset,
+  PasswordResetRequest,
+  PasswordResetValidation,
   PriceCheck,
   PriceDrop,
   PriceHistoryResponse,
@@ -77,6 +80,17 @@ export const validateInvite = (token: string) =>
 /** Create an account from an invite and start a session; an email pinned to the invite wins. */
 export const acceptInvite = (token: string, body: InviteAcceptRequest) =>
   api<{ user: User }>(`/api/auth/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body })
+
+/** Check a password-reset link before showing the form; 404 unknown, 410 used or expired. */
+export const validatePasswordReset = (token: string) =>
+  api<PasswordResetValidation>(`/api/auth/password-resets/${encodeURIComponent(token)}`)
+
+/**
+ * Set a new password from a reset link and sign the account out everywhere; 404/410
+ * as for validating it. Starts no session — the user signs in with the new password.
+ */
+export const completePasswordReset = (token: string, body: PasswordResetRequest) =>
+  api<void>(`/api/auth/password-resets/${encodeURIComponent(token)}`, { method: 'POST', body })
 
 /** Change the caller's email or vision thresholds; only sent fields change. */
 export const updateMe = (body: MeUpdateRequest) =>
@@ -271,10 +285,18 @@ export const updateUser = (id: number, body: AdminUserUpdateRequest) =>
   api<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body })
 
 /**
- * Delete a user (admin only); 409 user_has_items while they still watch anything,
- * 422 cannot_delete_self for the caller.
+ * Delete a user (admin only) with their items, listings, price history, channels
+ * and tokens; shared catalog items stay. 422 cannot_delete_self for the caller.
  */
 export const deleteUser = (id: number) => api<void>(`/api/admin/users/${id}`, { method: 'DELETE' })
+
+/**
+ * Issue a single-use link for a user to choose a new password (admin only); it
+ * replaces any earlier link for them. 422 sso_account for an account that signs
+ * in with SSO only.
+ */
+export const createPasswordReset = (id: number) =>
+  api<PasswordReset>(`/api/admin/users/${id}/password-reset`, { method: 'POST' })
 
 /** Pending invites — unused and not yet expired (admin only). */
 export const listInvites = () => api<{ data: Invite[] }>('/api/admin/invites')
