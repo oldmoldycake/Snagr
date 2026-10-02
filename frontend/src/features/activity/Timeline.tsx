@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { listJobs } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { Job, JobListParams, JobsSummary } from '@/api/types'
+import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
 import { ErrorState } from '@/components/ui/error-state'
 import { Pagination } from '@/components/ui/pagination'
@@ -18,7 +19,7 @@ import { JobStatusDot } from './JobStatusDot'
 import { LiveHuntRow } from './LiveHunts'
 import { reasonText, resultText } from './lines'
 import { useJobs } from './JobsProvider'
-import { groupByHour, rowTime } from './timeline'
+import { foldQueue, groupByHour, rowTime } from './timeline'
 import { useTick } from './useTick'
 
 type Filter = 'hunt' | 'ground' | 'recheck' | 'failed' | 'all'
@@ -74,9 +75,10 @@ function historyParams(filter: Filter, page: number): JobListParams {
 
 /**
  * The hunter's work on one clock: what is queued above the "now" line, what
- * is running on it, and what finished below it, newest first and headed by
- * the hour. Reading down the page is reading back in time, so there is one
- * place to look for any job whatever its state.
+ * is running on it, and what finished below it, so there is one place to look
+ * for any job whatever its state. The queue reads like a to-do list, soonest
+ * first and folded after the next few so it never buries "now" on a phone;
+ * the finished work reads back in time, newest first and headed by the hour.
  *
  * The filter narrows only the finished part — the queue and the live work
  * are always shown, because they are what "now" means. Hunts are the default
@@ -86,6 +88,7 @@ function historyParams(filter: Filter, page: number): JobListParams {
 export function Timeline({ summary }: { summary?: JobsSummary }) {
   const [filter, setFilter] = useState<Filter>(rememberedFilter)
   const [page, setPage] = useState(1)
+  const [queueOpen, setQueueOpen] = useState(false)
 
   const queued = useQuery({
     queryKey: qk.jobs(PENDING),
@@ -115,8 +118,7 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
     )
   }
 
-  // furthest first, so the soonest job sits right above the "now" line
-  const upcoming = [...(queued.data?.data ?? [])].reverse()
+  const upcoming = foldQueue(queued.data?.data ?? [], queueOpen)
   const groups = groupByHour(history.data?.data ?? [])
 
   return (
@@ -135,7 +137,22 @@ export function Timeline({ summary }: { summary?: JobsSummary }) {
             />
           </Row>
         ) : (
-          upcoming.map((job) => <QueuedRow key={job.id} job={job} />)
+          <>
+            {upcoming.shown.map((job) => <QueuedRow key={job.id} job={job} />)}
+            {upcoming.folded > 0 ? (
+              <Row>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={queueOpen}
+                  onClick={() => setQueueOpen((v) => !v)}
+                  className="-ml-2"
+                >
+                  {queueOpen ? 'Show fewer' : `Show ${upcoming.folded} more`}
+                </Button>
+              </Row>
+            ) : null}
+          </>
         )}
         <QueuedChecks summary={summary} />
 

@@ -4,6 +4,23 @@ import { formatClock } from '@/lib/time'
 /** How far back a failed hunt still asks for attention. */
 export const FAILURE_WINDOW_MS = 24 * 60 * 60 * 1000
 
+/** How many queued jobs show above "now" before the rest fold away. */
+const QUEUE_PREVIEW = 3
+
+/**
+ * The queued jobs to show, kept in the order they arrive (the API's soonest
+ * first), and how many fold behind "Show N more". `folded` holds while the
+ * fold is open, so "Show fewer" can still be offered. Folding away a single
+ * row saves nothing, so a queue one past the preview shows in full.
+ */
+export function foldQueue<T>(queued: T[], open: boolean): { shown: T[]; folded: number } {
+  if (queued.length <= QUEUE_PREVIEW + 1) return { shown: queued, folded: 0 }
+  return {
+    shown: open ? queued : queued.slice(0, QUEUE_PREVIEW),
+    folded: queued.length - QUEUE_PREVIEW,
+  }
+}
+
 /** One hour of finished work, as the timeline heads it. */
 export interface HourGroup {
   key: string
