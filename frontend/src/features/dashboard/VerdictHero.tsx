@@ -4,10 +4,10 @@ import { Link } from 'react-router-dom'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemSummary, PriceDrop } from '@/api/types'
-import { effectiveTarget, isFreshDrop } from '@/features/items/WatchList'
+import { isFreshDrop } from '@/features/items/WatchList'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { formatToday } from '@/lib/time'
-import { namedHits } from './verdict'
+import { namedHits, standing } from './verdict'
 
 /**
  * Beat one of the dashboard: the app states the hunt's status in a sentence,
@@ -26,17 +26,7 @@ export function VerdictHero({
 }) {
   const snagged = items.filter((item) => item.target_met)
   const { named, more } = namedHits(items)
-
-  let closest: { item: ItemSummary; gapCents: number; ratio: number } | null = null
-  for (const item of items) {
-    if (item.target_met) continue
-    const best = toCents(item.best_price)
-    const target = toCents(effectiveTarget(item))
-    if (best == null || target == null || target <= 0) continue
-    const gapCents = best - target
-    const ratio = gapCents / target
-    if (closest == null || ratio < closest.ratio) closest = { item, gapCents, ratio }
-  }
+  const stand = standing(items)
 
   const eyebrow = `Today · ${formatToday()}`
 
@@ -75,21 +65,31 @@ export function VerdictHero({
         </p>
       ) : null}
 
-      {closest ? (
+      {stand?.kind === 'closest' ? (
         <p className="mt-2.5 text-base text-ink-2">
           {snagged.length > 0 ? 'Next closest: ' : 'Closest to target: '}
-          <Link to={`/items/${closest.item.id}`} className="font-semibold text-ink hover:text-lume">
-            {closest.item.name}
+          <Link to={`/items/${stand.item.id}`} className="font-semibold text-ink hover:text-lume">
+            {stand.item.name}
           </Link>{' '}
           is{' '}
           <span className="font-mono text-[15px] font-semibold text-lume tnum">
-            {formatMoney(fromCents(closest.gapCents), closest.item.currency)}
+            {formatMoney(fromCents(stand.gapCents), stand.item.currency)}
           </span>{' '}
           above its target.
         </p>
-      ) : snagged.length === 0 ? (
+      ) : stand?.kind === 'no_targets' ? (
         <p className="mt-2.5 text-base text-ink-2">
-          No prices yet. Snagr is searching your sites and fills this in as it finds listings.
+          None of your items has a target price yet. Set one with Edit on an item's page, and Snagr tells you when a
+          listing is at or below it.
+        </p>
+      ) : stand?.kind === 'no_prices' ? (
+        <p className="mt-2.5 text-base text-ink-2">
+          {stand.elsewhere ? 'No prices yet for your items with a target. ' : 'No prices yet. '}
+          Snagr is searching your sites and fills this in as it finds listings. Follow along in{' '}
+          <Link to="/activity" className="font-semibold text-ink hover:text-lume">
+            Activity
+          </Link>
+          .
         </p>
       ) : null}
 
