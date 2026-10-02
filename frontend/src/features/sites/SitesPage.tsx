@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react'
@@ -37,25 +37,32 @@ import { RelativeTime } from '@/components/ui/relative-time'
 import { usePageTitle } from '@/lib/usePageTitle'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { useSession } from '@/features/auth/useSession'
+import { defaultSiteName, findDuplicate, isPlausibleUrl, normalizeBaseUrl } from './siteUrl'
 
 function SiteDialog({
   site,
+  sites,
   open,
   onOpenChange,
 }: {
   site: Site | null
+  sites: Site[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
   const [name, setName] = useState(site?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(site?.base_url ?? '')
+  // a new site is named after its host until a name is typed; an existing one keeps its own
+  const [nameTouched, setNameTouched] = useState(site != null)
+  const [urlProblem, setUrlProblem] = useState<string | null>(null)
+  const urlRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
   const save = useMutation({
-    mutationFn: () =>
-      site
-        ? updateSite(site.id, { name: name.trim(), base_url: baseUrl.trim() })
-        : createSite({ name: name.trim(), base_url: baseUrl.trim() }),
+    mutationFn: () => {
+      const body = { name: name.trim() || defaultSiteName(baseUrl), base_url: normalizeBaseUrl(baseUrl) }
+      return site ? updateSite(site.id, body) : createSite(body)
+    },
     meta: { inlineError: true },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['sites'] })
@@ -74,6 +81,21 @@ function SiteDialog({
       ? (save.error.fields?.name ?? save.error.fields?.base_url ?? save.error.message)
       : null
 
+  const submit = () => {
+    if (!isPlausibleUrl(baseUrl)) {
+      setUrlProblem("⚠ That doesn't look like a URL.")
+      urlRef.current?.focus()
+      return
+    }
+    const duplicate = findDuplicate(baseUrl, sites, site?.id)
+    if (duplicate) {
+      setUrlProblem(`⚠ ${duplicate.name} is already listed.`)
+      urlRef.current?.focus()
+      return
+    }
+    save.mutate()
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -87,7 +109,7 @@ function SiteDialog({
           className="contents"
           onSubmit={(e) => {
             e.preventDefault()
-            save.mutate()
+            submit()
           }}
         >
           <DialogBody className="space-y-3">
@@ -97,24 +119,39 @@ function SiteDialog({
               </p>
             ) : null}
             <div>
+              <Label htmlFor="site-url">Base URL</Label>
+              <Input
+                ref={urlRef}
+                id="site-url"
+                required
+                inputMode="url"
+                autoComplete="off"
+                placeholder="newegg.com"
+                aria-invalid={urlProblem != null || undefined}
+                className="aria-invalid:border-rise/60"
+                value={baseUrl}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value)
+                  setUrlProblem(null)
+                  if (!nameTouched) setName(defaultSiteName(e.target.value))
+                }}
+              />
+              {urlProblem ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  {urlProblem}
+                </p>
+              ) : null}
+            </div>
+            <div>
               <Label htmlFor="site-name">Name</Label>
               <Input
                 id="site-name"
-                required
-                placeholder="newegg.com"
+                autoComplete="off"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="site-url">Base URL</Label>
-              <Input
-                id="site-url"
-                type="url"
-                required
-                placeholder="https://www.newegg.com"
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value)
+                  setNameTouched(true)
+                }}
               />
             </div>
           </DialogBody>
@@ -122,7 +159,7 @@ function SiteDialog({
             <Button variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !name.trim() || !baseUrl.trim()}>
+            <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={save.isPending || !baseUrl.trim()}>
               {save.isPending ? <Loader2 className="animate-spin" /> : null}
               {site ? 'Save changes' : 'Add site'}
             </Button>
@@ -383,7 +420,7 @@ export function SitesPage() {
         </CardBody>
       </Card>
 
-      <SiteDialog key={`site-${dialogSession}`} site={editing} open={dialogOpen} onOpenChange={setDialogOpen} />
+      <SiteDialog key={`site-${dialogSession}`} site={editing} sites={rows} open={dialogOpen} onOpenChange={setDialogOpen} />
       <ConfirmDialog
         open={deleting != null}
         onOpenChange={(open) => {
