@@ -48,10 +48,15 @@ export function reasonText(job: Job): string {
     case 'backoff':
       return 'found nothing last time'
     case 'paused':
-      return `waiting for ${job.site_name ?? 'the site'} to resume`
+      return waitingForSite(job)
     default:
       return job.kind === 'ground' ? 'market price refresh' : 'queued'
   }
+}
+
+/** What a job on a paused site is waiting for, whatever queued it. */
+export function waitingForSite(job: Job): string {
+  return `waiting for ${job.site_name ?? 'the site'} to resume`
 }
 
 /** What a finished hunt came to — the History table's Result column. */
