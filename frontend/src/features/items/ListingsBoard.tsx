@@ -15,6 +15,7 @@ import { formatMoney, fromCents, toCents } from '@/lib/money'
 import { formatDateTime, RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
 import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
+import { sharedTitlePrefix, titleDifference } from './listingTitles'
 import { axisLabels, labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
 import { prepareSeries } from './seriesPrep'
 
@@ -248,10 +249,12 @@ function Track({
 
 function DeltaCell({
   listing,
+  color,
   targetC,
   currency,
 }: {
   listing: Listing
+  color: string
   targetC: number | null
   currency: string
 }) {
@@ -259,8 +262,9 @@ function DeltaCell({
   const diff = nowC != null && targetC != null ? nowC - targetC : null
   return (
     <div className="text-right">
-      {/* below sm the rail is gone, so the price returns as text */}
-      <p className="font-mono text-[14px] font-semibold text-ink tnum sm:hidden">
+      {/* below sm the rail is gone, so the price returns as text, with the rail's colored dot */}
+      <p className="flex items-center justify-end gap-1.5 font-mono text-[14px] font-semibold text-ink tnum sm:hidden">
+        <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: color }} />
         {formatMoney(listing.latest_price, currency)}
       </p>
       {diff == null ? (
@@ -322,6 +326,12 @@ function ExpandedRow({
   return (
     <div className="flex items-start gap-4 border-t border-hairline bg-well py-3 pr-4 pl-10">
       <p className="min-w-0 flex-1 font-mono text-[12px] leading-relaxed text-ink-3">
+        {listing.title ? (
+          <>
+            <span className="text-ink-2">{listing.title}</span>
+            <br />
+          </>
+        ) : null}
         {listing.match_score != null ? (
           <>
             <span className="text-ink-2">match {listing.match_score}</span>
@@ -387,6 +397,7 @@ function BoardRow({
   rail,
   railPx,
   color,
+  difference,
   startC,
   targetC,
   isBestMatch,
@@ -400,6 +411,7 @@ function BoardRow({
   rail: Rail | null
   railPx: number
   color: string
+  difference: string
   startC: number | null
   targetC: number | null
   isBestMatch: boolean
@@ -444,31 +456,42 @@ function BoardRow({
           >
             {expanded ? '▾' : '▸'}
           </span>
-          <a
-            href={listing.url}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="min-w-0 truncate text-[14px] font-medium text-ink hover:text-lume hover:underline"
-          >
-            {listing.title ?? listing.url.replace(/^https?:\/\/(www\.)?/, '')}
-          </a>
-          {isBestMatch ? (
-            <Badge variant="lume" className="shrink-0">
-              Best match
-            </Badge>
-          ) : null}
-          {soldOrEnded ? (
-            <Badge variant="warn" className="shrink-0">
-              {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} · <RelativeTime iso={listing.last_checked_at} />
-            </Badge>
-          ) : null}
-          {chip ? (
-            <Badge variant="warn" className="shrink-0 font-mono text-[12px]">
-              {chip}
-            </Badge>
-          ) : null}
-          {listing.authenticity ? <AuthenticityChip read={listing.authenticity} /> : null}
+          {/* the chart legend's swatch, so a row finds its line; on a phone the site needs
+              this width, and the color sits beside the price instead */}
+          <span aria-hidden className="h-0.5 w-3 shrink-0 rounded-full max-sm:hidden" style={{ background: color }} />
+          {/* the site gets a line to itself: the column is too narrow to share one with what sets
+              the listing apart, or a badge, without cutting the site off */}
+          <div className="flex min-w-0 flex-col items-start">
+            <a
+              href={listing.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-full truncate text-[14px] font-medium text-ink hover:text-lume hover:underline"
+            >
+              {listing.site_name}
+            </a>
+            <div className="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1">
+              {difference ? <span className="min-w-0 truncate text-[12px] text-ink-2">{difference}</span> : null}
+              {isBestMatch ? (
+                <Badge variant="lume" className="shrink-0">
+                  Best match
+                </Badge>
+              ) : null}
+              {soldOrEnded ? (
+                <Badge variant="warn" className="shrink-0">
+                  {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} ·{' '}
+                  <RelativeTime iso={listing.last_checked_at} />
+                </Badge>
+              ) : null}
+              {chip ? (
+                <Badge variant="warn" className="shrink-0 font-mono text-[12px]">
+                  {chip}
+                </Badge>
+              ) : null}
+              {listing.authenticity ? <AuthenticityChip read={listing.authenticity} /> : null}
+            </div>
+          </div>
         </div>
         <Track
           listing={listing}
@@ -479,7 +502,7 @@ function BoardRow({
           targetC={targetC}
           currency={detail.currency}
         />
-        <DeltaCell listing={listing} targetC={targetC} currency={detail.currency} />
+        <DeltaCell listing={listing} color={color} targetC={targetC} currency={detail.currency} />
         <MatchPill score={listing.match_score} summary={listing.match_summary} quietMid />
       </div>
       <CollapsibleContent className="row-detail">
@@ -553,6 +576,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
   const bestMatchId = mode === 'best_match' ? (active.find((l) => l.match_score != null)?.id ?? null) : null
 
   const rail = makeRail(main, startCents, targetC)
+  const titlePrefix = sharedTitlePrefix(detail.listings.map((l) => l.title))
 
   const soldCount = inactive.filter(
     (l) => l.latest_status === 'sold' || l.latest_status === 'ended',
@@ -574,6 +598,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
       rail={rail}
       railPx={railPx}
       color={colorOf(listing.id)}
+      difference={titleDifference(listing.title, titlePrefix)}
       startC={startCents.get(listing.id) ?? null}
       targetC={targetC}
       isBestMatch={bestMatchId === listing.id}
