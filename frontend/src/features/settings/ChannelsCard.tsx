@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BellRing, Check, Copy, Loader2, Plus, Trash2 } from 'lucide-react'
+import { BellRing, Check, Copy, Eye, EyeOff, Loader2, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { createChannel, deleteChannel, listChannels, testChannel, updateChannel } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
@@ -25,7 +25,9 @@ import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { copyText } from '@/lib/clipboard'
+import { cn } from '@/lib/cn'
 import { useInstance, useSession } from '@/features/auth/useSession'
+import { maskWebhookUrl } from './webhookUrl'
 
 const EVENT_LABELS: Record<NotificationEvent, string> = {
   'target.hit': 'at target',
@@ -250,6 +252,7 @@ function NewChannelDialog({ open, onOpenChange }: { open: boolean; onOpenChange:
 export function ChannelsCard() {
   const [adding, setAdding] = useState(false)
   const [deleting, setDeleting] = useState<NotificationChannel | null>(null)
+  const [revealed, setRevealed] = useState<Set<number>>(new Set())
   const queryClient = useQueryClient()
 
   const channels = useQuery({ queryKey: qk.channels, queryFn: listChannels })
@@ -272,6 +275,15 @@ export function ChannelsCard() {
       void queryClient.invalidateQueries({ queryKey: qk.channels })
     },
   })
+
+  const toggleReveal = (id: number) => {
+    setRevealed((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   return (
     <Card>
@@ -304,15 +316,37 @@ export function ChannelsCard() {
                       {channel.kind}
                     </Badge>
                   </div>
-                  <p className="truncate font-mono text-xs text-ink-3">
-                    {channel.kind === 'ntfy' ? channel.topic : channel.url}
-                    <span className="font-sans">
-                      {' · '}
-                      {channel.events == null
-                        ? 'everything'
-                        : channel.events.map((e) => EVENT_LABELS[e]).join(', ')}
-                    </span>
-                  </p>
+                  <div className="flex items-start gap-1">
+                    <p
+                      className={cn(
+                        'min-w-0 font-mono text-xs text-ink-3',
+                        revealed.has(channel.id) ? 'wrap-anywhere' : 'truncate',
+                      )}
+                    >
+                      {channel.url == null
+                        ? channel.topic
+                        : revealed.has(channel.id)
+                          ? channel.url
+                          : maskWebhookUrl(channel.url)}
+                      <span className="font-sans">
+                        {' · '}
+                        {channel.events == null
+                          ? 'everything'
+                          : channel.events.map((e) => EVENT_LABELS[e]).join(', ')}
+                      </span>
+                    </p>
+                    {channel.url != null ? (
+                      <button
+                        type="button"
+                        aria-label={`Show the full URL of ${channel.name}`}
+                        aria-pressed={revealed.has(channel.id)}
+                        className="tap-target relative -my-0.5 flex size-5 shrink-0 items-center justify-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
+                        onClick={() => toggleReveal(channel.id)}
+                      >
+                        {revealed.has(channel.id) ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
