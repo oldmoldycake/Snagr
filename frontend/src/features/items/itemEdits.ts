@@ -23,6 +23,7 @@ export function hasItemEdits(opened: ItemForm, current: ItemForm): boolean {
     to.maxListings !== from.maxListings ||
     to.recheckIntervalMinutes !== from.recheckIntervalMinutes ||
     to.hunt !== from.hunt ||
+    to.allowReproductions !== from.allowReproductions ||
     siteSet(to.siteIds) !== siteSet(from.siteIds)
   )
 }
