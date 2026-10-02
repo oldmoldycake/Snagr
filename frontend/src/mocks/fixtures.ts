@@ -1006,7 +1006,7 @@ function seedShowcaseHunt() {
     listing_id: saved.id,
     item_id: item.id,
   })
-  push('success', 'job_finished', `Hunt complete — 2 new · 4 seen · room for 1 more · 11.4k tokens`)
+  push('success', 'job_finished', `Hunt complete — 2 new · 4 looked at · room for 1 more · 11.4k tokens`)
 }
 
 /** ~200 finished rechecks over three days — the Checks filter's rows. */
