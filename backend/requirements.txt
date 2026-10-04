@@ -1,5 +1,5 @@
 # Web framework
-fastapi==0.141.1
+fastapi==0.142.2
 uvicorn[standard]==0.54.0
 starlette==1.7.0
 python-multipart  # multipart parsing for the reference-upload endpoint
