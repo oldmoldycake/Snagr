@@ -51,6 +51,14 @@ updates:
     groups:
       frontend-npm:
         patterns: ["*"]
+    ignore:
+      # msw 3 waits on vitest: @vitest/mocker still declares msw ^2 as an
+      # optional peer, and CI's npm (Node 22's npm 10) nests a second msw 2
+      # copy for it that Dependabot's newer npm leaves out of the lockfile,
+      # so `npm ci` fails. msw 3 also renames worker.start()'s options and
+      # needs public/mockServiceWorker.js regenerated: bump it by hand.
+      - dependency-name: msw
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
