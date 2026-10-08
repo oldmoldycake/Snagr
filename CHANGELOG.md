@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/oldmoldycake/Snagr/compare/v0.9.1...v0.10.0) (2026-10-08)
+
+
+### Features
+
+* **agent:** pluggable grounding search provider (Brave, SearXNG, none) ([b47e9bb](https://github.com/oldmoldycake/Snagr/commit/b47e9bb4bd58585ba328c5483d812e97f7f581dd))
+
 ## [0.9.1](https://github.com/oldmoldycake/Snagr/compare/v0.9.0...v0.9.1) (2026-10-02)
 
 
