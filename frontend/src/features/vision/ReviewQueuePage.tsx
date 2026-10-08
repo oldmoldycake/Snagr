@@ -1,23 +1,28 @@
 import { useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ZoomIn } from 'lucide-react'
 import { toast } from 'sonner'
-import { confirmReviewEntry, discardReviewEntry, listReviewQueue } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
+import { confirmReviewEntry, discardReviewEntry, listReviewQueue } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { LlmAuthenticityRead, ReferenceLabel, ReviewQueueEntry } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Pagination } from '@/components/ui/pagination'
-import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
+import { SimpleTooltip } from '@/components/ui/tooltip'
+import { RelativeTime } from '@/components/ui/relative-time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
+import { PhotoCompareDialog } from './PhotoCompareDialog'
+import { pageInRange } from './queue'
+import { suggestionText } from './review'
 
 const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   looks_authentic: 'looks authentic',
@@ -25,31 +30,28 @@ const LLM_READ_LABELS: Record<LlmAuthenticityRead, string> = {
   unsure: 'unsure',
 }
 
-const LABEL_OPTIONS = [
-  { value: 'real', label: 'Real' },
-  { value: 'fake', label: 'Fake' },
-] as const
+const LABELS: readonly ReferenceLabel[] = ['real', 'fake']
 
 function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
   const queryClient = useQueryClient()
-  const [label, setLabel] = useState<ReferenceLabel>(entry.suggested_label)
   const [variantTag, setVariantTag] = useState('')
+  const [discardOpen, setDiscardOpen] = useState(false)
+  const [compareOpen, setCompareOpen] = useState(false)
 
   const confirm = useMutation({
-    mutationFn: () => confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
-    onSuccess: () => {
+    mutationFn: (label: ReferenceLabel) =>
+      confirmReviewEntry(entry.id, { label, variant_tag: variantTag.trim() || null }),
+    onSuccess: (_, label) => {
       toast.success(`Added to ${entry.item_name}'s ${label} references`)
       void queryClient.invalidateQueries({ queryKey: ['items'] })
     },
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not confirm the photo'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['vision'] }),
   })
 
   const discard = useMutation({
     mutationFn: () => discardReviewEntry(entry.id),
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not discard the photo'),
+    meta: { inlineError: true },
+    onSuccess: () => setDiscardOpen(false),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: ['vision'] }),
   })
 
@@ -57,34 +59,55 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
 
   return (
     <Card className="flex flex-col">
-      <a href={entry.listing_url} target="_blank" rel="noreferrer" className="block">
+      <button
+        type="button"
+        onClick={() => setCompareOpen(true)}
+        aria-label={`Look closer at the photo of ${entry.item_name}`}
+        className="group relative block cursor-zoom-in"
+      >
         <img
           src={entry.image_url}
           alt={`Captured listing photo of ${entry.item_name}`}
           loading="lazy"
           className="aspect-[4/3] w-full border-b border-hairline bg-well object-cover"
         />
-      </a>
+        <span
+          aria-hidden
+          className="absolute right-2 bottom-2 grid size-7 place-items-center rounded-sm bg-black/60 text-ink-2 group-hover:text-lume"
+        >
+          <ZoomIn className="size-4" />
+        </span>
+      </button>
+      <PhotoCompareDialog entry={entry} open={compareOpen} onOpenChange={setCompareOpen} />
       <CardBody className="flex flex-1 flex-col gap-2.5 pt-3">
         <div className="flex items-center justify-between gap-2">
           <Link
             to={`/items/${entry.item_id}`}
-            className="min-w-0 truncate text-[13px] font-medium text-ink hover:text-lume hover:underline"
+            className="min-w-0 truncate text-[14px] font-medium text-ink hover:text-lume hover:underline"
           >
             {entry.item_name}
           </Link>
-          <Badge
-            variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
-            className="shrink-0 font-mono text-[10px] tnum"
+          <SimpleTooltip
+            content={
+              <span className="max-w-64">
+                How strongly this photo matches {entry.item_name}'s {entry.suggested_label} reference photos
+                over its {entry.suggested_label === 'fake' ? 'real' : 'fake'} ones. A suggestion only: you decide.
+              </span>
+            }
           >
-            {entry.suggested_label === 'fake' ? '✗' : '✓'} {entry.suggested_label} {entry.confidence}
-          </Badge>
+            <Badge
+              variant={entry.suggested_label === 'fake' ? 'rise' : 'snagged'}
+              className="shrink-0 font-mono text-[12px] tnum"
+            >
+              {suggestionText(entry.suggested_label, entry.confidence)}
+            </Badge>
+          </SimpleTooltip>
         </div>
-        <p className="font-mono text-[11px] text-ink-3">
+        <p className="font-mono text-[12px] text-ink-3">
           {entry.llm_authenticity_read
-            ? `agent read: ${LLM_READ_LABELS[entry.llm_authenticity_read]} · `
+            ? `Snagr's read: ${LLM_READ_LABELS[entry.llm_authenticity_read]} · `
             : ''}
-          captured {relativeTime(entry.created_at)} ·{' '}
+          captured <RelativeTime iso={entry.created_at} /> ·{' '}
           <a
             href={entry.listing_url}
             target="_blank"
@@ -98,33 +121,45 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
           value={variantTag}
           onChange={(e) => setVariantTag(e.target.value)}
           placeholder="Variant tag (optional)"
-          className="h-7 text-xs"
+          className="h-7 sm:text-xs"
           aria-label="Variant tag"
+          aria-describedby={`variant-hint-${entry.id}`}
         />
+        <p id={`variant-hint-${entry.id}`} className="-mt-1 text-[12px] text-ink-3">
+          Only for a legitimate variant (alternate art, regional box), so photos like it count as real.
+        </p>
+        {/* Neither answer is preset or styled as the default: the suggestion
+            above is a hint, and a reference filed under the wrong label
+            skews every later photo check for this item. */}
         <div className="mt-auto flex items-center gap-2">
-          <Segmented
-            options={LABEL_OPTIONS}
-            value={label}
-            onChange={setLabel}
-            ariaLabel="Reference label"
-          />
-          <span className="flex-1" />
-          <Button variant="ghost" size="sm" disabled={pending} onClick={() => discard.mutate()}>
-            {discard.isPending ? <Loader2 className="animate-spin" /> : null}
+          <Button variant="ghost" size="sm" disabled={pending} onClick={() => setDiscardOpen(true)}>
             Discard
           </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={pending}
-            onClick={() => confirm.mutate()}
-            className={cn(label === 'fake' && 'bg-rise/80 hover:bg-rise')}
-          >
-            {confirm.isPending ? <Loader2 className="animate-spin" /> : null}
-            Confirm {label}
-          </Button>
+          <span className="flex-1" />
+          {LABELS.map((label) => (
+            <Button key={label} size="sm" disabled={pending} onClick={() => confirm.mutate(label)}>
+              {confirm.isPending && confirm.variables === label ? (
+                <Loader2 className="animate-spin" />
+              ) : null}
+              It's {label}
+            </Button>
+          ))}
         </div>
       </CardBody>
+
+      <ConfirmDialog
+        open={discardOpen}
+        onOpenChange={(open) => {
+          setDiscardOpen(open)
+          if (!open) discard.reset()
+        }}
+        title="Discard photo"
+        description={`This photo is deleted from the queue and won't become one of ${entry.item_name}'s references. This can't be undone.`}
+        confirmLabel="Discard"
+        pending={discard.isPending}
+        error={discard.error instanceof ApiError ? discard.error.message : null}
+        onConfirm={() => discard.mutate()}
+      />
     </Card>
   )
 }
@@ -135,6 +170,7 @@ function QueueCard({ entry }: { entry: ReviewQueueEntry }) {
  * viewer's own captures, admins included — you review what your hunts found.
  */
 export function ReviewQueuePage() {
+  usePageTitle('Photo review')
   const { data: instance } = useInstance()
   const [page, setPage] = useState(1)
 
@@ -145,18 +181,29 @@ export function ReviewQueuePage() {
   })
 
   const entries = queue.data?.data ?? []
+  const meta = queue.data?.meta
+  // An emptied later page steps back rather than reading as an empty queue,
+  // which is why "Nothing to review" below keys off the total.
+  if (meta && pageInRange(page, meta) !== page) setPage(pageInRange(page, meta))
 
   return (
     <div className="space-y-5">
-      <div className="flex items-baseline gap-3">
-        <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
-          Review
-        </h1>
-        {queue.data ? (
-          <span className="font-mono text-[11px] text-ink-3 tnum">
-            {queue.data.meta.total} {queue.data.meta.total === 1 ? 'photo' : 'photos'} waiting
-          </span>
-        ) : null}
+      <div>
+        <div className="flex items-baseline gap-3">
+          <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">
+            Photo review
+          </h1>
+          {queue.data ? (
+            <span className="font-mono text-[12px] text-ink-3 tnum">
+              {queue.data.meta.total} {queue.data.meta.total === 1 ? 'photo' : 'photos'} waiting
+            </span>
+          ) : null}
+        </div>
+        <p className="mt-1.5 max-w-[64ch] text-[14px] text-ink-2">
+          Listing photos Snagr captured while hunting that closely match an item's reference photos.
+          Mark each one real or fake to add it to that item's references, which every later photo
+          check compares against, or discard it.
+        </p>
       </div>
 
       {instance && !instance.vision_enabled ? (
@@ -170,10 +217,17 @@ export function ReviewQueuePage() {
           <Skeleton className="h-72" />
           <Skeleton className="h-72" />
         </div>
-      ) : entries.length === 0 ? (
+      ) : queue.isError ? (
+        <ErrorState
+          title="Couldn't load the review queue"
+          error={queue.error}
+          onRetry={() => void queue.refetch()}
+          retrying={queue.isFetching}
+        />
+      ) : meta?.total === 0 ? (
         <EmptyState
-          title="Queue clear"
-          description="When a scan finds a listing photo that strongly matches an item's references, it lands here for your call. Confirming grows that item's library — the more it holds, the sharper future checks get."
+          title="Nothing to review"
+          description="When Snagr finds a listing photo that closely matches an item's reference photos, it shows up here for you to confirm. Each one you confirm makes future photo checks more accurate."
         />
       ) : (
         <>

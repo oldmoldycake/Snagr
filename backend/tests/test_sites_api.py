@@ -13,10 +13,20 @@ its own session — uncommitted rows would be invisible to the endpoint under te
 """
 
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
-from app.models import SiteCategories, User
+from app.models import (
+    ListingChecks,
+    Listings,
+    PriceChecks,
+    SiteCategories,
+    Sites,
+    User,
+    WatchSites,
+)
+from app.services import catalog
+from sqlalchemy import func, select
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -113,9 +123,9 @@ async def test_listing_count_counts_only_active_listings(client, db_session):
 
 
 async def test_counts_span_all_users(client, db_session):
-    """Sites are shared catalog: the aggregates include other users' watches,
-    like categories' global item_count. handlers.ts runs a single-user store so
-    the mock can't express this either way — pinned on the catalog precedent.
+    """Sites are shared catalog: the aggregates include other users' watches.
+    handlers.ts runs a single-user store so the mock can't express this either
+    way — pinned here.
     """
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:
@@ -291,6 +301,24 @@ async def test_create_site_rejects_blank_fields(client, overrides):
     assert res.json()["error"]["code"] == "validation_error"
 
 
+@pytest.mark.parametrize("name", ["TestBay", " TESTBAY "])
+async def test_create_site_rejects_a_duplicate_name(client, db_session, name):
+    """Case-insensitive, on the trimmed name: the MCP tools address a site by
+    name, and a second "TestBay" would make that name ambiguous for everyone."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.site()
+
+    res = await client.post(
+        "/api/sites", json={"name": name, "base_url": "https://other.test"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+
+
 # --- PATCH /api/sites/{site_id} -----------------------------------------------
 
 
@@ -369,25 +397,206 @@ async def test_update_site_ignores_empty_strings(client, db_session):
     assert res.json()["name"] == "TestBay"
 
 
+async def test_update_site_may_change_only_the_case(client, db_session):
+    """The duplicate check must not count the site being renamed."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json={"name": "TESTBAY"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "TESTBAY"
+
+
+async def test_update_site_rejects_another_sites_name(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.site("Ebay")
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json={"name": "EBAY"}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+    assert set(await _sites_by_name(client)) == {"Ebay", "TestBay"}
+
+
+def _lose_the_name_race(monkeypatch, db_session, rival: str):
+    """Let checked_name pass, then commit a site named `rival` from another
+    session before the write: what a concurrent request that won looks like."""
+    real = catalog.checked_name
+
+    async def racing(db, model, name, exclude_id=None):
+        checked = await real(db, model, name, exclude_id)
+        async with db_session() as session:
+            session.add(Sites(name=rival, base_url="https://rival.test"))
+            await session.commit()
+        return checked
+
+    monkeypatch.setattr(catalog, "checked_name", racing)
+
+
+@pytest.mark.parametrize("rival", ["Glassbay", "GLASSBAY"])
+async def test_create_site_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    """The name check reads before the INSERT, so a concurrent create can take
+    the name in between; the lower(name) index refuses the later one, and that
+    is the same 422 duplicate, not a 503."""
+    await _sign_in(client)
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.post(
+        "/api/sites", json={"name": "Glassbay", "base_url": "https://glass.test"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["message"] == "A site with this name already exists"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+
+
+@pytest.mark.parametrize("rival", ["Glassbay", "GLASSBAY"])
+@pytest.mark.parametrize("extra", [{}, {"paused_until": None}])
+async def test_update_site_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival, extra
+):
+    """Lifting a pause in the same PATCH runs an UPDATE whose autoflush would
+    write the new name before the duplicate check on the flush could see it."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.patch(
+        f"/api/sites/{site_id}", json={"name": "Glassbay", **extra}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A site with this name already exists"}
+    assert set(await _sites_by_name(client)) == {rival, "TestBay"}
+
+
+@pytest.mark.parametrize(
+    ("body", "field"), [({"name": "   "}, "name"), ({"base_url": " / "}, "base_url")]
+)
+async def test_update_site_rejects_a_field_left_blank_by_trimming(client, db_session, body, field):
+    """ "" is "leave it", but "   " isn't — it used to be stored trimmed, as ""."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site_id = (await sc.site()).id
+
+    res = await client.patch(f"/api/sites/{site_id}", json=body, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert set(error["fields"]) == {field}
+    assert (await _sites_by_name(client))["TestBay"]["base_url"] == "https://example.test"
+
+
 # --- DELETE /api/sites/{site_id} ----------------------------------------------
 
 
-async def test_delete_a_site_that_still_has_listings_is_db_unavailable(client, db_session):
-    """listings.site_id has no ON DELETE, so this trips the FK and comes back
-    as the DB error every other route reports: 503 db_unavailable.
-
-    The mock has no oracle for it — its store deactivates the listings and
-    always answers 204 — so the code is pinned to the eleven sibling handlers
-    instead. Whatever it is, it is not a `validation_error`: nothing about the
-    request was malformed.
-    """
+async def test_delete_a_site_linked_to_a_category_and_pinned_by_a_watch(client, db_session):
+    """Neither site_categories nor watch_sites has ON DELETE, so the delete
+    unlinks the site itself — the mock's 204 — rather than trip the FK. The
+    other site keeps its link and its pin."""
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:
-        item, watch = await sc.tracked()
-        await sc.listing(watch, item)
-        site_id = (await sc.site()).id
+        site, other = await sc.site(), await sc.site("OtherMart")
+        category = await sc.category()
+        sc.db.add_all(SiteCategories(site_id=s.id, category_id=category.id) for s in (site, other))
+        _, watch = await sc.tracked()
+        sc.db.add_all(WatchSites(watch_id=watch.id, site_id=s.id) for s in (site, other))
+        site_id, other_id, watch_id, category_id = site.id, other.id, watch.id, category.id
 
     res = await client.delete(f"/api/sites/{site_id}", headers=CSRF)
 
-    assert res.status_code == 503, res.text
-    assert res.json()["error"]["code"] == "db_unavailable"
+    assert res.status_code == 204, res.text
+    sites = await _sites_by_name(client)
+    assert list(sites) == ["OtherMart"]
+    assert sites["OtherMart"]["category_ids"] == [category_id]
+    async with db_session() as session:
+        pins = select(WatchSites.site_id).where(WatchSites.watch_id == watch_id)
+        assert (await session.scalars(pins)).all() == [other_id]
+
+
+async def test_delete_a_site_deletes_its_listings_and_their_checks(client, db_session):
+    """The mock deactivates a deleted site's listings, but listings.site_id
+    has no ON DELETE and a listing can't outlive its site — so every listing
+    found on it goes, active or not, with its price history and the hunter's
+    skip-log for the site. A listing on another site is untouched."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        site, other = await sc.site(), await sc.site("OtherMart")
+        item, watch = await sc.tracked()
+        await sc.checks(await sc.listing(watch, item, tag="a"), (2, "100.00"))
+        await sc.checks(await sc.listing(watch, item, tag="b", active=False), (3, "90.00"))
+        kept = await sc.listing(watch, item, tag="c", site=other)
+        await sc.checks(kept, (1, "110.00"))
+        sc.db.add(ListingChecks(watch_id=watch.id, site_id=site.id, url="https://x", reason="poor"))
+        site_id, kept_id = site.id, kept.id
+
+    res = await client.delete(f"/api/sites/{site_id}", headers=CSRF)
+
+    assert res.status_code == 204, res.text
+    assert list(await _sites_by_name(client)) == ["OtherMart"]
+    async with db_session() as session:
+        assert (await session.scalars(select(Listings.id))).all() == [kept_id]
+        checks = await session.scalars(select(PriceChecks.listing_id))
+        assert checks.all() == [kept_id]
+        assert await session.scalar(select(func.count()).select_from(ListingChecks)) == 0
+
+
+async def test_delete_an_unknown_site_is_not_found(client):
+    await _sign_in(client)
+
+    res = await client.delete("/api/sites/999999", headers=CSRF)
+
+    assert res.status_code == 404, res.text
+    assert res.json()["error"]["code"] == "not_found"
+
+
+# --- writes are admin-only ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/sites", {"name": "Evil", "base_url": "http://evil.example"}),
+        ("PATCH", "/api/sites/{id}", {"base_url": "http://evil.example"}),
+        ("PATCH", "/api/sites/{id}", {"paused_until": None}),
+        ("DELETE", "/api/sites/{id}", None),
+    ],
+)
+async def test_site_writes_are_admin_only(client, db_session, method, path, body):
+    """Sites are shared — the hunter searches a site's base_url for every
+    user — so a non-admin's write is 403 forbidden and changes nothing."""
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        site = await sc.site()
+        site.paused_until = datetime(2099, 1, 1, tzinfo=UTC)
+        site.paused_reason = "5 consecutive read errors: challenge page"
+        site_id = site.id
+
+    # the first registered user is the admin, so demote them to test this
+    async with db_session() as session:
+        user = await session.get(User, user_id)
+        user.role = "user"
+        await session.commit()
+
+    res = await client.request(method, path.format(id=site_id), json=body, headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    sites = await _sites_by_name(client)
+    assert list(sites) == ["TestBay"]
+    assert sites["TestBay"]["base_url"] == "https://example.test"
+    assert sites["TestBay"]["paused_until"] is not None

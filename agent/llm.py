@@ -21,14 +21,48 @@ be sliced by (job kind, site, category) is a tag, because a trace sits in
 exactly one session but can carry any number of tags.
 """
 
+from collections.abc import Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 
 from config import AI_API_KEY, AI_MODEL, AI_PROVIDER, AI_URL, LANGFUSE_ENABLED
 from langchain.chat_models import init_chat_model
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
+from langchain_core.tracers.context import register_configure_hook
 from langfuse import get_client, propagate_attributes
 from langfuse.langchain import CallbackHandler
 
 callbacks = [CallbackHandler()] if LANGFUSE_ENABLED else []
+
+
+class TokenCount(BaseCallbackHandler):
+    """Input and output tokens across the model calls made while it is
+    current. Providers that report no usage simply contribute nothing."""
+
+    # summed in the calling task rather than on a thread pool, so two
+    # concurrent calls never race on the totals
+    run_inline = True
+
+    def __init__(self) -> None:
+        """Start both totals at zero."""
+        self.tokens_in = 0
+        self.tokens_out = 0
+
+    def on_llm_end(self, response: LLMResult, **kwargs) -> None:
+        """Add one call's reported usage to the totals."""
+        for generations in response.generations:
+            for generation in generations:
+                message = getattr(generation, "message", None)
+                usage = getattr(message, "usage_metadata", None) or {}
+                self.tokens_in += usage.get("input_tokens") or 0
+                self.tokens_out += usage.get("output_tokens") or 0
+
+
+# Registered once: langchain_core's own get_usage_metadata_callback() adds a
+# hook per call, and the hunter calls this for every ground job, forever.
+_token_count: ContextVar[TokenCount | None] = ContextVar("snagr_token_count", default=None)
+register_configure_hook(_token_count, inheritable=True)
 
 
 def build_llm():
@@ -68,6 +102,24 @@ def job_trace(name: str, session_id: str, tags: list[str], **ids: int):
         get_client().start_as_current_observation(as_type="span", name=name),
     ):
         yield
+
+
+@contextmanager
+def count_tokens() -> Iterator[TokenCount]:
+    """
+    Count the tokens every model call inside spends, for a job made of bare
+    model calls — an agent job reads them off its transcript instead.
+
+    The count rides on a context variable, as job_trace's attributes do, so
+    calls deep inside the job (and in tasks it starts) are counted without
+    each one being handed a callback.
+    """
+    count = TokenCount()
+    token = _token_count.set(count)
+    try:
+        yield count
+    finally:
+        _token_count.reset(token)
 
 
 def flush_traces() -> None:

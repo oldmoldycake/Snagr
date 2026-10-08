@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { ApiError, isNotFound } from '@/api/client'
 import { deleteItem, getItem, listPriceChecks, listSites, updateWatch } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, PriceCheck } from '@/api/types'
@@ -10,38 +11,39 @@ import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
+import { Glossary } from '@/components/ui/glossary'
+import { TERMS } from '@/components/ui/glossaryTerms'
+import { NotFound } from '@/components/ui/not-found'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TerminalLog, type LogLine } from '@/components/ui/terminal-log'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
-import { formatDateTime, relativeTime } from '@/lib/time'
+import { priceMethodLabel } from '@/lib/priceMethod'
+import { formatDateTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { CheckPricesButton } from '@/features/activity/CheckPricesButton'
 import { HuntButton } from '@/features/activity/HuntButton'
 import { HunterLine } from '@/features/activity/HunterLine'
+import { useTargetAlertGap } from '@/features/settings/alertGap'
 import { ReferenceLibrary } from '@/features/vision/ReferenceLibrary'
 import { ChartPanel } from './ChartPanel'
+import { checkLevel } from './checkLevel'
 import { EditItemDialog } from './EditItemDialog'
 import { Ladder } from './Ladder'
 import { ListingsBoard } from './ListingsBoard'
 
 /**
- * Only the exceptions are marked. A price the model read looks exactly as it
- * always has; a price code read off the listing's stored locator carries a dim
- * tag saying where from, and a reading the plausibility bands rejected dims
- * the whole row and says so — it is shown, but it counts for nothing until a
- * later reading agrees with it.
+ * Only the exceptions are marked. A reading the plausibility bands rejected
+ * dims the whole row and says so — it is shown, but it counts for nothing
+ * until a later reading agrees with it. How code rather than the model read a
+ * price is a detail most people never need, so its tag shows only on request.
  */
-function checkLine(check: PriceCheck): LogLine {
-  const level =
-    check.status === 'ok'
-      ? 'success'
-      : check.status === 'error'
-        ? 'warn'
-        : check.status === 'sold' || check.status === 'ended'
-          ? 'error'
-          : 'info'
+function checkLine(check: PriceCheck, showMethod: boolean): LogLine {
+  const level = checkLevel(check)
   const text =
     check.status === 'sold' || check.status === 'ended'
       ? `${check.status} · ${check.site_name}`
@@ -51,7 +53,7 @@ function checkLine(check: PriceCheck): LogLine {
             check.in_stock == null ? 'stock unknown' : check.in_stock ? 'in stock' : 'out of stock'
           } · ${check.site_name}`
   const marks = [
-    check.method && check.method !== 'llm' ? check.method : null,
+    showMethod ? priceMethodLabel(check.method) : null,
     check.confirmed ? null : 'unconfirmed',
   ].filter(Boolean)
   const message = (
@@ -67,6 +69,21 @@ function checkLine(check: PriceCheck): LogLine {
 
 const CHECKS_PREVIEW = 8
 
+/** The words on this page that stay because no plainer one says the same. */
+const ITEM_TERMS = [
+  TERMS.target,
+  TERMS.vsTarget,
+  TERMS.change,
+  TERMS.match,
+  TERMS.mode,
+  TERMS.tracked,
+  TERMS.hunt,
+  TERMS.pageData,
+  TERMS.learnedSpot,
+  TERMS.unconfirmed,
+  TERMS.replicas,
+]
+
 /**
  * One item's page at /items/:id: price charts, the listings board, recent
  * price checks and, when vision is on, its reference library.
@@ -77,9 +94,11 @@ export function ItemDetailPage() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [range, setRange] = useRangeParam()
-  const [editOpen, setEditOpen] = useState(false)
+  // Edit tracking opens the same editor, on its tracking options
+  const [editing, setEditing] = useState<'item' | 'tracking' | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [allChecks, setAllChecks] = useState(false)
+  const [checkMethods, setCheckMethods] = useState(false)
 
   const { data: instance } = useInstance()
   const item = useQuery({ queryKey: qk.item(itemId), queryFn: () => getItem(itemId) })
@@ -88,6 +107,8 @@ export function ItemDetailPage() {
     queryFn: () => listPriceChecks(itemId, 50),
   })
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
+  const alertGap = useTargetAlertGap()
+  usePageTitle(item.data?.name ?? (isNotFound(item.error) ? 'Item not found' : undefined))
 
   const notifyToggle = useMutation({
     mutationFn: (notify: boolean) => updateWatch(itemId, { notify }),
@@ -110,10 +131,15 @@ export function ItemDetailPage() {
 
   const remove = useMutation({
     mutationFn: () => deleteItem(itemId),
+    meta: { inlineError: true },
     onSuccess: () => {
+      // removed, not invalidated: an older history entry for the item would otherwise paint the cached page, live buttons and all
+      queryClient.removeQueries({ queryKey: qk.item(itemId) })
       void queryClient.invalidateQueries({ queryKey: ['items'] })
       void queryClient.invalidateQueries({ queryKey: ['categories'] })
-      navigate(`/categories/${item.data?.category_slug ?? ''}`)
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // replace: Back from the category skips the page of the item that no longer exists
+      navigate(`/categories/${item.data?.category_slug ?? ''}`, { replace: true })
     },
   })
 
@@ -127,13 +153,28 @@ export function ItemDetailPage() {
     )
   }
 
+  if (item.isError && !isNotFound(item.error)) {
+    return (
+      <ErrorState
+        title="Couldn't load this item"
+        error={item.error}
+        onRetry={() => void item.refetch()}
+        retrying={item.isFetching}
+      />
+    )
+  }
+
   if (!item.data) {
-    return <EmptyState title="Item not found" description="It may have been deleted." />
+    return <NotFound title="Item not found" description="It may have been deleted." />
   }
 
   const detail = item.data
   const target = detail.watch.target_price ?? detail.target_price
+  // Notify looks just as on when no channel would carry the alert, so the page says so beside it
+  const notifyGoesNowhere = detail.watch.notify && alertGap != null
   const bestListing = detail.listings.find((l) => l.id === detail.best_listing_id) ?? null
+  // with hunting off on the server the Hunt button says so itself, and no swap will run
+  const swapHint = detail.hunt.slots_open === 0 && instance?.hunt_enabled !== false
 
   const trackedCount = detail.listings.filter((l) => l.active).length
   const siteNames =
@@ -149,15 +190,18 @@ export function ItemDetailPage() {
 
   return (
     <div>
-      <p className="font-mono text-[11px] tracking-[0.06em] text-ink-3 uppercase">
-        <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
-          {detail.category_name}
-        </Link>{' '}
-        <span className="opacity-50">/</span> {detail.name}
-      </p>
+      <div className="flex items-center gap-3">
+        <p className="min-w-0 flex-1 font-mono text-[12px] tracking-[0.06em] wrap-anywhere text-ink-3 uppercase">
+          <Link to={`/categories/${detail.category_slug}`} className="hover:text-lume">
+            {detail.category_name}
+          </Link>{' '}
+          / {detail.name}
+        </p>
+        <Glossary terms={ITEM_TERMS} className="-my-1 shrink-0" />
+      </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-3">
-        <h1 className="font-display text-[30px] leading-tight font-semibold tracking-[0.02em] text-ink">
+        <h1 className="min-w-0 font-display text-[30px] leading-tight font-semibold tracking-[0.02em] wrap-anywhere text-ink">
           {detail.name}
         </h1>
         {detail.target_met ? <SnaggedBadge /> : null}
@@ -169,17 +213,23 @@ export function ItemDetailPage() {
           scopeId={detail.id}
           label={detail.hunt.slots_open === 0 ? 'Hunt for better' : 'Hunt now'}
           size="sm"
-          title={
-            detail.hunt.slots_open === 0
-              ? `Look for something better than the weakest of the ${detail.max_listings} tracked listings`
-              : undefined
-          }
+          aria-describedby={swapHint ? 'swap-hint' : undefined}
         />
         <CheckPricesButton scope="item" scopeId={detail.id} size="sm" />
-        <Button size="sm" onClick={() => setEditOpen(true)}>
+        <Button size="sm" onClick={() => setEditing('item')}>
           Edit
         </Button>
       </div>
+      {swapHint ? (
+        // a relabelled button reads as a different action, and a swap sounds
+        // like losing a listing unless it says it may not happen at all
+        <p id="swap-hint" className="mt-1.5 font-mono text-[12px] text-ink-3 sm:text-right">
+          No room for more listings, so a hunt replaces{' '}
+          {detail.selection_mode === 'best_match'
+            ? 'the weakest match only if it finds a better one'
+            : 'the priciest only if it finds a cheaper one'}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex flex-wrap items-end gap-x-7 gap-y-4">
         <div
@@ -192,15 +242,15 @@ export function ItemDetailPage() {
           {formatMoney(detail.best_price, detail.currency)}
         </div>
         <div className="pb-1">
-          <p className="font-mono text-[13px] text-ink-2 tnum">
+          <p className="font-mono text-[14px] text-ink-2 tnum">
             target <span className="font-semibold text-ink">{formatMoney(target, detail.currency)}</span>
-            {' — '}best of {trackedCount} active {trackedCount === 1 ? 'listing' : 'listings'}
+            {' · '}best of {trackedCount} tracked {trackedCount === 1 ? 'listing' : 'listings'}
           </p>
-          <p className="mt-1 font-mono text-[11px] text-ink-3">
+          <p className="mt-1 font-mono text-[12px] text-ink-3">
             avg {formatMoney(detail.avg_price, detail.currency)}
             {detail.best_site_name ? ` · ${detail.best_site_name}` : ''}
             {' · checked '}
-            {relativeTime(detail.last_checked_at)}
+            <RelativeTime iso={detail.last_checked_at} />
             {bestListing ? (
               <>
                 {' · '}
@@ -234,9 +284,10 @@ export function ItemDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>Listings</CardTitle>
-              <span className="font-mono text-[11px] text-ink-3 tnum">
-                {detail.listings.length} tracked · {trackedCount} active
-                {detail.selection_mode === 'best_match' ? ' · best match mode' : ''}
+              <span className="font-mono text-[12px] text-ink-3 tnum">
+                {trackedCount} tracked
+                {detail.listings.length > trackedCount ? ` · ${detail.listings.length - trackedCount} not tracked` : ''}
+                {detail.selection_mode === 'best_match' ? ' · picked by best match' : ''}
               </span>
             </CardHeader>
             <CardBody className="px-0 pb-1">
@@ -246,8 +297,8 @@ export function ItemDetailPage() {
                   title={detail.criteria ? 'No listings met your criteria' : 'No listings yet'}
                   description={
                     detail.criteria
-                      ? 'The hunter left the slots empty rather than track poor matches. Loosen the criteria, or press Hunt now to search again.'
-                      : "The hunter finds listings by searching this category's sites — it is already looking, and Hunt now asks it to go again."
+                      ? 'Snagr found listings, but none matched your criteria well enough to track. Loosen the criteria, or press Hunt now to try again.'
+                      : "Snagr finds listings by searching this category's sites. It's already looking, and Hunt now asks it to look again."
                   }
                   action={<HuntButton scope="item" scopeId={detail.id} variant="snag" size="sm" />}
                 />
@@ -261,9 +312,14 @@ export function ItemDetailPage() {
             <CardHeader>
               <CardTitle>Recent checks</CardTitle>
               <div className="flex items-center gap-3">
-                <span className="font-mono text-[11px] text-ink-3 tnum">
+                <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
                   {shownChecks.length} of {checkRows.length}
                 </span>
+                {checkRows.some((check) => priceMethodLabel(check.method)) ? (
+                  <Button variant="ghost" size="sm" onClick={() => setCheckMethods((v) => !v)}>
+                    {checkMethods ? 'Hide details' : 'Show details'}
+                  </Button>
+                ) : null}
                 {checkRows.length > CHECKS_PREVIEW ? (
                   <Button variant="ghost" size="sm" onClick={() => setAllChecks((v) => !v)}>
                     {allChecks ? 'Show fewer' : 'Show all'}
@@ -277,12 +333,20 @@ export function ItemDetailPage() {
                   <Skeleton className="h-5" />
                   <Skeleton className="h-5" />
                 </div>
+              ) : checks.isError ? (
+                <ErrorState
+                  className="border-0 py-4"
+                  title="Couldn't load the checks"
+                  error={checks.error}
+                  onRetry={() => void checks.refetch()}
+                  retrying={checks.isFetching}
+                />
               ) : checkRows.length === 0 ? (
-                <p className="py-2 font-mono text-[11px] text-ink-3">
-                  No checks yet — the log fills in as the agent sweeps.
+                <p className="py-2 font-mono text-[12px] text-ink-3">
+                  No price checks yet. They appear once Snagr is tracking a listing.
                 </p>
               ) : (
-                <TerminalLog lines={shownChecks.map(checkLine)} />
+                <TerminalLog lines={shownChecks.map((check) => checkLine(check, checkMethods))} />
               )}
             </div>
           </Card>
@@ -297,15 +361,15 @@ export function ItemDetailPage() {
               {[
                 ['Target', formatMoney(target, detail.currency)],
                 ['Mode', detail.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'],
-                ['Slots', `${trackedCount} of ${detail.max_listings} used`],
+                ['Listings', `${trackedCount} of ${detail.max_listings} tracked`],
                 ['Sites', siteNames],
-                ['Reproductions', detail.allow_reproductions ? 'allowed' : 'not allowed'],
+                ['Replicas', detail.allow_reproductions ? 'accepted' : 'skipped'],
               ].map(([key, value]) => (
                 <div
                   key={key}
                   className="flex items-center justify-between gap-3 border-b border-hairline py-2"
                 >
-                  <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">{key}</dt>
+                  <dt className="font-mono text-[12px] text-ink-3">{key}</dt>
                   <dd
                     className={cn(
                       'text-right font-mono text-xs text-ink tnum',
@@ -316,15 +380,27 @@ export function ItemDetailPage() {
                   </dd>
                 </div>
               ))}
-              <div className="flex items-center justify-between gap-3 py-2">
-                <dt className="font-mono text-[10px] tracking-[0.1em] text-ink-3 uppercase">Notify</dt>
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-2">
+                <dt className="font-mono text-[12px] text-ink-3">Notify at target</dt>
                 <dd>
                   <Switch
                     checked={detail.watch.notify}
                     onCheckedChange={(v) => notifyToggle.mutate(v)}
-                    aria-label="Notify me when the target price is hit"
+                    aria-label="Notify me when this item reaches its target"
+                    aria-describedby={notifyGoesNowhere ? 'notify-gap' : undefined}
                   />
                 </dd>
+                {notifyGoesNowhere ? (
+                  <dd id="notify-gap" className="basis-full font-mono text-[12px] text-warn">
+                    ⚠{' '}
+                    {alertGap === 'no-channels'
+                      ? 'No channel yet, so this alert goes nowhere.'
+                      : 'No channel is on for at-target alerts.'}{' '}
+                    <Link to="/settings" className="text-ink-2 underline underline-offset-2 hover:text-ink">
+                      Choose where alerts go
+                    </Link>
+                  </dd>
+                ) : null}
               </div>
             </dl>
             {detail.criteria ? (
@@ -332,15 +408,15 @@ export function ItemDetailPage() {
                 “{detail.criteria}”
               </blockquote>
             ) : null}
-            <Button className="mt-4 w-full" onClick={() => setEditOpen(true)}>
+            <Button className="mt-4 w-full" onClick={() => setEditing('tracking')}>
               Edit tracking
             </Button>
             <button
               type="button"
-              className="mt-3 block w-full text-center font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase hover:text-rise"
+              className="mt-3 block w-full text-center font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase hover:text-rise"
               onClick={() => setDeleteOpen(true)}
             >
-              Delete item
+              Remove item
             </button>
           </Card>
         </div>
@@ -348,15 +424,17 @@ export function ItemDetailPage() {
 
       <ConfirmDialog
         open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete item"
-        description={`“${detail.name}” and its price history will be permanently removed.${
-          instance?.vision_enabled
-            ? ' Its photo-reference library and stored listing images are deleted with it.'
-            : ''
-        }`}
-        confirmLabel="Delete item"
+        onOpenChange={(open) => {
+          setDeleteOpen(open)
+          if (!open) remove.reset()
+        }}
+        title="Remove item"
+        description={`Remove “${detail.name}” from your items? Your listings and price history for it are deleted${
+          instance?.vision_enabled ? ', along with the listing photos saved for it. Its reference photos stay' : ''
+        }. Anyone else tracking it keeps theirs.`}
+        confirmLabel="Remove item"
         pending={remove.isPending}
+        error={remove.error instanceof ApiError ? remove.error.message : null}
         onConfirm={() => remove.mutate()}
       />
 
@@ -366,8 +444,14 @@ export function ItemDetailPage() {
         key={`${detail.id}-${detail.name}-${detail.target_price}-${detail.criteria}-${detail.selection_mode}-${detail.max_listings}-${detail.hunt.enabled}-${(detail.site_ids ?? []).join(',')}`}
         // the detail carries the watch's switch as hunt.enabled
         item={{ ...detail, hunt: detail.hunt.enabled }}
-        open={editOpen}
-        onOpenChange={setEditOpen}
+        open={editing != null}
+        onOpenChange={(open) => {
+          if (!open) setEditing(null)
+        }}
+        focusTracking={editing === 'tracking'}
+        onSaved={(saved) => {
+          if (saved.id !== detail.id) navigate(`/items/${saved.id}`, { replace: true })
+        }}
       />
     </div>
   )

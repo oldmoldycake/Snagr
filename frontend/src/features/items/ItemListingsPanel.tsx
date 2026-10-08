@@ -3,10 +3,14 @@ import { ExternalLink } from 'lucide-react'
 import { getItem } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
-import { relativeTime } from '@/lib/time'
 import { MatchPill } from './MatchPill'
+
+function stockText(inStock: boolean | null): string {
+  return inStock == null ? 'stock unknown' : inStock ? 'in stock' : 'out of stock'
+}
 
 /**
  * The "all the options" view: an item row's tracked listings, rendered inline
@@ -30,8 +34,8 @@ export function ItemListingsPanel({ itemId }: { itemId: number }) {
     return (
       <p className="py-2 text-xs text-ink-3">
         {item.data?.criteria
-          ? 'No listings met the criteria yet — run the agent to search for matches.'
-          : 'No tracked listings yet — run the agent to discover some.'}
+          ? "No listings met your criteria yet. Loosen them, or choose Hunt now from this row's menu to try again."
+          : "No tracked listings yet. Snagr is hunting for some, or choose Hunt now from this row's menu."}
       </p>
     )
   }
@@ -61,15 +65,21 @@ export function ItemListingsPanel({ itemId }: { itemId: number }) {
           <span className="w-20 shrink-0 text-right font-mono text-ink tnum">
             {formatMoney(listing.latest_price)}
           </span>
+          {listing.in_stock === false ? (
+            <span className="shrink-0 font-mono text-[12px] text-rise">out of stock</span>
+          ) : null}
           <span className="flex w-16 shrink-0 items-center gap-1 text-ink-3">
+            {/* out of stock is spelled out beside the price; in stock (filled) and unknown (hollow) differ by shape */}
             <span
-              aria-hidden
+              title={listing.in_stock === false ? undefined : stockText(listing.in_stock)}
               className={cn(
-                'size-1.5 rounded-full',
-                listing.in_stock == null ? 'bg-ink-3' : listing.in_stock ? 'bg-drop' : 'bg-rise',
+                'size-1.5 shrink-0 rounded-full',
+                listing.in_stock == null ? 'border border-ink-3' : listing.in_stock ? 'bg-drop' : 'invisible',
               )}
-            />
-            {relativeTime(listing.last_checked_at)}
+            >
+              {listing.in_stock === false ? null : <span className="sr-only">{stockText(listing.in_stock)}</span>}
+            </span>
+            <RelativeTime iso={listing.last_checked_at} />
           </span>
         </div>
       ))}

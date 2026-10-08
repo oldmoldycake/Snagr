@@ -98,6 +98,8 @@ async def test_create_field_validation(client):
         ({"name": "ok"}, "scopes"),
         ({"name": "ok", "scopes": ["admin"]}, "scopes"),
         ({"name": "ok", "scopes": ["read"], "expires_in_days": 0}, "expires_in_days"),
+        # far enough out to overflow the date it is added to
+        ({"name": "ok", "scopes": ["read"], "expires_in_days": 3_000_000}, "expires_in_days"),
     ]
     for body, field in cases:
         res = await client.post("/api/me/tokens", json=body, headers=CSRF)
@@ -214,6 +216,7 @@ async def test_account_routes_are_cookie_only(client, make_client):
         await agent.get("/api/me/channels", headers=_bearer(token)),
         await agent.get("/api/auth/me", headers=_bearer(token)),
         await agent.get("/api/admin/users", headers=_bearer(token)),
+        await agent.post("/api/admin/users/1/password-reset", headers=_bearer(token)),
     ):
         assert res.status_code == 403, res.text
         assert res.json()["error"]["code"] == "forbidden"

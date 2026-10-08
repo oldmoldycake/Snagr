@@ -1,17 +1,31 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { Loader2, Trash2 } from 'lucide-react'
-import { deleteCategory, listSites, setCategorySites, updateCategory } from '@/api/endpoints'
-import { qk } from '@/api/queries'
+import { deleteCategory, setCategorySites, updateCategory } from '@/api/endpoints'
+import { ApiError } from '@/api/client'
 import type { Category } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from '@/components/ui/dialog'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { cn } from '@/lib/cn'
+import { SitePicker } from '@/features/sites/SitePicker'
+import { hasCategoryEdits } from './categoryEdits'
 
-/** Rename a category, choose which sites it searches, or delete it. */
+/**
+ * Rename a category, choose which sites it searches, or delete it. Seeds its
+ * name from props once — remount it (via key) each time it opens. Saving stays
+ * on the page it was opened from, since a rename keeps the slug; deleting goes
+ * to the dashboard.
+ */
 export function EditCategoryDialog({
   category,
   open,
@@ -24,115 +38,131 @@ export function EditCategoryDialog({
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const [name, setName] = useState(category.name)
-  const [siteIds, setSiteIds] = useState<number[]>(category.site_ids)
+  // Null until the picker is used: until then it shows the category's current
+  // links and saving leaves them alone, so a rename can't undo sites linked
+  // since the dialog opened.
+  const [pickedSiteIds, setPickedSiteIds] = useState<number[] | null>(null)
+  const siteIds = pickedSiteIds ?? category.site_ids
+  const [sitesMissing, setSitesMissing] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-
-  const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
 
   const save = useMutation({
     mutationFn: async () => {
       if (name.trim() !== category.name) await updateCategory(category.id, { name: name.trim() })
-      // Navigate to the slug the server reports, never one re-derived from the
-      // new name: a rename keeps the original slug, so the derived URL 404s.
-      return (await setCategorySites(category.id, siteIds)).slug
+      if (pickedSiteIds) await setCategorySites(category.id, pickedSiteIds)
     },
-    onSuccess: async (slug) => {
+    meta: { inlineError: true },
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
+      // item rows carry the category's name
+      await queryClient.invalidateQueries({ queryKey: ['items'] })
       onOpenChange(false)
-      navigate(`/categories/${slug}`, { replace: true })
     },
   })
+
+  // a blank or taken name is refused with the reason on `fields.name`
+  const nameError = save.error instanceof ApiError ? (save.error.fields?.name ?? save.error.message) : null
+  const changed = hasCategoryEdits(category, name, pickedSiteIds)
 
   const remove = useMutation({
     mutationFn: () => deleteCategory(category.id),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['categories'] })
       await queryClient.invalidateQueries({ queryKey: ['items'] })
+      await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       navigate('/', { replace: true })
     },
   })
 
-  const toggleSite = (id: number) => {
-    setSiteIds((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]))
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogTitle>Edit category</DialogTitle>
-        <DialogDescription>
-          The hunter searches this category's linked sites.
-        </DialogDescription>
+      <DialogContent dirty={changed}>
+        <DialogHeader>
+          <DialogTitle>Edit category</DialogTitle>
+          <DialogDescription>
+            Snagr searches this category's linked sites.
+          </DialogDescription>
+        </DialogHeader>
 
-        <div className="mt-4 space-y-4">
-          <div>
-            <Label htmlFor="edit-category-name">Name</Label>
-            <Input id="edit-category-name" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-
-          <div>
-            <Label>Linked sites</Label>
-            {sites.data?.data.length === 0 ? (
-              <p className="text-xs text-ink-3">No sites yet — add sites on the Sites page first.</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {sites.data?.data.map((site) => {
-                  const selected = siteIds.includes(site.id)
-                  return (
-                    <button
-                      key={site.id}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => toggleSite(site.id)}
-                      className={cn(
-                        'rounded-sm border px-2 py-1 text-xs transition-colors',
-                        selected
-                          ? 'border-lume/50 bg-lume-glow text-lume'
-                          : 'border-hairline text-ink-3 hover:text-ink-2',
-                      )}
-                    >
-                      {site.name}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-hairline pt-3">
-            {confirmingDelete ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs text-rise">
-                  Delete “{category.name}” and its {category.item_count} item
-                  {category.item_count === 1 ? '' : 's'}? This cannot be undone.
+        <form
+          className="contents"
+          onSubmit={(e) => {
+            e.preventDefault()
+            // only a selection emptied here is refused: an untouched picker
+            // leaves the links as they are, even when there are none
+            if (pickedSiteIds?.length === 0) {
+              setSitesMissing(true)
+              return
+            }
+            save.mutate()
+          }}
+        >
+          <DialogBody className="space-y-4">
+            <div>
+              <Label htmlFor="edit-category-name">Name</Label>
+              <Input id="edit-category-name" value={name} onChange={(e) => setName(e.target.value)} />
+              {nameError ? (
+                <p role="alert" className="mt-1.5 text-xs text-rise">
+                  {nameError}
                 </p>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={remove.isPending}
-                  onClick={() => remove.mutate()}
-                >
-                  {remove.isPending ? <Loader2 className="animate-spin" /> : null}
-                  Delete
-                </Button>
-              </div>
-            ) : (
-              <Button variant="ghost" size="sm" className="text-rise" onClick={() => setConfirmingDelete(true)}>
-                <Trash2 /> Delete category
-              </Button>
-            )}
-          </div>
-        </div>
+              ) : null}
+            </div>
 
-        <DialogFooter>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button variant="primary" disabled={save.isPending || !name.trim()} onClick={() => save.mutate()}>
-            {save.isPending ? <Loader2 className="animate-spin" /> : null}
-            Save changes
-          </Button>
-        </DialogFooter>
+            <div>
+              <SitePicker
+                selected={siteIds}
+                onChange={(ids) => {
+                  setPickedSiteIds(ids)
+                  if (ids.length > 0) setSitesMissing(false)
+                }}
+              />
+              {sitesMissing ? (
+                <p role="alert" className="mt-2.5 text-xs text-rise">
+                  ⚠ Pick at least one site. Snagr needs somewhere to look.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="border-t border-hairline pt-3">
+              {confirmingDelete ? (
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-rise">
+                    Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be
+                    undone.
+                  </p>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate()}
+                  >
+                    {remove.isPending ? <Loader2 className="animate-spin" /> : null}
+                    Delete
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" size="sm" className="text-rise" onClick={() => setConfirmingDelete(true)}>
+                  <Trash2 /> Delete category
+                </Button>
+              )}
+            </div>
+          </DialogBody>
+
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              className="max-sm:flex-[2]"
+              disabled={save.isPending || !name.trim()}
+            >
+              {save.isPending ? <Loader2 className="animate-spin" /> : null}
+              Save changes
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )

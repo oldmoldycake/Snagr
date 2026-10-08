@@ -5,7 +5,7 @@ from typing import Literal
 from fastmcp import FastMCP
 
 from app.mcp.refs import Ref, resolve_category, resolve_site
-from app.mcp.server import DESTRUCTIVE, READ_ONLY, WRITE, caller_session
+from app.mcp.server import DESTRUCTIVE, READ, READ_ONLY, WRITE, caller_session
 from app.schemas.common import Paginated, TimeRange
 from app.schemas.items import (
     ItemCreateRequest,
@@ -26,7 +26,7 @@ from app.services import items as items_service
 def register(mcp: FastMCP) -> None:
     """Define the item tools on the shared server."""
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_items(
         category: Ref | None = None,
         site: Ref | None = None,
@@ -61,7 +61,7 @@ def register(mcp: FastMCP) -> None:
             )
             return await items_service.list_items(db, user.id, filters)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def get_item(item: int) -> ItemDetail:
         """One watched item in full: everything list_items shows plus every
         listing the agent tracks for it — URL, title, latest price, stock and
@@ -70,7 +70,7 @@ def register(mcp: FastMCP) -> None:
         async with caller_session() as (db, user):
             return await items_service.get_item_detail(db, user.id, item)
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_listings(
         item: int | None = None,
         site: Ref | None = None,
@@ -99,7 +99,7 @@ def register(mcp: FastMCP) -> None:
                 per_page=per_page,
             )
 
-    @mcp.tool(annotations=READ_ONLY)
+    @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_price_checks(item: int, limit: int = 50) -> list[PriceCheck]:
         """The raw observations behind an item's prices: each time the agent
         looked at one of its listings — price, currency, in stock, and the
@@ -122,7 +122,8 @@ def register(mcp: FastMCP) -> None:
         site_ids: list[Ref] | None = None,
     ) -> ItemSummary:
         """Start watching an item. If the shared catalog already has an item of
-        that name in the category this joins it; otherwise the item is created.
+        that name in the category (ignoring case) this joins it; otherwise the
+        item is created. A `duplicate` error means the user already watches it.
         Hunts of its sites are queued right away, unless hunt is false or the
         operator has switched hunting off.
 
@@ -130,7 +131,8 @@ def register(mcp: FastMCP) -> None:
           category: id or slug
           name: the item as a buyer would search for it, e.g. "Pokemon Emerald"
           target_price: decimal string like "120.00" the user wants to pay at
-            or below; null = just track prices, no target
+            or below, from 0.01 to 99999999.99 in whole cents; null = just
+            track prices, no target
           criteria: free text the agent judges every listing against, e.g.
             "authentic cartridge, working save battery, no reproductions"
           selection_mode: cheapest | best_match — how the tracked slots are filled
@@ -180,7 +182,13 @@ def register(mcp: FastMCP) -> None:
         site_ids (the site subset can't be changed yet) — plus `notify`:
         whether hitting the target should push a notification. Only the
         arguments you pass change; the rest stay as they are. Pass
-        recheck_interval_minutes="default" to go back to the instance default."""
+        recheck_interval_minutes="default" to go back to the instance default.
+
+        The name belongs to the shared catalog. If other users watch this item
+        too (watcher_count above 1) and you're not admin, renaming moves only
+        this user's watch, with its listings, to the category's item of the
+        new name, so the returned item has a different id: use that id from
+        then on."""
         async with caller_session() as (db, user):
             # null already means "unchanged" here, so clearing the interval
             # needs a word of its own; the REST PATCH says it with null
@@ -193,22 +201,30 @@ def register(mcp: FastMCP) -> None:
                     else recheck_interval_minutes
                 }
             )
+            passed = {
+                "name": name,
+                "target_price": target_price,
+                "criteria": criteria,
+                "selection_mode": selection_mode,
+                "max_listings": max_listings,
+                "allow_reproductions": allow_reproductions,
+                "hunt": hunt,
+            }
+            # only what was passed is set on the request: a key set to None
+            # there would clear the target or the criteria
             body = ItemUpdateRequest(
-                name=name,
-                target_price=target_price,
-                criteria=criteria,
-                selection_mode=selection_mode,
-                max_listings=max_listings,
-                allow_reproductions=allow_reproductions,
-                hunt=hunt,
+                **{field: value for field, value in passed.items() if value is not None},
                 **interval,
             )
-            detail = await items_service.update_item(db, user.id, item, body)
+            detail = await items_service.update_item(
+                db, user.id, item, body, is_admin=user.role == "admin"
+            )
             if notify is not None:
+                # detail.id, not item: a rename can have moved the watch
                 await items_service.update_watch(
-                    db, user.id, item, WatchUpdateRequest(notify=notify)
+                    db, user.id, detail.id, WatchUpdateRequest(notify=notify)
                 )
-                detail = await items_service.get_item_detail(db, user.id, item)
+                detail = await items_service.get_item_detail(db, user.id, detail.id)
             return detail
 
     @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)

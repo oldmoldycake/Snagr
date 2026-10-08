@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.applications import Starlette
 
 from app.config import settings
-from app.core.errors import ApiError, err
+from app.core.errors import ApiError, db_error, err
 from app.database import _sessionmaker
 from app.models import User
 from app.services.tokens import authenticate_token
@@ -40,9 +40,12 @@ READ_ONLY = ToolAnnotations(read_only_hint=True)
 DESTRUCTIVE = ToolAnnotations(destructive_hint=True)
 
 # scope gates — a tool carrying one is invisible to, and uncallable by, tokens
-# without that scope: the MCP twin of REST's 403 insufficient_scope
+# without that scope: the MCP twin of REST's 403 insufficient_scope. They
+# match REST route for route: a GET needs read, any other method needs write,
+# and the jobs routes add jobs on top of that
+READ = require_scopes("read")
 WRITE = require_scopes("write")
-JOBS = require_scopes("jobs")
+JOBS = require_scopes("write", "jobs")
 
 INSTRUCTIONS = """\
 Snagr is a self-hosted price tracker: the user watches items (a shared catalog
@@ -128,7 +131,18 @@ async def caller_session() -> AsyncIterator[tuple[AsyncSession, User]]:
         except ApiError as e:
             raise ToolError(_envelope(e.code, e.message, **e.extra)) from e
         except SQLAlchemyError as e:
-            raise ToolError(_envelope("db_unavailable", "Could not reach the database")) from e
+            api_error = db_error(e)
+            if api_error is None:
+                raise
+            raise ToolError(_envelope(api_error.code, api_error.message)) from e
+
+
+def require_admin(user: User) -> None:
+    """403 `forbidden` unless `user` is an admin — the tool twin of REST's
+    core.deps.require_admin. Call it inside caller_session() so the error
+    leaves as the envelope."""
+    if user.role != "admin":
+        raise err(403, "forbidden", "Admin access required")
 
 
 def build_mcp_app() -> Starlette:

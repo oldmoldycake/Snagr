@@ -34,11 +34,13 @@ updates:
       vision-python:
         patterns: ["*"]
     ignore:
-      # torch is deliberately pinned without the +cpu local tag (see
-      # requirements.txt) — Dependabot reads 2.x.y+cpu from the extra index as
-      # an upgrade and would pin a tag that doesn't resolve on arm64. Bump
-      # torch by hand.
+      # torch and torchvision are deliberately pinned without the +cpu local
+      # tag (see requirements.txt) — Dependabot reads x.y.z+cpu from the extra
+      # index as an upgrade and would pin a tag that doesn't resolve on arm64.
+      # Each torchvision release also pins one exact torch, so the two can
+      # only move together: bump the pair by hand.
       - dependency-name: torch
+      - dependency-name: torchvision
 
   - package-ecosystem: npm
     directory: /frontend
@@ -49,6 +51,14 @@ updates:
     groups:
       frontend-npm:
         patterns: ["*"]
+    ignore:
+      # msw 3 waits on vitest: @vitest/mocker still declares msw ^2 as an
+      # optional peer, and CI's npm (Node 22's npm 10) nests a second msw 2
+      # copy for it that Dependabot's newer npm leaves out of the lockfile,
+      # so `npm ci` fails. msw 3 also renames worker.start()'s options and
+      # needs public/mockServiceWorker.js regenerated: bump it by hand.
+      - dependency-name: msw
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /

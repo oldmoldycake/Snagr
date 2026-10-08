@@ -1,6 +1,6 @@
 """FastAPI application entrypoint.
 
-Wires up: the error-envelope exception handler, every domain router, the MCP
+Wires up: the error-envelope exception handlers, every domain router, the MCP
 sub-app (when MCP_ENABLED), and the two lifetime tasks (SSE hub, notification
 dispatcher).
 Run: `uvicorn app.main:app --reload --port 8000`
@@ -14,9 +14,10 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastmcp.utilities.lifespan import combine_lifespans
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.config import settings
-from app.core.errors import ApiError, api_error_handler
+from app.core.errors import ApiError, api_error_handler, db_error_handler
 from app.mcp.server import MCP_PATH, build_mcp_app
 from app.routers import (
     admin,
@@ -63,6 +64,7 @@ app = FastAPI(
 )
 
 app.add_exception_handler(ApiError, api_error_handler)
+app.add_exception_handler(SQLAlchemyError, db_error_handler)
 
 if settings.MCP_ENABLED:
     app.add_route(MCP_PATH, mcp_app, methods=["GET", "POST", "DELETE"])

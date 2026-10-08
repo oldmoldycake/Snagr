@@ -33,9 +33,13 @@ import type {
   NotificationChannel,
   NotificationChannelCreateRequest,
   NotificationChannelCreated,
+  NotificationChannelTestRequest,
   NotificationChannelUpdateRequest,
   Paginated,
   PasswordChangeRequest,
+  PasswordReset,
+  PasswordResetRequest,
+  PasswordResetValidation,
   PriceCheck,
   PriceDrop,
   PriceHistoryResponse,
@@ -71,11 +75,22 @@ export const getMe = () => api<User>('/api/auth/me')
 
 /** Check an invite link before showing the signup form; 404 unknown, 410 used or expired. */
 export const validateInvite = (token: string) =>
-  api<InviteValidation>(`/api/auth/invites/${token}`)
+  api<InviteValidation>(`/api/auth/invites/${encodeURIComponent(token)}`)
 
 /** Create an account from an invite and start a session; an email pinned to the invite wins. */
 export const acceptInvite = (token: string, body: InviteAcceptRequest) =>
-  api<{ user: User }>(`/api/auth/invites/${token}/accept`, { method: 'POST', body })
+  api<{ user: User }>(`/api/auth/invites/${encodeURIComponent(token)}/accept`, { method: 'POST', body })
+
+/** Check a password-reset link before showing the form; 404 unknown, 410 used or expired. */
+export const validatePasswordReset = (token: string) =>
+  api<PasswordResetValidation>(`/api/auth/password-resets/${encodeURIComponent(token)}`)
+
+/**
+ * Set a new password from a reset link and sign the account out everywhere; 404/410
+ * as for validating it. Starts no session — the user signs in with the new password.
+ */
+export const completePasswordReset = (token: string, body: PasswordResetRequest) =>
+  api<void>(`/api/auth/password-resets/${encodeURIComponent(token)}`, { method: 'POST', body })
 
 /** Change the caller's email or vision thresholds; only sent fields change. */
 export const updateMe = (body: MeUpdateRequest) =>
@@ -88,7 +103,7 @@ export const changePassword = (body: PasswordChangeRequest) =>
 /** The caller's notification channels. */
 export const listChannels = () => api<{ data: NotificationChannel[] }>('/api/me/channels')
 
-/** Add a notification channel; a webhook's signing secret comes back only in this response. */
+/** Add a notification channel (409 channel_limit past ten); a webhook's signing secret comes back only in this response. */
 export const createChannel = (body: NotificationChannelCreateRequest) =>
   api<NotificationChannelCreated>('/api/me/channels', { method: 'POST', body })
 
@@ -104,6 +119,10 @@ export const deleteChannel = (id: number) =>
 export const testChannel = (id: number) =>
   api<void>(`/api/me/channels/${id}/test`, { method: 'POST' })
 
+/** Send a test notification to a channel before it's saved: refused as createChannel would refuse it, 502 channel_failed when unreachable. */
+export const testNewChannel = (body: NotificationChannelTestRequest) =>
+  api<void>('/api/me/channels/test', { method: 'POST', body })
+
 /** The caller's API tokens, without their raw values. */
 export const listTokens = () => api<{ data: ApiToken[] }>('/api/me/tokens')
 
@@ -118,34 +137,34 @@ export const revokeToken = (id: number) =>
 /** Every category, with counts read through the caller's watches. */
 export const listCategories = () => api<{ data: Category[] }>('/api/categories')
 
-/** Create a category; 422 duplicate when the name exists (case-insensitive). */
+/** Create a category (admin only); 422 duplicate when the name exists (case-insensitive). */
 export const createCategory = (body: CategoryCreateRequest) =>
   api<Category>('/api/categories', { method: 'POST', body })
 
-/** Rename a category; its slug stays the same. */
+/** Rename a category (admin only); its slug stays the same. */
 export const updateCategory = (id: number, body: CategoryUpdateRequest) =>
   api<Category>(`/api/categories/${id}`, { method: 'PATCH', body })
 
-/** Delete a category and everything under it, including every user's watches on its items. */
+/** Delete a category and everything under it, including every user's watches on its items (admin only). */
 export const deleteCategory = (id: number) =>
   api<void>(`/api/categories/${id}`, { method: 'DELETE' })
 
-/** Replace the sites a category is searched on; unknown site ids are dropped. */
+/** Replace the sites a category is searched on (admin only); unknown site ids are dropped. */
 export const setCategorySites = (id: number, siteIds: number[]) =>
   api<Category>(`/api/categories/${id}/sites`, { method: 'PUT', body: { site_ids: siteIds } })
 
 /** Every site, with its counts and any circuit-breaker pause. */
 export const listSites = () => api<{ data: Site[] }>('/api/sites')
 
-/** Add a site for the hunter to search. */
+/** Add a site for the hunter to search (admin only). */
 export const createSite = (body: SiteCreateRequest) =>
   api<Site>('/api/sites', { method: 'POST', body })
 
-/** Rename a site, change its base URL, or lift a breaker pause (`paused_until: null`). */
+/** Rename a site, change its base URL, or lift a breaker pause (`paused_until: null`); admin only. */
 export const updateSite = (id: number, body: SiteUpdateRequest) =>
   api<Site>(`/api/sites/${id}`, { method: 'PATCH', body })
 
-/** Delete a site; one that listings still reference fails with 503 db_unavailable. */
+/** Delete a site (admin only), with its listings, category links and watch pins. */
 export const deleteSite = (id: number) => api<void>(`/api/sites/${id}`, { method: 'DELETE' })
 
 /** The caller's watched items, filtered and paged, each with its price rollup. */
@@ -159,7 +178,7 @@ export const createItem = (body: ItemCreateRequest) =>
 /** One watched item with its listings and what the hunter does next; 404 when unwatched. */
 export const getItem = (id: number) => api<ItemDetail>(`/api/items/${id}`)
 
-/** Edit an item's and the caller's watch fields; only sent fields change. */
+/** Edit an item's and the caller's watch fields; only sent fields change. A rename can answer under a new id. */
 export const updateItem = (id: number, body: ItemUpdateRequest) =>
   api<ItemDetail>(`/api/items/${id}`, { method: 'PATCH', body })
 
@@ -258,15 +277,26 @@ export const cancelJob = (id: number) => api<Job>(`/api/jobs/${id}/cancel`, { me
 /** Every user on the instance (admin only). */
 export const listUsers = () => api<{ data: AdminUser[] }>('/api/admin/users')
 
-/** Activate or deactivate a user, or change their role (admin only). */
+/**
+ * Activate or deactivate a user, or change their role (admin only); 409 last_admin
+ * for a change that would leave no active admin.
+ */
 export const updateUser = (id: number, body: AdminUserUpdateRequest) =>
   api<AdminUser>(`/api/admin/users/${id}`, { method: 'PATCH', body })
 
 /**
- * Delete a user (admin only); 409 user_has_items while they still watch anything,
- * 422 cannot_delete_self for the caller.
+ * Delete a user (admin only) with their items, listings, price history, channels
+ * and tokens; shared catalog items stay. 422 cannot_delete_self for the caller.
  */
 export const deleteUser = (id: number) => api<void>(`/api/admin/users/${id}`, { method: 'DELETE' })
+
+/**
+ * Issue a single-use link for a user to choose a new password (admin only); it
+ * replaces any earlier link for them. 422 sso_account for an account that signs
+ * in with SSO only.
+ */
+export const createPasswordReset = (id: number) =>
+  api<PasswordReset>(`/api/admin/users/${id}/password-reset`, { method: 'POST' })
 
 /** Pending invites — unused and not yet expired (admin only). */
 export const listInvites = () => api<{ data: Invite[] }>('/api/admin/invites')

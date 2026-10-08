@@ -80,6 +80,12 @@ _CLAIMED = (
 # exist. SKIP LOCKED is what lets several workers claim concurrently; FOR
 # UPDATE OF j is required because a paused site sits on the nullable side of
 # the join and Postgres will not lock that.
+#
+# The order is by due time with priority as a head start in minutes, not
+# priority first: a job worth 100 is taken as if it had come due 100 minutes
+# earlier. Ranked strictly by priority, a steady stream of new items would
+# starve every backoff hunt behind them; this way anything that has waited
+# longer than the head start goes first, so no job waits forever.
 _CLAIM = text(
     f"""
     UPDATE jobs SET
@@ -96,7 +102,7 @@ _CLAIM = text(
                AND j.kind IN :kinds
                AND j.run_after <= now()
                AND (s.paused_until IS NULL OR s.paused_until <= now())
-             ORDER BY j.priority DESC, j.run_after, j.id
+             ORDER BY j.run_after - make_interval(mins => j.priority), j.id
              FOR UPDATE OF j SKIP LOCKED
              LIMIT 1
      )
@@ -108,15 +114,16 @@ _CLAIM = text(
 async def claim(worker: str, kinds: Sequence[str]) -> dict | None:
     """Take the most urgent due job of these kinds, or None when there is none.
 
-    Highest priority first (a user's "hunt now" is 100), then oldest due, then
-    oldest row. Jobs for a paused site are invisible here — that is the
-    circuit breaker: while a site answers challenge pages, its work is not
-    claimed at all, so no browser opens and no model is asked to look at it.
+    Longest overdue first, counting a job's priority as minutes it has
+    already waited (a user's "hunt now" is 100), then oldest row. Jobs for a
+    paused site are invisible here — that is the circuit breaker: while a
+    site answers challenge pages, its work is not claimed at all, so no
+    browser opens and no model is asked to look at it.
 
     Args:
       worker: An identifier for this worker, recorded on the row so an
         abandoned job can be traced back to the process that had it.
-      kinds: Which kinds this pool works — ("recheck",) or ("hunt", "ground").
+      kinds: Which kinds this pool works — ("recheck",), ("hunt",) or ("ground",).
     Returns:
       The claimed row as a plain dict (captured before commit expires it), or
       None when nothing is due.
@@ -165,26 +172,32 @@ async def status(job_id: int) -> str | None:
             return None
 
 
-async def complete(job_id: int, stats: dict | None = None) -> bool:
+async def complete(job_id: int, stats: dict | None = None, *, worker: str) -> bool:
     """Mark a job done and, for a recheck, queue the listing's next one.
 
     A job the API cancelled while it was running keeps the cancelled state —
     the row lock makes that check atomic — but a cancelled recheck still gets
     its successor, because the chain is what keeps the listing watched.
+
+    Only the worker that holds the job may end it. One whose heartbeat stalled
+    long enough for the reaper to take the job back writes nothing: the job is
+    pending again or another worker's, and that owner closes the chain.
     """
-    return await _finish(job_id, "done", stats=stats)
+    return await _finish(job_id, "done", stats=stats, worker=worker)
 
 
-async def fail_or_retry(job_id: int, error: str) -> str:
+async def fail_or_retry(job_id: int, error: str, *, worker: str) -> str:
     """Put a failed job back in the queue, or give up on it.
 
     An attempt is spent on claim, so a job that has burned JOB_MAX_ATTEMPTS is
     failed for good; anything else goes back to pending, due immediately. A
     failed recheck still queues its successor: the page being unreadable today
-    is not a reason to stop watching the listing.
+    is not a reason to stop watching the listing. As with complete(), a worker
+    the reaper already took the job from writes nothing.
 
     Returns:
-      The status the job ended up in — 'pending' or 'failed'.
+      The status the job ended up in — 'pending' or 'failed', or whatever it
+      already was when this worker no longer held it.
     """
     async with AsyncSessionLocal() as session:
         job = await session.get(Jobs, job_id, with_for_update=True)
@@ -194,22 +207,41 @@ async def fail_or_retry(job_id: int, error: str) -> str:
         if job.status in TERMINAL_STATUSES:
             log.info(f"Job {job_id} is already {job.status}; leaving its terminal state")
             return job.status
+        if not _holds(job, worker):
+            return job.status
 
-        job.error = error[:1000]
-        if job.attempts >= JOB_MAX_ATTEMPTS:
-            job.status = "failed"
-            job.finished_at = datetime.now(UTC)
-            await _queue_successor(session, job)
-            log.warning(f"Job {job_id} failed after {job.attempts} attempts: {error}")
-        else:
-            job.status = "pending"
-            job.locked_by = None
-            job.started_at = None
-            job.run_after = datetime.now(UTC)
-            log.warning(f"Job {job_id} attempt {job.attempts} failed, retrying: {error}")
-        outcome = job.status
+        outcome = await _fail(session, job, error)
         await session.commit()
         return outcome
+
+
+async def _fail(session, job: Jobs, error: str) -> str:
+    job.error = error[:1000]
+    if job.attempts >= JOB_MAX_ATTEMPTS:
+        job.status = "failed"
+        job.finished_at = datetime.now(UTC)
+        await _queue_successor(session, job)
+        log.warning(f"Job {job.id} failed after {job.attempts} attempts: {error}")
+    else:
+        job.status = "pending"
+        job.locked_by = None
+        job.started_at = None
+        job.run_after = datetime.now(UTC)
+        log.warning(f"Job {job.id} attempt {job.attempts} failed, retrying: {error}")
+    return job.status
+
+
+def _holds(job: Jobs, worker: str) -> bool:
+    """Whether this worker still owns the job it is about to end. The API's
+    cancel leaves locked_by alone, so a cancelled job is still its worker's."""
+    if job.locked_by == worker:
+        return True
+    log.warning(
+        f"Job {job.id} was taken back from {worker} (now {job.status}"
+        + (f", held by {job.locked_by})" if job.locked_by else ")")
+        + "; dropping its result"
+    )
+    return False
 
 
 async def release(job_id: int) -> bool:
@@ -229,6 +261,29 @@ async def release(job_id: int) -> bool:
         job.run_after = datetime.now(UTC)
         await session.commit()
         log.info(f"Returned job {job_id} to the queue")
+        return True
+
+
+async def defer(job_id: int, until: datetime, *, worker: str) -> bool:
+    """Hand a running job back to the queue, due at `until` — for work that
+    cannot go ahead yet through no fault of its own, like grounding while
+    SearXNG has its engines suspended.
+
+    The attempt the claim spent is given back: waiting out someone else's
+    outage is not a failure, and counting it as one would fail the job for
+    good once a suspension had outlasted JOB_MAX_ATTEMPTS waits.
+    """
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Jobs, job_id, with_for_update=True)
+        if job is None or job.status != "running" or not _holds(job, worker):
+            return False
+        job.status = "pending"
+        job.locked_by = None
+        job.started_at = None
+        job.attempts = max(job.attempts - 1, 0)
+        job.run_after = until
+        await session.commit()
+        log.info(f"Deferred job {job_id} to {until:%H:%M} UTC")
         return True
 
 
@@ -253,11 +308,13 @@ async def release_all(workers: Sequence[str]) -> int:
         return result.rowcount
 
 
-async def _finish(job_id: int, outcome: str, stats: dict | None) -> bool:
+async def _finish(job_id: int, outcome: str, stats: dict | None, worker: str) -> bool:
     async with AsyncSessionLocal() as session:
         job = await session.get(Jobs, job_id, with_for_update=True)
         if job is None:
             log.error(f"Cannot finish unknown job {job_id}")
+            return False
+        if not _holds(job, worker):
             return False
         cancelled = job.status == "cancelled"
         if not cancelled:
@@ -566,28 +623,34 @@ async def reap() -> list[int]:
     job is never mistaken for a dead one. Left alone, a row abandoned by a
     SIGKILL would hold its target's open-job slot forever — nothing else would
     ever notice, because the unique index would refuse every replacement.
+
+    Picking the stale rows and taking them back happen under one row lock, so a
+    beat that lands in between keeps its job, and SKIP LOCKED leaves alone a
+    job its worker is ending right now.
     """
     cutoff = datetime.now(UTC) - timedelta(seconds=JOB_STALE_AFTER_SECONDS)
+    minutes = JOB_STALE_AFTER_SECONDS // 60
+    error = f"The worker stopped responding (no heartbeat for over {minutes} min)"
     async with AsyncSessionLocal() as session:
         stale = list(
             (
                 await session.execute(
-                    select(Jobs.id)
+                    select(Jobs)
                     .where(Jobs.status == "running")
                     .where(func.coalesce(Jobs.heartbeat_at, Jobs.started_at) < cutoff)
                     .order_by(Jobs.id)
+                    .with_for_update(skip_locked=True)
                 )
             )
             .scalars()
             .all()
         )
-
-    minutes = JOB_STALE_AFTER_SECONDS // 60
-    error = f"The worker stopped responding (no heartbeat for over {minutes} min)"
-    for job_id in stale:
-        log.warning(f"Job {job_id} has had no heartbeat for over {minutes} min; taking it back")
-        await fail_or_retry(job_id, error)
-    return stale
+        reaped = [job.id for job in stale]
+        for job in stale:
+            log.warning(f"Job {job.id} has had no heartbeat for over {minutes} min; taking it back")
+            await _fail(session, job, error)
+        await session.commit()
+    return reaped
 
 
 async def prune() -> int:

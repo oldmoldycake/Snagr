@@ -1,5 +1,6 @@
-"""Password hashing + token minting. Pure functions — no DB, no FastAPI — so
-you can unit-test every one of these in a python shell.
+"""Password hashing + token minting. No DB, no FastAPI — so you can unit-test
+every one of these in a python shell (the password pair is async: argon2 runs
+on a thread pool, off the event loop).
 
 Auth model:
   - access:  short-lived JWT (HS256, ACCESS_TTL_MIN) in the `snagr_access` cookie
@@ -9,10 +10,14 @@ Both cookies set httponly, samesite=lax, secure=settings.cookie_secure by the
 auth router.
 """
 
+import asyncio
 import hashlib
 import hmac
+import os
 import secrets
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import jwt
 from argon2 import PasswordHasher
@@ -23,18 +28,60 @@ from app.config import settings
 _ph = PasswordHasher()
 _ALGO = "HS256"
 
+# pg_advisory_xact_lock key that serializes creating a user who might be the
+# first: without it two sign-ups (password or SSO) on an empty instance both
+# count zero users and both become admin
+FIRST_USER_LOCK = 0x736E_6167_7200  # "snagr\0"
+
 
 # --- passwords --------------------------------------------------------------
 
+# the frontend's minLength on every new-password input; the server holds the
+# same line, since a script never sees that form
+MIN_PASSWORD_LENGTH = 8
 
-def hash_password(plain: str) -> str:
+# argon2 is slow on purpose (tens of ms of CPU and 64 MiB per call), so it
+# never runs on the event loop, where one hash stalls every other request.
+# Each hash already spreads over `parallelism` threads of its own, so a worker
+# per that many CPUs keeps them all busy; more would only fight over the cores
+# (the event loop's included), each holding its 64 MiB.
+_argon2_pool = ThreadPoolExecutor(
+    max_workers=max(1, (os.process_cpu_count() or 1) // _ph.parallelism),
+    thread_name_prefix="argon2",
+)
+
+# what an email with no password is checked against, so a login for an
+# unknown account costs what a wrong password costs and the response time
+# doesn't tell which emails exist
+_NO_PASSWORD_HASH = _ph.hash(secrets.token_urlsafe(16))
+
+
+def password_error(plain: str) -> str | None:
+    """Why `plain` can't be a new password, or None when it can."""
+    if len(plain) < MIN_PASSWORD_LENGTH:
+        return f"Password must be at least {MIN_PASSWORD_LENGTH} characters"
+    return None
+
+
+async def hash_password(plain: str) -> str:
     """Argon2 hash to store in users.password_hash."""
-    return _ph.hash(plain)
+    return await asyncio.get_running_loop().run_in_executor(_argon2_pool, _ph.hash, plain)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
-    """True if `plain` matches the stored hash; False on any mismatch/bad hash."""
+async def verify_password(plain: str, hashed: str | None) -> bool:
+    """True if `plain` matches the stored hash; False on any mismatch/bad hash.
+
+    A None hash (no such user, or an SSO-only account) is still worked
+    through in full and is always False."""
+    return await asyncio.get_running_loop().run_in_executor(_argon2_pool, _verify, plain, hashed)
+
+
+def _verify(plain: str, hashed: str | None) -> bool:
+    """The blocking half of verify_password, run on the argon2 pool."""
     try:
+        if hashed is None:
+            _ph.verify(_NO_PASSWORD_HASH, plain)
+            return False
         return _ph.verify(hashed, plain)
     except VerifyMismatchError, InvalidHashError:
         return False
@@ -43,12 +90,14 @@ def verify_password(plain: str, hashed: str) -> bool:
 # --- access token (JWT) -----------------------------------------------------
 
 
-def make_access_jwt(user_id: int, role: str) -> str:
-    """Short-lived signed token for the snagr_access cookie."""
+def make_access_jwt(user_id: int, role: str, family_id: UUID) -> str:
+    """Short-lived signed token for the snagr_access cookie. `sid` names the
+    sign-in (sessions.family_id) it was issued to."""
     now = datetime.now(UTC)
     payload = {
         "sub": str(user_id),
         "role": role,
+        "sid": str(family_id),
         "iat": now,
         "exp": now + timedelta(minutes=settings.ACCESS_TTL_MIN),
     }
@@ -95,6 +144,22 @@ def hash_api_token(raw: str) -> str:
     random bits, not something a person chose, so there is nothing to
     brute-force — and every request finds its row by this digest, the
     sessions.refresh_hash scheme."""
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+# --- password reset links ---------------------------------------------------
+
+
+def new_reset_token() -> tuple[str, str]:
+    """Return (raw_token_for_the_link, sha256_for_password_resets.token_hash).
+    The refresh-token scheme: only the hash is ever persisted."""
+    raw = secrets.token_urlsafe(32)
+    return raw, hash_reset_token(raw)
+
+
+def hash_reset_token(raw: str) -> str:
+    """sha256 of a raw reset token — the lookup key into password_resets.token_hash.
+    A fast hash for the reason hash_api_token gives: 256 random bits."""
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

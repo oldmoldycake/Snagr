@@ -3,6 +3,8 @@ import { useQuery } from '@tanstack/react-query'
 import { listCategories } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import { cn } from '@/lib/cn'
+import { useTrack } from '@/lib/useTrack'
+import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from './CreateCategoryDialog'
 
 /**
@@ -12,22 +14,33 @@ import { CreateCategoryDialog } from './CreateCategoryDialog'
 export function CategoryChips({ activeSlug, className }: { activeSlug?: string; className?: string }) {
   const { data } = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const categories = data?.data ?? []
+  // categories are shared, so only an admin creates one
+  const isAdmin = useSession().data?.role === 'admin'
+  // one lume bar tracks the active link, as the masthead's does its tabs; a new
+  // category can push the active link along, so the count moves it too
+  const { hostRef, markerRef } = useTrack<HTMLElement>('a[aria-current="page"]', `${activeSlug}:${categories.length}`)
 
   const chipClass = (isActive: boolean) =>
     cn(
-      'border-b-2 pb-0.5 font-mono text-[11px] whitespace-nowrap transition-colors',
-      isActive ? 'border-lume text-ink' : 'border-transparent text-ink-3 hover:text-ink-2',
+      'chip-tab relative pb-1 font-mono text-[12px] whitespace-nowrap transition-colors',
+      isActive ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
     )
 
   return (
-    <div className={cn('flex flex-wrap items-baseline gap-x-4 gap-y-1.5', className)}>
-      <Link to="/" className={chipClass(activeSlug == null)}>
+    <nav
+      ref={hostRef}
+      aria-label="Categories"
+      className={cn('relative flex flex-wrap items-baseline gap-x-4 gap-y-1.5', className)}
+    >
+      <span ref={markerRef} aria-hidden className="chip-lume" />
+      <Link to="/" aria-current={activeSlug == null ? 'page' : undefined} className={chipClass(activeSlug == null)}>
         All
       </Link>
       {categories.map((category) => (
         <Link
           key={category.id}
           to={`/categories/${category.slug}`}
+          aria-current={activeSlug === category.slug ? 'page' : undefined}
           className={chipClass(activeSlug === category.slug)}
         >
           {category.name}
@@ -39,11 +52,13 @@ export function CategoryChips({ activeSlug, className }: { activeSlug?: string; 
           ) : null}
         </Link>
       ))}
-      <CreateCategoryDialog
-        variant="ghost"
-        className="h-auto px-1 py-0 text-[11px] text-ink-3"
-        trigger={<span>＋ category</span>}
-      />
-    </div>
+      {isAdmin ? (
+        <CreateCategoryDialog
+          variant="ghost"
+          className="h-auto px-1 py-0 text-[12px] text-ink-3"
+          trigger={<span>＋ category</span>}
+        />
+      ) : null}
+    </nav>
   )
 }

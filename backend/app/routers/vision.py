@@ -129,7 +129,10 @@ async def upload_reference(
             "Upload must be an image file",
             fields={"file": "Must be an image file"},
         )
-    data = await file.read()
+    # one byte past the cap is enough to tell an oversized file apart, and
+    # keeps the handler from pulling an arbitrarily large upload into memory
+    # (Starlette has already spooled the part to disk past 1 MB)
+    data = await file.read(vision_service.MAX_UPLOAD_BYTES + 1)
     if len(data) > vision_service.MAX_UPLOAD_BYTES:
         raise err(
             422,

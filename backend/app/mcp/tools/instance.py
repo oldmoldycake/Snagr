@@ -10,7 +10,9 @@ from app.schemas.auth import InstanceInfo, user_out
 
 
 def register(mcp: FastMCP) -> None:
-    """Define the orientation tools on the shared server."""
+    """Define the orientation tools on the shared server. Neither carries a
+    scope gate: GET /api/instance is public, and a token may always ask what
+    it is — that is how a narrow token learns why its tool list is short."""
 
     @mcp.tool(annotations=READ_ONLY)
     async def get_instance() -> InstanceInfo:

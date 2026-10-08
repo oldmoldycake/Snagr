@@ -1,23 +1,24 @@
 import { Fragment, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronRight, ListFilter, MoreHorizontal, Pencil, Search, Trash2 } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { ChevronDown, ChevronRight, ListFilter, Pencil, Search, Trash2 } from 'lucide-react'
 import type { ItemSummary, PriceDrop } from '@/api/types'
 import { Sparkline } from '@/components/charts/Sparkline'
 import { SnaggedBadge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { MeterToTarget } from '@/components/ui/meter'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuMoreTrigger,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
 import { SimpleTooltip } from '@/components/ui/tooltip'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney, toCents } from '@/lib/money'
-import { relativeTime } from '@/lib/time'
+import { dayPhrase } from '@/lib/time'
 import { ItemListingsPanel } from './ItemListingsPanel'
 
 /** Rows plus the optional columns and row actions each page turns on. */
@@ -30,6 +31,20 @@ export interface WatchListProps {
   onEdit?: (item: ItemSummary) => void
   onDelete?: (item: ItemSummary) => void
   onHunt?: (item: ItemSummary) => void
+  /**
+   * Keep the header row for screen readers and for the fixed column widths, but
+   * draw it at zero height: a dashboard shelf sits under one shared label row
+   * (WatchListLabels). Not `sr-only`, whose absolute positioning drops the row
+   * out of the table layout and collapses every column.
+   */
+  hideHeader?: boolean
+  /**
+   * Fixed widths on every column but Item, so WatchLists stacked on one page
+   * (the dashboard's shelves) line up with each other and with WatchListLabels.
+   */
+  fixedColumns?: boolean
+  /** ids of rows that just struck, which flash once */
+  struck?: Set<number>
   className?: string
 }
 
@@ -38,7 +53,7 @@ export function effectiveTarget(item: ItemSummary): string | null {
   return item.watch.target_price ?? item.target_price
 }
 
-/** "Tonight" freshness — the window for the chip's "today" and the struck-through old price. */
+/** "Tonight" freshness — the last 24 hours, the window for the struck-through old price. */
 export function isFreshDrop(drop: PriceDrop): boolean {
   return Date.now() - new Date(drop.checked_at).getTime() < 86_400_000
 }
@@ -53,8 +68,11 @@ export function sortByDistanceToTarget(items: ItemSummary[]): ItemSummary[] {
   }
   return [...items].sort((a, b) => {
     if (a.target_met !== b.target_met) return a.target_met ? -1 : 1
-    const diff = ratio(a) - ratio(b)
-    if (diff !== 0) return diff
+    // compared, not subtracted: two unpriced items are Infinity - Infinity = NaN,
+    // which would skip the name tiebreak
+    const ra = ratio(a)
+    const rb = ratio(b)
+    if (ra !== rb) return ra < rb ? -1 : 1
     return a.name.localeCompare(b.name)
   })
 }
@@ -63,20 +81,74 @@ function CriteriaHint({ item }: { item: ItemSummary }) {
   if (!item.criteria) return null
   const mode = item.selection_mode === 'best_match' ? 'Best match' : 'Cheapest'
   return (
-    <SimpleTooltip content={<span className="block max-w-64">{`${mode} — “${item.criteria}”`}</span>}>
-      <ListFilter aria-label="Has criteria" className="size-3.5 shrink-0 text-ink-3" />
+    <SimpleTooltip
+      label="Show criteria"
+      content={<span className="block max-w-64">{`${mode} — “${item.criteria}”`}</span>}
+    >
+      <ListFilter aria-hidden className="size-3.5 shrink-0 text-ink-3" />
     </SimpleTooltip>
   )
 }
 
+/**
+ * The item's latest single drop, on whichever listing it was seen. Dated, so it
+ * can't be read as the change over the range that the Trend column prints.
+ */
 function DropChip({ drop }: { drop: PriceDrop }) {
   const pct = Math.abs(Number(drop.pct_change))
   if (!Number.isFinite(pct)) return null
-  const fresh = isFreshDrop(drop)
+  // A phone's Item column is narrower than the chip, so it breaks between figure and date
+  // instead of overrunning the Best column; half the one-line height keeps it a pill on one
+  // line and makes it a tag, not a stretched capsule, on two.
   return (
-    <span className="shrink-0 rounded-full border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[10px] text-drop tnum">
-      <span aria-hidden>▼</span> {pct.toFixed(1)}%{fresh ? ' today' : ''}
+    <span className="shrink-0 rounded-[11px] border border-drop/30 bg-drop-dim px-1.5 py-px font-mono text-[12px] text-drop tnum">
+      <span className="whitespace-nowrap">
+        <span aria-hidden>▼</span>
+        <span className="sr-only">dropped</span> {pct.toFixed(1)}%
+      </span>{' '}
+      <span className="whitespace-nowrap">{dayPhrase(drop.checked_at)}</span>
     </span>
+  )
+}
+
+/** The column header row; with `fixed`, the widths every column but Item keeps. */
+function WatchListHead({
+  showSite,
+  expandable,
+  hasActions,
+  hidden,
+  fixed,
+}: {
+  showSite?: boolean
+  expandable?: boolean
+  hasActions?: boolean
+  hidden?: boolean
+  fixed?: boolean
+}) {
+  return (
+    <THead className={cn(hidden && '[&_th]:h-0 [&_th]:py-0 [&_th]:text-[0px] [&_th]:leading-[0] [&_tr]:border-0')}>
+      <TR>
+        {expandable ? <TH className="w-8" /> : null}
+        <TH>Item</TH>
+        <TH className={cn('hidden md:table-cell', fixed && 'w-36')}>Trend</TH>
+        <TH className={cn('text-right', fixed && 'w-24 max-sm:w-20')}>Best</TH>
+        {/* w-36 fits a 16-character site name (bhphotovideo.com); below lg the Item column can't spare it */}
+        {showSite ? <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[88px] lg:w-36')}>Site</TH> : null}
+        <TH className={cn('hidden text-right md:table-cell', fixed && 'w-[92px]')}>Target</TH>
+        <TH className={cn('text-right', fixed && 'w-[150px] max-sm:w-[104px]')}>To target</TH>
+        <TH className={cn('hidden text-right sm:table-cell', fixed && 'w-[84px]')}>Checked</TH>
+        {hasActions ? <TH className="w-10" /> : null}
+      </TR>
+    </THead>
+  )
+}
+
+/** The column labels alone, for a page that shows them once above several WatchLists with `hideHeader`. */
+export function WatchListLabels({ showSite, className }: { showSite?: boolean; className?: string }) {
+  return (
+    <Table className={cn('table-fixed', className)}>
+      <WatchListHead showSite={showSite} fixed />
+    </Table>
   )
 }
 
@@ -90,6 +162,9 @@ export function WatchList({
   onEdit,
   onDelete,
   onHunt,
+  hideHeader,
+  fixedColumns,
+  struck,
   className,
 }: WatchListProps) {
   const navigate = useNavigate()
@@ -108,20 +183,14 @@ export function WatchList({
   const columnCount = 6 + (showSite ? 1 : 0) + (expandable ? 1 : 0) + (hasActions ? 1 : 0)
 
   return (
-    <Table className={className}>
-      <THead>
-        <TR>
-          {expandable ? <TH className="w-8" /> : null}
-          <TH>Item</TH>
-          <TH className="hidden md:table-cell">Trend</TH>
-          <TH className="text-right">Best</TH>
-          {showSite ? <TH className="hidden text-right md:table-cell">Site</TH> : null}
-          <TH className="hidden text-right md:table-cell">Target</TH>
-          <TH className="text-right">To target</TH>
-          <TH className="hidden text-right sm:table-cell">Checked</TH>
-          {hasActions ? <TH className="w-10" /> : null}
-        </TR>
-      </THead>
+    <Table className={cn(fixedColumns && 'table-fixed', className)}>
+      <WatchListHead
+        showSite={showSite}
+        expandable={expandable}
+        hasActions={hasActions}
+        hidden={hideHeader}
+        fixed={fixedColumns}
+      />
       <TBody>
         {items.map((item) => {
           const isExpanded = expanded.has(item.id)
@@ -136,9 +205,16 @@ export function WatchList({
             <Fragment key={item.id}>
               <TR
                 data-clickable="true"
-                onClick={() => navigate(`/items/${item.id}`)}
+                data-strike={struck?.has(item.id) || undefined}
+                // the name's link is what keyboards, screen readers and new tabs use; the row
+                // click is a mouse convenience, and leaves a click on the link to the link
+                onClick={(e) => {
+                  if (!(e.target as Element).closest('a')) navigate(`/items/${item.id}`)
+                }}
                 className={cn(
                   'border-l-2 border-l-transparent',
+                  // the in-range gradient is a background image, so the flash shows through its clear end
+                  'data-strike:animate-strike-row motion-reduce:data-strike:shadow-[inset_2px_0_0_var(--color-lume)]',
                   item.target_met &&
                     'border-l-drop bg-linear-to-r from-drop-dim to-transparent to-60% [&>td]:py-3',
                   isExpanded && 'border-b-0',
@@ -150,7 +226,7 @@ export function WatchList({
                       type="button"
                       aria-expanded={isExpanded}
                       aria-label={`${isExpanded ? 'Collapse' : 'Expand'} listings for ${item.name}`}
-                      className="flex size-5 items-center justify-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
+                      className="tap-target relative flex size-5 items-center justify-center rounded-sm text-ink-3 hover:bg-raised hover:text-ink"
                       onClick={() => toggleExpand(item.id)}
                     >
                       {isExpanded ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -164,20 +240,32 @@ export function WatchList({
                         ⌖
                       </span>
                     ) : null}
-                    <span className={cn('font-medium text-ink', item.target_met && 'text-sm font-semibold')}>
-                      {item.name}
-                    </span>
-                    {showCategory ? (
-                      <span className="hidden shrink-0 font-mono text-[10.5px] text-ink-3 md:inline">
-                        {item.category_name}
-                      </span>
-                    ) : null}
-                    <CriteriaHint item={item} />
-                    {drop && !item.target_met ? <DropChip drop={drop} /> : null}
+                    {/* the chip wraps under a name it doesn't fit beside rather than cutting the name short,
+                        and always does on a phone, where sharing the line left room for ~10 characters */}
+                    <div className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 max-sm:flex-col max-sm:items-start sm:items-center">
+                      <div className="flex max-w-full min-w-0 items-center gap-2">
+                        <Link
+                          to={`/items/${item.id}`}
+                          className={cn(
+                            'min-w-0 truncate font-medium text-ink hover:text-lume',
+                            item.target_met && 'text-sm font-semibold',
+                          )}
+                        >
+                          {item.name}
+                        </Link>
+                        {showCategory ? (
+                          <span className="hidden shrink-0 font-mono text-[12px] text-ink-3 md:inline">
+                            {item.category_name}
+                          </span>
+                        ) : null}
+                        <CriteriaHint item={item} />
+                      </div>
+                      {drop && !item.target_met ? <DropChip drop={drop} /> : null}
+                    </div>
                   </div>
                 </TD>
                 <TD className="hidden md:table-cell">
-                  <Sparkline data={item.spark} width={80} height={22} />
+                  <Sparkline data={item.spark} width={56} height={22} />
                 </TD>
                 <TD
                   className={cn(
@@ -187,7 +275,8 @@ export function WatchList({
                   )}
                 >
                   {struckFrom ? (
-                    <s className="block font-mono text-[11px] font-normal text-ink-3 sm:mr-1.5 sm:inline">
+                    // stacked, never inline: side by side the two prices overrun the fixed-width Best column
+                    <s className="block font-mono text-[12px] leading-tight font-normal text-ink-3">
                       {formatMoney(struckFrom.old_price, item.currency)}
                     </s>
                   ) : null}
@@ -200,7 +289,10 @@ export function WatchList({
                   )}
                 </TD>
                 {showSite ? (
-                  <TD className="hidden text-right font-mono text-[11.5px] text-ink-3 md:table-cell">
+                  <TD
+                    title={item.best_site_name ?? undefined}
+                    className="hidden truncate text-right font-mono text-[12px] text-ink-3 md:table-cell"
+                  >
                     {item.best_site_name ?? '—'}
                   </TD>
                 ) : null}
@@ -211,23 +303,39 @@ export function WatchList({
                   {item.target_met ? (
                     <SnaggedBadge />
                   ) : item.active_listing_count === 0 ? (
-                    <span className="font-mono text-[11px] text-ink-3">no listings yet</span>
+                    <span className="font-mono text-[12px] text-ink-3">no listings yet</span>
                   ) : (
                     <MeterToTarget best={item.best_price} target={effectiveTarget(item)} currency={item.currency} />
                   )}
                 </TD>
                 <TD className="hidden text-right font-mono text-xs whitespace-nowrap text-ink-3 sm:table-cell">
-                  {relativeTime(item.last_checked_at)}
+                  <RelativeTime iso={item.last_checked_at} />
                 </TD>
                 {hasActions ? (
                   <TD onClick={(e) => e.stopPropagation()}>
                     <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="iconSm" aria-label={`Actions for ${item.name}`}>
-                          <MoreHorizontal />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
+                      <DropdownMenuMoreTrigger label={`Actions for ${item.name}`} />
+                      <DropdownMenuContent align="end" className="w-60">
+                        <DropdownMenuLabel
+                          title={item.name}
+                          meta={
+                            <span className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
+                              target {formatMoney(effectiveTarget(item), item.currency)}
+                            </span>
+                          }
+                        >
+                          <span className="font-mono text-[12px] text-ink-2 tnum">
+                            {item.best_price == null ? (
+                              <span className="text-ink-3">no price yet</span>
+                            ) : (
+                              <>
+                                best {formatMoney(item.best_price, item.currency)}
+                                {item.best_site_name ? ` on ${item.best_site_name}` : ''}
+                                {item.target_met ? <span className="text-drop"> · ⌖ at target</span> : null}
+                              </>
+                            )}
+                          </span>
+                        </DropdownMenuLabel>
                         {onHunt ? (
                           <DropdownMenuItem onSelect={() => onHunt(item)}>
                             <Search /> Hunt now
@@ -241,8 +349,8 @@ export function WatchList({
                         {onDelete ? (
                           <>
                             <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-rise" onSelect={() => onDelete(item)}>
-                              <Trash2 /> Delete
+                            <DropdownMenuItem tone="danger" onSelect={() => onDelete(item)}>
+                              <Trash2 /> Remove
                             </DropdownMenuItem>
                           </>
                         ) : null}

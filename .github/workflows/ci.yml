@@ -228,6 +228,9 @@ jobs:
       # Alembic connects to this URL as-is (migrations/env.py reads
       # settings.DATABASE_URL) — no test-DB rewrite on this path.
       DATABASE_URL: postgresql+asyncpg://snagr:snagr@localhost:5432/snagr
+      # Importing settings refuses to load without a real-looking JWT_SECRET,
+      # even though migrations never sign anything.
+      JWT_SECRET: ci-only-jwt-secret-not-used-by-migrations
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

@@ -19,12 +19,16 @@
   --color-overlay: #1c2820;
   --color-hairline: rgb(193 255 208 / 0.09);
   --color-hairline-strong: rgb(193 255 208 / 0.16);
+  /* a control's own boundary (inputs, switches, checkboxes): ≥3:1 on every surface, as WCAG 1.4.11 asks */
+  --color-hairline-field: rgb(193 255 208 / 0.38);
   --color-grid: #202b23;
 
   /* Ink */
   --color-ink: #e9f1e9;
   --color-ink-2: #a6b5a7;
-  --color-ink-3: #69796e;
+  --color-ink-3: #8f9f94; /* ≥4.5:1 up to overlay, the lightest surface it sits on */
+  /* a field's placeholder: under ink-3 so it never passes for a typed value; ≥4.5:1 on well, every field's ground */
+  --color-ink-placeholder: #748279;
 
   /* Identity — "lume", the illuminated reticle. Active/live/primary, never semantic. */
   --color-lume: #ffb454;
@@ -50,12 +54,175 @@
   --radius-md: 6px;
   --radius-lg: 8px;
 
+  --ease-shelf: cubic-bezier(0.2, 0, 0, 1);
+  --ease-shelf-in: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-panel: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+
   --animate-sweep: sweep 3.2s linear infinite;
+  /* Exits are keyframes, not transitions: Radix Presence waits for animationend before unmounting. */
+  --animate-overlay-in: overlay-in 200ms cubic-bezier(0.2, 0, 0, 1) both;
+  --animate-overlay-out: overlay-out 150ms cubic-bezier(0.4, 0, 1, 1) both;
+  --animate-dialog-in: dialog-in 220ms var(--ease-panel) both;
+  --animate-dialog-out: dialog-out 150ms ease-in both;
+  --animate-sheet-up: sheet-up 280ms var(--ease-sheet) both;
+  --animate-sheet-down: sheet-down 200ms ease-in both;
+  --animate-step-fwd: step-fwd 180ms ease-out both;
+  --animate-step-back: step-back 180ms ease-out both;
+  --animate-pick-new: pick-new 600ms ease-out;
+  --animate-shelf-row: shelf-row 140ms var(--ease-shelf) both;
+  --animate-strike-row: strike-row 1200ms ease-out;
+  --animate-strike-edge: strike-edge 1200ms ease-out;
+  --animate-fold-open: fold-open 260ms var(--ease-shelf);
+  --animate-fold-close: fold-close 180ms var(--ease-shelf-in) both;
+  --animate-fold-row: shelf-row 180ms var(--ease-shelf) both;
+  --animate-fold-scan: fold-scan 260ms ease-out both;
+  --animate-menu-in: menu-in 170ms var(--ease-panel) both;
+  --animate-menu-out: menu-out 110ms var(--ease-shelf-in) both;
+  --animate-menu-row: shelf-row 150ms var(--ease-shelf) both;
+  --animate-menu-scan: menu-scan 300ms ease-out both;
 }
 
 @keyframes sweep {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes overlay-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+@keyframes dialog-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes sheet-down {
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@keyframes step-fwd {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+}
+
+@keyframes step-back {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+
+@keyframes pick-new {
+  from {
+    background-color: var(--color-lume-glow);
+  }
+}
+
+@keyframes shelf-row {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes strike-row {
+  from {
+    background-color: rgb(66 208 124 / 0.22);
+  }
+}
+
+@keyframes strike-edge {
+  0%,
+  25% {
+    border-color: rgb(255 180 84 / 0.6);
+  }
+}
+
+@keyframes fold-open {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+
+@keyframes fold-close {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes fold-scan {
+  from {
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--menu-dy, -4px)) scale(0.96);
+  }
+}
+
+@keyframes menu-out {
+  to {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes menu-scan {
+  from {
+    top: 0;
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  to {
+    top: 100%;
+    opacity: 0;
   }
 }
 
@@ -65,7 +232,7 @@
   }
 
   body {
-    @apply font-sans text-[13px] leading-normal text-ink antialiased;
+    @apply font-sans text-[14px] leading-normal text-ink antialiased;
     background:
       radial-gradient(900px 340px at 30% 0%, rgb(66 208 124 / 0.045), transparent 70%),
       var(--color-page);
@@ -77,6 +244,12 @@
 
   *:focus-visible {
     @apply outline-2 outline-offset-2 outline-lume;
+  }
+
+  /* where focus lands after a route change (AppShell): a landmark, not a control to ring */
+  main:focus-visible,
+  main h1[tabindex='-1']:focus-visible {
+    outline: none;
   }
 
   * {
@@ -95,6 +268,516 @@
   }
 }
 
+/*
+ * Dashboard shelves (motion "Drawer"). CategoryShelf sets data-state, and the
+ * body's hidden="until-found", from a layout effect, so every transition here
+ * starts from a real "before" state. Reduced motion is the global rule above.
+ */
+@layer components {
+  .shelf-body {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 160ms var(--ease-shelf-in);
+  }
+  /* preflight hides [hidden]; a collapsed body must stay a grid so Ctrl-F can find its rows */
+  .shelf-body[hidden='until-found'] {
+    display: grid !important;
+  }
+  .shelf[data-state='open'] > .shelf-body {
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 200ms var(--ease-shelf);
+  }
+  .shelf-inner {
+    min-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 90ms ease-out;
+  }
+  .shelf[data-state='open'] .shelf-inner {
+    opacity: 1;
+    transition: opacity 140ms ease-out 40ms;
+  }
+
+  .shelf-head {
+    transition: background-color 120ms ease-out;
+  }
+  .shelf-head:has(.shelf-toggle:hover) {
+    background-color: rgb(193 255 208 / 0.03);
+  }
+  .shelf-chevron {
+    color: var(--color-ink-3);
+    transition:
+      rotate 160ms var(--ease-shelf-in),
+      translate 80ms ease-out,
+      color 120ms ease-out;
+  }
+  .shelf[data-state='open'] .shelf-chevron {
+    rotate: 90deg;
+    transition:
+      rotate 200ms var(--ease-shelf),
+      translate 80ms ease-out,
+      color 120ms ease-out;
+  }
+  .shelf-toggle:is(:hover, :focus-visible) .shelf-chevron {
+    color: var(--color-lume);
+  }
+  /* a press nudges the chevron the way it is about to turn */
+  .shelf-toggle:active .shelf-chevron {
+    translate: 2px 0;
+  }
+  .shelf[data-state='open'] .shelf-toggle:active .shelf-chevron {
+    translate: 0 2px;
+  }
+
+  /* The lead and site count stand in for the hidden rows. They fade as the rows
+     open but keep their space, so the header never reflows. */
+  .shelf-peek {
+    transition:
+      opacity 140ms ease-out 60ms,
+      visibility 0s linear 0s;
+  }
+  .shelf[data-state='open'] .shelf-peek {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 90ms ease-out,
+      visibility 0s linear 90ms;
+  }
+  @media (width < 40rem) {
+    /* on a phone the lead takes its own line, which folds away as the shelf opens */
+    .shelf-lead {
+      flex-basis: 100%;
+      max-height: 3.2em;
+      overflow: hidden;
+      padding-left: 26px;
+      transition:
+        max-height 160ms var(--ease-shelf-in),
+        opacity 140ms ease-out 60ms,
+        visibility 0s;
+    }
+    .shelf[data-state='open'] .shelf-lead {
+      max-height: 0;
+      transition:
+        max-height 200ms var(--ease-shelf),
+        opacity 90ms ease-out,
+        visibility 0s linear 90ms;
+    }
+  }
+
+  /* after a user opens a shelf (not on first render, not in Expand all) its rows drop in in turn */
+  .shelf tbody tr {
+    --i: 5;
+  }
+  .shelf tbody tr:nth-child(1) {
+    --i: 1;
+  }
+  .shelf tbody tr:nth-child(2) {
+    --i: 2;
+  }
+  .shelf tbody tr:nth-child(3) {
+    --i: 3;
+  }
+  .shelf tbody tr:nth-child(4) {
+    --i: 4;
+  }
+  .shelf[data-rows-in] :is(.shelf-stagger, tbody tr) {
+    animation: var(--animate-shelf-row);
+    animation-delay: calc(40ms + var(--i, 0) * 20ms);
+  }
+
+  /* Ctrl-F opened the shelf: open it at once, the browser is already scrolling to the match */
+  .shelf[data-instant],
+  .shelf[data-instant] * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/*
+ * The listings board's fold and each row's detail (the same "Drawer" motion as
+ * the shelves). Radix Collapsible measures the content into
+ * --radix-collapsible-content-height and keeps it mounted until fold-close
+ * ends, then unmounts it, so a closed fold or detail leaves nothing in the tab order.
+ */
+@layer components {
+  .fold,
+  .row-detail {
+    position: relative;
+    overflow: hidden;
+  }
+  .fold[data-state='open'],
+  .row-detail[data-state='open'] {
+    animation: var(--animate-fold-open);
+  }
+  .fold[data-state='closed'],
+  .row-detail[data-state='closed'] {
+    animation: var(--animate-fold-close);
+  }
+
+  /* opt-in rather than overridden: the global reduced-motion rule shortens
+     durations but not delays, which would leave staggered rows blank */
+  @media (prefers-reduced-motion: no-preference) {
+    /* a faint phosphor line rides the reveal edge down */
+    .fold[data-state='open']::after {
+      content: '';
+      position: absolute;
+      inset-inline: 0;
+      bottom: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgb(193 255 208 / 0.45), transparent);
+      box-shadow: 0 0 8px rgb(193 255 208 / 0.25);
+      pointer-events: none;
+      animation: var(--animate-fold-scan);
+    }
+
+    .fold-rows > * {
+      --i: 6;
+    }
+    .fold-rows > :nth-child(1) {
+      --i: 0;
+    }
+    .fold-rows > :nth-child(2) {
+      --i: 1;
+    }
+    .fold-rows > :nth-child(3) {
+      --i: 2;
+    }
+    .fold-rows > :nth-child(4) {
+      --i: 3;
+    }
+    .fold-rows > :nth-child(5) {
+      --i: 4;
+    }
+    .fold-rows > :nth-child(6) {
+      --i: 5;
+    }
+    /* each child is one listing, row and detail together, so opening a detail replays nothing */
+    .fold-rows > * {
+      animation: var(--animate-fold-row);
+      animation-delay: calc(40ms + var(--i) * 25ms);
+    }
+    .row-detail[data-state='open'] > * {
+      animation: var(--animate-fold-row);
+      animation-delay: 40ms;
+    }
+  }
+}
+
+/*
+ * Masthead nav, segmented controls and the category links (motion "Reticle
+ * Track"). One marker tracks the active option — a lume bar, or a Segmented's
+ * plate: useTrack sets its edges (--l, --r) and which way it is moving
+ * (data-dir). Every transition is opt-in, so reduced motion moves it at once.
+ */
+@layer components {
+  :is(.nav-lume, .seg-plate, .chip-lume) {
+    position: absolute;
+    left: var(--l, 0);
+    right: var(--r, 100%);
+    pointer-events: none;
+  }
+  :is(.nav-lume, .seg-plate, .chip-lume)[data-state='idle'] {
+    opacity: 0;
+  }
+  .nav-lume {
+    bottom: -1px;
+    height: 2px;
+    background: var(--color-lume);
+  }
+  /* the category links wrap, so their bar rides the active link's bottom edge (--t) */
+  .chip-lume {
+    top: calc(var(--t, 0) - 2px);
+    height: 2px;
+    background: var(--color-lume);
+  }
+  /* the menu plate's ground, with its lume tick turned to sit under the label as the nav's bar does */
+  .seg-plate {
+    top: 2px;
+    bottom: 2px;
+    border-radius: 3px;
+    background: var(--color-raised);
+    box-shadow: inset 0 1px 0 rgb(193 255 208 / 0.05);
+  }
+  .seg-plate::after {
+    content: '';
+    position: absolute;
+    inset-inline: 6px;
+    bottom: 0;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--color-lume);
+  }
+
+  /* hovering an inactive option lights a faint candidate line where the marker would land */
+  :is(.nav-tab, .seg-option, .chip-tab)::after {
+    content: '';
+    position: absolute;
+    height: 1px;
+    background: var(--color-hairline-strong);
+    scale: 0 1;
+  }
+  .nav-tab::after {
+    inset-inline: 0;
+    bottom: -1px;
+  }
+  .seg-option::after {
+    inset-inline: 6px;
+    bottom: 0;
+  }
+  .chip-tab::after {
+    inset-inline: 0;
+    bottom: 0;
+  }
+  :is(.nav-tab, .seg-option, .chip-tab):not([aria-current='page'], [aria-checked='true']):hover::after {
+    scale: 1 1;
+  }
+  :is(.nav-tab, .seg-option, .chip-tab):not([aria-current='page'], [aria-checked='true']):active::after {
+    background: rgb(255 180 84 / 0.5);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    /* no direction: growing out of an option's center */
+    :is(.nav-lume, .seg-plate, .chip-lume) {
+      transition:
+        left 180ms var(--ease-shelf),
+        right 180ms var(--ease-shelf),
+        opacity 90ms var(--ease-shelf-in);
+    }
+    /* the leading edge lunges and the trailing edge catches up a beat later */
+    :is(.nav-lume, .seg-plate, .chip-lume)[data-dir='right'] {
+      transition:
+        right 180ms var(--ease-panel),
+        left 240ms var(--ease-shelf) 50ms;
+    }
+    :is(.nav-lume, .seg-plate, .chip-lume)[data-dir='left'] {
+      transition:
+        left 180ms var(--ease-panel),
+        right 240ms var(--ease-shelf) 50ms;
+    }
+    :is(.nav-lume, .seg-plate, .chip-lume)[data-state='idle'] {
+      transition:
+        left 160ms var(--ease-shelf-in),
+        right 160ms var(--ease-shelf-in),
+        opacity 90ms var(--ease-shelf-in) 70ms;
+    }
+
+    :is(.nav-tab, .seg-option, .chip-tab)::after {
+      transition:
+        scale 90ms var(--ease-shelf-in),
+        background-color 90ms ease-out;
+    }
+    :is(.nav-tab, .seg-option, .chip-tab):not([aria-current='page'], [aria-checked='true']):hover::after {
+      transition: scale 140ms var(--ease-shelf);
+    }
+  }
+
+  /* a first placement or a re-seat after the host changes width never animates */
+  :is(.nav-lume, .seg-plate, .chip-lume)[data-instant] {
+    transition: none !important;
+  }
+}
+
+/*
+ * Dropdown menus (the nav's "Reticle Track" motion). The panel grows out of its
+ * trigger, its rows drop in in turn, and one plate slides onto the highlighted
+ * row instead of each row lighting its own ground: DropdownMenuContent's
+ * placePlate sets its offset (--y), height (--h) and tone.
+ */
+@layer components {
+  /* a menu flipped above its trigger rises into place instead of dropping */
+  .menu-panel[data-side='top'] {
+    --menu-dy: 4px;
+  }
+
+  .menu-plate {
+    position: absolute;
+    top: 0;
+    inset-inline: 4px;
+    height: var(--h, 0);
+    transform: translateY(var(--y, 0));
+    border-radius: var(--radius-sm);
+    background: var(--color-raised);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .menu-plate::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 7px;
+    bottom: 7px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--color-lume);
+  }
+  .menu-plate[data-state='on'] {
+    opacity: 1;
+  }
+  .menu-plate[data-tone='danger'] {
+    background: rgb(240 86 92 / 0.1);
+  }
+  .menu-plate[data-tone='danger']::before {
+    background: var(--color-rise);
+  }
+
+  /* opt-in, like the fold: the global reduced-motion rule shortens durations but not delays */
+  @media (prefers-reduced-motion: no-preference) {
+    .menu-plate {
+      transition:
+        transform 170ms var(--ease-panel),
+        height 170ms var(--ease-panel),
+        opacity 90ms var(--ease-shelf-in),
+        background-color 120ms ease-out;
+    }
+
+    .menu-panel > * {
+      --i: 6;
+    }
+    .menu-panel > :nth-child(1) {
+      --i: 0;
+    }
+    .menu-panel > :nth-child(2) {
+      --i: 1;
+    }
+    .menu-panel > :nth-child(3) {
+      --i: 2;
+    }
+    .menu-panel > :nth-child(4) {
+      --i: 3;
+    }
+    .menu-panel > :nth-child(5) {
+      --i: 4;
+    }
+    .menu-panel > :nth-child(6) {
+      --i: 5;
+    }
+    .menu-panel[data-state='open'] > :not(.menu-plate) {
+      animation: var(--animate-menu-row);
+      animation-delay: calc(50ms + var(--i) * 22ms);
+    }
+
+    /* the listings fold's phosphor line, riding down the panel once as it opens */
+    .menu-panel[data-state='open']::after {
+      content: '';
+      position: absolute;
+      inset-inline: 0;
+      top: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgb(193 255 208 / 0.45), transparent);
+      box-shadow: 0 0 8px rgb(193 255 208 / 0.25);
+      pointer-events: none;
+      animation: var(--animate-menu-scan);
+    }
+  }
+
+  .menu-plate[data-instant] {
+    transition: none !important;
+  }
+
+  /* the account avatar locks on with four reticle ticks while its menu is open */
+  .avatar-ticks {
+    position: absolute;
+    inset: -7px;
+    fill: none;
+    stroke: var(--color-lume);
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    opacity: 0;
+    scale: 0.7;
+    rotate: 45deg;
+    pointer-events: none;
+  }
+  [data-state='open'] > .avatar-ticks {
+    opacity: 1;
+    scale: 1;
+    rotate: 0deg;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .avatar-ticks {
+      transition:
+        opacity 90ms ease-out,
+        scale 120ms var(--ease-shelf-in),
+        rotate 120ms var(--ease-shelf-in);
+    }
+    [data-state='open'] > .avatar-ticks {
+      transition:
+        opacity 120ms ease-out,
+        scale 240ms var(--ease-panel),
+        rotate 260ms var(--ease-panel);
+    }
+  }
+}
+
+/*
+ * Quieted content never fades with opacity: faded text drops below 4.5:1.
+ * A panel still showing the previous range or filter while the new one loads
+ * (aria-busy) shows a lume edge instead; a background refetch shows nothing,
+ * since the data on screen is still current. A row that is no longer live
+ * steps its primary ink down to ink-2 (ink-muted).
+ */
+@layer components {
+  .busy-edge {
+    position: relative;
+  }
+  .busy-edge[aria-busy='true']::after {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    z-index: 1;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--color-lume), transparent);
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .busy-edge[aria-busy='true']::after {
+      animation: busy-pulse 1.2s ease-in-out infinite;
+    }
+  }
+}
+
+@keyframes busy-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@utility ink-muted {
+  --color-ink: var(--color-ink-2);
+}
+
+/* What a menu acts on stays lit while it is open: a shelf's edge, a table row's
+   ground. In the utilities layer so it wins over the border and background
+   utilities those elements already carry. */
+@layer utilities {
+  .shelf {
+    transition: border-color 160ms ease-out;
+  }
+  .shelf:has(.shelf-head [aria-haspopup='menu'][data-state='open']) {
+    border-color: rgb(255 180 84 / 0.38);
+  }
+  .shelf:has(.shelf-head [aria-haspopup='menu'][data-state='open']) .shelf-head {
+    background-color: rgb(193 255 208 / 0.03);
+  }
+  tr:has(> td [aria-haspopup='menu'][data-state='open']) {
+    background-color: rgb(193 255 208 / 0.03);
+  }
+}
+
 @utility tnum {
   font-variant-numeric: tabular-nums;
+}
+
+/* A 44px hit area on touch screens (WCAG 2.5.5) without growing the control:
+   an invisible ::before reaches past each edge that falls short of 44px. The
+   host must be positioned. ::before, because the nav underlines own ::after. */
+@utility tap-target {
+  @media (pointer: coarse) {
+    &::before {
+      content: '';
+      position: absolute;
+      inset-block: min(0px, calc((100% - 44px) / 2));
+      inset-inline: min(0px, calc((100% - 44px) / 2));
+    }
+  }
 }

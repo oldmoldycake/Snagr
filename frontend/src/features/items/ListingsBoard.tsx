@@ -1,6 +1,7 @@
 import { type RefObject, useMemo, useState } from 'react'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { getPriceHistory, updateListing } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemDetail, Listing } from '@/api/types'
@@ -9,23 +10,27 @@ import { useMeasuredWidth } from '@/components/charts/pricePlot'
 import { Badge } from '@/components/ui/badge'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Switch } from '@/components/ui/switch'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
-import { RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
+import { formatDateTime, RANGE_LABELS, relativeTime, type TimeRange } from '@/lib/time'
+import { useInstance } from '@/features/auth/useSession'
 import { AuthenticityChip, AuthenticityLine } from '@/features/vision/AuthenticityBadge'
 import { MatchPill } from './MatchPill'
-import { labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
+import { foldListings } from './listingFold'
+import { sharedTitlePrefix, titleDifference } from './listingTitles'
+import { axisLabels, labeledTicks, labelFlipsLeft, makeRail, type Rail } from './rail'
 import { prepareSeries } from './seriesPrep'
 
-// Fold threshold, sub-$1 dot threshold, stale age, the label-flip position used
-// before the rail has been measured, and the shared grid.
-const FOLD_SCORE = 70
+// Sub-$1 dot threshold, stale age, the label-flip and ⌖-label right-anchor
+// positions used before the rail has been measured, and the shared grid.
 const UNCHANGED_CENTS = 100
 const STALE_MS = 24 * 3_600_000
 const LABEL_FLIP_PCT = 78
+const TARGET_LABEL_RIGHT_PCT = 82
 
-const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_34px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_34px]'
-const COL_LABEL = 'font-mono text-[10px] font-medium tracking-[0.13em] text-ink-3 uppercase'
+const GRID_COLS = 'grid-cols-[minmax(0,1fr)_100px_44px] sm:grid-cols-[minmax(170px,4fr)_minmax(180px,5fr)_100px_44px]'
+const COL_LABEL = 'font-mono text-[12px] font-medium text-ink-3'
 
 function stockText(listing: Listing): string {
   return listing.in_stock == null ? 'stock unknown' : listing.in_stock ? 'in stock' : 'out of stock'
@@ -59,26 +64,40 @@ function AxisStrip({
   currency: string
   range: TimeRange
 }) {
+  const caption = `${RANGE_LABELS[range]} change`
+  const targetLabel = `⌖ ${formatMoney(target, currency)}`
+  const layout =
+    rail?.targetPct != null
+      ? axisLabels(rail.targetPct, targetLabel, caption, railPx, TARGET_LABEL_RIGHT_PCT)
+      : { target: null, caption: 'left' as const }
+
   return (
     <div className={cn('hidden items-end gap-3 px-4 pt-1.5 pb-1 sm:grid', GRID_COLS)}>
       <span className={COL_LABEL}>Listing</span>
       <div ref={railRef} className="relative pt-3.5">
-        {rail ? (
-          <span className="absolute top-0 left-0 font-mono text-[10px] text-ink-3">
-            drift {RANGE_LABELS[range]}
+        {rail && layout.caption ? (
+          <span
+            className={cn(
+              'absolute top-0 font-mono text-[12px] whitespace-nowrap text-ink-3',
+              layout.caption === 'left' ? 'left-0' : 'right-0',
+            )}
+          >
+            {caption}
           </span>
         ) : null}
         {rail?.targetPct != null ? (
           <span
-            className="absolute top-0 font-mono text-[10px] whitespace-nowrap text-drop"
+            className="absolute top-0 font-mono text-[12px] whitespace-nowrap text-drop"
             style={
-              // right-anchor near the edge so the label can't spill out of the column
-              rail.targetPct > 82
-                ? { right: 0 }
-                : { left: `${rail.targetPct}%`, transform: 'translateX(-50%)' }
+              // pinned to an edge when centring on the notch would spill out of the column
+              layout.target === 'left'
+                ? { left: 0 }
+                : layout.target === 'right'
+                  ? { right: 0 }
+                  : { left: `${rail.targetPct}%`, transform: 'translateX(-50%)' }
             }
           >
-            ⌖ {formatMoney(target, currency)}
+            {targetLabel}
           </span>
         ) : null}
         {/* graduated ruler — the Ladder's baseline, with ticks at real prices placed by the dots' own scale */}
@@ -105,7 +124,7 @@ function AxisStrip({
                 return (
                   <span
                     key={c}
-                    className="absolute top-0 font-mono text-[10px] whitespace-nowrap text-ink-3 tnum"
+                    className="absolute top-0 font-mono text-[12px] whitespace-nowrap text-ink-3 tnum"
                     style={
                       pct < 6
                         ? { left: 0 }
@@ -121,8 +140,8 @@ function AxisStrip({
             : null}
         </div>
       </div>
-      <span className={cn(COL_LABEL, 'text-right')}>vs ⌖</span>
-      <span className={COL_LABEL}>Fit</span>
+      <span className={cn(COL_LABEL, 'text-right')}>vs target</span>
+      <span className={COL_LABEL}>Match</span>
     </div>
   )
 }
@@ -189,13 +208,13 @@ function Track({
           />
           {falling ? (
             <span
-              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-l-[6px] border-l-drop/85"
-              style={{ left: `calc(${now.pct}% - 11px)` }}
+              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-r-[6px] border-r-drop/85"
+              style={{ left: `calc(${now.pct}% + 5px)` }}
             />
           ) : (
             <span
-              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-r-[6px] border-r-rise/85"
-              style={{ left: `calc(${now.pct}% + 5px)` }}
+              className="absolute top-[15px] h-0 w-0 border-y-4 border-y-transparent border-l-[6px] border-l-rise/85"
+              style={{ left: `calc(${now.pct}% - 11px)` }}
             />
           )}
         </>
@@ -206,7 +225,7 @@ function Track({
       />
       {now.clamp ? (
         <span
-          className="absolute top-3 font-mono text-[10px] text-ink-3"
+          className="absolute top-3 font-mono text-[12px] text-ink-3"
           // inset so the glyph doesn't overprint the edge-pinned dot
           style={now.clamp === '»' ? { right: 8 } : { left: 8 }}
         >
@@ -215,7 +234,7 @@ function Track({
       ) : null}
       <span
         className={cn(
-          'absolute top-0 font-mono text-[10px] font-semibold whitespace-nowrap tnum',
+          'absolute top-0 font-mono text-[12px] font-semibold whitespace-nowrap tnum',
           under ? 'text-drop' : 'text-ink',
         )}
         style={
@@ -232,10 +251,12 @@ function Track({
 
 function DeltaCell({
   listing,
+  color,
   targetC,
   currency,
 }: {
   listing: Listing
+  color: string
   targetC: number | null
   currency: string
 }) {
@@ -243,18 +264,19 @@ function DeltaCell({
   const diff = nowC != null && targetC != null ? nowC - targetC : null
   return (
     <div className="text-right">
-      {/* below sm the rail is gone, so the price returns as text */}
-      <p className="font-mono text-[13px] font-semibold text-ink tnum sm:hidden">
+      {/* below sm the rail is gone, so the price returns as text, with the rail's colored dot */}
+      <p className="flex items-center justify-end gap-1.5 font-mono text-[14px] font-semibold text-ink tnum sm:hidden">
+        <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: color }} />
         {formatMoney(listing.latest_price, currency)}
       </p>
       {diff == null ? (
-        <p className="font-mono text-[11px] text-ink-3">—</p>
+        <p className="font-mono text-[12px] text-ink-3">—</p>
       ) : diff <= 0 ? (
-        <p className="font-mono text-[11px] whitespace-nowrap text-drop tnum">
+        <p className="font-mono text-[12px] whitespace-nowrap text-drop tnum">
           ✓ {formatMoney(fromCents(-diff), currency)} under
         </p>
       ) : (
-        <p className="font-mono text-[11px] whitespace-nowrap text-ink-3 tnum">
+        <p className="font-mono text-[12px] whitespace-nowrap text-ink-3 tnum">
           +{formatMoney(fromCents(diff), currency)}
         </p>
       )}
@@ -267,49 +289,36 @@ function ExpandedRow({
   detail,
   startC,
   range,
+  onTrack,
 }: {
   listing: Listing
   detail: ItemDetail
   startC: number | null
   range: TimeRange
+  onTrack: (active: boolean) => void
 }) {
-  const queryClient = useQueryClient()
-  const toggle = useMutation({
-    mutationFn: (active: boolean) => updateListing(listing.id, { active }),
-    // optimistic: flip immediately, roll back on error
-    onMutate: async (active) => {
-      await queryClient.cancelQueries({ queryKey: qk.item(detail.id) })
-      const prev = queryClient.getQueryData<ItemDetail>(qk.item(detail.id))
-      if (prev) {
-        queryClient.setQueryData<ItemDetail>(qk.item(detail.id), {
-          ...prev,
-          listings: prev.listings.map((l) => (l.id === listing.id ? { ...l, active } : l)),
-        })
-      }
-      return { prev }
-    },
-    onError: (_err, _active, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(qk.item(detail.id), ctx.prev)
-    },
-    onSettled: () => {
-      void queryClient.invalidateQueries({ queryKey: ['items'] })
-    },
-  })
-
+  // the slot an untracked listing frees is hunted for at once, unless hunting is off
+  const huntingOff = useInstance().data?.hunt_enabled === false
   const nowC = toCents(listing.latest_price)
   const moved = startC != null && nowC != null && Math.abs(nowC - startC) >= UNCHANGED_CENTS
   const fell = moved && nowC != null && startC != null && nowC < startC
 
   return (
-    <div className="flex items-start gap-4 bg-well py-3 pr-4 pl-10">
-      <p className="min-w-0 flex-1 font-mono text-[11px] leading-relaxed text-ink-3">
+    <div className="flex flex-col gap-3 border-t border-hairline bg-well py-3 pr-4 pl-10 sm:flex-row sm:items-start sm:gap-4">
+      <p className="min-w-0 flex-1 font-mono text-[12px] leading-relaxed text-ink-3">
+        {listing.title ? (
+          <>
+            <span className="text-ink-2">{listing.title}</span>
+            <br />
+          </>
+        ) : null}
         {listing.match_score != null ? (
           <>
             <span className="text-ink-2">match {listing.match_score}</span>
             {listing.match_summary ? <> — {listing.match_summary}</> : null}
           </>
         ) : (
-          'not scored yet'
+          'no match score yet'
         )}
         <br />
         {listing.authenticity ? (
@@ -331,27 +340,43 @@ function ExpandedRow({
         ) : startC != null ? (
           <>unchanged over {RANGE_LABELS[range]} · </>
         ) : null}
-        {stockText(listing)} · checked {relativeTime(listing.last_checked_at)} · {listing.site_name} ·{' '}
+        {stockText(listing)} · checked <RelativeTime iso={listing.last_checked_at} /> · {listing.site_name} ·{' '}
         {listing.discovered_by_job_id != null ? (
-          <Link to={`/activity/${listing.discovered_by_job_id}`} className="hover:text-ink hover:underline">
+          <Link
+            to={`/activity/${listing.discovered_by_job_id}`}
+            title={formatDateTime(listing.created_at)}
+            className="hover:text-ink hover:underline"
+          >
             found {relativeTime(listing.created_at)}
           </Link>
         ) : (
-          <>found {relativeTime(listing.created_at)}</>
+          <>
+            found <RelativeTime iso={listing.created_at} />
+          </>
         )}
         {' · '}
         <a href={listing.url} target="_blank" rel="noreferrer" className="text-ink-2 hover:text-lume">
           open listing ↗
         </a>
       </p>
-      <label className="flex shrink-0 items-center gap-2 font-mono text-[10px] tracking-[0.08em] text-ink-3 uppercase">
-        active
-        <Switch
-          checked={listing.active}
-          onCheckedChange={(active) => toggle.mutate(active)}
-          aria-label={`${listing.active ? 'Deactivate' : 'Activate'} ${listing.site_name} listing`}
-        />
-      </label>
+      <div className="shrink-0 sm:w-60">
+        <label className="flex items-center gap-2 text-[12px] text-ink-2">
+          <Switch
+            checked={listing.active}
+            onCheckedChange={onTrack}
+            aria-label={`Track this ${listing.site_name} listing`}
+            aria-describedby={`track-hint-${listing.id}`}
+          />
+          Track this listing
+        </label>
+        <p id={`track-hint-${listing.id}`} className="mt-1 text-[12px] leading-snug text-ink-3">
+          {!listing.active
+            ? "Snagr doesn't check its price. Switch on to resume."
+            : detail.hunt.enabled && !huntingOff
+              ? 'Snagr checks its price. Switch off to stop, and Snagr hunts for another listing to take its slot.'
+              : 'Snagr checks its price. Switch off to stop and free its slot.'}
+        </p>
+      </div>
     </div>
   )
 }
@@ -362,12 +387,14 @@ function BoardRow({
   rail,
   railPx,
   color,
+  difference,
   startC,
   targetC,
   isBestMatch,
   dimmed,
   expanded,
   onToggle,
+  onTrack,
   range,
 }: {
   listing: Listing
@@ -375,12 +402,14 @@ function BoardRow({
   rail: Rail | null
   railPx: number
   color: string
+  difference: string
   startC: number | null
   targetC: number | null
   isBestMatch: boolean
   dimmed: boolean
   expanded: boolean
   onToggle: () => void
+  onTrack: (active: boolean) => void
   range: TimeRange
 }) {
   const soldOrEnded =
@@ -388,7 +417,7 @@ function BoardRow({
   const chip = listing.active ? exceptionChip(listing) : null
 
   return (
-    <>
+    <Collapsible open={expanded}>
       <div
         role="button"
         tabIndex={0}
@@ -404,46 +433,57 @@ function BoardRow({
           'group grid cursor-pointer items-center gap-3 px-4 py-2 transition-colors',
           GRID_COLS,
           expanded ? 'bg-raised' : 'hover:bg-raised/60',
-          dimmed && 'opacity-45',
+          dimmed && 'ink-muted',
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
           <span
             aria-hidden
             className={cn(
-              'shrink-0 font-mono text-[10px]',
+              'shrink-0 font-mono text-[12px]',
               expanded
                 ? 'text-lume'
-                : 'text-ink-3 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+                : 'text-ink-3 opacity-50 group-hover:opacity-100 group-focus-visible:opacity-100',
             )}
           >
             {expanded ? '▾' : '▸'}
           </span>
-          <a
-            href={listing.url}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="min-w-0 truncate text-[13px] font-medium text-ink hover:text-lume hover:underline"
-          >
-            {listing.title ?? listing.url.replace(/^https?:\/\/(www\.)?/, '')}
-          </a>
-          {isBestMatch ? (
-            <Badge variant="lume" className="shrink-0">
-              Best match
-            </Badge>
-          ) : null}
-          {soldOrEnded ? (
-            <Badge variant="warn" className="shrink-0">
-              {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} · {relativeTime(listing.last_checked_at)}
-            </Badge>
-          ) : null}
-          {chip ? (
-            <Badge variant="warn" className="shrink-0 font-mono text-[10px]">
-              {chip}
-            </Badge>
-          ) : null}
-          {listing.authenticity ? <AuthenticityChip read={listing.authenticity} /> : null}
+          {/* the chart legend's swatch, so a row finds its line; on a phone the site needs
+              this width, and the color sits beside the price instead */}
+          <span aria-hidden className="h-0.5 w-3 shrink-0 rounded-full max-sm:hidden" style={{ background: color }} />
+          {/* the site gets a line to itself: the column is too narrow to share one with what sets
+              the listing apart, or a badge, without cutting the site off */}
+          <div className="flex min-w-0 flex-col items-start">
+            <a
+              href={listing.url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="max-w-full truncate text-[14px] font-medium text-ink hover:text-lume hover:underline"
+            >
+              {listing.site_name}
+            </a>
+            <div className="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1">
+              {difference ? <span className="min-w-0 truncate text-[12px] text-ink-2">{difference}</span> : null}
+              {isBestMatch ? (
+                <Badge variant="lume" className="shrink-0">
+                  Best match
+                </Badge>
+              ) : null}
+              {soldOrEnded ? (
+                <Badge variant="warn" className="shrink-0">
+                  {listing.latest_status === 'sold' ? 'Sold' : 'Ended'} ·{' '}
+                  <RelativeTime iso={listing.last_checked_at} />
+                </Badge>
+              ) : null}
+              {chip ? (
+                <Badge variant="warn" className="shrink-0 font-mono text-[12px]">
+                  {chip}
+                </Badge>
+              ) : null}
+              {listing.authenticity ? <AuthenticityChip read={listing.authenticity} /> : null}
+            </div>
+          </div>
         </div>
         <Track
           listing={listing}
@@ -454,23 +494,27 @@ function BoardRow({
           targetC={targetC}
           currency={detail.currency}
         />
-        <DeltaCell listing={listing} targetC={targetC} currency={detail.currency} />
+        <DeltaCell listing={listing} color={color} targetC={targetC} currency={detail.currency} />
         <MatchPill score={listing.match_score} summary={listing.match_summary} quietMid />
       </div>
-      {expanded ? <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} /> : null}
-    </>
+      <CollapsibleContent className="row-detail">
+        <ExpandedRow listing={listing} detail={detail} startC={startC} range={range} onTrack={onTrack} />
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 
 /**
  * The listings "target board": one log-scale price rail per listing, running
- * range-high (left) → cheapest (right) with a ⌖ notch per row, and drift marks from the
+ * cheapest (left) → range-high (right) with a ⌖ notch per row, and drift marks from the
  * chart's selected range. Healthy rows stay quiet; the rationale, drift
  * detail, and active switch live in the click-to-expand row.
  */
 export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: TimeRange }) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [foldOpen, setFoldOpen] = useState(false)
+  // rows whose tracking was switched on this visit, and whether each was on show then
+  const [placed, setPlaced] = useState<ReadonlyMap<number, boolean>>(new Map())
   // The strip's rail cell shares GRID_COLS with every row, so its width is every row's rail width.
   const { ref: railRef, width: railPx } = useMeasuredWidth()
 
@@ -499,33 +543,50 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
     return m
   }, [history.data])
 
+  const queryClient = useQueryClient()
+  const track = useMutation({
+    mutationFn: ({ listing, active }: { listing: Listing; active: boolean }) =>
+      updateListing(listing.id, { active }),
+    // optimistic: flip immediately, roll back on error
+    onMutate: async ({ listing, active }) => {
+      await queryClient.cancelQueries({ queryKey: qk.item(detail.id) })
+      const prev = queryClient.getQueryData<ItemDetail>(qk.item(detail.id))
+      if (prev) {
+        queryClient.setQueryData<ItemDetail>(qk.item(detail.id), {
+          ...prev,
+          listings: prev.listings.map((l) => (l.id === listing.id ? { ...l, active } : l)),
+        })
+      }
+      return { prev }
+    },
+    onSuccess: (_listing, { listing, active }) => {
+      if (active) return
+      toast(`Stopped tracking the ${listing.site_name} listing`, {
+        action: { label: 'Undo', onClick: () => track.mutate({ listing, active: true }) },
+      })
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(qk.item(detail.id), ctx.prev)
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['items'] })
+      void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      // pausing a listing cancels its re-check; resuming queues one
+      void queryClient.invalidateQueries({ queryKey: ['jobs'] })
+    },
+  })
+
   const target = detail.watch.target_price ?? detail.target_price
   const targetC = toCents(target)
   const mode = detail.selection_mode
 
-  const byMode = (a: Listing, b: Listing) => {
-    const priceDiff = Number(a.latest_price ?? Infinity) - Number(b.latest_price ?? Infinity)
-    if (mode !== 'best_match') return priceDiff
-    return (b.match_score ?? -1) - (a.match_score ?? -1) || priceDiff
-  }
-  const active = [...detail.listings].filter((l) => l.active).sort(byMode)
-  const inactive = [...detail.listings].filter((l) => !l.active).sort(byMode)
+  const { main, folded, lowMatch, inactive } = foldListings(detail.listings, mode, placed)
 
-  // best-match mode folds the low-scoring tail — but never the whole list
-  let main = active
-  let lowMatch: Listing[] = []
-  if (mode === 'best_match') {
-    const cleared = active.filter((l) => (l.match_score ?? -1) >= FOLD_SCORE)
-    if (cleared.length > 0 && cleared.length < active.length) {
-      main = cleared
-      lowMatch = active.filter((l) => (l.match_score ?? -1) < FOLD_SCORE)
-    }
-  }
-  const folded = [...lowMatch, ...inactive]
-
-  const bestMatchId = mode === 'best_match' ? (active.find((l) => l.match_score != null)?.id ?? null) : null
+  const bestMatchId =
+    mode === 'best_match' ? (main.find((l) => l.active && l.match_score != null)?.id ?? null) : null
 
   const rail = makeRail(main, startCents, targetC)
+  const titlePrefix = sharedTitlePrefix(detail.listings.map((l) => l.title))
 
   const soldCount = inactive.filter(
     (l) => l.latest_status === 'sold' || l.latest_status === 'ended',
@@ -534,7 +595,7 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
     `${folded.length} more`,
     lowMatch.length > 0 ? `${lowMatch.length} lower match` : null,
     soldCount > 0 ? `${soldCount} sold` : null,
-    inactive.length - soldCount > 0 ? `${inactive.length - soldCount} inactive` : null,
+    inactive.length - soldCount > 0 ? `${inactive.length - soldCount} not tracked` : null,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -547,12 +608,18 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
       rail={rail}
       railPx={railPx}
       color={colorOf(listing.id)}
+      difference={titleDifference(listing.title, titlePrefix)}
       startC={startCents.get(listing.id) ?? null}
       targetC={targetC}
       isBestMatch={bestMatchId === listing.id}
       dimmed={dimmed}
       expanded={expandedId === listing.id}
       onToggle={() => setExpandedId((id) => (id === listing.id ? null : listing.id))}
+      onTrack={(active) => {
+        const shown = main.includes(listing)
+        setPlaced((m) => (m.has(listing.id) ? m : new Map(m).set(listing.id, shown)))
+        track.mutate({ listing, active })
+      }}
       range={range}
     />
   )
@@ -568,20 +635,30 @@ export function ListingsBoard({ detail, range }: { detail: ItemDetail; range: Ti
         range={range}
       />
       <div className="divide-y divide-hairline border-t border-hairline">
-        {main.map((l) => row(l, false))}
+        {main.map((l) => row(l, !l.active))}
       </div>
       {folded.length > 0 ? (
         <Collapsible open={foldOpen} onOpenChange={setFoldOpen}>
           <CollapsibleTrigger asChild>
             <button
               type="button"
-              className="flex w-full items-center gap-3 bg-well px-4 py-1.5 font-mono text-[10.5px] tracking-[0.08em] text-ink-3 uppercase before:h-px before:flex-1 before:bg-hairline-strong before:content-[''] after:h-px after:flex-1 after:bg-hairline-strong after:content-[''] hover:text-ink-2"
+              className="flex w-full items-center gap-3 bg-well px-4 py-1.5 font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase before:h-px before:flex-1 before:bg-hairline-strong before:content-[''] after:h-px after:flex-1 after:bg-hairline-strong after:content-[''] hover:text-ink-2"
             >
               {foldLabel} — {foldOpen ? 'hide' : 'show'}
+              <svg
+                viewBox="0 0 10 10"
+                aria-hidden
+                className={cn(
+                  'size-2.5 shrink-0 transition-transform duration-[180ms] ease-shelf',
+                  foldOpen && 'rotate-180',
+                )}
+              >
+                <path d="M1.5 3.5 5 7l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              </svg>
             </button>
           </CollapsibleTrigger>
-          <CollapsibleContent>
-            <div className="divide-y divide-hairline border-t border-hairline">
+          <CollapsibleContent className="fold">
+            <div className="fold-rows divide-y divide-hairline border-t border-hairline">
               {folded.map((l) => row(l, !l.active))}
             </div>
           </CollapsibleContent>

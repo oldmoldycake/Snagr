@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { listReferences, revokeAutoReferences, revokeReference } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
+import { listReferences, revokeAutoReferences, revokeReference } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ReferenceImage } from '@/api/types'
 import { Badge } from '@/components/ui/badge'
@@ -11,14 +11,14 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
 import { UploadReferenceDialog } from './UploadReferenceDialog'
 
 function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onRevoke: () => void }) {
   const fake = reference.label === 'fake'
   return (
-    <div className={cn('overflow-hidden rounded-md border border-hairline', reference.revoked && 'opacity-45')}>
+    <div className={cn('overflow-hidden rounded-md border border-hairline', reference.revoked && 'ink-muted')}>
       <img
         src={reference.image_url}
         alt={`${reference.label} reference photo`}
@@ -27,31 +27,31 @@ function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onR
       />
       <div className="space-y-1.5 p-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant={fake ? 'rise' : 'snagged'} className="font-mono text-[10px]">
+          <Badge variant={fake ? 'rise' : 'snagged'} className="font-mono text-[12px]">
             {fake ? '✗ fake' : '✓ real'}
           </Badge>
-          <Badge variant="muted" className="font-mono text-[10px]">
+          <Badge variant="muted" className="font-mono text-[12px]">
             {reference.provenance}
           </Badge>
           {reference.revoked ? (
-            <Badge variant="muted" className="font-mono text-[10px]">
+            <Badge variant="muted" className="font-mono text-[12px]">
               revoked
             </Badge>
           ) : (
             <button
               type="button"
               onClick={onRevoke}
-              className="ml-auto font-mono text-[10px] tracking-[0.06em] text-ink-3 uppercase hover:text-rise"
+              className="ml-auto font-mono text-[12px] tracking-[0.06em] text-ink-3 uppercase hover:text-rise"
             >
               Revoke
             </button>
           )}
         </div>
         {reference.variant_tag ? (
-          <p className="truncate text-[11px] text-ink-2 italic">“{reference.variant_tag}”</p>
+          <p className="truncate text-[12px] text-ink-2 italic">“{reference.variant_tag}”</p>
         ) : null}
-        <p className="truncate font-mono text-[10px] text-ink-3">
-          {relativeTime(reference.created_at)}
+        <p className="truncate font-mono text-[12px] text-ink-3">
+          <RelativeTime iso={reference.created_at} />
           {reference.source_listing_url ? (
             <>
               {' · '}
@@ -79,6 +79,9 @@ function ReferenceTile({ reference, onRevoke }: { reference: ReferenceImage; onR
 export function ReferenceLibrary({ itemId }: { itemId: number }) {
   const queryClient = useQueryClient()
   const [uploadOpen, setUploadOpen] = useState(false)
+  // Bumped on every open so the dialog starts without the last file or error,
+  // while staying mounted after close long enough to play its exit animation.
+  const [uploadSession, setUploadSession] = useState(0)
   const [revokeTarget, setRevokeTarget] = useState<ReferenceImage | null>(null)
   const [revokeAutoOpen, setRevokeAutoOpen] = useState(false)
 
@@ -87,22 +90,25 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
     queryFn: () => listReferences(itemId),
   })
 
+  const openUpload = () => {
+    setUploadSession((n) => n + 1)
+    setUploadOpen(true)
+  }
+
   const revoke = useMutation({
     mutationFn: (id: number) => revokeReference(id),
+    meta: { inlineError: true },
     onSuccess: () => setRevokeTarget(null),
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not revoke the reference'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) }),
   })
 
   const revokeAuto = useMutation({
     mutationFn: () => revokeAutoReferences(itemId),
+    meta: { inlineError: true },
     onSuccess: ({ revoked }) => {
       setRevokeAutoOpen(false)
       toast.success(`Revoked ${revoked} auto-promoted ${revoked === 1 ? 'reference' : 'references'}`)
     },
-    onError: (error) =>
-      toast.error(error instanceof ApiError ? error.message : 'Could not revoke the references'),
     onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.itemReferences(itemId) }),
   })
 
@@ -111,14 +117,17 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
   const autoCount = live.filter((r) => r.provenance === 'auto').length
   const realCount = live.filter((r) => r.label === 'real').length
   const fakeCount = live.filter((r) => r.label === 'fake').length
+  // The empty state explains what references are for and carries its own Add
+  // button, so the header's would only repeat it.
+  const empty = !references.isLoading && rows.length === 0
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Library</CardTitle>
+        <CardTitle>Reference photos</CardTitle>
         <div className="flex items-center gap-3">
           {rows.length > 0 ? (
-            <span className="font-mono text-[11px] text-ink-3 tnum">
+            <span className="font-mono text-[12px] text-ink-3 tnum">
               {realCount} real · {fakeCount} fake
             </span>
           ) : null}
@@ -127,9 +136,11 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
               Revoke auto ×{autoCount}
             </Button>
           ) : null}
-          <Button size="sm" onClick={() => setUploadOpen(true)}>
-            Add photo
-          </Button>
+          {empty ? null : (
+            <Button size="sm" onClick={openUpload}>
+              Add photo
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardBody>
@@ -139,13 +150,13 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
             <Skeleton className="h-40" />
             <Skeleton className="h-40" />
           </div>
-        ) : rows.length === 0 ? (
+        ) : empty ? (
           <EmptyState
             className="border-0 py-8"
             title="No reference photos yet"
-            description="Photo checks stay inconclusive until this library holds known-real or known-fake photos. Confirm suggestions from your Review queue as hunts capture them, or upload photos of a unit you know first-hand."
+            description="Photo checks can't reach a verdict until this item has photos of known-real or known-fake copies. Confirm photos on the Photo review page, or upload your own."
             action={
-              <Button size="sm" onClick={() => setUploadOpen(true)}>
+              <Button size="sm" onClick={openUpload}>
                 Add photo
               </Button>
             }
@@ -166,26 +177,33 @@ export function ReferenceLibrary({ itemId }: { itemId: number }) {
       <ConfirmDialog
         open={revokeTarget != null}
         onOpenChange={(open) => {
-          if (!open) setRevokeTarget(null)
+          if (open) return
+          setRevokeTarget(null)
+          revoke.reset()
         }}
         title="Revoke reference"
         description={`This ${revokeTarget?.label ?? ''} reference stops counting toward the item's photo checks. There is no un-revoke.`}
         confirmLabel="Revoke"
         pending={revoke.isPending}
+        error={revoke.error instanceof ApiError ? revoke.error.message : null}
         onConfirm={() => revokeTarget && revoke.mutate(revokeTarget.id)}
       />
 
       <ConfirmDialog
         open={revokeAutoOpen}
-        onOpenChange={setRevokeAutoOpen}
+        onOpenChange={(open) => {
+          setRevokeAutoOpen(open)
+          if (!open) revokeAuto.reset()
+        }}
         title="Revoke auto-promoted references"
         description={`${autoCount} auto-promoted ${autoCount === 1 ? 'reference' : 'references'} will stop counting toward this item's photo checks. Human-confirmed and uploaded references are untouched.`}
         confirmLabel={`Revoke ${autoCount}`}
         pending={revokeAuto.isPending}
+        error={revokeAuto.error instanceof ApiError ? revokeAuto.error.message : null}
         onConfirm={() => revokeAuto.mutate()}
       />
 
-      <UploadReferenceDialog itemId={itemId} open={uploadOpen} onOpenChange={setUploadOpen} />
+      <UploadReferenceDialog key={`upload-${uploadSession}`} itemId={itemId} open={uploadOpen} onOpenChange={setUploadOpen} />
     </Card>
   )
 }

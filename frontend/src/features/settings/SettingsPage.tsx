@@ -1,23 +1,29 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Loader2, ScanSearch } from 'lucide-react'
+import { useBlocker } from 'react-router-dom'
 import { toast } from 'sonner'
 import { changePassword, updateMe } from '@/api/endpoints'
 import { ApiError } from '@/api/client'
 import { qk } from '@/api/queries'
 import { Button } from '@/components/ui/button'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { usePageTitle } from '@/lib/usePageTitle'
+import { NewPasswordInput } from '@/features/auth/NewPasswordInput'
 import { useInstance, useSession } from '@/features/auth/useSession'
 import { ChannelsCard } from '@/features/settings/ChannelsCard'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
+import { percentToThreshold, thresholdToPercent } from '@/features/settings/thresholds'
 
 /**
  * Account settings: profile, password, notification channels and, when vision
  * is on, the authenticity thresholds.
  */
 export function SettingsPage() {
+  usePageTitle('Settings')
   const { data: user } = useSession()
   const { data: instance } = useInstance()
   const queryClient = useQueryClient()
@@ -25,20 +31,23 @@ export function SettingsPage() {
   const [email, setEmail] = useState(user?.email ?? '')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [rejectFake, setRejectFake] = useState(user?.vision_auto_reject_fake ?? '0.85')
-  const [promoteReal, setPromoteReal] = useState(user?.vision_auto_promote_real ?? '0.90')
-  const [promoteFake, setPromoteFake] = useState(user?.vision_auto_promote_fake ?? '0.90')
+  const [rejectFake, setRejectFake] = useState(thresholdToPercent(user?.vision_auto_reject_fake ?? '0.85'))
+  const [promoteReal, setPromoteReal] = useState(thresholdToPercent(user?.vision_auto_promote_real ?? '0.90'))
+  const [promoteFake, setPromoteFake] = useState(thresholdToPercent(user?.vision_auto_promote_fake ?? '0.90'))
 
   const saveProfile = useMutation({
     mutationFn: () => updateMe({ email: email.trim() }),
+    meta: { inlineError: true },
     onSuccess: (updated) => {
       queryClient.setQueryData(qk.session, updated)
+      setEmail(updated.email)
       toast.success('Profile saved')
     },
   })
 
   const password = useMutation({
     mutationFn: () => changePassword({ current_password: currentPassword, new_password: newPassword }),
+    meta: { inlineError: true },
     onSuccess: () => {
       setCurrentPassword('')
       setNewPassword('')
@@ -49,30 +58,52 @@ export function SettingsPage() {
   const saveThresholds = useMutation({
     mutationFn: () =>
       updateMe({
-        vision_auto_reject_fake: Number(rejectFake).toFixed(2),
-        vision_auto_promote_real: Number(promoteReal).toFixed(2),
-        vision_auto_promote_fake: Number(promoteFake).toFixed(2),
+        vision_auto_reject_fake: percentToThreshold(rejectFake),
+        vision_auto_promote_real: percentToThreshold(promoteReal),
+        vision_auto_promote_fake: percentToThreshold(promoteFake),
       }),
+    meta: { inlineError: true },
     onSuccess: (updated) => {
       queryClient.setQueryData(qk.session, updated)
-      setRejectFake(updated.vision_auto_reject_fake)
-      setPromoteReal(updated.vision_auto_promote_real)
-      setPromoteFake(updated.vision_auto_promote_fake)
+      setRejectFake(thresholdToPercent(updated.vision_auto_reject_fake))
+      setPromoteReal(thresholdToPercent(updated.vision_auto_promote_real))
+      setPromoteFake(thresholdToPercent(updated.vision_auto_promote_fake))
       toast.success('Photo-check thresholds saved')
     },
   })
 
+  const profileError = saveProfile.error instanceof ApiError ? saveProfile.error.message : null
   const passwordError = password.error instanceof ApiError ? password.error.message : null
-  const thresholdFields =
-    saveThresholds.error instanceof ApiError ? (saveThresholds.error.fields ?? {}) : {}
+  const thresholdError = saveThresholds.error instanceof ApiError ? saveThresholds.error : null
+  const thresholdFields = thresholdError?.fields ?? {}
   const thresholdsDirty =
-    rejectFake !== user?.vision_auto_reject_fake ||
-    promoteReal !== user?.vision_auto_promote_real ||
-    promoteFake !== user?.vision_auto_promote_fake
+    user != null &&
+    (rejectFake !== thresholdToPercent(user.vision_auto_reject_fake) ||
+      promoteReal !== thresholdToPercent(user.vision_auto_promote_real) ||
+      promoteFake !== thresholdToPercent(user.vision_auto_promote_fake))
+  const emailDirty = user != null && email.trim() !== user.email
+
+  // Email and the thresholds wait for their Save button while the channel
+  // switches apply at once, so leaving with typed changes unsaved asks first.
+  // The password fields stay out: a password manager can fill them unprompted.
+  const unsaved = emailDirty || thresholdsDirty
+  const leaving = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      unsaved &&
+      nextLocation.pathname !== currentLocation.pathname &&
+      // signing out has already happened by the time it heads to /login
+      nextLocation.pathname !== '/login',
+  )
+  useEffect(() => {
+    if (!unsaved) return
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [unsaved])
 
   return (
-    <div className="max-w-2xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="max-w-3xl space-y-5">
+      <div className="flex flex-col items-start gap-3">
         <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Settings</h1>
         <SettingsTabs />
       </div>
@@ -82,20 +113,30 @@ export function SettingsPage() {
           <CardTitle>Profile</CardTitle>
         </CardHeader>
         <CardBody className="space-y-3">
-          <div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              saveProfile.mutate()
+            }}
+          >
             <Label htmlFor="settings-email">Email</Label>
             <div className="flex gap-2">
-              <Input id="settings-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+              <Input id="settings-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
               <Button
+                type="submit"
                 variant="default"
                 disabled={saveProfile.isPending || email.trim() === user?.email}
-                onClick={() => saveProfile.mutate()}
               >
                 {saveProfile.isPending ? <Loader2 className="animate-spin" /> : null}
                 Save
               </Button>
             </div>
-          </div>
+            {profileError ? (
+              <p role="alert" className="mt-1.5 text-xs text-rise">
+                {profileError}
+              </p>
+            ) : null}
+          </form>
 
           <form
             className="space-y-3 border-t border-hairline pt-3"
@@ -120,15 +161,7 @@ export function SettingsPage() {
               </div>
               <div>
                 <Label htmlFor="new-password">New password</Label>
-                <Input
-                  id="new-password"
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                  minLength={8}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                />
+                <NewPasswordInput id="new-password" value={newPassword} onChange={setNewPassword} />
               </div>
             </div>
             <Button type="submit" disabled={password.isPending || !currentPassword || !newPassword}>
@@ -148,49 +181,74 @@ export function SettingsPage() {
               <ScanSearch className="size-4 text-ink-3" /> Photo checks
             </CardTitle>
           </CardHeader>
-          <CardBody className="space-y-3">
-            <p className="text-[13px] text-ink-2">
-              Confidence thresholds for the image-based authenticity check, 0.50–1.00. Auto-reject
-              drops a listing before it's saved; auto-promote lets a strong suggestion join an
-              item's library without review — it also needs three confirmed references of that
-              label and the agent's own read to agree.
-            </p>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {(
-                [
-                  ['vision_auto_reject_fake', 'Auto-reject fake', rejectFake, setRejectFake],
-                  ['vision_auto_promote_real', 'Auto-promote real', promoteReal, setPromoteReal],
-                  ['vision_auto_promote_fake', 'Auto-promote fake', promoteFake, setPromoteFake],
-                ] as const
-              ).map(([field, label, value, setValue]) => (
-                <div key={field}>
-                  <Label htmlFor={field}>{label}</Label>
-                  <Input
-                    id={field}
-                    type="number"
-                    step="0.01"
-                    min="0.5"
-                    max="1"
-                    className="font-mono tnum"
-                    value={value}
-                    onChange={(e) => setValue(e.target.value)}
-                  />
-                  {thresholdFields[field] ? (
-                    <p className="mt-1 text-xs text-rise">{thresholdFields[field]}</p>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-            <Button
-              disabled={saveThresholds.isPending || !thresholdsDirty}
-              onClick={() => saveThresholds.mutate()}
+          <CardBody>
+            <form
+              className="space-y-3"
+              onSubmit={(e) => {
+                e.preventDefault()
+                saveThresholds.mutate()
+              }}
             >
-              {saveThresholds.isPending ? <Loader2 className="animate-spin" /> : null}
-              Save thresholds
-            </Button>
+              <p className="text-[14px] text-ink-2">
+                Confidence thresholds for the image-based authenticity check, 50–100%. Auto-reject
+                drops a listing before it's saved; auto-promote lets a strong suggestion join an
+                item's library without review — it also needs three confirmed references of that
+                label and Snagr's own read of the listing to agree.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {(
+                  [
+                    ['vision_auto_reject_fake', 'Auto-reject fake', rejectFake, setRejectFake],
+                    ['vision_auto_promote_real', 'Auto-promote real', promoteReal, setPromoteReal],
+                    ['vision_auto_promote_fake', 'Auto-promote fake', promoteFake, setPromoteFake],
+                  ] as const
+                ).map(([field, label, value, setValue]) => (
+                  <div key={field}>
+                    <Label htmlFor={field}>{label}</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id={field}
+                        type="number"
+                        required
+                        step="1"
+                        min="50"
+                        max="100"
+                        className="w-20 font-mono tnum"
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                      />
+                      <span className="text-xs text-ink-3">%</span>
+                    </div>
+                    {thresholdFields[field] ? (
+                      <p className="mt-1 text-xs text-rise">{thresholdFields[field]}</p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              {thresholdError && !thresholdError.fields ? (
+                <p role="alert" className="text-xs text-rise">
+                  {thresholdError.message}
+                </p>
+              ) : null}
+              <Button type="submit" disabled={saveThresholds.isPending || !thresholdsDirty}>
+                {saveThresholds.isPending ? <Loader2 className="animate-spin" /> : null}
+                Save thresholds
+              </Button>
+            </form>
           </CardBody>
         </Card>
       ) : null}
+
+      <ConfirmDialog
+        open={leaving.state === 'blocked'}
+        onOpenChange={(open) => {
+          if (!open) leaving.reset?.()
+        }}
+        title="Leave without saving?"
+        description="Changes you've typed here and not saved will be lost."
+        confirmLabel="Leave"
+        onConfirm={() => leaving.proceed?.()}
+      />
     </div>
   )
 }

@@ -58,13 +58,15 @@ MARKET_PRICE_MAX_REFRESH_PER_RUN = int(os.getenv("MARKET_PRICE_MAX_REFRESH_PER_R
 # kept for days, while a hunt is a story worth months.
 RECHECK_INTERVAL_MINUTES = int(os.getenv("RECHECK_INTERVAL_MINUTES", "30"))
 RECHECK_INTERVAL_FLOOR_MINUTES = int(os.getenv("RECHECK_INTERVAL_FLOOR_MINUTES", "5"))
-# Two pools, because they cost different things. Checks are cheap and mostly
+# Three pools, because they cost different things. Checks are cheap and mostly
 # browserless, so several run at once and a wedged page never blocks the
 # listing behind it; hunts carry the model, so one at a time until a operator
-# has measured what their provider will take. Ground jobs run in the hunt pool
-# — they are LLM work too.
+# has measured what their provider will take. Ground jobs are model work too,
+# but they wait on SearXNG, whose suspensions last minutes to hours, so they
+# get a pool of their own: a slow grounding never holds a hunt back.
 RECHECK_CONCURRENCY = int(os.getenv("RECHECK_CONCURRENCY", "3"))
 HUNT_CONCURRENCY = int(os.getenv("HUNT_CONCURRENCY", "1"))
+GROUND_CONCURRENCY = int(os.getenv("GROUND_CONCURRENCY", "1"))
 JOB_HEARTBEAT_INTERVAL_SECONDS = int(os.getenv("JOB_HEARTBEAT_INTERVAL_SECONDS", "30"))
 JOB_STALE_AFTER_SECONDS = int(os.getenv("JOB_STALE_AFTER_SECONDS", "300"))
 JOB_MAX_ATTEMPTS = int(os.getenv("JOB_MAX_ATTEMPTS", "3"))
@@ -117,7 +119,8 @@ STATIC_FETCH = os.getenv("STATIC_FETCH", "true").lower() != "false"
 # fallback that also fails. SITE_BREAKER_ERRORS consecutive read errors stop
 # the site outright for SITE_BREAKER_MINUTES; a bot wall that persists doubles
 # the wait each time up to SITE_BREAKER_CAP_MINUTES, and any successful read
-# resets the count. A wall then costs five reads and goes quiet.
+# resets the count. A wall then costs five reads and goes quiet. ERRORS=0
+# switches the breaker off.
 SITE_BREAKER_ERRORS = int(os.getenv("SITE_BREAKER_ERRORS", "5"))
 SITE_BREAKER_MINUTES = int(os.getenv("SITE_BREAKER_MINUTES", "60"))
 SITE_BREAKER_CAP_MINUTES = int(os.getenv("SITE_BREAKER_CAP_MINUTES", "1440"))

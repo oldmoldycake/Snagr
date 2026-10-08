@@ -3,18 +3,22 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Loader2 } from 'lucide-react'
 import { acceptInvite, validateInvite } from '@/api/endpoints'
-import { ApiError } from '@/api/client'
+import { ApiError, isNotFound } from '@/api/client'
 import { qk } from '@/api/queries'
 import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
+import { NewPasswordInput } from './NewPasswordInput'
 
 /**
  * Accept-invite page at /invite/:token: validates the token, then creates the
  * account and signs the new user in.
  */
 export function InvitePage() {
+  usePageTitle('Invitation')
   const { token = '' } = useParams()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -29,6 +33,7 @@ export function InvitePage() {
 
   const accept = useMutation({
     mutationFn: () => acceptInvite(token, { email: invite.data?.email ?? email, password }),
+    meta: { inlineError: true },
     onSuccess: ({ user }) => {
       queryClient.setQueryData(qk.session, user)
       navigate('/', { replace: true })
@@ -47,12 +52,27 @@ export function InvitePage() {
 
   if (invite.isError) {
     const expired = invite.error instanceof ApiError && invite.error.status === 410
+    // Only a 404 or 410 is the server's verdict on the link: a dropped
+    // connection or a 500 says nothing about it, so it is never "not valid".
+    if (!expired && !isNotFound(invite.error)) {
+      return (
+        <AuthLayout>
+          <ErrorState
+            title="Couldn't check this invite"
+            error={invite.error}
+            onRetry={() => void invite.refetch()}
+            retrying={invite.isFetching}
+            className="border-0 px-0 py-4"
+          />
+        </AuthLayout>
+      )
+    }
     return (
       <AuthLayout>
         <h1 className="font-display text-[17px] font-semibold tracking-[0.08em] text-ink uppercase">
           {expired ? 'Invite expired' : 'Invite not valid'}
         </h1>
-        <p className="mt-2 text-[13px] text-ink-2">
+        <p className="mt-2 text-[14px] text-ink-2">
           {expired
             ? 'This invite has expired or was already used. Ask your admin for a new one.'
             : 'This invite link is not valid. Check the link or ask your admin for a new invite.'}
@@ -95,21 +115,13 @@ export function InvitePage() {
             required
             value={lockedEmail ?? email}
             readOnly={lockedEmail != null}
-            className={lockedEmail != null ? 'opacity-60' : undefined}
+            className={lockedEmail != null ? 'text-ink-2' : undefined}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
         <div>
           <Label htmlFor="invite-password">Password</Label>
-          <Input
-            id="invite-password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
+          <NewPasswordInput id="invite-password" value={password} onChange={setPassword} />
         </div>
 
         <Button type="submit" variant="primary" className="w-full" disabled={accept.isPending}>

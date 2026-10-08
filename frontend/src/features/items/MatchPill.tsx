@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn'
 
 /**
  * 0–100 criteria-fit score, tinted by band. The agent's one-line rationale
- * lives in the tooltip. `quietMid` drops the amber 70–84 tint — the listings
+ * lives in the tooltip, which a tap opens too. `quietMid` drops the amber 70–84 tint — the listings
  * board only lets the top band glow.
  */
 export function MatchPill({
@@ -27,7 +27,7 @@ export function MatchPill({
   const pill = (
     <span
       className={cn(
-        'inline-flex min-w-8 items-center justify-center rounded-full border px-1.5 py-0.5 font-mono text-[11px] font-medium tnum',
+        'inline-flex min-w-8 items-center justify-center rounded-full border px-1.5 py-0.5 font-mono text-[12px] font-medium tnum',
         band,
       )}
     >

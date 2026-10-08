@@ -16,6 +16,11 @@ versioned webhook envelope. A failed send spends an attempt and backs off
 (RETRY_BACKOFF); after MAX_ATTEMPTS the delivery goes 'failed' and stays
 as the delivery log.
 
+Sends run DELIVERY_WORKERS at a time, at most PER_HOST_SENDS of them to any
+one host, so a user's dead webhook burns its own timeouts instead of holding
+up everyone else's notifications, and a burst to one Discord webhook doesn't
+take every worker (or trip its rate limit).
+
 Errors here log-and-continue instead of raising — the loud-failure rule
 serves request handlers, but a dead dispatcher silently loses everyone's
 notifications. A send that raises anything (a poisoned payload included) is
@@ -24,15 +29,20 @@ wedging the loop. Single-worker assumption: the Dockerfile and compose run
 one uvicorn worker, so exactly one dispatcher exists; the SKIP LOCKED
 claims make an accidental second instance safe, not supported.
 
-Test sends (POST /api/me/channels/{id}/test) reuse the same adapters via
-send_test(), which is what keeps the test button honest — it exercises the
-exact path a real event takes.
+Test sends (POST /api/me/channels/{id}/test, and /api/me/channels/test for a
+channel not saved yet) reuse the same adapters via send_test(), which is what
+keeps the test button honest — it exercises the exact path a real event takes.
 """
 
 import asyncio
+import collections
+import ipaddress
 import json
 import logging
+import re
+import socket
 from datetime import UTC, datetime, timedelta
+from urllib.parse import quote, urlsplit
 
 import asyncpg
 import httpx
@@ -50,9 +60,23 @@ CHANNEL = "snagr_notifications"
 
 SEND_TIMEOUT_SECONDS = 10
 MAX_ATTEMPTS = 5
+# each worker holds a pooled DB connection for the length of its send
+DELIVERY_WORKERS = 4
+PER_HOST_SENDS = 2
 # seconds until retry n+1 after failure n: quick blip, short outage, longer
 # outage, "try again in a while"
 RETRY_BACKOFF = (30, 300, 1800, 7200)
+# Idle seconds before the dispatcher probes its link (and drains due
+# retries), which is also how long the probe may take before the link counts
+# as dead; then the reconnect pause.
+HEARTBEAT_SECONDS = 10
+RECONNECT_SECONDS = 5
+# pasted into the ntfy server's path, so nothing that could climb out of it
+NTFY_TOPIC = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+# Everything a URL may already carry stays as is (so an encoded URL isn't
+# double-encoded); only non-ASCII and the unsafe leftovers get escaped.
+_URL_SAFE = "%!#$&'()*+,/:;=?@[]~"
 
 _EMBED_COLORS = {"target.hit": 0x22C55E, "listing.new": 0x3B82F6, "test": 0x64748B}
 
@@ -69,9 +93,15 @@ class _RetryAfter(Exception):
 # --- per-kind rendering (pure — shared by real sends, test sends, and tests) --
 
 
+def _header_url(url: str) -> str:
+    """A URL fit for an HTTP header: httpx refuses non-ASCII header values."""
+    return quote(url, safe=_URL_SAFE)
+
+
 def _ntfy_message(event: str, payload: dict) -> tuple[str, dict[str, str]]:
     """(body, headers) for a ntfy push. Title stays ASCII: item names ride in
-    the UTF-8 body because HTTP header values have no encoding to trust."""
+    the UTF-8 body because HTTP header values have no encoding to trust, and
+    the Click URL is percent-encoded for the same reason."""
     if event == "target.hit":
         body = (
             f"{payload['item_name']} — {payload['price']} {payload['currency']} "
@@ -80,7 +110,7 @@ def _ntfy_message(event: str, payload: dict) -> tuple[str, dict[str, str]]:
         return body, {
             "Title": "Snagr target hit",
             "Tags": "moneybag",
-            "Click": payload["listing_url"],
+            "Click": _header_url(payload["listing_url"]),
         }
     if event == "listing.new":
         body = (
@@ -90,7 +120,7 @@ def _ntfy_message(event: str, payload: dict) -> tuple[str, dict[str, str]]:
         return body, {
             "Title": "Snagr new listing",
             "Tags": "mag",
-            "Click": payload["listing_url"],
+            "Click": _header_url(payload["listing_url"]),
         }
     return "Snagr test notification — you're all set!", {"Title": "Snagr", "Tags": "tada"}
 
@@ -156,6 +186,90 @@ def _webhook_body(outbox_id: int, event: str, payload: dict, occurred_at: str) -
     return json.dumps(envelope, separators=(",", ":")).encode()
 
 
+# --- where a channel may point ------------------------------------------------
+
+
+class RefusedDestination(ValueError):
+    """A channel whose URL or topic the guard below refuses — raised at send
+    time too, so a row saved before the guard existed can't slip past it."""
+
+
+def public_url(url: str) -> str | None:
+    """Why notifications may not be sent to this URL, or None when they may.
+
+    Any user can create a channel, and the backend posts to it from inside
+    the deployment's network, so a channel URL must look like the public
+    web: http(s), no credentials, and a host that is not a bare container
+    name (`vision`, `minio`), not localhost or an .internal/.local name, and
+    not a literal address in a private, loopback, link-local or otherwise
+    reserved range (`169.254.169.254`). The agent's validation.public_url
+    rule, plus the shorthand IPv4 spellings ("127.1", "0x7f.1") that
+    ipaddress refuses but the resolver accepts.
+
+    No DNS is resolved: a public name that resolves inward is not caught here.
+    Every sender below passes follow_redirects=False, or a public URL
+    answering 302 to an internal one would walk straight past this check.
+    """
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        parsed.port  # noqa: B018 — raises on a malformed or out-of-range port
+    except ValueError:  # an unclosed "[", say
+        return "not a valid URL"
+    if parsed.scheme not in ("http", "https") or not host:
+        return "only http(s) URLs with a hostname are accepted"
+    if parsed.username or parsed.password:
+        return "a URL carrying credentials is not accepted"
+
+    host = host.rstrip(".")
+    literal = _address(host)
+    if literal is not None:
+        return None if literal.is_global else f"{host} is a private or reserved address"
+    if "." not in host:
+        return f"{host} is not a public hostname"
+    if host == "localhost" or host.endswith((".localhost", ".internal", ".local", ".home.arpa")):
+        return f"{host} is not a public hostname"
+    return None
+
+
+def ntfy_topic_error(topic: str) -> str | None:
+    """Why this ntfy topic is refused, or None when it is fine."""
+    if not NTFY_TOPIC.fullmatch(topic):
+        return "Use 1-64 letters, digits, - or _"
+    return None
+
+
+def _address(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The host as a literal IP, or None when it is a name."""
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
+
+
+def _host(channel: NotificationChannels) -> str:
+    """The host a send to this channel goes to — what PER_HOST_SENDS counts.
+    A URL too broken to name one groups under "": its send refuses it anyway."""
+    url = settings.NTFY_SERVER_URL if channel.kind == "ntfy" else channel.url
+    try:
+        return urlsplit(url or "").hostname or ""
+    except ValueError:
+        return ""
+
+
+def _check_destination(channel: NotificationChannels) -> None:
+    if channel.kind == "ntfy":
+        refused = ntfy_topic_error(channel.topic or "")
+    else:
+        refused = public_url(channel.url or "")
+    if refused:
+        raise RefusedDestination(refused)
+
+
 # --- per-kind sending ---------------------------------------------------------
 
 
@@ -163,7 +277,7 @@ async def _send_ntfy(channel: NotificationChannels, event: str, payload: dict) -
     if not settings.NTFY_SERVER_URL:
         raise RuntimeError("this instance has no ntfy server configured")
     body, headers = _ntfy_message(event, payload)
-    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS, follow_redirects=False) as client:
         resp = await client.post(
             f"{settings.NTFY_SERVER_URL.rstrip('/')}/{channel.topic}",
             content=body,
@@ -175,7 +289,7 @@ async def _send_ntfy(channel: NotificationChannels, event: str, payload: dict) -
 async def _send_discord(
     channel: NotificationChannels, event: str, payload: dict, occurred_at: str
 ) -> None:
-    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS, follow_redirects=False) as client:
         resp = await client.post(channel.url, json=_discord_payload(event, payload, occurred_at))
         if resp.status_code == 429:
             raise _RetryAfter(float(resp.headers.get("Retry-After") or 0), "Discord rate limit")
@@ -199,7 +313,7 @@ async def _send_webhook(
         "X-Snagr-Timestamp": timestamp,
         "X-Snagr-Signature": sign_webhook(channel.secret, timestamp, body),
     }
-    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=SEND_TIMEOUT_SECONDS, follow_redirects=False) as client:
         resp = await client.post(channel.url, content=body, headers=headers)
         resp.raise_for_status()
 
@@ -213,6 +327,7 @@ async def _send(
     delivery_id: str,
 ) -> None:
     """Deliver one message to one channel; raises on any failure."""
+    _check_destination(channel)
     if channel.kind == "ntfy":
         await _send_ntfy(channel, event, payload)
     elif channel.kind == "discord":
@@ -224,7 +339,8 @@ async def _send(
 async def send_test(channel: NotificationChannels) -> None:
     """One synthetic message through the real adapter for this channel's kind.
     Raises exactly like a real send — the router maps RuntimeError (no ntfy
-    server) to 422 no_server and httpx errors to 502 channel_failed."""
+    server) to 422 no_server, RefusedDestination to 422 validation_error and
+    httpx errors to 502 channel_failed."""
     await _send(channel, 0, "test", {}, datetime.now(UTC).isoformat(), "test")
 
 
@@ -260,8 +376,30 @@ async def _expand_one() -> bool:
         return True
 
 
-async def _deliver_one() -> bool:
-    """Claim one due pending delivery and attempt it; True when one was tried.
+class _Sending:
+    """One drain's in-flight sends, shared by its workers. A delivery whose
+    host is at PER_HOST_SENDS is held back — left pending and unclaimable
+    this drain — until one of that host's sends finishes, so the worker moves
+    on instead of waiting on a slow host."""
+
+    def __init__(self) -> None:
+        self.in_flight: collections.Counter[str] = collections.Counter()
+        self.held_back: dict[str, set[int]] = collections.defaultdict(set)
+        self.host_freed = asyncio.Condition()
+
+    def excluded(self) -> list[int]:
+        return [i for ids in self.held_back.values() for i in ids]
+
+    async def release(self, host: str) -> None:
+        async with self.host_freed:
+            self.in_flight[host] -= 1
+            self.held_back.pop(host, None)
+            self.host_freed.notify_all()
+
+
+async def _deliver_one(sending: _Sending) -> bool:
+    """Claim one due pending delivery and attempt it; True when one was
+    claimed (held back for a busy host included).
 
     The send happens while the row lock is held — deliberate: a crash mid-send
     releases the lock and the row is simply still pending, so there is no
@@ -279,6 +417,7 @@ async def _deliver_one() -> bool:
             )
             .where(NotificationDeliveries.status == "pending")
             .where(NotificationDeliveries.next_attempt_at <= now)
+            .where(NotificationDeliveries.id.not_in(sending.excluded()))
             .order_by(NotificationDeliveries.next_attempt_at)
             .limit(1)
             .with_for_update(skip_locked=True, of=NotificationDeliveries)
@@ -287,6 +426,12 @@ async def _deliver_one() -> bool:
         if claimed is None:
             return False
         delivery, outbox, channel = claimed
+        host = _host(channel)
+        if sending.in_flight[host] >= PER_HOST_SENDS:
+            # untouched, so closing the session just drops the lock
+            sending.held_back[host].add(delivery.id)
+            return True
+        sending.in_flight[host] += 1
         delivery.attempts += 1
         try:
             await _send(
@@ -314,8 +459,23 @@ async def _deliver_one() -> bool:
         else:
             delivery.status = "delivered"
             delivery.delivered_at = datetime.now(UTC)
-        await session.commit()
+        try:
+            await session.commit()
+        finally:
+            await sending.release(host)
         return True
+
+
+async def _delivery_worker(sending: _Sending) -> None:
+    """Deliver until nothing is claimable and no send is in flight — while
+    one is, finishing it may free a host with deliveries held back."""
+    while True:
+        if await _deliver_one(sending):
+            continue
+        async with sending.host_freed:
+            if not sending.in_flight.total():
+                return
+            await sending.host_freed.wait()
 
 
 async def _drain() -> None:
@@ -324,8 +484,15 @@ async def _drain() -> None:
     missed NOTIFY is never special."""
     while await _expand_one():
         pass
-    while await _deliver_one():
-        pass
+    sending = _Sending()
+    workers = [asyncio.create_task(_delivery_worker(sending)) for _ in range(DELIVERY_WORKERS)]
+    try:
+        await asyncio.gather(*workers)
+    finally:
+        # one worker losing the DB fails the drain; the rest go with it
+        # rather than outliving it into the reconnect
+        for worker in workers:
+            worker.cancel()
 
 
 async def listen_pg() -> None:
@@ -348,18 +515,27 @@ async def listen_pg() -> None:
                 await _drain()
                 while True:
                     try:
-                        await asyncio.wait_for(pending.get(), timeout=10)
+                        await asyncio.wait_for(pending.get(), timeout=HEARTBEAT_SECONDS)
                         while not pending.empty():  # coalesce a burst into one drain
                             pending.get_nowait()
                     except TimeoutError:
-                        # idle: surface a silently-dead TCP link (VPN drop) —
-                        # and this tick is what makes due retries fire
-                        await conn.execute("SELECT 1")
+                        # idle: surface a silently-dead TCP link (VPN drop),
+                        # bounded because on such a link the probe itself
+                        # hangs — and this tick is what makes due retries fire
+                        await conn.execute("SELECT 1", timeout=HEARTBEAT_SECONDS)
                     await _drain()
             finally:
-                await conn.close()
-        # SQLAlchemyError too, unlike the SSE hub: _drain() IS this task's job,
-        # so a DB loss inside it must reconnect rather than kill the loop
-        except (OSError, asyncpg.PostgresError, SQLAlchemyError) as e:
-            log.error(f"notification dispatcher lost Postgres ({e}); retrying in 5s")
-            await asyncio.sleep(5)
+                await conn.close(timeout=RECONNECT_SECONDS)
+        # a connection the server dropped raises InterfaceError, not a
+        # PostgresError; SQLAlchemyError too, unlike the SSE hub: _drain() IS
+        # this task's job, so a DB loss inside it must reconnect as well
+        except (OSError, asyncpg.PostgresError, asyncpg.InterfaceError, SQLAlchemyError) as e:
+            log.error(
+                f"notification dispatcher lost Postgres ({e!r}); retrying in {RECONNECT_SECONDS}s"
+            )
+            await asyncio.sleep(RECONNECT_SECONDS)
+        except Exception:
+            # not a lost link but a bug — still no reason to stop everyone's
+            # notifications until a restart
+            log.exception(f"notification dispatcher failed; restarting in {RECONNECT_SECONDS}s")
+            await asyncio.sleep(RECONNECT_SECONDS)

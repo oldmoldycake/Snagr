@@ -58,6 +58,9 @@ class ItemSummary(BaseModel):
     pct_change_range: str | None  # signed percent, e.g. "-8.30"
     last_checked_at: str | None
     created_at: str
+    # users watching the item, the caller among them; above 1 a rename is not
+    # the caller's alone (services/items.py _rename)
+    watcher_count: int
     watch: Watch
     spark: list[str | None]  # <=30 bucketed best-price points; null = no data in bucket
 
@@ -149,14 +152,15 @@ class ItemCreateRequest(BaseModel):
 class ItemUpdateRequest(BaseModel):
     """PATCH /api/items/{id} body; omitted fields are left unchanged."""
 
+    # on target_price, criteria, recheck_interval_minutes and site_ids an
+    # explicit null means something (cleared, or back to the default) while an
+    # omitted key is unchanged; model_fields_set tells them apart
     name: str | None = None
     target_price: str | None = None
     criteria: str | None = None
     selection_mode: SelectionMode | None = None
     max_listings: int | None = None
     allow_reproductions: bool | None = None
-    # the one field here where an explicit null means something: back to the
-    # instance default. Omitted = unchanged (model_fields_set tells them apart)
     recheck_interval_minutes: int | None = None
     hunt: bool | None = None
     site_ids: list[int] | None = None

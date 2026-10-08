@@ -18,9 +18,11 @@ Callers: routers/jobs.py, routers/items.py (through services/items.py),
 mcp/tools/jobs.py and services/events.py.
 """
 
+import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, func, or_, select, true, update
+from pydantic import ValidationError
+from sqlalchemy import and_, exists, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +39,7 @@ from app.models import (
     Watches,
     WatchSites,
 )
-from app.schemas.common import PageMeta, Paginated
+from app.schemas.common import PageMeta, Paginated, page_param
 from app.schemas.items import HuntFacts, RecheckFacts
 from app.schemas.jobs import (
     Job,
@@ -47,13 +49,19 @@ from app.schemas.jobs import (
     PausedSite,
 )
 
+log = logging.getLogger(__name__)
+
 OPEN_STATUSES = ("pending", "running")
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
 KINDS = ("hunt", "recheck", "ground")
 REQUESTABLE_KINDS = ("hunt", "recheck")
 SCOPES = ("global", "category", "site", "item")
-# what a person asked for goes to the front of the queue
+# what a person asked for goes to the front of the queue: the hunter reads a
+# priority as minutes of head start (agent/jobs.py::claim)
 USER_PRIORITY = 100
+# ...and each further site of one watch starts a little further back, so a
+# batch of new items has every item's first site hunted before anyone's second
+SITE_STAGGER = 10
 
 MAX_PER_PAGE = 100
 MAX_EVENTS = 500
@@ -212,8 +220,8 @@ async def list_jobs(db: AsyncSession, viewer: User, filters: JobListParams) -> P
     is a queue and reads forwards, by when each is due; everything else is
     history and reads backwards.
     """
-    page = filters.page or 1
-    per_page = min(filters.per_page or 20, MAX_PER_PAGE)
+    page = page_param(filters.page, 1)
+    per_page = min(page_param(filters.per_page, 20), MAX_PER_PAGE)
 
     stmt = _named().where(visible(viewer))
     kinds = _csv(filters.kind)
@@ -274,7 +282,16 @@ async def visible_events(
         .scalars()
         .all()
     )
-    return [build_job_event(event) for event in rows]
+    events = []
+    for row in rows:
+        try:
+            events.append(build_job_event(row))
+        except ValidationError as e:
+            # A row this backend can't describe — an event_type from a newer
+            # agent, say. It costs one line of the log, as it does on the SSE
+            # stream, never the whole backfill.
+            log.error(f"Left out job_events {row.job_id}:{row.seq} the schema refuses: {e}")
+    return events
 
 
 async def summary(db: AsyncSession, viewer: User) -> JobsSummary:
@@ -288,7 +305,16 @@ async def summary(db: AsyncSession, viewer: User) -> JobsSummary:
         return (await db.execute(stmt)).scalar_one()
 
     async def soonest(*clauses) -> str | None:
-        stmt = select(func.min(Jobs.run_after)).where(mine).where(Jobs.status == "pending")
+        # The hunter doesn't claim a paused site's jobs, so they come due when
+        # the pause lifts, not at run_after; GREATEST skips an unpaused site's NULL.
+        paused = and_(Sites.id == Jobs.site_id, Sites.paused_until > func.now())
+        stmt = (
+            select(func.min(func.greatest(Jobs.run_after, Sites.paused_until)))
+            .select_from(Jobs)
+            .outerjoin(Sites, paused)
+            .where(mine)
+            .where(Jobs.status == "pending")
+        )
         for clause in clauses:
             stmt = stmt.where(clause)
         due = (await db.execute(stmt)).scalar_one()
@@ -378,12 +404,13 @@ async def enqueue(
     """
     _validate(kind, scope, scope_id)
     if kind == "hunt" and not settings.HUNT_ENABLED:
-        raise err(409, "hunting_disabled", "Hunting is paused by the operator")
+        raise err(409, "hunting_disabled", "Hunting is turned off on this server")
     watches = await _scoped_watches(db, viewer, scope, scope_id)
     # an unknown target and one holding none of the caller's watches are the
     # same 404: neither is anything this caller can ask the hunter about
     if not watches:
-        raise err(404, "not_found", f"Nothing to {kind} in that scope")
+        action = "hunt for" if kind == "hunt" else "check prices for"
+        raise err(404, "not_found", f"You have no items here to {action}")
 
     queued = (
         await _hunts(db, watches, viewer.id, scope, scope_id)
@@ -482,15 +509,31 @@ async def _hunts(
         # listings. The flag records that on the job; the hunter itself decides
         # by counting the watch's slots when the hunt runs.
         payload = {"swap": True} if await open_slots(db, watch) <= 0 else None
-        for site_id in await watch_sites(db, watch):
-            if scope == "site" and site_id != scope_id:
-                continue
+        sites = [
+            site_id
+            for site_id in await watch_sites(db, watch)
+            if scope != "site" or site_id == scope_id
+        ]
+        for index, site_id in enumerate(sites):
             job = await enqueue_hunt(
-                db, watch, site_id, user_id=user_id, reason="user", payload=payload
+                db,
+                watch,
+                site_id,
+                user_id=user_id,
+                reason="user",
+                priority=_site_priority(index),
+                payload=payload,
             )
             if job is not None:
                 queued.append(job)
     return queued
+
+
+def _site_priority(index: int) -> int:
+    """The head start a person's hunt of a watch's index-th site gets —
+    USER_PRIORITY for the first, SITE_STAGGER less for each after it, never
+    below a background job's."""
+    return max(USER_PRIORITY - index * SITE_STAGGER, 0)
 
 
 async def enqueue_hunt(
@@ -604,8 +647,10 @@ async def enqueue_hunts_for_watch(
     """Every site a new watch will be searched on, queued at once — what makes
     a just-added item start hunting in seconds rather than on some tick."""
     queued = []
-    for site_id in await watch_sites(db, watch):
-        job = await enqueue_hunt(db, watch, site_id, user_id=user_id, reason=reason)
+    for index, site_id in enumerate(await watch_sites(db, watch)):
+        job = await enqueue_hunt(
+            db, watch, site_id, user_id=user_id, reason=reason, priority=_site_priority(index)
+        )
         if job is not None:
             queued.append(job)
     return queued
@@ -666,6 +711,23 @@ async def cancel_recheck(db: AsyncSession, listing_id: int) -> None:
         .where(Jobs.kind == "recheck")
         .where(Jobs.listing_id == listing_id)
         .where(Jobs.status == "pending")
+        .values(status="cancelled", finished_at=datetime.now(UTC))
+    )
+
+
+async def cancel_unwatched_ground(db: AsyncSession, item_id: int) -> None:
+    """Drop an item's pending grounding once nobody watches it, in the
+    caller's transaction — what the last watcher leaving means to the queue.
+    The items row stays (whoever watches that name next picks it back up,
+    market price and all), but nobody is asking about its price until then.
+    A job the agent already claimed is its own: it finds nobody watching and
+    finishes without grounding."""
+    await db.execute(
+        update(Jobs)
+        .where(Jobs.kind == "ground")
+        .where(Jobs.item_id == item_id)
+        .where(Jobs.status == "pending")
+        .where(~exists().where(Watches.item_id == item_id))
         .values(status="cancelled", finished_at=datetime.now(UTC))
     )
 

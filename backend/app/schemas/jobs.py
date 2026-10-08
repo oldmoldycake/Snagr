@@ -26,7 +26,7 @@ JobEventType = Literal[
     "listing_discovered",
     "listing_ended",  # tracked listing sold/ended; slot freed — payload: listing_id, item_id
     "site_paused",  # the breaker tripped — payload: site_id, paused_until, paused_reason
-    "error",
+    "error",  # a failed attempt's payload: detail (its raw error text, for debugging)
     "job_finished",
 ]
 

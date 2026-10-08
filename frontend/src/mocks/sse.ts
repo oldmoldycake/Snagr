@@ -1,10 +1,11 @@
 /**
  * Mock SSE: a per-viewer hub feeding every open /api/events stream, plus the
  * two scripts that make the hunter look alive — a demo hunt that plays out in
- * real time when someone presses Hunt now, and a check loop that re-reads one
- * listing every ~20 s for as long as a stream is open. Both write real rows
- * into the fixture store, so what the page announces is what the next fetch
- * returns. Every frame is gated by the job-visibility predicate (jobVisible in
+ * real time, and a check loop that works the queue for as long as a stream is
+ * open, re-reading each listing as its check comes due and starting the next
+ * due hunt, so the queue keeps to its schedule. Both write real rows into the
+ * fixture store, so what the page announces is what the next fetch returns.
+ * Every frame is gated by the job-visibility predicate (jobVisible in
  * fixtures.ts), mirroring the backend hub.
  */
 
@@ -19,7 +20,7 @@ import {
   type MockListing,
   type MockUser,
 } from './fixtures'
-import { toJob, toJobEvent } from './serializers'
+import { effectiveInterval, HUNT_ENABLED, toJob, toJobEvent } from './serializers'
 
 /** One open /api/events stream and the viewer it belongs to. */
 export type StreamClient = { user: MockUser; enqueue: (chunk: string) => void }
@@ -119,8 +120,10 @@ export function cancelDemoHunt(job: MockJob) {
  * One hunt, played out over ~12 s: it looks at a few candidates, rejects some
  * against the item's criteria, and saves one — writing a real listing and a
  * real price check, so the item page shows the find the moment it lands.
+ * `claimMs` is how long it stays queued first: a moment for a press of Hunt
+ * now, none for the next due hunt, which the pool claims as the last ends.
  */
-export function startDemoHunt(job: MockJob) {
+export function startDemoHunt(job: MockJob, claimMs = 400) {
   const jobTimers: ReturnType<typeof setTimeout>[] = []
   timers.set(job.id, jobTimers)
   const at = (ms: number, fn: () => void) => jobTimers.push(setTimeout(fn, ms))
@@ -141,7 +144,7 @@ export function startDemoHunt(job: MockJob) {
     method: null,
     transport: null,
   }
-  let clock = 400
+  let clock = claimMs
 
   at(clock, () => {
     job.status = 'running'
@@ -153,15 +156,15 @@ export function startDemoHunt(job: MockJob) {
       'job_started',
       (swap
         ? `Hunting ${site.name} for something better than "${item.name}"'s weakest tracked listing — ` +
-          `all ${item.max_listings} slots filled`
-        : `Hunting ${site.name} for "${item.name}" — ${slotsOpen} open slot${slotsOpen === 1 ? '' : 's'}`) +
+          `all ${item.max_listings} already tracked`
+        : `Hunting ${site.name} for "${item.name}" — room for ${slotsOpen} more listing${slotsOpen === 1 ? '' : 's'}`) +
         `, ${item.selection_mode === 'best_match' ? 'best match' : 'cheapest'} mode`,
     )
   })
 
   clock += 900
   at(clock, () =>
-    emit(job, 'info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 6 results, 2 already tracked`),
+    emit(job, 'info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 5 results, 2 already tracked`),
   )
 
   const REJECTED = [
@@ -252,7 +255,7 @@ export function startDemoHunt(job: MockJob) {
       job,
       'success',
       'listing_discovered',
-      `Saved as listing #${listing.id} — ${activeListings(item.id).length} of ${item.max_listings} slots filled · locator learned (jsonld)`,
+      `Saved as listing #${listing.id} — tracking ${activeListings(item.id).length} of ${item.max_listings} listings`,
       { listing_id: listing.id, item_id: item.id },
     )
   })
@@ -271,11 +274,12 @@ export function startDemoHunt(job: MockJob) {
       'success',
       'job_finished',
       stats.new_listings > 0
-        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} seen · ${left} slots left`
-        : `Hunt complete — nothing new · ${stats.listings_checked} seen`,
+        ? `Hunt complete — ${stats.new_listings} new · ${stats.listings_checked} looked at · room for ${left} more`
+        : `Hunt complete — nothing new · ${stats.listings_checked} looked at`,
     )
     broadcastJob('job.finished', job)
     timers.delete(job.id)
+    startDueHunt()
   })
 }
 
@@ -283,30 +287,82 @@ export function startDemoHunt(job: MockJob) {
 
 /** Cycled so the checks tail shows every way a price can be read. */
 const CHECK_METHODS = ['jsonld', 'meta', 'locator', 'llm']
+/** RECHECK_CONCURRENCY's default; each check the pool claims takes one tick. */
+const CHECK_SLOTS = 3
+const TICK_MS = 3_000
 let checkLoop: ReturnType<typeof setInterval> | null = null
 let checkCount = 0
+/** The rechecks claimed last tick, finished on this one. */
+let checking: MockJob[] = []
 
 function startCheckLoop() {
   if (checkLoop != null) return
-  checkLoop = setInterval(runOneCheck, 20_000)
+  checkLoop = setInterval(workQueue, TICK_MS)
 }
 
 function stopCheckLoop() {
   if (checkLoop == null) return
   clearInterval(checkLoop)
   checkLoop = null
+  // as the daemon does on shutdown, what it held goes back to the queue
+  for (const job of checking) job.status = 'pending'
+  checking = []
+}
+
+/**
+ * The daemon's pools in small: finish the checks claimed last tick, claim up
+ * to CHECK_SLOTS more that are due, and start the next due hunt. Without it,
+ * everything queued would sit overdue.
+ */
+function workQueue() {
+  for (const job of checking) runOneCheck(job)
+  checking = dueJobs('recheck').slice(0, CHECK_SLOTS)
+  for (const job of checking) job.status = 'running'
+  startDueHunt()
+}
+
+/** The next due hunt, once no demo hunt is playing — one at a time, as behind
+ *  HUNT_CONCURRENCY's default. */
+function startDueHunt() {
+  if (!HUNT_ENABLED || checkLoop == null || timers.size > 0) return
+  const hunt = dueJobs('hunt')[0]
+  if (hunt) startDemoHunt(hunt, 0)
+}
+
+/**
+ * A kind's due jobs in the daemon's claim order — priority counts as a head
+ * start in minutes — leaving out a paused site's, which it never claims.
+ */
+function dueJobs(kind: MockJob['kind']): MockJob[] {
+  const now = Date.now()
+  const claimAt = (job: MockJob) => job.run_after - job.priority * 60_000
+  return store.jobs
+    .filter((job) => job.kind === kind && job.status === 'pending' && job.run_after <= now)
+    .filter((job) => (store.sites.find((s) => s.id === job.site_id)?.paused_until ?? 0) <= now)
+    .sort((a, b) => claimAt(a) - claimAt(b) || a.id - b.id)
 }
 
 /**
  * One recheck, the way the daemon does it: a real price_checks row and the
- * frame the trigger would raise. Rechecks write no job events and emit no
- * lifecycle frames — this one frame is the whole of their output.
+ * frame the trigger would raise, and the listing's next check queued. Rechecks
+ * write no job events and emit no lifecycle frames — this one frame is the
+ * whole of their output.
  */
-function runOneCheck() {
-  const tracked = store.listings.filter((l) => l.active)
-  if (tracked.length === 0) return
-  const listing = tracked[checkCount % tracked.length]
+function runOneCheck(job: MockJob) {
+  const listing = store.listings.find((l) => l.id === job.listing_id)
+  // untracked while it waited: untracking ends the chain
+  if (!listing?.active) {
+    job.status = 'cancelled'
+    job.finished_at = Date.now()
+    return
+  }
   const item = store.items.find((i) => i.id === listing.item_id)!
+  // the next check, one interval out. The daemon would finish this row and
+  // queue a fresh one; reusing it keeps the demo's Checks history to its seed.
+  job.status = 'pending'
+  job.run_after = Date.now() + effectiveInterval(item) * 60_000
+  job.priority = 0
+  job.reason = null
   const site = store.sites.find((s) => s.id === listing.site_id)!
   const method = CHECK_METHODS[checkCount % CHECK_METHODS.length]
   // one in twelve is a reading the bands did not believe — it shows in the

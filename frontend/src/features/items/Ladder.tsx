@@ -1,6 +1,8 @@
+import { useMeasuredWidth } from '@/components/charts/pricePlot'
 import { cn } from '@/lib/cn'
 import { formatMoney } from '@/lib/money'
 import { RANGE_LABELS, type TimeRange } from '@/lib/time'
+import { ladderLabelJoins } from './ladderLabels'
 
 /**
  * The range ladder: a graduated rail from the range high down to the target,
@@ -42,6 +44,8 @@ export function Ladder({
   const pos = (value: number) => Math.max(0, Math.min(1, (high - value) / span)) * 100
   const markerPos = pos(bestN)
   const targetPos = pos(targetN)
+  const highLabel = `${RANGE_LABELS[range]} high ${formatMoney(high.toFixed(2), currency)}`
+  const targetLabel = `⌖ ${formatMoney(target, currency)} ·`
 
   return (
     <div className={cn('w-full max-w-90', className)}>
@@ -69,51 +73,95 @@ export function Ladder({
           style={{ left: `${markerPos}%` }}
         />
       </div>
-      <div className="relative mt-1 h-4 font-mono text-[10px]">
-        <span className="absolute left-0 text-ink-3">
-          {RANGE_LABELS[range]} high {formatMoney(high.toFixed(2), currency)}
-        </span>
-        {/* Past 55% the positioned label would overprint the right-anchored one
-            (worst exactly when best ≈ target), so the pair collapses into a
-            single right-anchored phrase instead. */}
-        {inRange ? (
-          targetPos > 55 ? (
-            <span className="absolute right-0 whitespace-nowrap text-drop">
-              <span className="text-drop/60">⌖ {formatMoney(target, currency)}{' · '}</span>
-              now {formatMoney(best, currency)} ⌖
-            </span>
-          ) : (
-            <>
-              <span
-                className="absolute -translate-x-full whitespace-nowrap text-drop/60"
-                style={{ left: `${Math.max(targetPos, 42)}%` }}
-              >
-                ⌖ {formatMoney(target, currency)} ·
-              </span>
-              <span className="absolute right-0 whitespace-nowrap text-drop">
-                now {formatMoney(best, currency)} ⌖
-              </span>
-            </>
-          )
-        ) : markerPos > 55 ? (
-          <span className="absolute right-0 whitespace-nowrap">
-            <span className="text-lume">now {formatMoney(best, currency)}</span>
-            <span className="text-drop">{' · '}⌖ target {formatMoney(target, currency)}</span>
+      <LadderLabels
+        inRange={inRange}
+        markerPos={markerPos}
+        targetPos={targetPos}
+        highLabel={highLabel}
+        targetLabel={targetLabel}
+        best={best}
+        target={target}
+        currency={currency}
+      />
+    </div>
+  )
+}
+
+/**
+ * The ladder's label line. Its own component so the row it measures exists
+ * from mount: Ladder renders nothing until it has a best price and a target.
+ */
+function LadderLabels({
+  inRange,
+  markerPos,
+  targetPos,
+  highLabel,
+  targetLabel,
+  best,
+  target,
+  currency,
+}: {
+  inRange: boolean
+  markerPos: number
+  targetPos: number
+  highLabel: string
+  targetLabel: string
+  best: string | null
+  target: string | null
+  currency: string
+}) {
+  const { ref, width } = useMeasuredWidth()
+  const nowLabel = `now ${formatMoney(best, currency)}`
+  const huntTargetLabel = `⌖ target ${formatMoney(target, currency)}`
+  const joins = inRange
+    ? ladderLabelJoins(Math.max(targetPos, 42), 'end', targetLabel, highLabel, `${nowLabel} ⌖`, width)
+    : ladderLabelJoins(Math.max(46, markerPos), 'center', nowLabel, highLabel, huntTargetLabel, width)
+  return (
+    <div
+      ref={ref}
+      className={cn('relative mt-1 font-mono text-[12px] leading-4', joins ? 'flex flex-wrap gap-x-2' : 'h-4')}
+    >
+      <span className={cn('whitespace-nowrap text-ink-3', !joins && 'absolute left-0')}>{highLabel}</span>
+      {/* Where the positioned label would overprint a neighbour, the pair
+          collapses into a single right-anchored phrase instead; the line wraps,
+          so a phrase too long to share it with the high label drops beneath it. */}
+      {inRange ? (
+        joins ? (
+          <span className="ml-auto whitespace-nowrap text-drop">
+            <span className="text-drop/60">⌖ {formatMoney(target, currency)}{' · '}</span>
+            {nowLabel} ⌖
           </span>
         ) : (
           <>
             <span
-              className="absolute -translate-x-1/2 whitespace-nowrap text-lume"
-              style={{ left: `${Math.max(46, markerPos)}%` }}
+              className="absolute -translate-x-full whitespace-nowrap text-drop/60"
+              style={{ left: `${Math.max(targetPos, 42)}%` }}
             >
-              now {formatMoney(best, currency)}
+              {targetLabel}
             </span>
             <span className="absolute right-0 whitespace-nowrap text-drop">
-              ⌖ target {formatMoney(target, currency)}
+              {nowLabel} ⌖
             </span>
           </>
-        )}
-      </div>
+        )
+      ) : joins ? (
+        <span className="ml-auto whitespace-nowrap">
+          <span className="text-lume">{nowLabel}</span>
+          <span className="text-drop">{' · '}{huntTargetLabel}</span>
+        </span>
+      ) : (
+        <>
+          <span
+            className="absolute -translate-x-1/2 whitespace-nowrap text-lume"
+            style={{ left: `${Math.max(46, markerPos)}%` }}
+          >
+            {nowLabel}
+          </span>
+          <span className="absolute right-0 whitespace-nowrap text-drop">
+            {huntTargetLabel}
+          </span>
+        </>
+      )}
     </div>
   )
 }

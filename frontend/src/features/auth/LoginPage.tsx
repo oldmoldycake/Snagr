@@ -6,33 +6,39 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/cn'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { AuthLayout } from './AuthLayout'
-import { useInstance, useLogin, useSession } from './useSession'
+import { useInstance, useLogin, useReturnTo, useSession } from './useSession'
 
 const MOCKS_ON = import.meta.env.VITE_USE_MOCKS === 'true'
 
 /**
  * Sign-in page: email and password, plus the SSO button when the instance has
- * an OIDC provider. Already signed-in visitors go straight to the dashboard.
+ * an OIDC provider. Either way, signing in returns the visitor to where they
+ * were headed (the dashboard by default); one already signed in goes straight
+ * there.
  */
 export function LoginPage() {
-  const { data: user } = useSession()
+  usePageTitle('Sign in')
+  const session = useSession()
   const { data: instance } = useInstance()
   const login = useLogin()
+  const returnTo = useReturnTo()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [searchParams] = useSearchParams()
 
-  if (user) return <Navigate to="/" replace />
+  // A failed refetch keeps the last user in `data` while AuthGuard, seeing the
+  // error, sends the visitor here: only a successful read means signed in, or
+  // the two pages redirect to each other forever.
+  if (session.isSuccess) return <Navigate to={returnTo} replace />
 
   const errorMessage =
     login.error instanceof ApiError
       ? login.error.message
-      : login.error
-        ? 'Something went wrong — try again'
-        : searchParams.get('error') === 'sso_failed'
-          ? 'SSO sign-in failed — try again or use your password'
-          : null
+      : searchParams.get('error') === 'sso_failed'
+        ? 'SSO sign-in failed — try again or use your password'
+        : null
 
   return (
     <AuthLayout>
@@ -112,7 +118,7 @@ export function LoginPage() {
             <span className="h-px flex-1 bg-hairline" />
           </div>
           <a
-            href="/api/auth/oidc/login"
+            href={`/api/auth/oidc/login?next=${encodeURIComponent(returnTo)}`}
             className={cn(buttonVariants({ variant: 'default' }), 'mt-3 w-full')}
           >
             Sign in with {instance.oidc_provider_name}

@@ -2,15 +2,16 @@ import type { Listing } from '@/api/types'
 import { toCents } from '@/lib/money'
 
 /**
- * The listings board's price rail: range-high on the left → cheapest on the
- * right, on a log scale. Log because listing prices spread multiplicatively —
+ * The listings board's price rail: cheapest on the left → range-high on the
+ * right, so a price that rises moves right, as it climbs on the charts above
+ * the board. On a log scale, because listing prices spread multiplicatively —
  * a linear rail lets a $40–$65 tail own the width and crush the under-target
  * cluster (item 3: thirteen $6–$10 listings in 6% of the rail) into one spot.
  */
 export interface Rail {
   place: (cents: number) => { pct: number; clamp: '«' | '»' | null }
   targetPct: number | null
-  /** Round prices inside the domain, cheapest last; `thin` ones lose their label when crowded. */
+  /** Round prices inside the domain, cheapest first; `thin` ones lose their label when crowded. */
   ticks: { cents: number; thin: boolean }[]
 }
 
@@ -18,10 +19,17 @@ export interface Rail {
 const MIN_LABEL_GAP_PX = 40
 /** A tick label this close to ⌖ yields to the ⌖ label, which names the same spot. */
 const TARGET_LABEL_CLEARANCE_PCT = 7
-/** IBM Plex Mono advance at the rail's 10px type (0.6em). */
-const CHAR_PX = 6
+/** IBM Plex Mono advance at the rail's 12px type (0.6em). */
+const CHAR_PX = 7.2
 /** Matches the ±9px dot→label offset in Track. */
 const LABEL_GAP_PX = 9
+/** Room kept between two labels on one line; also absorbs ⌖, which Plex Mono lacks and a fallback font draws wider. */
+export const LABEL_CLEARANCE_PX = 8
+
+/** Estimated width of a label in the rails' 12px mono type. */
+export function labelPx(label: string): number {
+  return label.length * CHAR_PX
+}
 
 /** Build the rail for the board's unfolded rows; null when none of them has a price. */
 export function makeRail(
@@ -46,18 +54,18 @@ export function makeRail(
   const hi = lg(Math.max(...cents))
   const lo = lg(Math.min(...cents))
   const pad = Math.max((hi - lo) * 0.04, Math.log(1.02))
-  const left = hi + pad
-  const right = lo - pad
+  const left = lo - pad
+  const right = hi + pad
   const place = (c: number) => {
-    const raw = ((left - lg(c)) / (left - right)) * 100
+    const raw = ((lg(c) - left) / (right - left)) * 100
     return {
       pct: Math.max(0, Math.min(100, raw)),
       clamp: raw < 0 ? ('«' as const) : raw > 100 ? ('»' as const) : null,
     }
   }
 
-  const loC = Math.exp(right)
-  const hiC = Math.exp(left)
+  const loC = Math.exp(left)
+  const hiC = Math.exp(right)
   let ticks: Rail['ticks'] = []
   for (let d = Math.floor(Math.log10(loC)); d <= Math.ceil(Math.log10(hiC)); d++) {
     for (const m of [1, 2, 5]) {
@@ -72,7 +80,6 @@ export function makeRail(
     ticks = []
     for (let k = Math.ceil(loC / step); k * step <= hiC; k++) ticks.push({ cents: k * step, thin: k % 2 === 1 })
   }
-  ticks.sort((a, b) => b.cents - a.cents)
 
   return { place, targetPct: targetC != null && targetC > 0 ? place(targetC).pct : null, ticks }
 }
@@ -113,4 +120,30 @@ export function labelFlipsLeft(
   if (nowPct + labelPct > 100) return true
   const crossesTarget = targetPct != null && nowPct < targetPct && nowPct + labelPct > targetPct
   return crossesTarget && nowPct - labelPct >= 0
+}
+
+/**
+ * The axis strip's top line: the ⌖ label centres on its notch unless that
+ * would spill out of the column, then pins to the edge it would cross. The
+ * drift caption keeps the left end unless ⌖ covers it (a target cheaper than
+ * every listing sits there), then moves to the right end, or drops out when
+ * the two can't share the line. Before the rail is measured, ⌖ right-anchors
+ * past `fallbackRightPct` and the caption stays put.
+ */
+export function axisLabels(
+  targetPct: number,
+  targetLabel: string,
+  caption: string,
+  railPx: number,
+  fallbackRightPct: number,
+): { target: 'left' | 'center' | 'right'; caption: 'left' | 'right' | null } {
+  if (railPx <= 0) return { target: targetPct > fallbackRightPct ? 'right' : 'center', caption: 'left' }
+  const width = labelPx(targetLabel)
+  const at = (targetPct / 100) * railPx
+  const target = at - width / 2 < 0 ? 'left' : at + width / 2 > railPx ? 'right' : 'center'
+  const start = target === 'left' ? 0 : target === 'right' ? railPx - width : at - width / 2
+  const captionPx = labelPx(caption) + LABEL_CLEARANCE_PX
+  if (start >= captionPx) return { target, caption: 'left' }
+  if (start + width + captionPx <= railPx) return { target, caption: 'right' }
+  return { target, caption: null }
 }

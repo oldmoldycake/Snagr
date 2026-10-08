@@ -277,6 +277,21 @@ class TestClaim:
         assert claimed["id"] == urgent
         assert claimed["priority"] == 100
 
+    def test_a_long_enough_wait_outranks_a_users_request(self):
+        # priority is a head start in minutes, not a rank: a backoff hunt two
+        # hours overdue goes before a batch of new items' hunts, or a steady
+        # stream of them would starve it
+        async def scenario():
+            ids = await seed_scope_graph()
+            starved, _ = await seed(
+                pending_job(ids, kind="hunt", run_after=NOW - timedelta(hours=2)),
+                pending_job(ids, priority=100, run_after=NOW),
+            )
+            return starved, await job_queue.claim("w1", ("recheck", "hunt"))
+
+        starved, claimed = db(scenario())
+        assert claimed["id"] == starved
+
     def test_the_longest_wait_wins_at_equal_priority(self):
         async def scenario():
             ids = await seed_scope_graph()
@@ -396,7 +411,9 @@ class TestCompletion:
             ids = await seed_scope_graph()
             (job_id,) = await seed(pending_job(ids))
             await job_queue.claim("w1", ("recheck",))
-            await job_queue.complete(job_id, {"listings_checked": 1, "prices_found": 1})
+            await job_queue.complete(
+                job_id, {"listings_checked": 1, "prices_found": 1}, worker="w1"
+            )
             return await read_job(job_id), await read_jobs(status="pending")
 
         row, pending = db(scenario())
@@ -415,7 +432,7 @@ class TestCompletion:
                 listing = await session.get(Listings, ids["listing_a"])
                 listing.active = False
                 await session.commit()
-            await job_queue.complete(job_id, {})
+            await job_queue.complete(job_id, {}, worker="w1")
             return await read_jobs(status="pending")
 
         assert db(scenario()) == []
@@ -432,7 +449,7 @@ class TestCompletion:
                 site.paused_until = NOW + timedelta(hours=3)
                 site.paused_reason = "5 consecutive read errors"
                 await session.commit()
-            await job_queue.complete(job_id, {})
+            await job_queue.complete(job_id, {}, worker="w1")
             return await read_jobs(status="pending")
 
         (successor,) = db(scenario())
@@ -450,7 +467,7 @@ class TestCompletion:
                 await session.commit()
             (job_id,) = await seed(pending_job(ids))
             await job_queue.claim("w1", ("recheck",))
-            await job_queue.complete(job_id, {})
+            await job_queue.complete(job_id, {}, worker="w1")
             return await read_jobs(status="pending")
 
         (successor,) = db(scenario())
@@ -481,7 +498,7 @@ class TestCompletion:
                 job = await session.get(Jobs, job_id)
                 job.status = "cancelled"
                 await session.commit()
-            wrote = await job_queue.complete(job_id, {"listings_checked": 1})
+            wrote = await job_queue.complete(job_id, {"listings_checked": 1}, worker="w1")
             return wrote, await read_job(job_id), await read_jobs(status="pending")
 
         wrote, row, pending = db(scenario())
@@ -530,7 +547,9 @@ async def finish_hunt(job_id: int, new_listings: int = 0) -> None:
         job.run_after = datetime.now(UTC)
         await session.commit()
     await job_queue.claim("w1", ("hunt",))
-    await job_queue.complete(job_id, {"new_listings": new_listings, "listings_checked": 4})
+    await job_queue.complete(
+        job_id, {"new_listings": new_listings, "listings_checked": 4}, worker="w1"
+    )
 
 
 def due_in(hunt: dict) -> timedelta:
@@ -627,7 +646,7 @@ class TestHuntChain:
             ids = await seed_scope_graph()
             (job_id,) = await seed(pending_job(ids, kind="hunt", attempts=2))
             await job_queue.claim("w1", ("hunt",))
-            await job_queue.fail_or_retry(job_id, "the page timed out")
+            await job_queue.fail_or_retry(job_id, "the page timed out", worker="w1")
             return await read_job(job_id), await read_hunts(status="pending")
 
         failed, pending = db(scenario())
@@ -642,7 +661,7 @@ class TestHuntChain:
             async with AsyncSessionLocal() as session:
                 (await session.get(Jobs, job_id)).status = "cancelled"
                 await session.commit()
-            await job_queue.complete(job_id, None)
+            await job_queue.complete(job_id, None, worker="w1")
             return await read_hunts(status="pending")
 
         assert db(scenario()) == []
@@ -655,7 +674,9 @@ class TestHuntChain:
             await set_watch(ids["watch_a"], max_listings=1)
             (job_id,) = await seed(pending_job(ids, kind="hunt", payload={"swap": True}))
             claimed = await job_queue.claim("w1", ("hunt",))
-            await job_queue.complete(job_id, {"new_listings": 1, "listings_checked": 4})
+            await job_queue.complete(
+                job_id, {"new_listings": 1, "listings_checked": 4}, worker="w1"
+            )
             return claimed, await read_hunts(status="pending")
 
         claimed, pending = db(scenario())
@@ -992,7 +1013,7 @@ class TestFailure:
             ids = await seed_scope_graph()
             (job_id,) = await seed(pending_job(ids))
             await job_queue.claim("w1", ("recheck",))
-            outcome = await job_queue.fail_or_retry(job_id, "the page timed out")
+            outcome = await job_queue.fail_or_retry(job_id, "the page timed out", worker="w1")
             return outcome, await read_job(job_id)
 
         outcome, row = db(scenario())
@@ -1009,7 +1030,7 @@ class TestFailure:
             ids = await seed_scope_graph()
             (job_id,) = await seed(pending_job(ids, attempts=2))
             await job_queue.claim("w1", ("recheck",))
-            outcome = await job_queue.fail_or_retry(job_id, "challenge page")
+            outcome = await job_queue.fail_or_retry(job_id, "challenge page", worker="w1")
             return outcome, await read_job(job_id), await read_jobs(status="pending")
 
         outcome, row, pending = db(scenario())
@@ -1022,7 +1043,7 @@ class TestFailure:
         async def scenario():
             ids = await seed_scope_graph()
             (job_id,) = await seed(pending_job(ids, status="cancelled", finished_at=NOW))
-            outcome = await job_queue.fail_or_retry(job_id, "too late")
+            outcome = await job_queue.fail_or_retry(job_id, "too late", worker="w1")
             return outcome, await read_job(job_id)
 
         outcome, row = db(scenario())
@@ -1058,6 +1079,58 @@ class TestRelease:
         released, row = db(scenario())
         assert released is False
         assert row["status"] == "done"
+
+
+class TestDefer:
+    """Waiting out a SearXNG suspension: the slot is freed now, the job comes
+    back when the suspension should be over, and no retry budget is spent."""
+
+    def test_a_deferred_job_waits_in_the_queue_with_its_attempt_given_back(self):
+        until = NOW + timedelta(minutes=15)
+
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="ground", watch_id=None, site_id=None))
+            await job_queue.claim("w1", ("ground",))
+            deferred = await job_queue.defer(job_id, until, worker="w1")
+            return deferred, await read_job(job_id), await job_queue.claim("w1", ("ground",))
+
+        deferred, row, claimed_again = db(scenario())
+        assert deferred is True
+        assert row["status"] == "pending"
+        assert row["locked_by"] is None
+        assert row["started_at"] is None
+        assert row["run_after"] == until
+        assert row["attempts"] == 0
+        assert row["error"] is None
+        # not due yet, so the pool goes back to sleep instead of meeting the
+        # same suspension again
+        assert claimed_again is None
+
+    def test_a_suspension_that_outlasts_the_retry_budget_never_fails_the_job(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids, kind="ground", watch_id=None, site_id=None))
+            for _ in range(job_queue.JOB_MAX_ATTEMPTS + 1):
+                await job_queue.claim("w1", ("ground",))
+                await job_queue.defer(job_id, NOW - timedelta(seconds=1), worker="w1")
+            return await read_job(job_id)
+
+        row = db(scenario())
+        assert row["status"] == "pending"
+        assert row["attempts"] == 0
+
+    def test_a_job_the_api_cancelled_meanwhile_stays_cancelled(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(ids, kind="ground", status="cancelled", finished_at=NOW)
+            )
+            return await job_queue.defer(job_id, NOW, worker="w1"), await read_job(job_id)
+
+        deferred, row = db(scenario())
+        assert deferred is False
+        assert row["status"] == "cancelled"
 
 
 class TestReaper:
@@ -1117,6 +1190,111 @@ class TestReaper:
             return await read_job(job_id)
 
         assert db(scenario())["status"] == "failed"
+
+
+class TestTakenBack:
+    """A worker whose heartbeat stalled can still be running when the reaper
+    takes its job back and another worker claims it. Whatever the first one
+    then writes, the job stays its new owner's."""
+
+    async def _reclaimed(self) -> int:
+        """A recheck claimed by w1, reaped after w1 went quiet, and claimed
+        again by w2."""
+        ids = await seed_scope_graph()
+        (job_id,) = await seed(pending_job(ids))
+        await job_queue.claim("w1", ("recheck",))
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Jobs, job_id)
+            job.heartbeat_at = NOW - timedelta(hours=1)
+            await session.commit()
+        assert await job_queue.reap() == [job_id]
+        await job_queue.claim("w2", ("recheck",))
+        return job_id
+
+    def test_the_old_worker_cannot_complete_it(self):
+        async def scenario():
+            job_id = await self._reclaimed()
+            wrote = await job_queue.complete(job_id, {"listings_checked": 1}, worker="w1")
+            return wrote, await read_job(job_id), await read_jobs(status="pending")
+
+        wrote, row, pending = db(scenario())
+        assert wrote is False
+        assert row["status"] == "running"
+        assert row["locked_by"] == "w2"
+        assert row["stats"] is None
+        # w2 owns the chain; a successor now would be a second check ahead
+        assert pending == []
+
+    def test_the_old_worker_cannot_fail_it(self):
+        async def scenario():
+            job_id = await self._reclaimed()
+            outcome = await job_queue.fail_or_retry(job_id, "the page timed out", worker="w1")
+            return outcome, await read_job(job_id)
+
+        outcome, row = db(scenario())
+        assert outcome == "running"
+        assert row["status"] == "running"
+        assert row["locked_by"] == "w2"
+
+    def test_the_old_worker_cannot_defer_it(self):
+        async def scenario():
+            job_id = await self._reclaimed()
+            deferred = await job_queue.defer(job_id, NOW + timedelta(minutes=15), worker="w1")
+            return deferred, await read_job(job_id)
+
+        deferred, row = db(scenario())
+        assert deferred is False
+        assert row["status"] == "running"
+        assert row["locked_by"] == "w2"
+
+    def test_a_job_back_in_the_queue_is_not_the_old_workers_either(self):
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(pending_job(ids))
+            await job_queue.claim("w1", ("recheck",))
+            await job_queue.fail_or_retry(job_id, "the page timed out", worker="w1")
+            wrote = await job_queue.complete(job_id, {"listings_checked": 1}, worker="w1")
+            return wrote, await read_job(job_id)
+
+        wrote, row = db(scenario())
+        assert wrote is False
+        assert row["status"] == "pending"
+
+    def test_the_new_owner_still_finishes_it(self):
+        async def scenario():
+            job_id = await self._reclaimed()
+            await job_queue.complete(job_id, {"listings_checked": 1}, worker="w1")
+            wrote = await job_queue.complete(job_id, {"listings_checked": 1}, worker="w2")
+            return wrote, await read_job(job_id), await read_jobs(status="pending")
+
+        wrote, row, pending = db(scenario())
+        assert wrote is True
+        assert row["status"] == "done"
+        assert len(pending) == 1
+
+    def test_the_reaper_leaves_a_job_its_worker_is_ending(self):
+        # the worker holds the row lock while it writes the job's end; the
+        # reaper must not take it back from under that write
+        async def scenario():
+            ids = await seed_scope_graph()
+            (job_id,) = await seed(
+                pending_job(
+                    ids,
+                    status="running",
+                    started_at=NOW - timedelta(hours=1),
+                    heartbeat_at=NOW - timedelta(minutes=30),
+                    attempts=1,
+                    locked_by="w1",
+                )
+            )
+            async with AsyncSessionLocal() as session:
+                await session.get(Jobs, job_id, with_for_update=True)
+                reaped = await job_queue.reap()
+            return reaped, await read_job(job_id)
+
+        reaped, row = db(scenario())
+        assert reaped == []
+        assert row["status"] == "running"
 
 
 class TestRetention:
@@ -1341,6 +1519,21 @@ class TestUnitLookups:
     def test_a_missing_item_has_nothing_to_ground(self):
         assert db(get_ground_unit(9999)) is None
 
+    def test_an_item_nobody_watches_has_nothing_to_ground(self):
+        # its job was queued while somebody watched it; a market price nobody
+        # reads is search and model calls for nothing
+        async def scenario():
+            ids = await seed_scope_graph()
+            async with AsyncSessionLocal() as session:
+                left = Items(category_id=ids["cat_b"], name="Blastoise")
+                session.add(left)
+                await session.flush()
+                left_id = left.id
+                await session.commit()
+            return await get_ground_unit(left_id)
+
+        assert db(scenario()) is None
+
     def test_a_site_the_watchs_category_does_not_carry_is_not_a_pair(self):
         # CardBay sells cards; the Emerald watch has no business there, even
         # if a stale job says otherwise
@@ -1493,6 +1686,21 @@ class TestUnitTally:
         assert result.startswith("Successfully")
         assert counted["listings_checked"] == 1
         assert counted["prices_found"] == 0
+
+    def test_a_rejected_candidate_tallies_as_looked_at(self):
+        # the hunt's log lists every rejection, so its summary has to count them
+        async def scenario():
+            ids = await seed_scope_graph()
+            runtime = unit_a(ids)
+            result = await tools.log_listing_check(
+                "https://gamebay.test/nope", "poor_fit", runtime=runtime
+            )
+            return result, tally(runtime)
+
+        result, counted = db(scenario())
+        assert result.startswith("Logged rejected listing")
+        assert counted["listings_checked"] == 1
+        assert counted["new_listings"] == 0
 
     def test_save_listing_tallies_only_genuinely_new_rows(self):
         async def scenario():

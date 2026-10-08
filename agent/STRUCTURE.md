@@ -27,7 +27,7 @@ stating its job.
 ```
 agent/
 ├── main.py            # entry point: logging, --serve | --once (no bare mode), SIGTERM/SIGINT → cancellation via _supervised
-├── worker.py          # the daemon: the two pools, LISTEN snagr_jobs + 30 s tick, per-kind job runners, housekeeping (reap, grounding, sweep, prune)
+├── worker.py          # the daemon: the three pools, LISTEN snagr_jobs + 30 s tick, per-kind job runners, housekeeping (reap, grounding, sweep, prune)
 ├── jobs.py            # the queue: claim, heartbeat, complete / fail_or_retry, successors, hunt backoff + wakes, sweep, reap, prune, job events
 ├── agent.py           # the model-facing units: browser session + tool filtering, guarded browser_navigate, run_hunt_job, recheck_listing, the unit budgets
 ├── prompt.py          # prompt text: the hunt prompt (TRACKING SLOTS / TRACKED LISTINGS), the recheck prompt, grounding's two prompts
@@ -41,7 +41,7 @@ agent/
 ├── pricing.py         # market-price grounding: search + guide pages over plain HTTP, model extraction, tier stats → market_prices
 ├── search.py          # grounding's web search behind one call: SearXNG, the Brave Search API, or none (SEARCH_PROVIDER)
 ├── notify.py          # the target-hit *decision* only (pure): is this reading a crossing, and what is the owner told
-├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces
+├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces; count_tokens for a ground job's bare model calls
 ├── config.py          # settings from env/.env — every one except DATABASE_URL (see Conventions)
 ├── database.py        # engine + session factory, the ORM subset of backend/app/models.py, the read/write helpers the units use
 ├── Dockerfile         # 2-stage: build venv → slim runtime; CMD is --once, compose overrides it with --serve
@@ -79,17 +79,22 @@ across all of it deciding what is believed and which sites are read at all.
 ## How a job flows
 
 1. **Claim.** `jobs.claim` is one `UPDATE … WHERE id = (SELECT … FOR UPDATE OF j
-   SKIP LOCKED LIMIT 1) RETURNING …`: highest `priority` first (a user's "hunt
-   now" is 100), then oldest `run_after`, then oldest id. The subquery
+   SKIP LOCKED LIMIT 1) RETURNING …`: oldest `run_after` first, with `priority`
+   counted as a head start in minutes (a user's "hunt now" is 100, so it goes
+   ahead of anything less than 100 minutes overdue — and never ahead of
+   anything more, which is what keeps a burst of new items from starving the
+   backoff hunts), then oldest id. The subquery
    `LEFT JOIN`s `sites` and **skips any job whose site is paused** — that is the
    circuit breaker's whole enforcement. The claim stamps `running`, `locked_by`,
    `heartbeat_at`, `started_at` and spends an attempt.
 2. **Pools.** `worker.serve` starts `RECHECK_CONCURRENCY` check workers that
    claim `recheck` (browser session always, a model only when the ladder gives
-   up) and `HUNT_CONCURRENCY` hunt workers that claim `hunt` (model + browser)
-   and `ground` (model + web search + plain HTTP, no browser). Under
-   `HUNT_ENABLED=false` the hunt pool claims only `ground` (`worker.kinds_for`).
-   Worker ids are `host:pid#check-N` / `#hunt-N`, recorded on every claimed row.
+   up), `HUNT_CONCURRENCY` hunt workers that claim `hunt` (model + browser),
+   and `GROUND_CONCURRENCY` ground workers that claim `ground` (model +
+   web search + plain HTTP, no browser) — a pool of its own, so grounding stuck
+   behind SearXNG never holds up a hunt. Under `HUNT_ENABLED=false` there is
+   no hunt pool at all (`worker.worker_ids`). Worker ids are
+   `host:pid#check-N` / `#hunt-N` / `#ground-N`, recorded on every claimed row.
 3. **Wake-ups.** Migration 015's trigger `NOTIFY`s `snagr_jobs` on every job
    insert and status change; one `LISTEN` connection nudges every worker, and
    each drains its kinds until the queue is empty. A 30 s tick does the same
@@ -108,16 +113,35 @@ across all of it deciding what is believed and which sites are read at all.
    `JOB_HEARTBEAT_INTERVAL_SECONDS` meanwhile.
 5. **Finish.** `jobs.complete` (done, stats) or `jobs.fail_or_retry` (back to
    `pending`, due at once, until `JOB_MAX_ATTEMPTS` attempts are spent, then
-   `failed`). A job the API cancelled mid-flight keeps `cancelled`. Successors
+   `failed`). A failure's `jobs.error` is one plain sentence naming its kind
+   (`worker.failure_reason`: too slow, site unreadable, the AI provider, the
+   step cap, or unexpected) — it is what the Activity page shows; the
+   exception's own text goes on the job's `error` event as `payload.detail`,
+   which the job page keeps behind a disclosure. `agent.model_failures` wraps
+   the model call so a provider's error, whatever its SDK, is `ModelFailed`.
+   A job the API cancelled mid-flight keeps `cancelled`. A ground
+   job that meets a SearXNG suspension is neither: `jobs.defer` puts it back
+   to `pending`, due when the suspension should be over, with its attempt
+   given back (`pricing.SearchGate` — 15 min, doubling to 4 h while it lasts;
+   every ground job behind it waits too, spending nothing). Successors
    are inserted **in the same transaction**: a recheck that completes, is
    cancelled, or fails for good queues the listing's next check; a hunt that
-   completes queues its pair's next hunt (see below).
+   completes queues its pair's next hunt (see below). Every terminal write
+   (`complete`, `fail_or_retry`, `defer`) names the worker and is dropped
+   unless that worker still holds the job (`locked_by`): one whose heartbeat
+   stalled until the reaper took the job back must not end it under its new
+   owner.
 6. **Shutdown.** `main._supervised` turns SIGTERM/SIGINT into task
    cancellation; `serve`'s `finally` cancels the pools and hands everything this
    process holds back to `pending` in one statement (`jobs.release_all`).
+   A pool that loses the database (in a claim, or in a job's terminal write)
+   logs, waits `POOL_RETRY_SECONDS` and claims again; a job whose terminal
+   write was lost stays `running` for the reaper. Anything else that ends a
+   pool ends `serve`, and `_supervised` exits 1, so a supervisor that restarts
+   on failure brings the hunter back.
 7. **Housekeeping.** `worker._scheduler` runs `housekeeping` every 60 s:
-   `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` goes
-   through `fail_or_retry`) and `queue_grounding` every pass; `jobs.sweep` and
+   `jobs.reap` (any `running` row silent past `JOB_STALE_AFTER_SECONDS` is
+   failed or retried, picked and taken back under one row lock) and `queue_grounding` every pass; `jobs.sweep` and
    `jobs.prune` every 60th pass **and on the first**, so a hunter that was down
    picks dropped pairs back up the moment it starts. `--once` runs one
    housekeeping pass (first-pass rules) before draining.
@@ -201,7 +225,12 @@ across all of it deciding what is believed and which sites are read at all.
    `SITE_BREAKER_ERRORS` (5) consecutive failed reads pause the site for
    `SITE_BREAKER_MINUTES` (60), doubling per trip up to `SITE_BREAKER_CAP_MINUTES`
    (1440); any successful read resets the count, and a disbelieved price still
-   counts as an answer. Paused means invisible: the claim skips the site's jobs
+   counts as an answer. Only failures the site is to blame for count — a unit
+   whose reads all errored, or `agent.SiteUnreadable` (every browser call
+   failed). Any other exception (model provider auth or quota, MCP down, a DB
+   blip) is the hunter's own: it blames no site, and `worker.Backoff` holds
+   every pool off 30 s, doubling per consecutive one to 15 min, until a job
+   finishes. Paused means invisible: the claim skips the site's jobs
    and its pending jobs are pushed out to the moment the pause lifts
    (`reason='paused'`, a user's own request keeps `'user'`). The trip writes a
    `warn` `site_paused` event on the job that caused it. `PATCH /api/sites/{id}`
@@ -215,12 +244,13 @@ across all of it deciding what is believed and which sites are read at all.
    A disbelieved model read is recorded with `confirmed = false`, never
    notifies, and stays out of every aggregate for good; the *next* read landing
    within 1% of it is the one believed. A disbelieved locator read is thrown
-   away and the model re-reads the page. `url_allowed` keeps a URL inside the
-   site's registrable domain and off the private network, for storing a URL
-   *and* for every navigation: the model is given a `browser_navigate` wrapper
-   (`guarded_navigate`), and code execution, file upload and tab control are
-   withheld (`BLOCKED_BROWSER_TOOLS`). `clip_text` caps model-typed text before
-   it reaches a later prompt or a notification body.
+   away and the model re-reads the page. `url_allowed` keeps a URL on the
+   site's own host (or a subdomain of it) and off the private network, for
+   storing a URL *and* for every navigation: the model is given a
+   `browser_navigate` wrapper (`guarded_navigate`), and code execution, file
+   upload and tab control are withheld (`BLOCKED_BROWSER_TOOLS`). `clip_text`
+   caps model-typed text before it reaches a later prompt or a notification
+   body.
 
 7. **One writer owns the observation** (`observations.record_price_check`).
    The model's `save_price_check`, `save_listing` with a price, and the
@@ -254,8 +284,10 @@ across all of it deciding what is believed and which sites are read at all.
 
 9. **Who writes job events.** A hunt writes its story — `job_started`, each
    page read, `listing_discovered` / `listing_evaluated` / `listing_ended`,
-   `price_found`, `job_finished`. A `ground` job writes one `job_finished`. A
-   recheck writes nothing when it succeeds: its whole output is its
+   `price_found`, `job_finished`. A `ground` job writes one `job_finished`
+   (`warn` when the stats came out insufficient, and saying so outright when
+   it found no price at all), plus a `warn` line each time a SearXNG
+   suspension defers it. A recheck writes nothing when it succeeds: its whole output is its
    `price_checks` row, which migration 015's trigger turns into a
    `listing.checked` frame. Every kind, recheck included, gets the worker's
    generic lines (`worker._work_one`) — an `error` when it raises, a `warn`
@@ -278,7 +310,8 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | | `BRAVE_API_KEY` | unset | Brave Search API key, required by `SEARCH_PROVIDER=brave` |
 | | `VISION_SIDECAR_URL` | unset | vision sidecar; unset = `check_images` not registered |
 | Pools | `RECHECK_CONCURRENCY` | 3 | check workers |
-| | `HUNT_CONCURRENCY` | 1 | hunt workers (hunt + ground); raise only after measuring the provider |
+| | `HUNT_CONCURRENCY` | 1 | hunt workers; raise only after measuring the provider |
+| | `GROUND_CONCURRENCY` | 1 | ground workers (model work too, counted against the same provider) |
 | Hunting | `HUNT_ENABLED` | true | kill switch; same value in `backend/.env` |
 | | `HUNT_BACKOFF_MIN_MINUTES` / `_CAP_MINUTES` | 15 / 360 | empty-hunt backoff, doubling |
 | Recheck | `RECHECK_INTERVAL_MINUTES` | 30 | default cadence; same value in `backend/.env` |
@@ -286,7 +319,7 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | | `CHEAP_RECHECK` | true | false = every recheck through the model |
 | | `STATIC_FETCH` | true | false = never the browserless GET |
 | | `LOCATOR_MAX_FAILURES` | 3 | misses before a locator is cleared and relearned |
-| Breaker | `SITE_BREAKER_ERRORS` | 5 | consecutive failed reads that trip it |
+| Breaker | `SITE_BREAKER_ERRORS` | 5 | consecutive failed reads that trip it; 0 = off |
 | | `SITE_BREAKER_MINUTES` / `_CAP_MINUTES` | 60 / 1440 | first pause, doubling to the cap |
 | Plausibility | `PRICE_BAND_LOW` / `PRICE_BAND_HIGH` | 0.2 / 5 | ratio band against the listing's last confirmed price; 0 = off |
 | | `PRICE_MARKET_FLOOR` | 0.1 | fraction of the market median below which a price is disbelieved; 0 = off |

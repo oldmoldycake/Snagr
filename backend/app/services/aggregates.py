@@ -19,7 +19,6 @@ Prices in and out are decimal STRINGS.
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from math import floor
 
 from sqlalchemy import extract, func, select
 
@@ -70,29 +69,44 @@ def _clamp_points(points: int) -> int:
     return max(1, min(500, points))
 
 
-def _create_price_points(checks, step: float = 1) -> list[PricePoint]:
-    """Serialize checks into contract PricePoints, taking every `step`-th one.
+def _downsample_indices(checks, points: int) -> list[int]:
+    """Pick at most `points` indices into `checks` (oldest first) for a chart.
 
-    step=1 keeps everything. A fractional step walks the list at even intervals
-    and floors to an index, thinning a long series while preserving the shape of
-    the curve. The caller computes the step; this just walks it.
+    The newest check is always kept — it is the current price, and a line that
+    ends on an older one misstates it — along with the oldest, the cheapest and
+    the dearest, so thinning never hides where the price is now or how far it
+    swung. The remaining budget is spread evenly across the list; the mock's
+    downsample() keeps the same anchors.
     """
-    steps = 0
-    price_point_list = []
+    last = len(checks) - 1
+    if len(checks) <= points:
+        return list(range(len(checks)))
 
-    while steps < len(checks):
-        current_check = checks[floor(steps)]
+    prices = [check.price for check in checks]
+    cheapest = prices.index(min(prices))
+    dearest = prices.index(max(prices))
+    # Priority order for a budget too small to hold every anchor.
+    anchors = list(dict.fromkeys([last, 0, cheapest, dearest]))
+    if points < len(anchors):
+        return sorted(anchors[:points])
 
-        price_point_list.append(
-            PricePoint(
-                ts=current_check.checked_at.isoformat(),
-                price=str(current_check.price),
-                in_stock=current_check.in_stock,
-            )
+    # The even walk includes both ends itself; only extremes that fall between
+    # them need a slot of their own.
+    budget = points - len({cheapest, dearest} - {0, last})
+    even = {k * last // (budget - 1) for k in range(budget)}
+    return sorted(even | {cheapest, dearest})
+
+
+def _create_price_points(checks, points: int) -> list[PricePoint]:
+    """Serialize checks into contract PricePoints, thinned to at most `points`."""
+    return [
+        PricePoint(
+            ts=checks[i].checked_at.isoformat(),
+            price=str(checks[i].price),
+            in_stock=checks[i].in_stock,
         )
-        steps += step
-
-    return price_point_list
+        for i in _downsample_indices(checks, points)
+    ]
 
 
 def _create_summary_points(checks, start, points) -> list[SummaryPoint]:
@@ -363,10 +377,7 @@ async def price_history(db, user_id, item_id, range, points: int) -> list[Listin
 
         checks = (await db.execute(stmt)).scalars().all()
 
-        if len(checks) > points:
-            price_points = _create_price_points(checks, len(checks) / points)
-        else:
-            price_points = _create_price_points(checks)
+        price_points = _create_price_points(checks, points)
 
         site = await db.get(Sites, listing.site_id)
         listing_series_list.append(

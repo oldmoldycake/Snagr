@@ -16,7 +16,7 @@ import httpx2
 import pytest
 from app.config import settings
 from app.main import app, mcp_app
-from app.models import User
+from app.models import Items, User
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -29,9 +29,9 @@ MCP_URL = "http://test/api/mcp"
 ACCEPT = {"Accept": "application/json, text/event-stream"}
 LIST_TOOLS = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
 
+# no scope gate: every token sees these
+ORIENTATION_TOOLS = {"get_instance", "whoami"}
 READ_TOOLS = {
-    "get_instance",
-    "whoami",
     "list_categories",
     "list_sites",
     "list_items",
@@ -195,20 +195,25 @@ async def test_tool_list_follows_scopes_and_the_vision_setting(client, monkeypat
     read = await _token(client)
     write = await _token(client, scopes=("read", "write"))
     jobs = await _token(client, scopes=("read", "jobs"))
+    jobs_only = await _token(client, scopes=("jobs",))
     full = await _token(client, scopes=("read", "write", "jobs"))
 
     async def names(token):
         async with _agent(token) as agent:
-            return {t.name for t in await agent.list_tools()}
+            return {t.name for t in await agent.list_tools()} - ORIENTATION_TOOLS
 
-    # a scope you lack hides its tools entirely — nothing to be tempted by
+    # a scope you lack hides its tools entirely — nothing to be tempted by.
+    # The gates match REST's: reads need read, and the job tools need write
+    # as well as jobs, as POST /api/jobs does
     assert await names(read) == READ_TOOLS
     assert await names(write) == READ_TOOLS | WRITE_TOOLS
-    assert await names(jobs) == READ_TOOLS | JOB_TOOLS
+    assert await names(jobs) == READ_TOOLS
+    assert await names(jobs_only) == set()
     assert await names(full) == READ_TOOLS | WRITE_TOOLS | JOB_TOOLS
 
     monkeypatch.setattr(settings, "VISION_SIDECAR_URL", "http://vision.test")
     assert await names(read) == READ_TOOLS | VISION_TOOLS
+    assert await names(jobs_only) == set()
     assert (
         await names(full)
         == READ_TOOLS | WRITE_TOOLS | JOB_TOOLS | VISION_TOOLS | VISION_WRITE_TOOLS
@@ -223,12 +228,38 @@ async def test_hidden_tools_are_not_callable(client):
         assert "create_category" in res.content[0].text
 
 
+async def test_scope_gates_match_rest(client):
+    """A token REST refuses with 403 insufficient_scope can't do the same
+    thing over MCP either."""
+    await _sign_in(client)
+    item = await _watched_item(client)
+    jobs_only = await _token(client, scopes=("jobs",))
+    no_write = await _token(client, scopes=("read", "jobs"))
+
+    rest = await client.get("/api/items", headers={"Authorization": f"Bearer {jobs_only}"})
+    assert rest.status_code == 403
+    assert rest.json()["error"]["code"] == "insufficient_scope"
+    async with _agent(jobs_only) as agent:
+        res = await agent.call_tool("list_items", {}, raise_on_error=False)
+        assert res.is_error
+
+    body = {"kind": "hunt", "scope": "item", "scope_id": item["id"]}
+    headers = {"Authorization": f"Bearer {no_write}"}
+    rest = await client.post("/api/jobs", json=body, headers=headers)
+    assert rest.status_code == 403
+    assert rest.json()["error"]["code"] == "insufficient_scope"
+    async with _agent(no_write) as agent:
+        args = {"kind": "hunt", "scope": "item", "target": item["id"]}
+        assert (await agent.call_tool("enqueue_jobs", args, raise_on_error=False)).is_error
+        assert (await agent.call_tool("cancel_job", {"job_id": 1}, raise_on_error=False)).is_error
+
+
 async def test_annotations_say_what_a_tool_does(client):
     await _sign_in(client)
     async with _agent(await _token(client, scopes=("read", "write", "jobs"))) as agent:
         for tool in await agent.list_tools():
             hints = tool.annotations
-            if tool.name in READ_TOOLS:
+            if tool.name in ORIENTATION_TOOLS | READ_TOOLS:
                 assert hints.read_only_hint is True, tool.name
             elif tool.name.startswith("delete_"):
                 assert hints.destructive_hint is True, tool.name
@@ -443,11 +474,16 @@ async def test_catalog_writes(client):
 
         site = await _ok(agent, "create_site", name="eBay", base_url="https://ebay.com/")
         assert site["base_url"] == "https://ebay.com"  # one trailing slash dropped, like REST
+        # a second "ebay" would leave every call naming the site ambiguous
+        dup = await _error(agent, "create_site", name="EBAY", base_url="https://ebay.co.uk")
+        assert dup["code"] == "duplicate"
 
         linked = await _ok(
             agent, "update_category", category="cameras", name="Film cameras", site_ids=["ebay"]
         )
         assert linked["name"] == "Film cameras"
+        blank = await _error(agent, "update_category", category="cameras", name="   ")
+        assert blank["code"] == "validation_error"
         assert linked["site_ids"] == [site["id"]]
         (listed,) = await _ok(agent, "list_sites")
         assert listed["category_ids"] == [cat["id"]]
@@ -463,6 +499,46 @@ async def test_catalog_writes(client):
         assert await _ok(agent, "list_sites") == []
         assert "Deleted category" in await _ok(agent, "delete_category", category="cameras")
         assert await _ok(agent, "list_categories") == []
+
+
+async def test_catalog_writes_are_admin_only(client, db_session):
+    """The catalog is shared, so its write tools answer `forbidden` to a
+    non-admin's token — checked before the category or site is even looked
+    up — while the reads stay open."""
+    user_id = await _sign_in(client)
+    cat = (await client.post("/api/categories", json={"name": "Cameras"}, headers=CSRF)).json()
+    site_body = {"name": "eBay", "base_url": "https://ebay.com"}
+    site = (await client.post("/api/sites", json=site_body, headers=CSRF)).json()
+    token = await _token(client, scopes=("read", "write"))
+
+    # the first registered user is the admin, so demote them to test this
+    async with db_session() as session:
+        user = await session.get(User, user_id)
+        user.role = "user"
+        await session.commit()
+
+    async with _agent(token) as agent:
+        calls = [
+            ("create_category", {"name": "Lenses"}),
+            ("update_category", {"category": "cameras", "name": "Film cameras"}),
+            ("update_category", {"category": "cameras", "site_ids": ["ebay"]}),
+            ("delete_category", {"category": "cameras"}),
+            ("create_site", {"name": "Evil", "base_url": "http://evil.example"}),
+            ("update_site", {"site": "ebay", "base_url": "http://evil.example"}),
+            ("delete_site", {"site": "ebay"}),
+            ("delete_category", {"category": "nope"}),
+        ]
+        for tool, args in calls:
+            assert (await _error(agent, tool, **args))["code"] == "forbidden", tool
+
+        (category,) = await _ok(agent, "list_categories")
+        assert (category["id"], category["name"], category["site_ids"]) == (
+            cat["id"],
+            "Cameras",
+            [],
+        )
+        (listed,) = await _ok(agent, "list_sites")
+        assert (listed["id"], listed["base_url"]) == (site["id"], "https://ebay.com")
 
 
 async def test_item_writes(client, db_session):
@@ -488,6 +564,9 @@ async def test_item_writes(client, db_session):
         assert updated["criteria"] == "boxed, working meter"
         assert updated["watch"]["notify"] is False
         assert updated["name"] == "Leica M6"  # untouched
+        # an argument left out stays as it is, the target and criteria included
+        renamed = await _ok(agent, "update_item", item=created["id"], name="Leica M6 TTL")
+        assert (renamed["target_price"], renamed["criteria"]) == ("1400.00", "boxed, working meter")
 
         paused = await _ok(agent, "update_listing", listing_id=seed["live"], active=False)
         assert paused["active"] is False
@@ -501,6 +580,28 @@ async def test_item_writes(client, db_session):
         assert (await _error(agent, "create_item", category="nope", name="x"))[
             "code"
         ] == "not_found"
+
+
+async def test_renaming_a_shared_item_answers_under_its_new_id(client, db_session):
+    """Someone else watches Alpha, so the rename moves this user's watch to a
+    new item — and the notify switch passed alongside lands on that watch."""
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with db_session() as session:
+        sc = Scenario(session)
+        (await session.get(User, user_id)).role = "user"
+        await sc.watch(await session.get(Items, seed["alpha"]), user=await sc.other_user())
+        await sc.commit()
+
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        renamed = await _ok(
+            agent, "update_item", item=seed["alpha"], name="Alpha Mk II", notify=False
+        )
+
+        assert renamed["id"] != seed["alpha"]
+        assert (renamed["name"], renamed["watch"]["notify"]) == ("Alpha Mk II", False)
+        assert [listing["id"] for listing in renamed["listings"]] == [seed["live"]]
+        assert (await _error(agent, "get_item", item=seed["alpha"]))["code"] == "not_found"
 
 
 async def test_the_check_interval_over_mcp(client, db_session):
@@ -551,6 +652,40 @@ async def test_the_check_interval_over_mcp(client, db_session):
                 assert set(error["fields"]) == {"recheck_interval_minutes"}
 
 
+async def test_a_target_that_is_not_an_amount_is_a_tool_error(client, db_session):
+    """The REST routes' 422, on both tools that take a target."""
+    user_id = await _sign_in(client)
+    seed = await _seed_listings(db_session, user_id)
+    async with _agent(await _token(client, scopes=("read", "write"))) as agent:
+        created = await _ok(
+            agent, "create_item", category=seed["slug"], name="Leica M6", target_price="1500"
+        )
+        assert created["target_price"] == "1500.00"
+
+        for target in ("NaN", "abc", "1e20", "0"):
+            for error in (
+                await _error(
+                    agent,
+                    "create_item",
+                    category=seed["slug"],
+                    name="Nikon F3",
+                    target_price=target,
+                ),
+                await _error(agent, "update_item", item=created["id"], target_price=target),
+            ):
+                assert error["code"] == "validation_error"
+                assert set(error["fields"]) == {"target_price"}
+
+
+async def test_a_value_out_of_range_is_a_tool_error_not_an_outage(client):
+    """An id past what the column holds is the caller's mistake, not a
+    database that can't be reached; a page below one reads as the first."""
+    await _sign_in(client)
+    async with _agent(await _token(client)) as agent:
+        assert (await _error(agent, "get_item", item=2**31))["code"] == "validation_error"
+        assert (await _ok(agent, "list_jobs", page=-1))["meta"]["page"] == 1
+
+
 async def test_the_hunting_switch_over_mcp(client, db_session):
     """The allow_reproductions pattern: set on create, changed on update, and
     left alone when the argument is left out."""
@@ -576,7 +711,7 @@ async def test_a_hunt_while_hunting_is_off_is_a_tool_error(client, monkeypatch):
     await _sign_in(client)
     item = await _watched_item(client)
     monkeypatch.setattr(settings, "HUNT_ENABLED", False)
-    async with _agent(await _token(client, scopes=("read", "jobs"))) as agent:
+    async with _agent(await _token(client, scopes=("read", "write", "jobs"))) as agent:
         error = await _error(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
         assert error["code"] == "hunting_disabled"
         assert (await _ok(agent, "get_instance"))["hunt_enabled"] is False
@@ -585,7 +720,7 @@ async def test_a_hunt_while_hunting_is_off_is_a_tool_error(client, monkeypatch):
 async def test_job_tools_need_the_jobs_scope(client):
     await _sign_in(client)
     item = await _watched_item(client)
-    runner = await _token(client, scopes=("read", "jobs"))
+    runner = await _token(client, scopes=("read", "write", "jobs"))
     async with _agent(runner) as agent:
         queued = await _ok(agent, "enqueue_jobs", kind="hunt", scope="item", target=item["id"])
         assert [j["status"] for j in queued] == ["pending"]

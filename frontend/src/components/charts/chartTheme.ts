@@ -14,7 +14,7 @@ export const chart = {
   lume: '#ffb454',
   ink: '#e9f1e9',
   inkSecondary: '#a6b5a7',
-  inkMuted: '#69796e',
+  inkMuted: '#8f9f94',
   drop: '#42d07c',
   rise: '#f0565c',
   sparkDim: '#4e5d53',
@@ -41,6 +41,6 @@ export function mixToWhite(hex: string, t: number): string {
 /** SVG text style for axis tick labels — muted mono, so labels never compete with the traces. */
 export const axisTickStyle = {
   fill: chart.inkMuted,
-  fontSize: 11,
+  fontSize: 12,
   fontFamily: "'IBM Plex Mono', monospace",
 } as const

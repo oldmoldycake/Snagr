@@ -22,8 +22,9 @@ backend/
 │   ├── database.py        # async engine + session factory + get_db() dependency
 │   ├── models.py          # ALL ORM models (owns the schema; mirrors agent/database.py + new tables)
 │   ├── core/
-│   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handler  ← raise err(404, ...)
-│   │   ├── security.py     # password hashing (argon2) + JWT/refresh/API-token minting + webhook secret & HMAC signing (no DB, no FastAPI)
+│   │   ├── errors.py       # ApiError + the {"error":{...}} envelope handlers (ApiError, database errors)  ← raise err(404, ...)
+│   │   ├── security.py     # password rules + hashing (argon2, on a thread pool) + JWT/refresh/API-token/reset-link minting + webhook secret & HMAC signing (no DB, no FastAPI)
+│   │   ├── ratelimit.py    # sign-in attempt limits per client address and per account (in-process) → 429 rate_limited
 │   │   ├── cookies.py      # the two auth cookie names + set/clear helpers (httpOnly, SameSite=Lax, Path=/)
 │   │   └── deps.py         # FastAPI deps: current_user (cookie OR bearer), reject_bearer, require_scope, require_admin, csrf_guard
 │   ├── schemas/           # Pydantic models — one file per contract section, mirror types.ts
@@ -38,7 +39,7 @@ backend/
 │   │   └── vision.py       # ReviewQueueEntry, ReferenceImage, AuthenticityRead + requests
 │   ├── routers/           # one file per section of endpoints.ts — HTTP layer only
 │   │   ├── instance.py     # GET /api/instance — public, no auth (the frontend's first call on boot)
-│   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, oidc login/callback)
+│   │   ├── auth.py         # /api/auth/*  (login, register, refresh, me, invites, password resets, oidc login/callback)
 │   │   ├── me.py           # /api/me, /api/me/password, /api/me/channels[/{id}][/test], /api/me/tokens[/{id}] — cookie-only
 │   │   ├── categories.py   # /api/categories[/{id}][/sites]
 │   │   ├── sites.py        # /api/sites[/{id}]
@@ -46,7 +47,7 @@ backend/
 │   │   ├── charts.py       # /api/items/{id}/price-*, /api/categories/{id}/price-change, /api/dashboard/*
 │   │   ├── jobs.py         # /api/jobs[/summary|/{id}][/events|/cancel]
 │   │   ├── events.py       # GET /api/events (SSE) — opened via EventSource, not in endpoints.ts
-│   │   ├── admin.py        # /api/admin/users, /api/admin/invites
+│   │   ├── admin.py        # /api/admin/users (+ password-reset links), /api/admin/invites
 │   │   └── vision.py       # /api/vision/* (review queue, references, image proxy) + /api/items/{id}/references*
 │   ├── mcp/               # the MCP endpoint (POST /api/mcp): Snagr as tools for agents
 │   │   ├── server.py       # FastMCP instance, bearer verifier, the error-envelope conversion, app factory
@@ -61,13 +62,13 @@ backend/
 │       ├── oidc.py         # SSO: OIDC discovery, code exchange, ID-token validation, account linking
 │       ├── events.py       # SSE broadcaster hub (Postgres LISTEN/NOTIFY) — job.* frames + listing.checked
 │       ├── vision.py       # sidecar httpx client + authenticity batch lookup + confirm/revoke/upload flows
-│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders
+│       ├── notifications.py# outbox dispatcher: LISTEN + drain, ntfy/webhook/discord senders + the channel-destination guard (public URLs only, safe ntfy topics)
 │       └── tokens.py       # API-token lookup shared by REST bearer auth and the MCP verifier
 ├── tests/
 │   ├── conftest.py         # DATABASE_URL → snagr_test redirect, create_all schema + migration 015's triggers by hand, per-test truncate, the CSRF header
 │   ├── factories.py        # row builders shared by the API tests
 │   └── test_*.py           # one module per router/service (17 files) — copy the nearest sibling's pattern
-├── migrations/            # Alembic revisions 001–018 (linear chain); the backend owns the canonical schema
+├── migrations/            # Alembic revisions 001–023 (linear chain); the backend owns the canonical schema
 ├── requirements.txt       # deps — `pip install -r` then `pip freeze >` to pin
 ├── alembic.ini            # Alembic config (script location; migrations/env.py injects the URL from settings)
 ├── pytest.ini             # asyncio_mode=auto + the session loop scope
@@ -90,7 +91,7 @@ JSON in/out. **core** holds cross-cutting concerns (errors, auth, security).
 | `services/` | multi-step logic (item mapping, aggregation, the job queue, SSE) | knowing about HTTP/FastAPI |
 | `schemas/` | the exact request/response shapes (mirror `types.ts`) + the `*_out()` serializers that map a row to its shape | business logic, DB access |
 | `models.py` | ORM tables (the schema) | request shapes |
-| `core/` | error envelope, auth deps, hashing/tokens | domain logic |
+| `core/` | error envelope, auth deps, hashing/tokens, sign-in limits | domain logic |
 | `config.py` | reading env | anything else |
 
 **Rule of thumb:** a thin CRUD route (the admin user list, `routers/admin.py`)
@@ -106,9 +107,9 @@ Find any `endpoints.ts` function here:
 | endpoints.ts function | Router file | Phase |
 |---|---|---|
 | `getInstance` | `instance.py` | 0 |
-| `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` (+ refresh) | `auth.py` | 2 |
+| `login` `register` `logout` `getMe` `validateInvite` `acceptInvite` `validatePasswordReset` `completePasswordReset` (+ refresh) | `auth.py` | 2 |
 | `updateMe` `changePassword` | `me.py` | 2 |
-| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` | `me.py` | notifications |
+| `listChannels` `createChannel` `updateChannel` `deleteChannel` `testChannel` `testNewChannel` | `me.py` | notifications |
 | `listTokens` `createToken` `revokeToken` | `me.py` | mcp |
 | `listCategories` `createCategory` `updateCategory` `deleteCategory` `setCategorySites` | `categories.py` | 1 / 3 |
 | `listSites` `createSite` `updateSite` `deleteSite` | `sites.py` | 1 / 3 |
@@ -116,7 +117,7 @@ Find any `endpoints.ts` function here:
 | `getPriceHistory` `getPriceSummary` `getCategoryPriceChange` `getDashboardStats` `getPriceDrops` | `charts.py` | 1 |
 | `enqueueJobs` `listJobs` `getJobsSummary` `getJob` `getJobEvents` `cancelJob` | `jobs.py` | 3 |
 | *(EventSource `/api/events`)* | `events.py` | 3 |
-| `listUsers` `updateUser` `deleteUser` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
+| `listUsers` `updateUser` `deleteUser` `createPasswordReset` `listInvites` `createInvite` `revokeInvite` | `admin.py` | 4 |
 | `listReviewQueue` `confirmReviewEntry` `discardReviewEntry` `listReferences` `uploadReference` `revokeReference` `revokeAutoReferences` | `vision.py` | vision |
 | *(`<img src>` `/api/vision/images/{key}`)* | `vision.py` | vision |
 | *(MCP tools over `POST /api/mcp` — same services, same shapes)* | `mcp/tools/*.py` | mcp |
@@ -129,6 +130,11 @@ Find any `endpoints.ts` function here:
    `watches` row (target_price, criteria, selection_mode, max_listings,
    allow_reproductions, recheck_interval_minutes, hunt, notify) + `watch_sites` (the `site_ids` subset). Handled in
    `services/items.py`. `GET /api/items` lists *the user's watches*, not the catalog.
+   A name is unique per category ignoring case (`uq_items_category_name`), and
+   renaming an item other people watch moves only the caller's watch (with its
+   listings, jobs and scans) to the item of the new name — unless the caller
+   is an admin — so a PATCH can answer under a different id. `watcher_count`
+   on every item tells the edit dialog which of the two a rename will be.
 
 2. **Lots of response fields are computed, not stored.** `best_price`, `avg_price`,
    `spark`, `pct_change_range`, `item_count`, `listing_count`, `last_checked_at`, the
@@ -168,7 +174,10 @@ Find any `endpoints.ts` function here:
    to one watch, so seeing the job is seeing its events. `listing.checked` frames
    are gated by listing ownership instead, which is the same person. Reconnects
    never infer gaps from seq arithmetic; the client refetches each visible
-   backfill on every snapshot and the filtered response is authoritative. This is
+   backfill on every snapshot and the filtered response is authoritative. An open
+   stream is re-authorised every `REAUTH_SECONDS` (account active, same role,
+   sign-in or API token still live) and closed when it fails, so deactivating,
+   demoting or signing out a user ends their stream within a minute. This is
    **peer privacy only**: the instance operator can always read the DB.
 
    **The queue's own rules live half here and half in the agent** (the agent's
@@ -210,10 +219,11 @@ Find any `endpoints.ts` function here:
    `ItemDetail.recheck.interval_minutes`. Both settings live in `backend/.env`
    *and* the agent's env with the same values (the `VISION_SIDECAR_URL`
    precedent): the backend needs the default for `InstanceInfo` and the floor
-   for the 422. On `PATCH /api/items/{id}` this is the one field where an
-   explicit null means something (back to the default — `model_fields_set`
-   tells it from an absent key), and a shorter interval pulls the watch's
-   pending checks forward in the same transaction.
+   for the 422. On `PATCH /api/items/{id}` an explicit null sends it back to
+   the default (`model_fields_set` tells it from an absent key, as it does
+   for the other nullable fields: `target_price`, `criteria`, `site_ids`),
+   and a shorter interval pulls the watch's pending checks forward in the
+   same transaction.
 
 5. **Vision visibility splits three ways, enforced in three places.**
    An item's reference *library* is communal — every watcher of the item reads
@@ -235,6 +245,11 @@ Find any `endpoints.ts` function here:
 - **Prices** are decimal strings (`"549.99"`), never numbers. `null` for unknown, never `0`.
 - **Timestamps** are ISO-8601 UTC strings.
 - **Errors** always use `raise err(status, code, message, **extra)` → `{"error":{...}}`. Never FastAPI's default `{"detail":...}`.
+- **Database errors need no wrapping** in a route: `core/errors.db_error_handler` answers a value a column can't hold (SQLSTATE class 22 — an id past int4, a negative LIMIT) with 422 `validation_error`, a tripped constraint with 409 `conflict`, and only a lost connection with 503 `db_unavailable`; anything else stays a 500. The MCP tools go through the same `db_error`. Paging params below 1 read as their default, as the mock's `intParam` reads them (`schemas.common.page_param`).
 - **Paginated** = `{data, meta:{page, per_page, total}}`; **plain list** = `{data:[...]}`.
 - **Mutations** require the `X-Snagr-Csrf` header (`csrf_guard`) — the frontend always sends it; bearer (API-token) callers are exempt.
-- **`/api/auth/*` returns 401 directly** — it must not trip the client's refresh-retry loop.
+- **Catalog writes are admin-only.** Every mutation under `/api/categories` and `/api/sites` depends on `require_admin`, and the MCP catalog write tools call `mcp.server.require_admin`: categories and sites are shared by every user, deleting a category takes every user's items, watches and price history in it with it, and deleting a site takes every listing found on it and that listing's price history. Reads stay open to any signed-in user.
+- **`/api/auth/*` returns 401 directly**; the client's refresh-retry skips the credential routes (login, register, refresh, logout, invites) so a refused login is never replayed, but refreshes on `/me`.
+- **Passwords never touch the event loop.** `hash_password` / `verify_password` are async and run argon2 on `core/security`'s thread pool; login checks an unknown email against a stand-in hash, so the response time doesn't say which emails exist, and hands its DB connection back before verifying. A new password (register, invite accept, password change) is 8+ characters or 422 `validation_error`. Login and the password change's current-password check count against `core/ratelimit` (per client address and per account; 429 `rate_limited`, right password or not).
+- **SSO links only to a vouched-for email.** `services/oidc.resolve_oidc_user` gives a first SSO login an existing account with the same email only when the IdP marks it verified *and* the account's `email_verified` is set, and never re-points an account already linked to another subject. Only the first user's signup and an invite pinned to an email set the flag; an address typed in at signup, into an unpinned invite, or through `PATCH /api/me` leaves it false, so that SSO login fails (`/login?error=sso_failed`) instead of handing over the account.
+- **The instance always keeps an admin.** The first account becomes admin however it arrives — password signup (`routers/auth.register`) or a first SSO login (`services/oidc.resolve_oidc_user`), both under the same `FIRST_USER_LOCK` advisory lock — and `PATCH /api/admin/users/{id}` refuses (409 `last_admin`) to demote or deactivate the only active admin, since recovering from zero admins takes SQL.

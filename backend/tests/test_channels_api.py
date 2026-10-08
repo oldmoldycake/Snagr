@@ -12,10 +12,13 @@ Seeding goes through `db_session` and COMMITS, because each request runs on
 its own session.
 """
 
+import asyncio
+
 import httpx
 import pytest
 from app.config import settings
-from app.models import NotificationDeliveries
+from app.models import NotificationChannels, NotificationDeliveries, User
+from app.routers.me import MAX_CHANNELS
 from app.services import notifications as notifications_service
 from sqlalchemy import select
 
@@ -70,9 +73,16 @@ async def test_channels_require_a_session(client):
     res = await client.post("/api/me/channels", json={"kind": "discord"}, headers=CSRF)
     assert res.status_code == 401
 
+    res = await client.post("/api/me/channels/test", json={"kind": "discord"}, headers=CSRF)
+    assert res.status_code == 401
+
 
 async def test_channel_mutations_require_the_csrf_header(client):
     res = await client.post("/api/me/channels", json={"kind": "discord"})
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "csrf"
+
+    res = await client.post("/api/me/channels/test", json={"kind": "discord"})
     assert res.status_code == 403
     assert res.json()["error"]["code"] == "csrf"
 
@@ -164,6 +174,46 @@ async def test_create_field_validation(client, ntfy_server):
         assert field in res.json()["error"]["fields"], body
 
 
+async def test_channels_stop_at_the_limit(client):
+    await _sign_in(client)
+    for n in range(MAX_CHANNELS):
+        res = await _create(client, kind="webhook", name=f"hook {n}", url="https://example.com/h")
+        assert res.status_code == 201, res.text
+
+    res = await _create(client, kind="webhook", name="one more", url="https://example.com/h")
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "channel_limit"
+    assert len((await client.get("/api/me/channels")).json()["data"]) == MAX_CHANNELS
+
+
+async def test_a_create_racing_another_stops_at_the_limit(client, db_session):
+    user_id = await _sign_in(client)
+    for n in range(MAX_CHANNELS - 1):
+        res = await _create(client, kind="webhook", name=f"hook {n}", url="https://example.com/h")
+        assert res.status_code == 201, res.text
+
+    # a second create, mid-transaction: it holds the owner's row and adds the
+    # last channel, so this request must wait for it, not count under the limit too
+    async with db_session() as other:
+        await other.execute(select(User.id).where(User.id == user_id).with_for_update())
+        racing = asyncio.create_task(
+            _create(client, kind="webhook", name="one more", url="https://example.com/h")
+        )
+        await asyncio.sleep(0.3)
+        assert not racing.done()
+        other.add(
+            NotificationChannels(
+                user_id=user_id, kind="webhook", name="last", url="https://example.com/h"
+            )
+        )
+        await other.commit()
+
+    res = await racing
+    assert res.status_code == 409
+    assert res.json()["error"]["code"] == "channel_limit"
+    assert len((await client.get("/api/me/channels")).json()["data"]) == MAX_CHANNELS
+
+
 async def test_empty_and_full_event_sets_normalize_to_null(client):
     await _sign_in(client)
     full = await _create(
@@ -186,6 +236,44 @@ async def test_empty_and_full_event_sets_normalize_to_null(client):
         events=["target.hit"],
     )
     assert subset.json()["events"] == ["target.hit"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://vision:8100/rescore",
+        "http://minio:9000/snagr",
+        "http://localhost:8000/api/items",
+        "http://nas.local/hook",
+        "http://127.0.0.1/",
+        "http://127.1/",
+        "http://2130706433/",
+        "http://10.0.0.5/hook",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://[::1]/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[::1",
+        "https://example.com:99999/hook",
+        "https://user:pass@example.com/hook",
+    ],
+)
+async def test_webhook_urls_must_be_public(client, url):
+    await _sign_in(client)
+    res = await _create(client, kind="webhook", name="x", url=url)
+    assert res.status_code == 422, url
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert "url" in error["fields"]
+
+
+@pytest.mark.parametrize("topic", ["a/../v1/account", "has space", "a?b=c", "x" * 65])
+async def test_ntfy_topics_are_a_single_path_segment(client, ntfy_server, topic):
+    await _sign_in(client)
+    res = await _create(client, kind="ntfy", name="x", topic=topic)
+    assert res.status_code == 422, topic
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert "topic" in error["fields"]
 
 
 # --- update + delete ----------------------------------------------------------
@@ -212,6 +300,21 @@ async def test_patch_updates_and_keeps_kind(client):
         ["listing.new"],
         "discord",
     )
+
+
+async def test_patch_cannot_point_a_channel_inward(client):
+    await _sign_in(client)
+    created = (
+        await _create(client, kind="webhook", name="x", url="https://example.com/hook")
+    ).json()
+
+    res = await client.patch(
+        f"/api/me/channels/{created['id']}", json={"url": "http://minio:9000/"}, headers=CSRF
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    (channel,) = (await client.get("/api/me/channels")).json()["data"]
+    assert channel["url"] == "https://example.com/hook"
 
 
 async def test_another_users_channel_is_hidden(client, make_client, monkeypatch, ntfy_server):
@@ -305,3 +408,124 @@ async def test_ntfy_test_without_a_server_is_no_server(client, ntfy_server, monk
     res = await client.post(f"/api/me/channels/{channel['id']}/test", headers=CSRF)
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "no_server"
+
+
+async def _saved_before_the_guard(db_session, user_id, url):
+    """A webhook channel written straight to the DB, as rows from before the
+    URL guard existed were — the API would refuse to create it."""
+    async with db_session() as session:
+        channel = NotificationChannels(
+            user_id=user_id, kind="webhook", name="old", url=url, secret="s", enabled=True
+        )
+        session.add(channel)
+        await session.commit()
+        return channel.id
+
+
+async def test_testing_an_internal_url_sends_nothing(client, db_session, outbound):
+    user_id = await _sign_in(client)
+    channel_id = await _saved_before_the_guard(db_session, user_id, "http://169.254.169.254/")
+
+    res = await client.post(f"/api/me/channels/{channel_id}/test", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert outbound == []
+
+
+async def test_a_url_httpx_cannot_parse_is_not_a_500(client, db_session, outbound):
+    user_id = await _sign_in(client)
+    channel_id = await _saved_before_the_guard(db_session, user_id, "https://example.com/a\x01b")
+
+    res = await client.post(f"/api/me/channels/{channel_id}/test", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert outbound == []
+
+
+# --- test sends before saving -------------------------------------------------
+
+
+async def _test_unsaved(client, **body):
+    return await client.post("/api/me/channels/test", json=body, headers=CSRF)
+
+
+async def test_an_unsaved_channel_is_tested_without_saving_it(client, ntfy_server, outbound):
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="ntfy", topic=" my-topic ")
+    assert res.status_code == 204, res.text
+    (request,) = outbound
+    assert str(request.url) == "https://ntfy.test/my-topic"
+    assert request.headers["Title"] == "Snagr"
+    assert (await client.get("/api/me/channels")).json() == {"data": []}
+
+
+async def test_an_unsaved_webhook_test_carries_every_delivery_header(client, outbound):
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="webhook", url="https://example.com/hook")
+    assert res.status_code == 204, res.text
+    (request,) = outbound
+    assert str(request.url) == "https://example.com/hook"
+    assert request.headers["X-Snagr-Event"] == "test"
+    assert request.headers["X-Snagr-Delivery"] == "test"
+    assert request.headers["X-Snagr-Signature"].startswith("sha256=")
+
+
+@pytest.mark.parametrize(
+    ("body", "field"),
+    [
+        ({"kind": "carrier-pigeon"}, "kind"),
+        ({"kind": "ntfy"}, "topic"),
+        ({"kind": "ntfy", "topic": "a/../v1/account"}, "topic"),
+        ({"kind": "webhook"}, "url"),
+        ({"kind": "webhook", "url": "ftp://nope"}, "url"),
+        ({"kind": "discord", "url": "https://example.com/hook"}, "url"),
+        ({"kind": "webhook", "url": "http://vision:8100/rescore"}, "url"),
+        ({"kind": "webhook", "url": "http://127.1/"}, "url"),
+        ({"kind": "webhook", "url": "http://169.254.169.254/latest/meta-data/"}, "url"),
+        ({"kind": "webhook", "url": "https://user:pass@example.com/hook"}, "url"),
+    ],
+)
+async def test_an_unsaved_test_refuses_what_create_would(
+    client, ntfy_server, outbound, body, field
+):
+    await _sign_in(client)
+    res = await _test_unsaved(client, **body)
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert field in error["fields"]
+    assert outbound == []
+
+
+async def test_an_unsaved_ntfy_test_without_a_server_is_no_server(client, monkeypatch, outbound):
+    monkeypatch.setattr(settings, "NTFY_SERVER_URL", None)
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="ntfy", topic="t")
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "no_server"
+    assert outbound == []
+
+
+async def test_an_unsaved_test_the_destination_refuses_is_channel_failed(client, monkeypatch):
+    await _sign_in(client)
+    real_client = httpx.AsyncClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        # what Discord answers a webhook URL with a mistyped token
+        return httpx.Response(401)
+
+    def factory(**kwargs):
+        return real_client(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr(notifications_service.httpx, "AsyncClient", factory)
+    res = await _test_unsaved(client, kind="discord", url="https://discord.com/api/webhooks/1/t")
+    assert res.status_code == 502
+    assert res.json()["error"]["code"] == "channel_failed"
+
+
+async def test_an_unsaved_url_httpx_cannot_parse_is_not_a_500(client, outbound):
+    await _sign_in(client)
+    res = await _test_unsaved(client, kind="webhook", url="https://example.com/a\x01b")
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert outbound == []

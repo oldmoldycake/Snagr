@@ -219,6 +219,14 @@ export interface MockInvite {
   created_at: number
 }
 
+/** An admin-issued link for a user to choose a new password. */
+export interface MockPasswordReset {
+  token: string
+  user_id: number
+  expires_at: number
+  used_at: number | null
+}
+
 /** Where a user's alerts are pushed; `events` null means every event. */
 export interface MockNotificationChannel {
   id: number
@@ -268,6 +276,7 @@ export const store = {
   jobs: [] as MockJob[],
   jobEvents: [] as MockJobEvent[],
   invites: [] as MockInvite[],
+  passwordResets: [] as MockPasswordReset[],
   notificationChannels: [] as MockNotificationChannel[],
   tokens: [] as MockApiToken[],
   references: [] as MockReference[],
@@ -875,7 +884,7 @@ function seedJobs() {
   // one hunt the breaker killed, and one the owner cancelled mid-flight
   const failedPair = pairs.find((pair) => pair.siteId === paused.id) ?? pairs[0]
   const failedAt = NOW - 75 * MINUTE
-  pushJob({
+  const failed = pushJob({
     id: newId(),
     kind: 'hunt',
     status: 'failed',
@@ -889,12 +898,39 @@ function seedJobs() {
     attempts: 3,
     started_at: failedAt,
     finished_at: failedAt + 12_000,
-    error: `${paused.name} answered a challenge page instead of the listing.`,
+    error: 'No page on the site would load.',
     stats: jobStats({ errors: 1, duration_ms: 12_000 }),
     reason: 'user',
     last_seq: 0,
     created_at: failedAt - MINUTE,
   })
+
+  // what the agent writes for a failed attempt: the job's sentence, with the
+  // error it raised behind it for the job page's Details
+  failed.last_seq = 2
+  store.jobEvents.push(
+    {
+      job_id: failed.id,
+      seq: 1,
+      ts: failedAt,
+      level: 'info',
+      event_type: 'job_started',
+      message: `Hunting ${paused.name} for "${failedPair.item.name}"`,
+      payload: null,
+    },
+    {
+      job_id: failed.id,
+      seq: 2,
+      ts: failedAt + 12_000,
+      level: 'error',
+      event_type: 'error',
+      message: failed.error!,
+      payload: {
+        detail:
+          'every browser call failed: ### Error\nError: page.goto: net::ERR_HTTP2_PROTOCOL_ERROR at https://www.ebay.com/sch/i.html',
+      },
+    },
+  )
 
   const cancelledPair = pairs[2]
   const cancelledAt = NOW - 100 * MINUTE
@@ -987,7 +1023,7 @@ function seedShowcaseHunt() {
     })
   }
 
-  push('info', 'job_started', `Hunting ${site.name} for "${item.name}" — 3 open slots, best match mode`)
+  push('info', 'job_started', `Hunting ${site.name} for "${item.name}" — room for 3 more listings, best match mode`)
   push('info', 'listing_check', `Searched "${item.name.toLowerCase()}" · 6 results, 2 already tracked`)
   push('info', 'listing_evaluated', `Skipped "Pokemon Emerald repro cart" — reproduction, not authentic (match 12)`, {
     item_id: item.id,
@@ -1002,11 +1038,11 @@ function seedShowcaseHunt() {
     item_id: item.id,
     price: (price / 100).toFixed(2),
   })
-  push('success', 'listing_discovered', `Saved as listing #${saved.id} — 3 of 5 slots filled · locator learned (jsonld) · static ok`, {
+  push('success', 'listing_discovered', `Saved as listing #${saved.id} — tracking 3 of 5 listings`, {
     listing_id: saved.id,
     item_id: item.id,
   })
-  push('success', 'job_finished', `Hunt complete — 2 new · 4 seen · 3 slots left · 11.4k tokens`)
+  push('success', 'job_finished', `Hunt complete — 2 new · 4 looked at · room for 1 more · 11.4k tokens`)
 }
 
 /** ~200 finished rechecks over three days — the Checks filter's rows. */

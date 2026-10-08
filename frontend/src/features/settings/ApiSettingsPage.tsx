@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Copy, KeyRound, Loader2, Plug, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -12,17 +12,23 @@ import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { ErrorState } from '@/components/ui/error-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TBody, TD, TH, THead, TR } from '@/components/ui/table'
-import { formatDateTime, relativeTime } from '@/lib/time'
+import { RelativeTime } from '@/components/ui/relative-time'
+import { copyText } from '@/lib/clipboard'
+import { formatDateTime } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { useInstance } from '@/features/auth/useSession'
 import { SettingsTabs } from '@/features/settings/SettingsTabs'
 
@@ -102,7 +108,11 @@ function snippetFor(kind: ClientKind, url: string, token: string): { code: strin
 function CopyButton({ text, label, size = 'default' }: { text: string; label: string; size?: 'default' | 'sm' }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
-    await navigator.clipboard.writeText(text)
+    if (!(await copyText(text))) {
+      toast.error("Couldn't copy — select the text and copy it yourself")
+      return
+    }
+    toast.success('Copied to clipboard')
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }
@@ -128,7 +138,7 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
         <div>
           <Label htmlFor="mcp-url">MCP endpoint</Label>
           <div className="flex gap-2">
-            <Input id="mcp-url" readOnly value={url} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+            <Input id="mcp-url" readOnly value={url} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
             <CopyButton text={url} label="Copy MCP URL" />
           </div>
         </div>
@@ -138,7 +148,7 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
           <Label className="mb-0">Client config</Label>
           <Segmented options={CLIENT_OPTIONS} value={kind} onChange={setKind} ariaLabel="Client" />
         </div>
-        <pre className="overflow-x-auto rounded-sm border border-hairline-strong bg-well px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre text-ink">
+        <pre className="rounded-sm border border-hairline-strong bg-well px-3 py-2.5 font-mono text-xs leading-relaxed whitespace-pre-wrap wrap-anywhere text-ink">
           {code}
         </pre>
         <div className="mt-1.5 flex items-start justify-between gap-2">
@@ -147,6 +157,21 @@ function ConnectSnippets({ token, compact = false }: { token: string | null; com
         </div>
       </div>
     </div>
+  )
+}
+
+/** One numbered step of connecting an agent, its pip drawn like StepPips'. */
+function SetupStep({ step, title, children }: { step: number; title: string; children: ReactNode }) {
+  return (
+    <li>
+      <h4 className="mb-2 flex items-center gap-2 font-mono text-[12px] font-medium tracking-[0.08em] text-ink-2 uppercase">
+        <span className="grid size-5 place-items-center rounded-full border border-hairline-strong tracking-normal">
+          {step}
+        </span>
+        {title}
+      </h4>
+      {children}
+    </li>
   )
 }
 
@@ -165,10 +190,17 @@ const ACCESS_SCOPES: Record<Access, ApiTokenScope[]> = {
   write: ['read', 'write'],
   full: ['read', 'write', 'jobs'],
 }
+/** The create dialog's access name for a token's scopes; a set made through the API that matches none keeps its raw scopes. */
+function accessLabels(scopes: readonly ApiTokenScope[]): string[] {
+  const match = ACCESS_OPTIONS.find(
+    (o) => ACCESS_SCOPES[o.value].length === scopes.length && ACCESS_SCOPES[o.value].every((s) => scopes.includes(s)),
+  )
+  return match ? [match.label] : [...scopes]
+}
 const ACCESS_HINT: Record<Access, string> = {
-  read: 'Browse items, prices, the hunter\'s activity and the review queue.',
+  read: 'Browse items, prices, activity and the photo review queue.',
   write: 'Also add and edit categories, sites, items, listings and photo reviews.',
-  full: 'Also queue hunts and price checks, and cancel jobs.',
+  full: "Also queue hunts and price checks, and cancel jobs. Hunts use AI, so an agent with this access can add to your AI provider's bill.",
 }
 
 type Expiry = 'never' | '30' | '90' | '365'
@@ -194,6 +226,7 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         scopes: ACCESS_SCOPES[access],
         expires_in_days: expiry === 'never' ? null : Number(expiry),
       }),
+    meta: { inlineError: true },
     onSuccess: (token) => {
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
       setCreated(token.token)
@@ -216,67 +249,79 @@ function NewTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent>
-        <DialogTitle>New API token</DialogTitle>
-        <DialogDescription>
-          A token lets an agent or script act as you — on your items and the hunter, never on your account.
-        </DialogDescription>
+      <DialogContent dismissible={created == null}>
+        <DialogHeader>
+          <DialogTitle>New API token</DialogTitle>
+          <DialogDescription>
+            A token lets an AI agent or script act as you on your items, hunts and price checks, never on your account.
+          </DialogDescription>
+        </DialogHeader>
 
         {created != null ? (
-          <div className="mt-4 space-y-3">
-            <div>
-              <Label>Token — shown once, store it now</Label>
-              <div className="flex gap-2">
-                <Input readOnly value={created} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
-                <CopyButton text={created} label="Copy token" />
+          <>
+            <DialogBody className="space-y-3">
+              <div>
+                <Label>Token — shown once, store it now</Label>
+                <div className="flex gap-2">
+                  <Input readOnly value={created} className="font-mono sm:text-xs" onFocus={(e) => e.target.select()} />
+                  <CopyButton text={created} label="Copy token" />
+                </div>
               </div>
-            </div>
-            <ConnectSnippets token={created} compact />
+              <ConnectSnippets token={created} compact />
+            </DialogBody>
             <DialogFooter>
               <Button variant="primary" onClick={() => close(false)}>
-                Done
+                I've saved it
               </Button>
             </DialogFooter>
-          </div>
+          </>
         ) : (
           <form
-            className="mt-4 space-y-3"
+            className="contents"
             onSubmit={(e) => {
               e.preventDefault()
               create.mutate()
             }}
           >
-            <div>
-              <Label htmlFor="token-name">Name</Label>
-              <Input
-                id="token-name"
-                placeholder="claude code (laptop)"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-              {fieldError('name') ? <p className="mt-1 text-xs text-rise">{fieldError('name')}</p> : null}
-            </div>
-
-            <div>
-              <Label>Access</Label>
-              <Segmented options={ACCESS_OPTIONS} value={access} onChange={setAccess} ariaLabel="Token access" />
-              <p className="mt-1.5 text-xs text-ink-3">{ACCESS_HINT[access]}</p>
-              {fieldError('scopes') ? <p className="mt-1 text-xs text-rise">{fieldError('scopes')}</p> : null}
-            </div>
-
-            <div>
-              <Label>Expires</Label>
-              <Segmented options={EXPIRY_OPTIONS} value={expiry} onChange={setExpiry} ariaLabel="Token expiry" />
-              {fieldError('expires_in_days') ? (
-                <p className="mt-1 text-xs text-rise">{fieldError('expires_in_days')}</p>
+            <DialogBody className="space-y-3">
+              {createError && !createError.fields ? (
+                <p role="alert" className="text-xs text-rise">
+                  {createError.message}
+                </p>
               ) : null}
-            </div>
+              <div>
+                <Label htmlFor="token-name">Name</Label>
+                <Input
+                  id="token-name"
+                  placeholder="e.g. Claude Code (laptop)"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                {fieldError('name') ? <p className="mt-1 text-xs text-rise">{fieldError('name')}</p> : null}
+              </div>
+
+              <div>
+                <Label>Access</Label>
+                <Segmented options={ACCESS_OPTIONS} value={access} onChange={setAccess} ariaLabel="Token access" />
+                <p className="mt-1.5 text-xs text-ink-3">{ACCESS_HINT[access]}</p>
+                {fieldError('scopes') ? <p className="mt-1 text-xs text-rise">{fieldError('scopes')}</p> : null}
+              </div>
+
+              <div>
+                <Label>Expires</Label>
+                <Segmented options={EXPIRY_OPTIONS} value={expiry} onChange={setExpiry} ariaLabel="Token expiry" />
+                {fieldError('expires_in_days') ? (
+                  <p className="mt-1 text-xs text-rise">{fieldError('expires_in_days')}</p>
+                ) : null}
+              </div>
+
+            </DialogBody>
 
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" disabled={create.isPending || !name.trim()}>
+              <Button type="submit" variant="primary" className="max-sm:flex-[2]" disabled={create.isPending || !name.trim()}>
                 {create.isPending ? <Loader2 className="animate-spin" /> : null}
                 Create token
               </Button>
@@ -299,6 +344,7 @@ function expiryCell(token: ApiToken) {
  * when the instance has MCP enabled.
  */
 export function ApiSettingsPage() {
+  usePageTitle('MCP & API · Settings')
   const { data: instance } = useInstance()
   const queryClient = useQueryClient()
   const [adding, setAdding] = useState(false)
@@ -309,16 +355,16 @@ export function ApiSettingsPage() {
 
   const remove = useMutation({
     mutationFn: (id: number) => revokeToken(id),
+    meta: { inlineError: true },
     onSuccess: () => {
       setRevoking(null)
       void queryClient.invalidateQueries({ queryKey: qk.tokens })
     },
-    onError: (error) => toast.error(error instanceof ApiError ? error.message : 'Could not revoke the token'),
   })
 
   return (
-    <div className="max-w-2xl space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="max-w-3xl space-y-5">
+      <div className="flex flex-col items-start gap-3">
         <h1 className="font-display text-[26px] leading-tight font-semibold tracking-[0.05em] text-ink uppercase">Settings</h1>
         <SettingsTabs />
       </div>
@@ -328,7 +374,7 @@ export function ApiSettingsPage() {
       ) : !enabled ? (
         <Card>
           <CardBody className="pt-4">
-            <p className="text-[13px] text-ink-2">
+            <p className="text-[14px] text-ink-2">
               Agent access is turned off on this instance — the operator set{' '}
               <code className="rounded-sm bg-well px-1 py-0.5 font-mono">MCP_ENABLED=false</code>. There is no
               MCP endpoint and API tokens are not accepted.
@@ -344,18 +390,30 @@ export function ApiSettingsPage() {
               </CardTitle>
             </CardHeader>
             <CardBody className="space-y-3">
-              <p className="text-[13px] text-ink-2">
+              <p className="text-[14px] text-ink-2">
                 Snagr speaks the Model Context Protocol: point Claude Code, Hermes, OpenClaw or any MCP
                 client at the endpoint below with a token, and it can browse your items and prices, add
-                watches, and ask the hunter for work — exactly what you can do here, nothing more.
+                items, and start hunts and price checks. It can do exactly what you can do here, nothing more.
               </p>
-              <ConnectSnippets token={null} />
-              <p className="text-xs text-ink-3">
-                Replace <code className="rounded-sm bg-well px-1 py-0.5 font-mono">{TOKEN_PLACEHOLDER}</code>{' '}
-                with a token from below — the create dialog fills these in for you. claude.ai and Claude
-                Desktop connectors sign in with OAuth, which Snagr doesn't offer yet; use a client that sends
-                a bearer header.
-              </p>
+              <ol className="space-y-4">
+                <SetupStep step={1} title="Create a token">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
+                      <Plus /> New token
+                    </Button>
+                    <p className="text-xs text-ink-3">It's shown once, with your config already filled in.</p>
+                  </div>
+                </SetupStep>
+                <SetupStep step={2} title="Copy your config">
+                  <ConnectSnippets token={null} />
+                  <p className="mt-3 text-xs text-ink-3">
+                    Using a token you already have? Replace{' '}
+                    <code className="rounded-sm bg-well px-1 py-0.5 font-mono">{TOKEN_PLACEHOLDER}</code> with it.
+                    claude.ai and Claude Desktop connectors sign in with OAuth, which Snagr doesn't offer yet; use a
+                    client that sends a bearer header.
+                  </p>
+                </SetupStep>
+              </ol>
             </CardBody>
           </Card>
 
@@ -364,17 +422,22 @@ export function ApiSettingsPage() {
               <CardTitle className="flex items-center gap-2">
                 <KeyRound className="size-4 text-ink-3" /> API tokens
               </CardTitle>
-              <Button variant="primary" size="sm" onClick={() => setAdding(true)}>
-                <Plus /> New token
-              </Button>
             </CardHeader>
             <CardBody className="px-0 py-1">
               {tokens.isPending ? (
                 <div className="space-y-2 p-4">
                   <Skeleton className="h-6" />
                 </div>
+              ) : tokens.isError ? (
+                <ErrorState
+                  className="m-4 border-0 py-6"
+                  title="Couldn't load your tokens"
+                  error={tokens.error}
+                  onRetry={() => void tokens.refetch()}
+                  retrying={tokens.isFetching}
+                />
               ) : (tokens.data?.data.length ?? 0) === 0 ? (
-                <p className="px-4 py-3 text-[13px] text-ink-3">
+                <p className="px-4 py-3 text-[14px] text-ink-3">
                   No tokens yet — create one to connect your first agent.
                 </p>
               ) : (
@@ -394,15 +457,15 @@ export function ApiSettingsPage() {
                         <TD className="font-medium text-ink">{token.name}</TD>
                         <TD>
                           <div className="flex gap-1">
-                            {token.scopes.map((scope) => (
-                              <Badge key={scope} variant="muted" className="font-mono">
-                                {scope}
+                            {accessLabels(token.scopes).map((label) => (
+                              <Badge key={label} variant="muted" className="font-mono">
+                                {label}
                               </Badge>
                             ))}
                           </div>
                         </TD>
                         <TD className="hidden text-ink-3 sm:table-cell">
-                          {token.last_used_at ? relativeTime(token.last_used_at) : 'never'}
+                          {token.last_used_at ? <RelativeTime iso={token.last_used_at} /> : 'never'}
                         </TD>
                         <TD className="hidden text-ink-3 sm:table-cell">{expiryCell(token)}</TD>
                         <TD className="text-right">
@@ -428,11 +491,16 @@ export function ApiSettingsPage() {
       <NewTokenDialog open={adding} onOpenChange={setAdding} />
       <ConfirmDialog
         open={revoking != null}
-        onOpenChange={(o) => (o ? null : setRevoking(null))}
+        onOpenChange={(o) => {
+          if (o) return
+          setRevoking(null)
+          remove.reset()
+        }}
         title={`Revoke ${revoking?.name ?? 'token'}?`}
         description="Anything using this token stops working immediately. This can't be undone."
         confirmLabel="Revoke"
         pending={remove.isPending}
+        error={remove.error instanceof ApiError ? remove.error.message : null}
         onConfirm={() => (revoking ? remove.mutate(revoking.id) : null)}
       />
     </div>

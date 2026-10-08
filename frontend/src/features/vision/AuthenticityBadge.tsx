@@ -1,8 +1,8 @@
 import type { AuthenticityRead, AuthenticityVerdict } from '@/api/types'
 import { SimpleTooltip } from '@/components/ui/tooltip'
 import { Badge } from '@/components/ui/badge'
+import { RelativeTime } from '@/components/ui/relative-time'
 import { cn } from '@/lib/cn'
-import { relativeTime } from '@/lib/time'
 
 /**
  * The copy states the evidence asymmetry verbatim: matching known fakes
@@ -24,8 +24,8 @@ export function AuthenticityChip({ read }: { read: AuthenticityRead }) {
   if (read.verdict !== 'leans_fake') return null
   return (
     <SimpleTooltip content={<span className="max-w-64">{VERDICT_COPY.leans_fake}</span>}>
-      <Badge variant="rise" className="shrink-0 font-mono text-[10px] tnum">
-        ✗ photos·fakes{read.fake_confidence != null ? ` ${read.fake_confidence}` : ''}
+      <Badge variant="rise" className="shrink-0 font-mono text-[12px] tnum">
+        ✗ likely fake{read.fake_confidence != null ? ` · ${Math.round(Number(read.fake_confidence) * 100)}%` : ''}
       </Badge>
     </SimpleTooltip>
   )
@@ -67,7 +67,7 @@ export function AuthenticityLine({ read }: { read: AuthenticityRead }) {
       ) : null}
       {' · '}
       {read.image_count} {read.image_count === 1 ? 'photo' : 'photos'} · scanned{' '}
-      {relativeTime(read.checked_at)}
+      <RelativeTime iso={read.checked_at} />
     </>
   )
 }

@@ -48,16 +48,42 @@ export function relativeTime(iso: string | null | undefined): string {
   return `${Math.floor(months / 12)}y ago`
 }
 
-/** `Sep 18, 3:04 PM` — an absolute timestamp in the viewer's locale. */
+/*
+ * Every date and time the app prints comes from this file, in the viewer's
+ * own locale (`undefined` below), so the clock is 12- or 24-hour the same
+ * way on every page — whichever the browser's language uses.
+ */
+const CLOCK: Intl.DateTimeFormatOptions = { hour: 'numeric', minute: '2-digit' }
+
+/** `3:04 PM` or `15:04`, per the viewer's locale. */
+export function formatClock(date: Date): string {
+  return date.toLocaleTimeString(undefined, CLOCK)
+}
+
+/** `Sep 18, 3:04 PM` — an absolute timestamp; the year shows once it is not this one. */
 export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
-  return d.toLocaleString('en-US', {
+  if (!Number.isFinite(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
+    ...CLOCK,
   })
+}
+
+/** `Oct 2, 2026` — a calendar date, for things that happen on a day rather than at a time. */
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+/** `Wed, Oct 1` — today, the way the page headers name it. */
+export function formatToday(): string {
+  return new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })
 }
 
 /** `2m 14s` from start to end, or to now while it is still going. */
@@ -83,23 +109,29 @@ export function tickFormatterFor(range: TimeRange): (ts: number) => string {
   return (ts: number) => {
     const d = new Date(ts)
     if (range === '7d' || range === '30d') {
-      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
     }
-    return d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }).replace(' ', " '")
+    return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' }).replace(' ', " '")
   }
 }
+
+/** How long past due work can be before it is late rather than about to start. */
+const OVERDUE_AFTER_SECS = 60
 
 /**
  * How long until something happens, the way the Activity page says it:
  * under a minute `in 0:42`, under an hour `in 12m`, under a day `in 2h` or
  * `in 4h 12m`, and beyond that the clock time — a countdown in days is a
- * date, not a countdown.
+ * date, not a countdown. A time that passed within the last minute is `now`
+ * (the hunter wakes every 30 s); one further back is `overdue`, since
+ * whatever was due didn't start when it should have.
  */
 export function countdown(iso: string | null | undefined): string {
   if (!iso) return '—'
   const then = new Date(iso).getTime()
   if (!Number.isFinite(then)) return '—'
   const secs = Math.round((then - Date.now()) / 1000)
+  if (secs < -OVERDUE_AFTER_SECS) return 'overdue'
   if (secs <= 0) return 'now'
   if (secs < 60) return `in 0:${String(secs).padStart(2, '0')}`
   const mins = Math.floor(secs / 60)
@@ -110,34 +142,67 @@ export function countdown(iso: string | null | undefined): string {
   return rest === 0 ? `in ${hours}h` : `in ${hours}h ${rest}m`
 }
 
-/** `15:04`, or `yesterday` / `Sep 18` once it is not today's clock. */
+/** Whether work due at `iso` should have started by now — what `countdown` calls `overdue`. */
+export function isOverdue(iso: string | null | undefined, now: number = Date.now()): boolean {
+  if (!iso) return false
+  return Math.round((new Date(iso).getTime() - now) / 1000) < -OVERDUE_AFTER_SECS
+}
+
+/** `3:04 PM` / `15:04`, or `yesterday` / `Sep 18` once it is not today's clock. */
 export function clockTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   const then = new Date(iso)
   if (!Number.isFinite(then.getTime())) return '—'
   const today = new Date()
   if (then.toDateString() === today.toDateString()) {
-    return then.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' })
+    return formatClock(then)
   }
   const yesterday = new Date(today)
   yesterday.setDate(today.getDate() - 1)
   if (then.toDateString() === yesterday.toDateString()) return 'yesterday'
-  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  return then.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-/** `14:02:11` — the timestamp every log line carries. */
+/**
+ * `today`, `yesterday` or `on Sep 18` — the calendar day something happened,
+ * worded to follow what happened (`▼ 8.4% on Sep 18`). The year shows once it
+ * is not this one.
+ */
+export function dayPhrase(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const then = new Date(iso)
+  if (!Number.isFinite(then.getTime())) return '—'
+  const today = new Date()
+  if (then.toDateString() === today.toDateString()) return 'today'
+  const yesterday = new Date(today)
+  yesterday.setDate(today.getDate() - 1)
+  if (then.toDateString() === yesterday.toDateString()) return 'yesterday'
+  const date = then.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: then.getFullYear() === today.getFullYear() ? undefined : 'numeric',
+  })
+  return `on ${date}`
+}
+
+/**
+ * `02:02:11 PM` / `14:02:11` — the timestamp every log line carries; the
+ * two-digit hour keeps the column one width.
+ */
 export function logTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-US', {
-    hour12: false,
+  return new Date(iso).toLocaleTimeString(undefined, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
   })
 }
 
-/** `12.4k` — token counts are read at a glance, never audited. */
+/** `12.4k`, `1.8M` — token counts are read at a glance, never audited. */
 export function formatTokens(n: number): string {
-  return n < 1000 ? String(n) : `${(n / 1000).toFixed(1)}k`
+  if (n < 1000) return String(n)
+  // 999.95k would round to "1000.0k"; hand it to the M branch instead
+  if (n < 999_950) return `${(n / 1000).toFixed(1)}k`
+  return `${(n / 1_000_000).toFixed(1)}M`
 }
 
 /** `1.8s` — how long one job took. */

@@ -20,14 +20,17 @@ from decimal import Decimal
 
 import asyncpg
 import pytest
+from app.config import settings
 from app.database import _sessionmaker
 from app.models import JobEvents, Jobs, PriceChecks, User
 from app.services import events as events_service
+from sqlalchemy import text
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
 
 OWNER = {"email": "sse@example.com", "password": "hunter2hunter2"}
+GUEST = {"email": "guest@example.com", "password": "guest-password"}
 
 # conftest already rewrote this to the snagr_test URL; asyncpg wants no driver tag
 DSN = os.environ["DATABASE_URL"].replace("+asyncpg", "")
@@ -280,6 +283,13 @@ class TestHub:
         await _notify(events_service.EVENTS_CHANNEL, check=999)
         assert mailbox.empty()
 
+    async def test_an_event_type_this_backend_does_not_know_is_skipped(self, mailbox):
+        # a newer agent's event: one lost frame, not a raise out of the hub
+        (job_id,) = await _seed(_job())
+        await _seed(_event(job_id, seq=1, event_type="from_a_newer_agent"))
+        await _notify(events_service.EVENTS_CHANNEL, job_id=job_id, seq=1)
+        assert mailbox.empty()
+
 
 class _SseConnection:
     """A hand-driven ASGI connection to GET /api/events.
@@ -289,11 +299,12 @@ class _SseConnection:
     so these tests speak ASGI to the app directly, in the test's own loop.
     """
 
-    def __init__(self, cookies: dict[str, str]):
+    def __init__(self, cookies: dict[str, str], headers: dict[str, str] | None = None):
         from app.main import app
 
         self._app = app
         cookie = "; ".join(f"{name}={value}" for name, value in cookies.items())
+        extra = [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]
         self._scope = {
             "type": "http",
             "asgi": {"version": "3.0"},
@@ -304,7 +315,7 @@ class _SseConnection:
             "raw_path": b"/api/events",
             "query_string": b"",
             "root_path": "",
-            "headers": [(b"host", b"test"), (b"cookie", cookie.encode())],
+            "headers": [(b"host", b"test"), (b"cookie", cookie.encode()), *extra],
             "client": ("127.0.0.1", 1),
             "server": ("test", 80),
         }
@@ -341,6 +352,10 @@ class _SseConnection:
             message = await asyncio.wait_for(self._incoming.get(), timeout)
             if message["type"] == "http.response.body":
                 self._buffer += message["body"].decode().replace("\r\n", "\n")
+
+    async def wait_closed(self, timeout: float = 5.0) -> None:
+        """Wait for the server to end the stream on its own."""
+        await asyncio.wait_for(self._task, timeout)
 
     async def disconnect(self) -> None:
         self._disconnected.set_result({"type": "http.disconnect"})
@@ -397,6 +412,79 @@ class TestStreamEndpoint:
 
         await conn.disconnect()
         assert len(events_service._clients) == before
+
+
+class TestStreamRevalidation:
+    """A stream outlives its request, so the hub re-checks its viewer on a
+    timer: whatever ends the sign-in ends the stream, without waiting for the
+    viewer to reconnect."""
+
+    @pytest.fixture(autouse=True)
+    def _fast_recheck(self, monkeypatch):
+        monkeypatch.setattr(events_service, "REAUTH_SECONDS", 0.1)
+
+    async def _guest_stream(self, client, make_client, monkeypatch) -> tuple:
+        """An admin session (`client`) plus a plain user with an open stream."""
+        monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+        await client.post("/api/auth/register", json=OWNER, headers=CSRF)
+        guest = await make_client()
+        res = await guest.post("/api/auth/register", json=GUEST, headers=CSRF)
+        assert res.status_code == 201, res.text
+        conn = _SseConnection(dict(guest.cookies))
+        await conn.start()
+        await conn.next_event()  # snapshot — the stream is fully up
+        return guest, res.json()["user"]["id"], conn
+
+    async def test_a_still_valid_viewer_stays_connected(self, client, make_client, monkeypatch):
+        _, _, conn = await self._guest_stream(client, make_client, monkeypatch)
+        try:
+            await asyncio.sleep(0.4)  # several re-checks
+            assert not conn._task.done()
+            assert len(events_service._clients) == 1
+        finally:
+            await conn.disconnect()
+
+    async def test_deactivating_the_user_closes_the_stream(self, client, make_client, monkeypatch):
+        _, guest_id, conn = await self._guest_stream(client, make_client, monkeypatch)
+        res = await client.patch(
+            f"/api/admin/users/{guest_id}", json={"is_active": False}, headers=CSRF
+        )
+        assert res.status_code == 200
+        await conn.wait_closed()
+        assert events_service._clients == set()
+
+    async def test_demoting_an_admin_closes_the_stream(self, client, db_session):
+        res = await client.post("/api/auth/register", json=OWNER, headers=CSRF)
+        admin_id = res.json()["user"]["id"]
+        conn = _SseConnection(dict(client.cookies))
+        await conn.start()
+        await conn.next_event()
+        async with db_session() as session:
+            (await session.get(User, admin_id)).role = "user"
+            await session.commit()
+        await conn.wait_closed()
+
+    async def test_logging_out_closes_the_stream(self, client):
+        await client.post("/api/auth/register", json=OWNER, headers=CSRF)
+        conn = _SseConnection(dict(client.cookies))
+        await conn.start()
+        await conn.next_event()
+        assert (await client.post("/api/auth/logout", headers=CSRF)).status_code == 204
+        await conn.wait_closed()
+
+    async def test_revoking_the_api_token_closes_the_stream(self, client):
+        await client.post("/api/auth/register", json=OWNER, headers=CSRF)
+        res = await client.post(
+            "/api/me/tokens", json={"name": "agent", "scopes": ["read"]}, headers=CSRF
+        )
+        minted = res.json()
+        conn = _SseConnection({}, headers={"Authorization": f"Bearer {minted['token']}"})
+        await conn.start()
+        assert conn.status == 200
+        await conn.next_event()
+        res = await client.delete(f"/api/me/tokens/{minted['id']}", headers=CSRF)
+        assert res.status_code == 204
+        await conn.wait_closed()
 
 
 # --- per-viewer filtering -------------------------------------------------------
@@ -571,6 +659,32 @@ class TestEndToEnd:
             assert message["event"] == "job.event"
             assert message["id"] == f"{job_id}:1"
             assert json.loads(message["data"])["message"] == "Hunting TestBay…"
+        finally:
+            listener.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await listener
+
+    async def test_the_listener_reconnects_after_postgres_drops_it(
+        self, mailbox, pg_connections, monkeypatch
+    ):
+        """A Postgres restart surfaces as InterfaceError at the next
+        heartbeat; the loop must reconnect and re-snapshot, not die."""
+        monkeypatch.setattr(events_service, "HEARTBEAT_SECONDS", 0.1)
+        monkeypatch.setattr(events_service, "RECONNECT_SECONDS", 0.1)
+        listener = asyncio.create_task(events_service.listen_pg())
+        try:
+            assert (await _next(mailbox))["event"] == "job.snapshot"
+
+            async with _sessionmaker()() as session:
+                await session.execute(
+                    text("SELECT pg_terminate_backend(:pid)"),
+                    {"pid": pg_connections[0].get_server_pid()},
+                )
+            # reconnected once the next snapshot lands
+            assert (await _next(mailbox))["event"] == "job.snapshot"
+
+            await _seed(_job())
+            assert (await _next(mailbox))["event"] == "job.started"
         finally:
             listener.cancel()
             with pytest.raises(asyncio.CancelledError):

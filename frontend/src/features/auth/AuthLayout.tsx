@@ -24,8 +24,8 @@ export function AuthLayout({ children }: { children: ReactNode }) {
           <span className="mt-1.5 block font-display text-[40px] leading-none font-bold tracking-[0.14em] text-ink">
             SNAGR
           </span>
-          <p className="mt-2.5 font-mono text-[11px] tracking-[0.04em] text-ink-3">
-            Set a target. The agent hunts all night.
+          <p className="mt-2.5 font-mono text-[12px] tracking-[0.04em] text-ink-3">
+            Set a target. Snagr hunts all night.
           </p>
         </div>
         <div className="rounded-lg border border-hairline bg-surface p-6">{children}</div>

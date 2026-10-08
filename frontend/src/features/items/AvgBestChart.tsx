@@ -11,7 +11,9 @@ import {
   PlotFrame,
   polylineD,
   priceDomain,
+  priceSummary,
   SweepBeam,
+  TargetKey,
   timeTicks,
   useMeasuredWidth,
   useSweep,
@@ -99,12 +101,16 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
     return { plot, domain, avg, best, xTicks: timeTicks(plot, xMin, xMax, range) }
   }, [width, avgPts, bestPts, target, range])
 
-  const sweep = useSweep(geom?.plot ?? null)
+  const stops = useMemo(
+    () => [...new Set([...avgPts, ...bestPts].map((p) => p.ts))].sort((a, b) => a - b),
+    [avgPts, bestPts],
+  )
+  const sweep = useSweep(geom?.plot ?? null, stops)
 
   if (avgPts.length === 0 && bestPts.length === 0) {
     return (
-      <p className="px-4 py-10 text-center text-[13px] text-ink-3">
-        Not enough data to summarize yet — run the agent to collect prices.
+      <p className="px-4 py-10 text-center text-[14px] text-ink-3">
+        Not enough prices to summarize yet. They fill in as Snagr checks this item's listings.
       </p>
     )
   }
@@ -119,11 +125,28 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
     .filter((r): r is { label: string; color: string; value: number } => r.value != null)
     .sort((a, b) => a.value - b.value)
 
+  // the best line leads the summary; the average only when there is no best
+  const lead = bestPts.length > 0 ? bestPts : avgPts
+  const avgNow = bestPts.length > 0 && avgPts.length > 0 ? avgPts[avgPts.length - 1].value : null
+  const summary = `${lead === bestPts ? BEST_LABEL : AVG_LABEL}: ${priceSummary(
+    lead.map((p) => p.value),
+    lead[lead.length - 1].value,
+    target,
+    data.currency,
+  )}${avgNow != null ? `. Average now ${formatMoney(avgNow.toFixed(2), data.currency)}` : ''}. Arrow keys step through the checks.`
+
   return (
     <div>
       <div ref={ref} className="relative h-64">
         {geom ? (
-          <svg width={width} height={HEIGHT} className="touch-none" {...sweep.handlers}>
+          <svg
+            width={width}
+            height={HEIGHT}
+            role="img"
+            aria-label={summary}
+            className="touch-pan-y select-none focus-visible:-outline-offset-2"
+            {...sweep.svgProps}
+          >
             <GlowDefs id={glowId} />
             <PlotFrame
               plot={geom.plot}
@@ -131,7 +154,6 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
               yMax={geom.domain[1]}
               xTicks={geom.xTicks}
               target={target}
-              targetLabel={`⌖ TARGET ${formatMoney(data.target_price, data.currency)}`}
               beamX={struck.length > 0 ? sweep.pos!.x : null}
             />
             {geom.avg ? (
@@ -181,7 +203,14 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
           </FloatingTip>
         ) : null}
       </div>
-      <div className="flex items-center gap-4 px-4 pt-2">
+      <p aria-live="polite" className="sr-only">
+        {sweep.pos?.keyed
+          ? `${tooltipTimeLabel(sweep.pos.ts)}: ${struck
+              .map((r) => `${r.label} ${formatMoney(r.value.toFixed(2), data.currency)}`)
+              .join('; ')}`
+          : ''}
+      </p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
         <span className="flex items-center gap-1.5 text-xs text-ink-2">
           <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: chart.ink }} />
           {BEST_LABEL}
@@ -190,6 +219,7 @@ export function AvgBestChart({ data, range }: { data: PriceSummaryResponse; rang
           <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: chart.series[0] }} />
           {AVG_LABEL}
         </span>
+        {data.target_price != null ? <TargetKey price={data.target_price} currency={data.currency} /> : null}
       </div>
     </div>
   )

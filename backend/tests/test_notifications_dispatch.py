@@ -8,7 +8,9 @@
                           MockTransport: the exact ntfy bytes, the signed webhook
                           envelope (signature recomputed and verified here),
                           the Discord embed, and the retry/backoff ladder.
-4. TestEndToEnd         — the real listen_pg() task, nothing mocked but HTTP:
+4. TestConcurrentSends  — _drain's workers: a host that never answers holds
+                          only its own PER_HOST_SENDS slots.
+5. TestEndToEnd         — the real listen_pg() task, nothing mocked but HTTP:
                           the on-connect drain delivers what was queued while
                           it was down, then a fresh insert rides the NOTIFY.
 
@@ -30,7 +32,7 @@ import pytest
 from app.config import settings
 from app.models import NotificationDeliveries, NotificationOutbox
 from app.services import notifications as notifications_service
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 DSN = os.environ["DATABASE_URL"].replace("+asyncpg", "")
 
@@ -74,6 +76,17 @@ def ntfy_server(monkeypatch):
 
 async def _next(queue: asyncio.Queue, timeout: float = 5.0):
     return await asyncio.wait_for(queue.get(), timeout)
+
+
+async def _until(condition, timeout: float = 5.0) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not condition():
+        assert asyncio.get_running_loop().time() < deadline, "timed out"
+        await asyncio.sleep(0.05)
+
+
+async def _deliver_one() -> bool:
+    return await notifications_service._deliver_one(notifications_service._Sending())
 
 
 async def _read_delivery(db_session, delivery_id: int) -> NotificationDeliveries:
@@ -163,7 +176,7 @@ class TestDeliver:
         _, _, delivery_id = await _seed_delivery(sc, kind="ntfy")
         requests, _ = outbound
 
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         (request,) = requests
         assert str(request.url) == "https://ntfy.test/test-topic"
         assert request.content.decode() == "Widget — 90.00 USD on TestBay (target 100.00)"
@@ -175,11 +188,31 @@ class TestDeliver:
         assert (delivery.status, delivery.attempts) == ("delivered", 1)
         assert delivery.delivered_at is not None
 
+    async def test_ntfy_click_percent_encodes_a_non_ascii_listing_url(
+        self, sc, db_session, outbound, ntfy_server
+    ):
+        # httpx refuses a non-ASCII header value, which would burn every attempt
+        outbox = await sc.outbox()
+        outbox.payload = {
+            **outbox.payload,
+            "listing_url": "https://testbay.example/listing/café 1?q=über#größe",
+        }
+        channel = await sc.channel(kind="ntfy")
+        sc.db.add(NotificationDeliveries(outbox_id=outbox.id, channel_id=channel.id))
+        await sc.db.commit()
+        requests, _ = outbound
+
+        assert await _deliver_one() is True
+        (request,) = requests
+        assert request.headers["Click"] == (
+            "https://testbay.example/listing/caf%C3%A9%201?q=%C3%BCber#gr%C3%B6%C3%9Fe"
+        )
+
     async def test_webhook_envelope_is_signed_and_versioned(self, sc, db_session, outbound):
         outbox_id, _, delivery_id = await _seed_delivery(sc, kind="webhook")
         requests, _ = outbound
 
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         (request,) = requests
         body = json.loads(request.content)
         assert body == {
@@ -214,7 +247,7 @@ class TestDeliver:
         await _seed_delivery(sc, kind="discord")
         requests, _ = outbound
 
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         (request,) = requests
         body = json.loads(request.content)
         assert body["username"] == "Snagr"
@@ -235,7 +268,7 @@ class TestDeliver:
         status["code"] = 500
 
         before = datetime.now(UTC)
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         delivery = await _read_delivery(db_session, delivery_id)
         assert (delivery.status, delivery.attempts) == ("pending", 1)
         assert "500" in delivery.last_error
@@ -244,7 +277,7 @@ class TestDeliver:
         )
 
         # not due yet — nothing to deliver until the backoff elapses
-        assert await notifications_service._deliver_one() is False
+        assert await _deliver_one() is False
 
     async def test_the_last_attempt_goes_terminal(self, sc, db_session, outbound):
         _, _, delivery_id = await _seed_delivery(
@@ -253,7 +286,7 @@ class TestDeliver:
         _, status = outbound
         status["code"] = 500
 
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         delivery = await _read_delivery(db_session, delivery_id)
         expected = ("failed", notifications_service.MAX_ATTEMPTS)
         assert (delivery.status, delivery.attempts) == expected
@@ -265,7 +298,7 @@ class TestDeliver:
         status["headers"] = {"Retry-After": "120"}
 
         before = datetime.now(UTC)
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         delivery = await _read_delivery(db_session, delivery_id)
         assert delivery.status == "pending"
         assert delivery.next_attempt_at >= before + timedelta(seconds=120)
@@ -276,10 +309,79 @@ class TestDeliver:
         monkeypatch.setattr(settings, "NTFY_SERVER_URL", None)
         _, _, delivery_id = await _seed_delivery(sc, kind="ntfy")
 
-        assert await notifications_service._deliver_one() is True
+        assert await _deliver_one() is True
         delivery = await _read_delivery(db_session, delivery_id)
         assert (delivery.status, delivery.attempts) == ("pending", 1)
         assert "no ntfy server" in delivery.last_error
+
+    async def test_an_internal_url_saved_before_the_guard_is_never_fetched(
+        self, sc, db_session, outbound
+    ):
+        outbox = await sc.outbox()
+        channel = await sc.channel(kind="webhook", url="http://vision:8100/rescore")
+        delivery = NotificationDeliveries(outbox_id=outbox.id, channel_id=channel.id)
+        sc.db.add(delivery)
+        await sc.db.commit()
+        requests, _ = outbound
+
+        assert await _deliver_one() is True
+        assert requests == []
+        delivery = await _read_delivery(db_session, delivery.id)
+        assert (delivery.status, delivery.attempts) == ("pending", 1)
+        assert "not a public hostname" in delivery.last_error
+
+
+class TestConcurrentSends:
+    async def test_a_hanging_host_holds_up_no_one_else(self, sc, db_session, monkeypatch):
+        """One user's webhook host never answers; another user's notifications
+        still go out, and the hung host never gets more than PER_HOST_SENDS
+        of the dispatcher's workers."""
+        release = asyncio.Event()
+        stuck: list[httpx.Request] = []
+        most_stuck = 0
+        delivered: list[httpx.Request] = []
+        real_client = httpx.AsyncClient  # the patch below replaces the module attr
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            nonlocal most_stuck
+            if request.url.host == "dead.example":
+                stuck.append(request)
+                most_stuck = max(most_stuck, len(stuck))
+                await release.wait()
+                stuck.remove(request)
+                return httpx.Response(504)
+            delivered.append(request)
+            return httpx.Response(200)
+
+        def factory(**kwargs):
+            return real_client(transport=httpx.MockTransport(handler))
+
+        monkeypatch.setattr(notifications_service.httpx, "AsyncClient", factory)
+
+        hung_owner, other = await sc.user(), await sc.other_user()
+        for n in range(3):
+            await sc.channel(hung_owner, kind="webhook", url=f"https://dead.example/hook/{n}")
+            await sc.outbox(hung_owner)
+        await sc.channel(other, kind="webhook")
+        for _ in range(3):
+            await sc.outbox(other)
+        await sc.db.commit()
+
+        drain = asyncio.create_task(notifications_service._drain())
+        try:
+            await _until(lambda: len(delivered) == 3)
+            await _until(lambda: len(stuck) == notifications_service.PER_HOST_SENDS)
+            assert not drain.done()
+        finally:
+            release.set()
+        await asyncio.wait_for(drain, 5)
+
+        # the held-back sends went out once the host freed up, and failed
+        assert most_stuck == notifications_service.PER_HOST_SENDS
+        async with db_session() as session:
+            deliveries = (await session.execute(select(NotificationDeliveries))).scalars().all()
+        assert sorted(d.attempts for d in deliveries) == [1] * 12
+        assert sorted(d.status for d in deliveries) == ["delivered"] * 3 + ["pending"] * 9
 
 
 class TestEndToEnd:
@@ -297,14 +399,7 @@ class TestEndToEnd:
 
         task = asyncio.create_task(notifications_service.listen_pg())
         try:
-
-            async def until(condition, timeout=5.0):
-                deadline = asyncio.get_running_loop().time() + timeout
-                while not condition():
-                    assert asyncio.get_running_loop().time() < deadline, "timed out"
-                    await asyncio.sleep(0.05)
-
-            await until(lambda: len(requests) == 1)
+            await _until(lambda: len(requests) == 1)
 
             async with db_session() as session:
                 refreshed = await session.get(NotificationOutbox, queued.id)
@@ -316,7 +411,46 @@ class TestEndToEnd:
                 )
                 await session.commit()
 
-            await until(lambda: len(requests) == 2)
+            await _until(lambda: len(requests) == 2)
+        finally:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    async def test_delivery_survives_postgres_dropping_the_connection(
+        self, sc, db_session, outbound, ntfy_server, monkeypatch
+    ):
+        """A Postgres restart surfaces as InterfaceError at the next
+        heartbeat; the loop must reconnect and keep delivering, not die."""
+        monkeypatch.setattr(notifications_service, "HEARTBEAT_SECONDS", 0.1)
+        monkeypatch.setattr(notifications_service, "RECONNECT_SECONDS", 0.1)
+        # the LISTEN connections alone: the delivery workers open pooled
+        # connections of their own, through the same asyncpg.connect
+        listening: list[asyncpg.Connection] = []
+        real_add_listener = asyncpg.Connection.add_listener
+
+        async def add_listener(conn, *args, **kwargs):
+            listening.append(conn)
+            return await real_add_listener(conn, *args, **kwargs)
+
+        monkeypatch.setattr(asyncpg.Connection, "add_listener", add_listener)
+        await sc.channel(kind="ntfy")
+        await sc.db.commit()
+        requests, _ = outbound
+
+        task = asyncio.create_task(notifications_service.listen_pg())
+        try:
+            await _until(lambda: len(listening) == 1)
+            async with db_session() as session:
+                await session.execute(
+                    text("SELECT pg_terminate_backend(:pid)"),
+                    {"pid": listening[0].get_server_pid()},
+                )
+            await _until(lambda: len(listening) == 2)
+
+            await sc.outbox()
+            await sc.db.commit()
+            await _until(lambda: len(requests) == 1)
         finally:
             task.cancel()
             with pytest.raises(asyncio.CancelledError):

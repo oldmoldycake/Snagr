@@ -1,15 +1,18 @@
+import { Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { getJobsSummary } from '@/api/endpoints'
 import { qk } from '@/api/queries'
 import type { ItemSummary, PriceDrop } from '@/api/types'
-import { effectiveTarget, isFreshDrop } from '@/features/items/WatchList'
+import { isFreshDrop } from '@/features/items/WatchList'
 import { formatMoney, fromCents, toCents } from '@/lib/money'
+import { formatToday } from '@/lib/time'
+import { namedHits, standing } from './verdict'
 
 /**
  * Beat one of the dashboard: the app states the hunt's status in a sentence,
- * then one line of tonight's totals. Aggregates only — per-item facts live in
- * the table, so nothing here can repeat a row (the "once only" rule).
+ * then one line of tonight's totals. The sentence names the items at target,
+ * linked, so nobody has to scan the shelves to find what the count counted.
  */
 export function VerdictHero({
   items,
@@ -22,56 +25,71 @@ export function VerdictHero({
   className?: string
 }) {
   const snagged = items.filter((item) => item.target_met)
+  const { named, more } = namedHits(items)
+  const stand = standing(items)
 
-  let closest: { item: ItemSummary; gapCents: number; ratio: number } | null = null
-  for (const item of items) {
-    if (item.target_met) continue
-    const best = toCents(item.best_price)
-    const target = toCents(effectiveTarget(item))
-    if (best == null || target == null || target <= 0) continue
-    const gapCents = best - target
-    const ratio = gapCents / target
-    if (closest == null || ratio < closest.ratio) closest = { item, gapCents, ratio }
-  }
-
-  const eyebrow = `Tonight · ${new Date().toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })}`
+  const eyebrow = `Today · ${formatToday()}`
 
   return (
     <section className={className}>
-      <p className="font-mono text-[10.5px] tracking-[0.16em] text-ink-3 uppercase">{eyebrow}</p>
+      <p className="font-mono text-[12px] tracking-[0.16em] text-ink-3 uppercase">{eyebrow}</p>
 
       {snagged.length > 0 ? (
-        <h1 className="mt-3 font-display text-[42px] leading-[1.05] font-semibold tracking-[0.015em] text-drop text-balance">
-          {snagged.length} in range
-          <span aria-hidden className="ml-1 align-[4px] text-3xl">
+        <h1 className="mt-3 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.015em] text-drop text-balance">
+          {snagged.length} at target
+          <span aria-hidden className="ml-1 align-[3px] text-[0.7em]">
             ⌖
           </span>
         </h1>
       ) : (
-        <h1 className="mt-3 font-display text-[42px] leading-[1.05] font-semibold tracking-[0.015em] text-ink-2 text-balance">
-          Nothing in range yet
+        <h1 className="mt-3 font-display text-[30px] leading-[1.05] font-semibold tracking-[0.015em] text-ink-2 text-balance">
+          Nothing at target yet
         </h1>
       )}
 
-      {closest ? (
+      {named.length > 0 ? (
         <p className="mt-2.5 text-base text-ink-2">
-          {snagged.length > 0 ? 'Next closest: ' : 'Closest: '}
-          <Link to={`/items/${closest.item.id}`} className="font-semibold text-ink hover:text-lume">
-            {closest.item.name}
+          {named.map((item, i) => (
+            <Fragment key={item.id}>
+              {i === 0 ? null : i === named.length - 1 && more === 0 ? ' and ' : ', '}
+              <Link to={`/items/${item.id}`} className="font-semibold text-ink hover:text-lume">
+                {item.name}
+              </Link>
+              {i === 0 ? ' is at ' : ' at '}
+              <span className="font-mono text-[15px] font-semibold text-drop tnum">
+                {formatMoney(item.best_price, item.currency)}
+              </span>
+            </Fragment>
+          ))}
+          {more > 0 ? ` and ${more} more` : null}.
+        </p>
+      ) : null}
+
+      {stand?.kind === 'closest' ? (
+        <p className="mt-2.5 text-base text-ink-2">
+          {snagged.length > 0 ? 'Next closest: ' : 'Closest to target: '}
+          <Link to={`/items/${stand.item.id}`} className="font-semibold text-ink hover:text-lume">
+            {stand.item.name}
           </Link>{' '}
           is{' '}
           <span className="font-mono text-[15px] font-semibold text-lume tnum">
-            {formatMoney(fromCents(closest.gapCents), closest.item.currency)}
+            {formatMoney(fromCents(stand.gapCents), stand.item.currency)}
           </span>{' '}
-          from striking.
+          above its target.
         </p>
-      ) : snagged.length === 0 ? (
+      ) : stand?.kind === 'no_targets' ? (
         <p className="mt-2.5 text-base text-ink-2">
-          No prices yet — run a sweep to get eyes on your targets.
+          None of your items has a target price yet. Set one with Edit on an item's page, and Snagr tells you when a
+          listing is at or below it.
+        </p>
+      ) : stand?.kind === 'no_prices' ? (
+        <p className="mt-2.5 text-base text-ink-2">
+          {stand.elsewhere ? 'No prices yet for your items with a target. ' : 'No prices yet. '}
+          Snagr is searching your sites and fills this in as it finds listings. Follow along in{' '}
+          <Link to="/activity" className="font-semibold text-ink hover:text-lume">
+            Activity
+          </Link>
+          .
         </p>
       ) : null}
 
@@ -111,11 +129,11 @@ function PulseLine({ items, drops }: { items: ItemSummary[]; drops: Map<number, 
   const quiet = struck === 0 && dropped === 0
   return (
     <p className="mt-4.5 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 font-mono text-xs text-ink-2 tnum">
-      <span className="text-[10.5px] tracking-[0.1em] text-ink-3 uppercase">Tonight</span>
+      <span className="text-[12px] tracking-[0.1em] text-ink-3 uppercase">Last 24 hours</span>
       {quiet ? <span>no movement</span> : null}
       {struck > 0 ? (
         <span className="text-drop">
-          <span aria-hidden>⌖</span> <b className="font-semibold text-ink">{struck}</b> struck
+          <span aria-hidden>⌖</span> <b className="font-semibold text-ink">{struck}</b> reached target
         </span>
       ) : null}
       {dropped > 0 ? (

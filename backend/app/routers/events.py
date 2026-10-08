@@ -15,13 +15,15 @@ the listing.checked frame. Backed by services/events.py (Postgres
 LISTEN/NOTIFY hub); the frame list above is the whole wire contract.
 nginx.conf already disables buffering + extends timeouts for this path. Auth
 rides the access cookie — EventSource can't send headers, which is why auth is
-cookies in the first place; an expired cookie 401s the reconnect and the
-client shows "reconnecting" until any refreshed request restores it.
+cookies in the first place; an expired cookie 401s the reconnect, which ends
+the browser's EventSource for good, so the client refreshes the session and
+opens a new one itself (features/activity/liveStream.ts).
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sse_starlette import EventSourceResponse
 
 from app.core.deps import current_user
@@ -31,9 +33,17 @@ router = APIRouter(prefix="/api", tags=["events"])
 
 
 @router.get("/events")
-async def stream_events(user=Depends(current_user)) -> EventSourceResponse:
-    """Open the caller's SSE stream: a job.snapshot first, then live frames."""
-    client = events_service.register_client(user)
+async def stream_events(request: Request, user=Depends(current_user)) -> EventSourceResponse:
+    """Open the caller's SSE stream: a job.snapshot first, then live frames.
+    The stream closes once its viewer is deactivated, demoted or signed out
+    (see services/events.py)."""
+    # current_user leaves whichever credential it accepted on the request
+    api_token = getattr(request.state, "api_token", None)
+    client = events_service.register_client(
+        user,
+        family_id=getattr(request.state, "session_family", None),
+        token_id=api_token.id if api_token is not None else None,
+    )
     # captured before streaming starts — the ORM row detaches with the request
     user_id, is_admin = user.id, user.role == "admin"
 
@@ -42,8 +52,23 @@ async def stream_events(user=Depends(current_user)) -> EventSourceResponse:
         # would be long gone by the time an SSE body starts streaming
         try:
             yield await events_service.snapshot_message(user_id, is_admin)
+            loop = asyncio.get_running_loop()
+            next_check = loop.time() + events_service.REAUTH_SECONDS
             while True:
-                yield await client.queue.get()
+                try:
+                    message = await asyncio.wait_for(
+                        client.queue.get(), timeout=max(0, next_check - loop.time())
+                    )
+                except TimeoutError:
+                    message = None
+                if loop.time() >= next_check:
+                    # checked before the frame goes out, so a revoked viewer
+                    # never gets one more
+                    if not await events_service.still_authorized(client):
+                        return
+                    next_check = loop.time() + events_service.REAUTH_SECONDS
+                if message is not None:
+                    yield message
         finally:
             events_service.unregister_client(client)
 

@@ -1,24 +1,15 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { cancelJob } from '@/api/endpoints'
 import type { Job } from '@/api/types'
 import { Card } from '@/components/ui/card'
 import { Radar } from '@/components/ui/radar'
+import { LogGlyph } from '@/components/ui/terminal-log'
 import { useSession } from '@/features/auth/useSession'
 import { formatDuration } from '@/lib/time'
-import { GLYPHS, glyphFor } from './lines'
+import { glyphFor } from './lines'
 import { useJobs } from './JobsProvider'
-
-/** Elapsed re-renders once a second while anything is live. */
-function useTick(active: boolean) {
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    if (!active) return
-    const id = setInterval(() => setTick((n) => n + 1), 1000)
-    return () => clearInterval(id)
-  }, [active])
-}
+import { useTick } from './useTick'
 
 /**
  * Beat two: hunts have a voice. One row per live hunt or grounding pass,
@@ -32,7 +23,7 @@ export function LiveHunts({ onOpen }: { onOpen?: () => void }) {
 
   return (
     <section className="space-y-2">
-      <h2 className="font-mono text-[10px] tracking-[0.14em] text-ink-3 uppercase">Live hunts</h2>
+      <h2 className="font-mono text-[12px] text-ink-3">Live hunts</h2>
       <Card className="divide-y divide-hairline">
         {live.map((job) => (
           <LiveHuntRow key={job.id} job={job} onOpen={onOpen} />
@@ -42,12 +33,13 @@ export function LiveHunts({ onOpen }: { onOpen?: () => void }) {
   )
 }
 
-function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
+/** One live hunt: its latest line, how long it has run, and a way out or in. */
+export function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
   const { events } = useJobs()
   const { data: me } = useSession()
   const queryClient = useQueryClient()
   const latest = (events.get(job.id) ?? []).at(-1)
-  const glyph = latest ? GLYPHS[glyphFor(latest)] : null
+  const level = latest ? glyphFor(latest) : null
 
   const cancel = useMutation({
     mutationFn: () => cancelJob(job.id),
@@ -61,16 +53,14 @@ function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 p-3">
       <Radar size={22} />
       <div className="min-w-0 flex-1 basis-56">
-        <p className="truncate text-[13px] font-medium text-ink">
+        <p className="truncate text-[14px] font-medium text-ink">
           {job.item_name}
           {job.site_name ? <span className="text-ink-3"> × {job.site_name}</span> : null}
         </p>
-        <p className="mt-0.5 truncate font-mono text-[11px] text-ink-2">
-          {latest && glyph ? (
+        <p className="mt-0.5 truncate font-mono text-[12px] text-ink-2">
+          {latest && level ? (
             <>
-              <span aria-hidden className={glyph.className}>
-                {glyph.glyph}
-              </span>{' '}
+              <LogGlyph level={level} />{' '}
               {latest.message}
             </>
           ) : (
@@ -78,7 +68,7 @@ function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
           )}
         </p>
       </div>
-      <span className="font-mono text-[11px] text-ink-3 tnum">
+      <span className="font-mono text-[12px] text-ink-3 tnum">
         {formatDuration(job.started_at)}
       </span>
       {canCancel ? (
@@ -86,7 +76,7 @@ function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
           type="button"
           disabled={cancel.isPending}
           onClick={() => cancel.mutate()}
-          className="font-mono text-[11px] text-rise hover:underline disabled:opacity-50"
+          className="font-mono text-[12px] text-rise hover:underline disabled:opacity-50"
         >
           Cancel
         </button>
@@ -94,7 +84,7 @@ function LiveHuntRow({ job, onOpen }: { job: Job; onOpen?: () => void }) {
       <Link
         to={`/activity/${job.id}`}
         onClick={onOpen}
-        className="font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+        className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
       >
         Open →
       </Link>

@@ -236,7 +236,7 @@ async def _announce(
             job_id,
             "warn",
             "listing_ended",
-            f"Listing {status} — the slot is free again",
+            f"Listing {status} — room for a new listing",
             {"listing_id": listing_id, "item_id": item_id},
         )
     elif price is not None:

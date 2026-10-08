@@ -3,7 +3,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/cn'
 
 const badgeVariants = cva(
-  'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[11px] font-medium leading-4',
+  'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[12px] font-medium leading-4',
   {
     variants: {
       variant: {
@@ -29,11 +29,11 @@ export function Badge({ className, variant, ...props }: BadgeProps) {
   return <span className={cn(badgeVariants({ variant }), className)} {...props} />
 }
 
-/** The in-range state — target hit. Always carries the crosshair glyph. */
+/** The at-target state — the best price reached the target. Always carries the crosshair glyph. */
 export function SnaggedBadge({ className }: { className?: string }) {
   return (
-    <Badge variant="snagged" className={cn('rounded-full font-mono', className)}>
-      <span aria-hidden>⌖</span> in range
+    <Badge variant="snagged" className={cn('rounded-full font-mono whitespace-nowrap', className)}>
+      <span aria-hidden>⌖</span> at target
     </Badge>
   )
 }

@@ -7,22 +7,23 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
 import httpx
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi import APIRouter, Depends, Request, status
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.core import ratelimit
 from app.core.deps import csrf_guard, current_user, reject_bearer
 from app.core.errors import err
 from app.core.security import (
     hash_password,
     new_api_token,
     new_channel_secret,
+    password_error,
     verify_password,
 )
 from app.database import get_db
-from app.models import ApiTokens, NotificationChannels
+from app.models import ApiTokens, NotificationChannels, Sessions
 from app.models import User as UserModel
 from app.schemas.auth import MeUpdateRequest, PasswordChangeRequest, User, user_out
 from app.schemas.common import DataList
@@ -31,6 +32,7 @@ from app.schemas.notifications import (
     NotificationChannel,
     NotificationChannelCreated,
     NotificationChannelCreateRequest,
+    NotificationChannelTestRequest,
     NotificationChannelUpdateRequest,
     channel_created_out,
     channel_out,
@@ -77,7 +79,8 @@ async def update_me(
         except InvalidOperation, TypeError:
             fields[field] = "Must be between 0.50 and 1.00"
             continue
-        if not Decimal("0.50") <= value <= Decimal("1.00"):
+        # finiteness first: comparing a NaN raises
+        if not value.is_finite() or not Decimal("0.50") <= value <= Decimal("1.00"):
             fields[field] = "Must be between 0.50 and 1.00"
         else:
             thresholds[field] = value.quantize(Decimal("0.01"))
@@ -88,8 +91,15 @@ async def update_me(
 
     # PATCH semantics: only touch fields the client actually sent — that's what
     # model_fields_set tracks.
-    if "email" in body.model_fields_set and body.email is not None and body.email != user.email:
-        if await db.scalar(select(UserModel).where(UserModel.email == body.email)):
+    if (
+        "email" in body.model_fields_set
+        and body.email is not None
+        and body.email != user.email.lower()
+    ):
+        taken = select(UserModel).where(
+            func.lower(UserModel.email) == body.email, UserModel.id != user.id
+        )
+        if await db.scalar(taken):
             raise err(
                 422,
                 "validation_error",
@@ -97,6 +107,9 @@ async def update_me(
                 fields={"email": "An account with this email already exists"},
             )
         user.email = body.email
+        # nobody confirmed the new address; unverified keeps SSO from linking
+        # its real owner's IdP identity to this account (services/oidc.py)
+        user.email_verified = False
     for field, value in thresholds.items():
         setattr(user, field, value)
     await db.commit()
@@ -105,12 +118,19 @@ async def update_me(
 
 @router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
-    body: PasswordChangeRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
+    body: PasswordChangeRequest,
+    request: Request,
+    user=Depends(current_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Change the caller's password.
+    """Change the caller's password and sign out every other session; the one
+    making the change stays signed in. API tokens are untouched — they are
+    revoked one by one from the tokens list.
 
     422 invalid_password for a wrong current password, or for an SSO account,
-    which has none."""
+    which has none; 422 validation_error for a new password under 8
+    characters; 429 rate_limited once the account has made too many sign-in
+    attempts — the current password is one (core/ratelimit.py)."""
     if user.password_hash is None:  # SSO-provisioned account — no password to change
         raise err(
             422,
@@ -118,15 +138,83 @@ async def change_password(
             "This account signs in with SSO",
             fields={"current_password": "This account signs in with SSO"},
         )
-    if not verify_password(body.current_password, user.password_hash):
+    if problem := password_error(body.new_password):
+        raise err(422, "validation_error", problem, fields={"new_password": problem})
+    account = user.email.lower()
+    if wait := ratelimit.by_account.retry_after(account):
+        raise ratelimit.rate_limited(wait)
+    ratelimit.by_account.record(account)
+    if not await verify_password(body.current_password, user.password_hash):
         raise err(
             422,
             "invalid_password",
             "Current password is incorrect",
             fields={"current_password": "Current password is incorrect"},
         )
-    user.password_hash = hash_password(body.new_password)
+    user.password_hash = await hash_password(body.new_password)
+    await db.execute(
+        update(Sessions)
+        .where(
+            Sessions.user_id == user.id,
+            Sessions.family_id != request.state.session_family,
+            Sessions.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )
     await db.commit()
+
+
+# every channel is another send per event, so one user can't queue unbounded
+# work ahead of everyone else's notifications
+MAX_CHANNELS = 10
+
+
+def _check_new_kind(kind: str | None) -> None:
+    """Refuse a kind a new channel can't have: 422 validation_error for an
+    unknown one, 422 no_server for ntfy while the instance has no ntfy server."""
+    if kind not in ("ntfy", "webhook", "discord"):
+        raise err(
+            422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
+        )
+    if kind == "ntfy" and not settings.NTFY_SERVER_URL:
+        raise err(422, "no_server", "This instance has no ntfy server configured")
+
+
+def _destination(kind: str, url: str | None, topic: str | None) -> tuple[str | None, str | None]:
+    """Validate where a channel of this kind sends — mock parity with
+    handlers.ts validateDestination. Returns (url, topic) with the one the kind
+    doesn't use cleared. Saves and the unsaved test share it, so a test never
+    reaches a destination a save would refuse."""
+    if kind == "ntfy":
+        if not topic:
+            raise err(
+                422, "validation_error", "Topic is required", fields={"topic": "Topic is required"}
+            )
+        if problem := notifications_service.ntfy_topic_error(topic):
+            raise err(422, "validation_error", "Not a valid ntfy topic", fields={"topic": problem})
+        return None, topic
+    if not url or not re.match(r"^https?://", url):
+        raise err(
+            422,
+            "validation_error",
+            "A valid URL is required",
+            fields={"url": "Must be an http(s) URL"},
+        )
+    if kind == "discord" and not re.match(r"^https://(discord|discordapp)\.com/api/webhooks/", url):
+        raise err(
+            422,
+            "validation_error",
+            "Not a Discord webhook URL",
+            fields={"url": "Must be a Discord incoming-webhook URL"},
+        )
+    if problem := notifications_service.public_url(url):
+        raise err(
+            422,
+            "validation_error",
+            "Notifications can only be sent to a public address",
+            fields={"url": problem},
+        )
+    return url, None
 
 
 def _channel_fields(
@@ -154,31 +242,7 @@ def _channel_fields(
         topic = (body.topic or "").strip() or None
     else:
         topic = existing.topic if existing is not None else None
-
-    if kind == "ntfy":
-        url = None
-        if not topic:
-            raise err(
-                422, "validation_error", "Topic is required", fields={"topic": "Topic is required"}
-            )
-    else:
-        topic = None
-        if not url or not re.match(r"^https?://", url):
-            raise err(
-                422,
-                "validation_error",
-                "A valid URL is required",
-                fields={"url": "Must be an http(s) URL"},
-            )
-        if kind == "discord" and not re.match(
-            r"^https://(discord|discordapp)\.com/api/webhooks/", url
-        ):
-            raise err(
-                422,
-                "validation_error",
-                "Not a Discord webhook URL",
-                fields={"url": "Must be a Discord incoming-webhook URL"},
-            )
+    url, topic = _destination(kind, url, topic)
 
     events = (
         body.events if "events" in sent else (existing.events if existing is not None else None)
@@ -200,10 +264,7 @@ def _channel_fields(
 async def _own_channel(channel_id: int, user, db: AsyncSession) -> NotificationChannels:
     """Fetch one of the caller's channels; another user's channel 404s the
     same as a missing one (hidden ≡ nonexistent, the job-privacy rule)."""
-    try:
-        channel = await db.get(NotificationChannels, channel_id)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    channel = await db.get(NotificationChannels, channel_id)
     if channel is None or channel.user_id != user.id:
         raise err(404, "not_found", f"Channel {channel_id} does not exist")
     return channel
@@ -212,15 +273,12 @@ async def _own_channel(channel_id: int, user, db: AsyncSession) -> NotificationC
 @router.get("/channels", response_model=DataList[NotificationChannel])
 async def list_channels(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """The caller's notification channels."""
-    try:
-        result = await db.execute(
-            select(NotificationChannels)
-            .where(NotificationChannels.user_id == user.id)
-            .order_by(NotificationChannels.id)
-        )
-        return DataList(data=[channel_out(c) for c in result.scalars()])
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    result = await db.execute(
+        select(NotificationChannels)
+        .where(NotificationChannels.user_id == user.id)
+        .order_by(NotificationChannels.id)
+    )
+    return DataList(data=[channel_out(c) for c in result.scalars()])
 
 
 @router.post(
@@ -234,27 +292,31 @@ async def create_channel(
     """Add a notification channel; a webhook's signing secret is returned only here.
 
     422 validation_error for invalid fields; 422 no_server for ntfy while the
-    instance has no ntfy server."""
-    if body.kind not in ("ntfy", "webhook", "discord"):
+    instance has no ntfy server; 409 channel_limit at MAX_CHANNELS."""
+    _check_new_kind(body.kind)
+    # the owner's row lock serializes concurrent creates, or two at
+    # MAX_CHANNELS - 1 would both count under the limit and both insert
+    await db.execute(select(UserModel.id).where(UserModel.id == user.id).with_for_update())
+    owned = await db.scalar(
+        select(func.count())
+        .select_from(NotificationChannels)
+        .where(NotificationChannels.user_id == user.id)
+    )
+    if owned >= MAX_CHANNELS:
         raise err(
-            422, "validation_error", "Unknown channel kind", fields={"kind": "Unknown channel kind"}
+            409, "channel_limit", f"You can have at most {MAX_CHANNELS} notification channels"
         )
-    if body.kind == "ntfy" and not settings.NTFY_SERVER_URL:
-        raise err(422, "no_server", "This instance has no ntfy server configured")
     fields = _channel_fields(body.kind, body)
     secret = new_channel_secret() if body.kind == "webhook" else None
-    try:
-        channel = NotificationChannels(
-            user_id=user.id, kind=body.kind, secret=secret, enabled=body.enabled, **fields
-        )
-        db.add(channel)
-        await db.flush()
-        await db.refresh(channel)  # created_at comes back from the server default
-        await db.commit()
-        # the one response the signing secret ever rides in
-        return channel_created_out(channel, secret)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    channel = NotificationChannels(
+        user_id=user.id, kind=body.kind, secret=secret, enabled=body.enabled, **fields
+    )
+    db.add(channel)
+    await db.flush()
+    await db.refresh(channel)  # created_at comes back from the server default
+    await db.commit()
+    # the one response the signing secret ever rides in
+    return channel_created_out(channel, secret)
 
 
 @router.patch("/channels/{channel_id}", response_model=NotificationChannel)
@@ -268,15 +330,12 @@ async def update_channel(
     user's channel, like a missing one."""
     channel = await _own_channel(channel_id, user, db)
     fields = _channel_fields(channel.kind, body, existing=channel)
-    try:
-        for key, value in fields.items():
-            setattr(channel, key, value)
-        if body.enabled is not None:
-            channel.enabled = body.enabled
-        await db.commit()
-        return channel_out(channel)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    for key, value in fields.items():
+        setattr(channel, key, value)
+    if body.enabled is not None:
+        channel.enabled = body.enabled
+    await db.commit()
+    return channel_out(channel)
 
 
 @router.delete("/channels/{channel_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -285,13 +344,24 @@ async def delete_channel(
 ):
     """Delete one of the caller's channels and its pending deliveries."""
     channel = await _own_channel(channel_id, user, db)
-    try:
-        # pending deliveries go with it (FK ON DELETE CASCADE)
-        await db.delete(channel)
-        await db.commit()
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    # pending deliveries go with it (FK ON DELETE CASCADE)
+    await db.delete(channel)
+    await db.commit()
     return None
+
+
+async def _send_test(channel: NotificationChannels) -> None:
+    """Send a test notification through a channel, saved or not, and answer
+    the dispatcher's failures with the error envelope."""
+    try:
+        await notifications_service.send_test(channel)
+    except RuntimeError as e:  # ntfy kind while the instance has no server
+        raise err(422, "no_server", "This instance has no ntfy server configured") from e
+    # httpx.InvalidURL is no HTTPError: a URL httpx can't parse would be a 500
+    except (notifications_service.RefusedDestination, httpx.InvalidURL) as e:
+        raise err(422, "validation_error", "This channel's destination is not accepted") from e
+    except httpx.HTTPError as e:
+        raise err(502, "channel_failed", "Could not reach the channel destination") from e
 
 
 @router.post("/channels/{channel_id}/test", status_code=status.HTTP_204_NO_CONTENT)
@@ -300,20 +370,35 @@ async def test_channel(
 ):
     """Send a test notification through one of the caller's channels.
 
-    422 no_server for ntfy while the instance has no ntfy server; 502
+    422 no_server for ntfy while the instance has no ntfy server; 422
+    validation_error for a destination the channel guard refuses; 502
     channel_failed when the destination can't be reached."""
     channel = await _own_channel(channel_id, user, db)
-    try:
-        await notifications_service.send_test(channel)
-    except RuntimeError as e:  # ntfy kind while the instance has no server
-        raise err(422, "no_server", "This instance has no ntfy server configured") from e
-    except httpx.HTTPError as e:
-        raise err(502, "channel_failed", "Could not reach the channel destination") from e
+    await _send_test(channel)
+
+
+@router.post("/channels/test", status_code=status.HTTP_204_NO_CONTENT)
+async def test_new_channel(body: NotificationChannelTestRequest, user=Depends(current_user)):
+    """Send a test notification to a channel before it is saved; nothing is stored.
+
+    422 validation_error and 422 no_server wherever create would answer them;
+    502 channel_failed when the destination can't be reached."""
+    _check_new_kind(body.kind)
+    url, topic = _destination(
+        body.kind, (body.url or "").strip() or None, (body.topic or "").strip() or None
+    )
+    # a webhook's signing secret is created with the channel, so a test sent
+    # before then is signed with a one-off key no receiver holds
+    secret = new_channel_secret() if body.kind == "webhook" else None
+    await _send_test(NotificationChannels(kind=body.kind, url=url, topic=topic, secret=secret))
 
 
 # --- API tokens ---------------------------------------------------------------
 
 TOKEN_NAME_MAX = 64
+# ten years: the UI offers a year at most, and "never" is how to ask for
+# longer. Unbounded, a large enough count overflows the date it is added to.
+TOKEN_EXPIRY_MAX_DAYS = 3650
 
 
 def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime | None]:
@@ -332,6 +417,8 @@ def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime
         fields["scopes"] = "Unknown scope"
     if body.expires_in_days is not None and body.expires_in_days < 1:
         fields["expires_in_days"] = "Must be at least 1 day"
+    elif body.expires_in_days is not None and body.expires_in_days > TOKEN_EXPIRY_MAX_DAYS:
+        fields["expires_in_days"] = f"Must be {TOKEN_EXPIRY_MAX_DAYS} days or fewer"
     if fields:
         raise err(422, "validation_error", "Check the token details", fields=fields)
     expires_at = (
@@ -345,13 +432,10 @@ def _token_fields(body: ApiTokenCreateRequest) -> tuple[str, list[str], datetime
 @router.get("/tokens", response_model=DataList[ApiToken])
 async def list_tokens(user=Depends(current_user), db: AsyncSession = Depends(get_db)):
     """The caller's API tokens (never the raw values)."""
-    try:
-        result = await db.execute(
-            select(ApiTokens).where(ApiTokens.user_id == user.id).order_by(ApiTokens.id)
-        )
-        return DataList(data=[token_out(t) for t in result.scalars()])
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    result = await db.execute(
+        select(ApiTokens).where(ApiTokens.user_id == user.id).order_by(ApiTokens.id)
+    )
+    return DataList(data=[token_out(t) for t in result.scalars()])
 
 
 @router.post("/tokens", response_model=ApiTokenCreated, status_code=status.HTTP_201_CREATED)
@@ -361,18 +445,15 @@ async def create_token(
     """Mint an API token; the raw value is returned only here."""
     name, scopes, expires_at = _token_fields(body)
     raw, token_hash = new_api_token()
-    try:
-        token = ApiTokens(
-            user_id=user.id, name=name, token_hash=token_hash, scopes=scopes, expires_at=expires_at
-        )
-        db.add(token)
-        await db.flush()
-        await db.refresh(token)  # created_at comes back from the server default
-        await db.commit()
-        # the one response the raw token ever rides in
-        return token_created_out(token, raw)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    token = ApiTokens(
+        user_id=user.id, name=name, token_hash=token_hash, scopes=scopes, expires_at=expires_at
+    )
+    db.add(token)
+    await db.flush()
+    await db.refresh(token)  # created_at comes back from the server default
+    await db.commit()
+    # the one response the raw token ever rides in
+    return token_created_out(token, raw)
 
 
 @router.delete("/tokens/{token_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -381,16 +462,10 @@ async def revoke_token(
 ):
     """Delete one of the caller's API tokens; another user's token 404s like a
     missing one."""
-    try:
-        token = await db.get(ApiTokens, token_id)
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    token = await db.get(ApiTokens, token_id)
     # another user's token 404s the same as a missing one (hidden ≡ nonexistent)
     if token is None or token.user_id != user.id:
         raise err(404, "not_found", f"Token {token_id} does not exist")
-    try:
-        await db.delete(token)
-        await db.commit()
-    except SQLAlchemyError as e:
-        raise err(503, "db_unavailable", "Could not reach the database") from e
+    await db.delete(token)
+    await db.commit()
     return None

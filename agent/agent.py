@@ -45,7 +45,11 @@ from database import (
 )
 from jobs import append_event, status
 from langchain.agents import create_agent
-from langchain.agents.middleware import ClearToolUsesEdit, ContextEditingMiddleware
+from langchain.agents.middleware import (
+    ClearToolUsesEdit,
+    ContextEditingMiddleware,
+    wrap_model_call,
+)
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
@@ -96,6 +100,22 @@ CANCEL_POLL_SECONDS = 5
 
 class Cancelled(Exception):
     """The job was cancelled while its unit was running."""
+
+
+class SiteUnreadable(RuntimeError):
+    """The site is to blame for this unit failing: the browser reached it and
+    could not get a page out of it. The only exception the circuit breaker
+    counts — anything else a unit raises is the hunter's own trouble."""
+
+
+class ModelFailed(RuntimeError):
+    """The model call itself failed: a refused key, a spent quota, a provider
+    that is down. Every provider SDK raises its own types, so this is what
+    lets the job's error say "the AI provider" whichever one is configured."""
+
+
+class TimedOut(RuntimeError):
+    """The unit outlived AGENT_UNIT_TIMEOUT_SECONDS and was cancelled."""
 
 
 def agent_config(
@@ -224,9 +244,25 @@ def guarded_navigate(navigate):
     return browser_navigate
 
 
+@wrap_model_call
+async def model_failures(request, handler):
+    """Raise whatever the model call raises as ModelFailed.
+
+    The call is the one place a model failure can be told apart: a tool that
+    raises, or the step cap, comes out of the same stream. Listed last, so
+    it wraps the provider call and none of the other middleware.
+    """
+    try:
+        return await handler(request)
+    except Exception as e:
+        raise ModelFailed(str(e)) from e
+
+
 def build_recheck_agent(llm, browser_tools: list):
     """The fallback reader: price and availability tools only."""
-    return create_agent(llm, [*browser_tools, save_price_check, disable_listing])
+    return create_agent(
+        llm, [*browser_tools, save_price_check, disable_listing], middleware=[model_failures]
+    )
 
 
 def build_hunt_agent(llm, browser_tools: list):
@@ -257,7 +293,7 @@ def build_hunt_agent(llm, browser_tools: list):
             )
         ]
     )
-    return create_agent(llm, tools, middleware=[trim_pages])
+    return create_agent(llm, tools, middleware=[trim_pages, model_failures])
 
 
 def tokens_spent(messages: list) -> tuple[int, int]:
@@ -283,7 +319,7 @@ def _require_browser_success(messages: list) -> None:
         m for m in messages if isinstance(m, ToolMessage) and (m.name or "").startswith("browser_")
     ]
     if results and all(m.status == "error" for m in results):
-        raise RuntimeError(f"every browser call failed: {results[0].content}")
+        raise SiteUnreadable(f"every browser call failed: {results[0].content}")
 
 
 async def _stream(agent, prompt: str, config: dict, job_id: int | None) -> list:
@@ -315,7 +351,7 @@ async def recheck_listing(agent, row, browser, job_id=None) -> dict:
     Reached only when the deterministic ladder could not read the page
     (agent/recheck.py). Afterwards a locator is learned from whatever the model
     confirmed, so the next check of this listing does not need a model at all.
-    Raises on failure — the worker counts it.
+    Raises on failure; only SiteUnreadable counts against the site.
 
     Returns:
       The unit's tally plus the tokens it spent, the same shape a hunt
@@ -423,12 +459,12 @@ async def run_hunt_job(agent, job_id: int, row, browser) -> dict:
         swap_listings = await get_tracked_listings(watch_id, row["selection_mode"])
         started = (
             f'Hunting {site_name} for something better than "{item_name}"\'s weakest '
-            f"tracked listings — all {max_listings} slots filled, {mode} mode"
+            f"tracked listings — all {max_listings} already tracked, {mode} mode"
         )
     else:
         started = (
-            f'Hunting {site_name} for "{item_name}" — {open_slots} open '
-            f"slot{'' if open_slots == 1 else 's'}, {mode} mode"
+            f'Hunting {site_name} for "{item_name}" — room for {open_slots} more '
+            f"listing{'' if open_slots == 1 else 's'}, {mode} mode"
         )
 
     log.info(
@@ -502,4 +538,4 @@ async def bounded(unit):
         async with asyncio.timeout(AGENT_UNIT_TIMEOUT_SECONDS):
             return await unit
     except TimeoutError:
-        raise RuntimeError(f"unit exceeded the {AGENT_UNIT_TIMEOUT_SECONDS}s budget") from None
+        raise TimedOut(f"unit exceeded the {AGENT_UNIT_TIMEOUT_SECONDS}s budget") from None

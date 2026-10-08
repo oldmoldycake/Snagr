@@ -4,8 +4,16 @@ Each test starts from an empty DB (conftest truncates between tests), so
 "first user" scenarios are the default and every actor is created explicitly.
 """
 
+import asyncio
+import threading
+from datetime import timedelta
+
 from app.config import settings
-from app.models import User
+from app.core import ratelimit
+from app.core.security import hash_password, hash_refresh, hash_reset_token
+from app.models import PasswordResets, Sessions, User
+from argon2 import PasswordHasher
+from sqlalchemy import select, update
 
 from tests.conftest import CSRF
 
@@ -54,6 +62,60 @@ async def test_register_duplicate_email(client, monkeypatch):
     assert "email" in res.json()["error"]["fields"]
 
 
+async def test_register_lowercases_the_email(client, make_client):
+    res = await _register(client, {"email": "Alice@Example.COM", "password": "hunter2hunter2"})
+    assert res.status_code == 201
+    assert res.json()["user"]["email"] == "alice@example.com"
+    other = await make_client()
+    login = await other.post(
+        "/api/auth/login",
+        json={"email": "alice@example.com", "password": "hunter2hunter2"},
+        headers=CSRF,
+    )
+    assert login.status_code == 200
+
+
+async def test_register_refuses_a_case_variant_of_a_taken_email(client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    res = await _register(client, {"email": "ADMIN@example.com", "password": "whatever123"})
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "email" in res.json()["error"]["fields"]
+
+
+async def test_login_finds_a_mixed_case_account(client, db_session):
+    # an account stored before addresses were lowercased on the way in
+    async with db_session() as s:
+        s.add(User(email="Legacy@Example.com", password_hash=await hash_password("pw-pw-pw-pw")))
+        await s.commit()
+    res = await client.post(
+        "/api/auth/login",
+        json={"email": "legacy@EXAMPLE.com", "password": "pw-pw-pw-pw"},
+        headers=CSRF,
+    )
+    assert res.status_code == 200
+    assert res.json()["user"]["email"] == "Legacy@Example.com"
+
+
+async def test_concurrent_first_registrations_make_one_admin(make_client, db_session):
+    first, second = await make_client(), await make_client()
+    results = await asyncio.gather(_register(first, ADMIN), _register(second, GUEST))
+    # REGISTRATION_OPEN is off by default: one bootstraps the instance, the other is refused
+    assert sorted(r.status_code for r in results) == [201, 403]
+    async with db_session() as db:
+        assert (await db.scalars(select(User.role))).all() == ["admin"]
+
+
+async def test_concurrent_duplicate_registrations(make_client, monkeypatch, db_session):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    first, second = await make_client(), await make_client()
+    results = await asyncio.gather(_register(first), _register(second))
+    assert sorted(r.status_code for r in results) == [201, 422]
+    refused = next(r for r in results if r.status_code == 422)
+    assert "email" in refused.json()["error"]["fields"]
+
+
 async def test_instance_reflects_toggle(client, monkeypatch):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", False)
     assert (await client.get("/api/instance")).json()["registration_open"] is True  # 0 users
@@ -61,6 +123,61 @@ async def test_instance_reflects_toggle(client, monkeypatch):
     assert (await client.get("/api/instance")).json()["registration_open"] is False
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
     assert (await client.get("/api/instance")).json()["registration_open"] is True
+
+
+# --- sessions ------------------------------------------------------------------
+
+
+async def test_logout_ends_the_access_token_too(client, make_client):
+    await _register(client)
+    # a copy of the access cookie, as if it had leaked before the logout
+    copy = await make_client()
+    copy.cookies.set("snagr_access", client.cookies["snagr_access"])
+    assert (await copy.get("/api/auth/me")).status_code == 200
+
+    assert (await client.post("/api/auth/logout", headers=CSRF)).status_code == 204
+    assert (await copy.get("/api/auth/me")).status_code == 401
+
+
+async def test_concurrent_refreshes_mint_one_session(client, db_session):
+    await _register(client)
+    results = await asyncio.gather(
+        client.post("/api/auth/refresh", headers=CSRF),
+        client.post("/api/auth/refresh", headers=CSRF),
+    )
+    assert sorted(r.status_code for r in results) == [204, 401]
+    async with db_session() as db:
+        live = await db.scalars(select(Sessions.id).where(Sessions.revoked_at.is_(None)))
+        assert len(live.all()) == 1
+    # a race between two tabs of one browser is not a theft: the winner's
+    # session survives the loser's refused token
+    assert (await client.get("/api/auth/me")).status_code == 200
+
+
+async def test_reused_refresh_token_signs_out_its_family(client, make_client, db_session):
+    await _register(client)
+    stolen = client.cookies["snagr_refresh"]
+    thief = await make_client()
+    thief.cookies.set("snagr_refresh", stolen)
+    assert (await thief.post("/api/auth/refresh", headers=CSRF)).status_code == 204
+    assert (await thief.get("/api/auth/me")).status_code == 200
+    # a login elsewhere is a different sign-in, and outlives the reuse
+    elsewhere = await make_client()
+    await elsewhere.post("/api/auth/login", json=ADMIN, headers=CSRF)
+
+    async with db_session() as db:  # past the grace a racing tab gets
+        await db.execute(
+            update(Sessions)
+            .where(Sessions.refresh_hash == hash_refresh(stolen))
+            .values(revoked_at=Sessions.revoked_at - timedelta(minutes=1))
+        )
+        await db.commit()
+    # the owner comes back with the token the thief already rotated
+    assert (await client.post("/api/auth/refresh", headers=CSRF)).status_code == 401
+
+    assert (await thief.get("/api/auth/me")).status_code == 401
+    assert (await thief.post("/api/auth/refresh", headers=CSRF)).status_code == 401
+    assert (await elsewhere.get("/api/auth/me")).status_code == 200
 
 
 # --- invites -------------------------------------------------------------------
@@ -91,6 +208,47 @@ async def test_invite_lifecycle(client, make_client):
     assert pending.json()["data"] == []
 
 
+async def test_invite_accepted_once_under_concurrency(client, make_client, db_session):
+    await _register(client)
+    token = (await client.post("/api/admin/invites", json={}, headers=CSRF)).json()["token"]
+
+    invitees = [await make_client() for _ in range(10)]
+    results = await asyncio.gather(
+        *(
+            invitee.post(
+                f"/api/auth/invites/{token}/accept",
+                json={"email": f"guest{n}@example.com", "password": "guest-password"},
+                headers=CSRF,
+            )
+            for n, invitee in enumerate(invitees)
+        )
+    )
+    assert sorted(r.status_code for r in results) == [201] + [410] * 9
+    async with db_session() as db:
+        assert len((await db.scalars(select(User.id))).all()) == 2  # the admin + one invitee
+
+
+async def test_concurrent_invites_for_one_email(client, make_client):
+    await _register(client)
+    tokens = [
+        (await client.post("/api/admin/invites", json={}, headers=CSRF)).json()["token"]
+        for _ in range(2)
+    ]
+    invitees = [await make_client() for _ in tokens]
+    results = await asyncio.gather(
+        *(
+            invitee.post(f"/api/auth/invites/{token}/accept", json=GUEST, headers=CSRF)
+            for invitee, token in zip(invitees, tokens, strict=True)
+        )
+    )
+    assert sorted(r.status_code for r in results) == [201, 422]
+    refused = next(r for r in results if r.status_code == 422)
+    assert refused.json()["error"]["code"] == "validation_error"
+    # the losing invite was not burned: its transaction rolled back
+    pending = (await client.get("/api/admin/invites")).json()["data"]
+    assert len(pending) == 1
+
+
 async def test_invite_unknown_token_404(client):
     await _register(client)
     assert (await client.get("/api/auth/invites/nope")).status_code == 404
@@ -111,6 +269,30 @@ async def test_invite_pinned_email_wins(client, make_client):
     )
     assert res.status_code == 201
     assert res.json()["user"]["email"] == "pinned@example.com"
+
+
+async def test_invite_accept_refuses_a_case_variant_of_a_taken_email(client, make_client):
+    await _register(client, {"email": "racer0@example.com", "password": "hunter2hunter2"})
+    created = await client.post("/api/admin/invites", json={}, headers=CSRF)
+    token = created.json()["token"]
+
+    invitee = await make_client()
+    res = await invitee.post(
+        f"/api/auth/invites/{token}/accept",
+        json={"email": "RACER0@example.com", "password": "pw-pw-pw-pw"},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "email" in res.json()["error"]["fields"]
+
+
+async def test_invite_pinned_email_is_lowercased(client, make_client):
+    await _register(client)
+    created = await client.post(
+        "/api/admin/invites", json={"email": "Pinned@Example.com"}, headers=CSRF
+    )
+    assert created.json()["email"] == "pinned@example.com"
 
 
 async def test_invite_revoke(client):
@@ -153,6 +335,28 @@ async def test_password_change(client, make_client):
     assert new.status_code == 200
 
 
+async def test_password_change_signs_out_every_other_session(client, make_client):
+    await _register(client)
+    other = await make_client()
+    await other.post("/api/auth/login", json=ADMIN, headers=CSRF)
+    assert (await other.get("/api/auth/me")).status_code == 200
+
+    res = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": "new-password-1"},
+        headers=CSRF,
+    )
+    assert res.status_code == 204
+
+    # the other browser is out at once — its unexpired access token included
+    assert (await other.get("/api/auth/me")).status_code == 401
+    assert (await other.post("/api/auth/refresh", headers=CSRF)).status_code == 401
+    # the browser that made the change stays signed in, and can still refresh
+    assert (await client.get("/api/auth/me")).status_code == 200
+    assert (await client.post("/api/auth/refresh", headers=CSRF)).status_code == 204
+    assert (await client.get("/api/auth/me")).status_code == 200
+
+
 async def test_me_update_email(client):
     await _register(client)
     res = await client.patch("/api/me", json={"email": "renamed@example.com"}, headers=CSRF)
@@ -161,6 +365,184 @@ async def test_me_update_email(client):
     # ntfy_topic left the contract with the channels rework — a stale client
     # still sending it is ignored, not an error
     assert "ntfy_topic" not in res.json()
+
+
+async def test_me_update_email_refuses_a_case_variant_of_a_taken_email(
+    client, make_client, monkeypatch
+):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    guest = await make_client()
+    await _register(guest, GUEST)
+    res = await guest.patch("/api/me", json={"email": "Admin@Example.com"}, headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "email" in res.json()["error"]["fields"]
+
+
+async def test_me_update_resaving_a_mixed_case_email_keeps_it(client, db_session):
+    await _register(client)
+    # an address stored before they were lowercased on the way in
+    async with db_session() as s:
+        await s.execute(update(User).values(email="Admin@Example.com"))
+        await s.commit()
+    res = await client.patch("/api/me", json={"email": "admin@example.com"}, headers=CSRF)
+    assert res.status_code == 200
+    async with db_session() as s:
+        user = await s.scalar(select(User))
+    assert user.email == "Admin@Example.com"
+    assert user.email_verified  # re-saving your own address doesn't unconfirm it
+
+
+# --- password rules ----------------------------------------------------------------
+
+
+async def test_register_refuses_a_short_password(client):
+    for password in ("", "7-chars"):
+        res = await _register(client, {"email": ADMIN["email"], "password": password})
+        assert res.status_code == 422
+        assert res.json()["error"]["code"] == "validation_error"
+        assert "password" in res.json()["error"]["fields"]
+    assert (await _register(client)).status_code == 201
+
+
+async def test_invite_accept_refuses_a_short_password(client, make_client):
+    await _register(client)
+    token = (await client.post("/api/admin/invites", json={}, headers=CSRF)).json()["token"]
+    invitee = await make_client()
+
+    res = await invitee.post(
+        f"/api/auth/invites/{token}/accept",
+        json={"email": GUEST["email"], "password": "short"},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "password" in res.json()["error"]["fields"]
+    # the refused form did not burn the invite
+    accepted = await invitee.post(f"/api/auth/invites/{token}/accept", json=GUEST, headers=CSRF)
+    assert accepted.status_code == 201
+
+
+async def test_password_change_refuses_a_short_password(client, make_client):
+    await _register(client)
+    res = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": ""},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "new_password" in res.json()["error"]["fields"]
+    fresh = await make_client()
+    assert (await fresh.post("/api/auth/login", json=ADMIN, headers=CSRF)).status_code == 200
+
+
+# --- password checks ---------------------------------------------------------------
+
+
+async def test_password_checks_leave_the_event_loop_free(client, monkeypatch):
+    await _register(client)
+    started, finish = threading.Event(), threading.Event()
+    finished_in_time = []
+    real_verify = PasswordHasher.verify
+
+    def held_verify(self, hash, password):
+        started.set()
+        finished_in_time.append(finish.wait(timeout=5))
+        return real_verify(self, hash, password)
+
+    monkeypatch.setattr(PasswordHasher, "verify", held_verify)
+    login = asyncio.create_task(client.post("/api/auth/login", json=ADMIN, headers=CSRF))
+    assert await asyncio.to_thread(started.wait, 5)
+    # a login is mid-check, and other requests are still answered
+    assert (await client.get("/api/instance")).status_code == 200
+    finish.set()
+    assert (await login).status_code == 200
+    assert finished_in_time == [True]
+
+
+async def test_unknown_email_costs_a_full_password_check(client, monkeypatch):
+    await _register(client)
+    checked = []
+    real_verify = PasswordHasher.verify
+
+    def counted_verify(self, hash, password):
+        checked.append(hash)
+        return real_verify(self, hash, password)
+
+    monkeypatch.setattr(PasswordHasher, "verify", counted_verify)
+    res = await client.post(
+        "/api/auth/login",
+        json={"email": "nobody@example.com", "password": ADMIN["password"]},
+        headers=CSRF,
+    )
+    assert res.status_code == 401
+    assert res.json()["error"]["code"] == "invalid_credentials"
+    assert len(checked) == 1
+
+
+# --- sign-in limits ----------------------------------------------------------------
+
+
+async def test_login_locks_an_account_after_too_many_attempts(client, make_client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    monkeypatch.setattr(ratelimit, "by_account", ratelimit.AttemptLimit(limit=3))
+    await _register(client)
+    await _register(await make_client(), GUEST)
+
+    browser = await make_client()
+    wrong = {"email": ADMIN["email"], "password": "not-the-password"}
+    for _ in range(3):
+        res = await browser.post("/api/auth/login", json=wrong, headers=CSRF)
+        assert res.status_code == 401
+    # refused even with the right password, and whatever the email's case
+    for creds in (ADMIN, {**ADMIN, "email": ADMIN["email"].upper()}):
+        res = await browser.post("/api/auth/login", json=creds, headers=CSRF)
+        assert res.status_code == 429
+        assert res.json()["error"]["code"] == "rate_limited"
+    # another account signs in from the same address
+    assert (await browser.post("/api/auth/login", json=GUEST, headers=CSRF)).status_code == 200
+
+
+async def test_login_limits_an_address_across_accounts(client, make_client, monkeypatch):
+    monkeypatch.setattr(ratelimit, "by_address", ratelimit.AttemptLimit(limit=3))
+    await _register(client)
+
+    browser = await make_client()
+    for n in range(3):
+        res = await browser.post(
+            "/api/auth/login",
+            json={"email": f"guess{n}@example.com", "password": "not-the-password"},
+            headers=CSRF,
+        )
+        assert res.status_code == 401
+    res = await browser.post("/api/auth/login", json=ADMIN, headers=CSRF)
+    assert res.status_code == 429
+    assert res.json()["error"]["code"] == "rate_limited"
+
+
+async def test_password_change_attempts_count_against_the_account(client, make_client, monkeypatch):
+    monkeypatch.setattr(ratelimit, "by_account", ratelimit.AttemptLimit(limit=3))
+    await _register(client)
+
+    for _ in range(3):
+        res = await client.post(
+            "/api/me/password",
+            json={"current_password": "not-the-password", "new_password": "new-password-1"},
+            headers=CSRF,
+        )
+        assert res.status_code == 422
+    res = await client.post(
+        "/api/me/password",
+        json={"current_password": ADMIN["password"], "new_password": "new-password-1"},
+        headers=CSRF,
+    )
+    assert res.status_code == 429
+    assert res.json()["error"]["code"] == "rate_limited"
+    # the same account can't be guessed at through the login form instead
+    browser = await make_client()
+    assert (await browser.post("/api/auth/login", json=ADMIN, headers=CSRF)).status_code == 429
 
 
 # --- admin ----------------------------------------------------------------------
@@ -182,6 +564,24 @@ async def test_admin_cannot_delete_self(client):
     assert res.json()["error"]["code"] == "cannot_delete_self"
 
 
+async def test_admin_cannot_remove_the_last_admin(client, make_client, monkeypatch):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    me = (await _register(client)).json()["user"]
+    for change in ({"role": "user"}, {"is_active": False}):
+        res = await client.patch(f"/api/admin/users/{me['id']}", json=change, headers=CSRF)
+        assert res.status_code == 409
+        assert res.json()["error"]["code"] == "last_admin"
+    assert (await client.get("/api/auth/me")).json()["role"] == "admin"
+
+    # with a second active admin, the first may step down
+    plain = await make_client()
+    guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
+    res = await client.patch(f"/api/admin/users/{guest_id}", json={"role": "admin"}, headers=CSRF)
+    assert res.status_code == 200
+    res = await client.patch(f"/api/admin/users/{me['id']}", json={"role": "user"}, headers=CSRF)
+    assert res.status_code == 200 and res.json()["role"] == "user"
+
+
 async def test_admin_deactivate_locks_out(client, make_client, monkeypatch):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
     await _register(client)
@@ -199,44 +599,168 @@ async def test_admin_deactivate_locks_out(client, make_client, monkeypatch):
     assert (await fresh.post("/api/auth/login", json=GUEST, headers=CSRF)).status_code == 403
 
 
-async def test_admin_delete_user_and_watch_guard(client, make_client, monkeypatch, db_session):
+async def test_admin_delete_user_takes_their_watches_and_keeps_shared_items(
+    client, make_client, monkeypatch, db_session
+):
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    admin_id = (await _register(client)).json()["user"]["id"]
+    plain = await make_client()
+    guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
+    token = await plain.post(
+        "/api/me/tokens", json={"name": "laptop", "scopes": ["read"]}, headers=CSRF
+    )
+    assert token.status_code == 201
+
+    from app.models import (
+        ApiTokens,
+        Items,
+        Jobs,
+        Listings,
+        NotificationChannels,
+        PriceChecks,
+        Watches,
+    )
+
+    from tests.factories import Scenario
+
+    # the guest watches two items, one of which the admin watches too; their
+    # watch has a listing with price history, plus a channel and a pending hunt
+    async with db_session() as s:
+        sc = Scenario(s)
+        guest = await s.get(User, guest_id)
+        shared = await sc.item("Shared")
+        own = await sc.item("Guest only")
+        guest_watch = await sc.watch(shared, user=guest)
+        await sc.watch(own, user=guest)
+        admin_watch = await sc.watch(shared, user=await s.get(User, admin_id))
+        listing = await sc.listing(guest_watch, shared)
+        await sc.checks(listing, (2, "100.00"), (1, "90.00"))
+        await sc.listing(admin_watch, shared)
+        await sc.channel(user=guest)
+        await sc.job(watch=guest_watch, status="pending", user_id=guest_id)
+        await sc.commit()
+
+    res = await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)
+    assert res.status_code == 204
+    users = (await client.get("/api/admin/users")).json()["data"]
+    assert [u["email"] for u in users] == [ADMIN["email"]]
+
+    async with db_session() as s:
+        # the catalog keeps both items; only the admin's watch is left on them
+        assert sorted(await s.scalars(select(Items.name))) == ["Guest only", "Shared"]
+        assert list(await s.scalars(select(Watches.user_id))) == [admin_id]
+        assert list(await s.scalars(select(Listings.watch_id))) == [admin_watch.id]
+        assert list(await s.scalars(select(PriceChecks.id))) == []
+        assert list(await s.scalars(select(Jobs.id))) == []
+        assert list(await s.scalars(select(NotificationChannels.id))) == []
+        assert list(await s.scalars(select(ApiTokens.id))) == []
+
+
+async def test_admin_delete_unknown_user_is_404(client):
+    await _register(client)
+    res = await client.delete("/api/admin/users/999999", headers=CSRF)
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
+
+
+async def _guest_with_reset(client, make_client, monkeypatch):
+    """The admin signed in on `client`, a guest signed in on the returned client,
+    and a fresh reset link for the guest."""
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _register(client)
+    guest = await make_client()
+    guest_id = (await _register(guest, GUEST)).json()["user"]["id"]
+    res = await client.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)
+    assert res.status_code == 201, res.text
+    return guest, guest_id, res.json()
+
+
+async def test_password_reset_sets_a_new_password_and_signs_out(client, make_client, monkeypatch):
+    guest, _, reset = await _guest_with_reset(client, make_client, monkeypatch)
+    anyone = await make_client()
+    url = f"/api/auth/password-resets/{reset['token']}"
+
+    res = await anyone.get(url)
+    assert res.status_code == 200
+    assert res.json() == {"email": GUEST["email"], "expires_at": reset["expires_at"]}
+
+    res = await anyone.post(url, json={"password": "a-brand-new-one"}, headers=CSRF)
+    assert res.status_code == 204
+    # every sign-in the account had is over, and no new one was started
+    assert (await guest.get("/api/auth/me")).status_code == 401
+    assert (await anyone.get("/api/auth/me")).status_code == 401
+    fresh = await make_client()
+    assert (await fresh.post("/api/auth/login", json=GUEST, headers=CSRF)).status_code == 401
+    new_creds = {"email": GUEST["email"], "password": "a-brand-new-one"}
+    assert (await fresh.post("/api/auth/login", json=new_creds, headers=CSRF)).status_code == 200
+
+    # single-use
+    for res in (
+        await anyone.get(url),
+        await anyone.post(url, json={"password": "and-another-one"}, headers=CSRF),
+    ):
+        assert res.status_code == 410
+        assert res.json()["error"]["code"] == "reset_expired"
+
+
+async def test_password_reset_link_errors(client, make_client, monkeypatch, db_session):
+    _, guest_id, first = await _guest_with_reset(client, make_client, monkeypatch)
+    anyone = await make_client()
+
+    res = await anyone.post(
+        f"/api/auth/password-resets/{first['token']}", json={"password": "short"}, headers=CSRF
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "password" in res.json()["error"]["fields"]
+
+    # a new link replaces the old one — the refused attempt above didn't burn it
+    second = (await client.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)).json()
+    for token in (first["token"], "not-a-token"):
+        res = await anyone.get(f"/api/auth/password-resets/{token}")
+        assert res.status_code == 404
+        assert res.json()["error"]["code"] == "not_found"
+
+    async with db_session() as s:
+        # only the hash is stored
+        row = await s.scalar(select(PasswordResets))
+        assert row.token_hash == hash_reset_token(second["token"])
+        await s.execute(
+            update(PasswordResets).values(expires_at=PasswordResets.expires_at - timedelta(days=2))
+        )
+        await s.commit()
+    res = await anyone.get(f"/api/auth/password-resets/{second['token']}")
+    assert res.status_code == 410
+    assert res.json()["error"]["code"] == "reset_expired"
+
+
+async def test_admin_password_reset_errors(client, make_client, monkeypatch, db_session):
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
     await _register(client)
     plain = await make_client()
     guest_id = (await _register(plain, GUEST)).json()["user"]["id"]
 
-    # give the guest a watch -> delete must refuse (their data anchors listings)
-    from app.models import Categories, Items, Watches
+    res = await plain.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "forbidden"
+    res = await client.post(f"/api/admin/users/{guest_id}/password-reset")
+    assert res.status_code == 403  # no CSRF header
+    res = await client.post("/api/admin/users/999/password-reset", headers=CSRF)
+    assert res.status_code == 404
+    assert res.json()["error"]["code"] == "not_found"
 
     async with db_session() as s:
-        cat = Categories(name="Consoles", slug="consoles")
-        s.add(cat)
-        await s.flush()
-        item = Items(category_id=cat.id, name="PS3 Slim")
-        s.add(item)
-        await s.flush()
-        s.add(Watches(user_id=guest_id, item_id=item.id))
+        await s.execute(update(User).where(User.id == guest_id).values(password_hash=None))
         await s.commit()
-
-    blocked = await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)
-    assert blocked.status_code == 409
-    assert blocked.json()["error"]["code"] == "user_has_items"
-
-    # drop the watch -> delete goes through
-    async with db_session() as s:
-        from sqlalchemy import delete as sa_delete
-
-        await s.execute(sa_delete(Watches).where(Watches.user_id == guest_id))
-        await s.commit()
-    assert (await client.delete(f"/api/admin/users/{guest_id}", headers=CSRF)).status_code == 204
-    users = (await client.get("/api/admin/users")).json()["data"]
-    assert [u["email"] for u in users] == [ADMIN["email"]]
+    res = await client.post(f"/api/admin/users/{guest_id}/password-reset", headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "sso_account"
 
 
 async def test_deleting_a_user_degrades_their_jobs_to_system(
     client, make_client, monkeypatch, db_session
 ):
-    # a job somebody asked for doesn't block deletion the way watches do —
+    # a job somebody asked for on another user's watch outlives them —
     # ON DELETE SET NULL turns it into one the hunter appears to have queued
     # itself (user_id NULL) instead of breaking the hard delete
     monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)

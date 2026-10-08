@@ -10,7 +10,9 @@ import {
   makePlot,
   PlotFrame,
   priceDomain,
+  priceSummary,
   SweepBeam,
+  TargetKey,
   timeTicks,
   useMeasuredWidth,
   useSweep,
@@ -19,34 +21,19 @@ import {
 } from '@/components/charts/pricePlot'
 import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
+import { seriesLabel, sharedTitlePrefix } from './listingTitles'
 import { prepareSeries, type PreparedSeries } from './seriesPrep'
 
 const HEIGHT = 256
+const END_LABEL_GAP = 13
 
 /**
  * Legend labels: strip the longest shared title prefix (whole words) among the
- * plotted listings so six near-identical titles read by their differences,
- * then append the site. Falls back to the site name alone.
+ * plotted listings so six near-identical titles read by their differences.
  */
 function seriesLabels(plotted: PreparedSeries[]): Map<number, string> {
-  const titles = plotted.map((s) => s.listing.title).filter((t): t is string => t != null)
-  let prefix = ''
-  if (titles.length >= 2) {
-    prefix = titles[0]
-    for (const t of titles) while (!t.startsWith(prefix)) prefix = prefix.slice(0, -1)
-    if (titles.some((t) => t.length > prefix.length && t[prefix.length] !== ' ')) {
-      prefix = prefix.slice(0, prefix.lastIndexOf(' ') + 1)
-    }
-  }
-  return new Map(
-    plotted.map((s) => {
-      const raw = s.listing.title?.slice(prefix.length).trim() ?? ''
-      // truncate the fragment, not the label — the site must survive
-      const fragment = raw.length > 26 ? `${raw.slice(0, 25).trimEnd()}…` : raw
-      const label = fragment ? `${fragment} · ${s.listing.site_name}` : s.listing.site_name
-      return [s.listing.listing_id, label]
-    }),
-  )
+  const prefix = sharedTitlePrefix(plotted.map((s) => s.listing.title))
+  return new Map(plotted.map((s) => [s.listing.listing_id, seriesLabel(s.listing.site_name, s.listing.title, prefix)]))
 }
 
 /** Latest price at-or-before ts, step semantics (price holds until next check). */
@@ -102,6 +89,42 @@ function buildTrace(series: PreparedSeries, plot: Plot, nowTs: number): Trace {
   }
 }
 
+/**
+ * Each line's legend number, in the plot's right margin beside its end dot —
+ * lines told apart by hue alone fail anyone who can't tell the hues apart.
+ * Outside the well, clear of the traces; pushed apart top-down so lines
+ * ending at near-equal prices stay legible.
+ */
+function EndLabels({ traces, plot, numbers }: { traces: Trace[]; plot: Plot; numbers: Map<number, number> }) {
+  const placed = [...traces].sort((a, b) => a.now.y - b.now.y)
+  const ys: number[] = []
+  for (const tr of placed) {
+    const prev = ys.at(-1)
+    ys.push(Math.max(tr.now.y, plot.box.t + 8, prev != null ? prev + END_LABEL_GAP : -Infinity))
+  }
+  // the push can run off the bottom; pull the stack back up from there
+  for (let i = ys.length - 1; i >= 0; i--) {
+    const below = ys[i + 1]
+    ys[i] = Math.min(ys[i], plot.box.b - 6, below != null ? below - END_LABEL_GAP : Infinity)
+  }
+  return (
+    <g aria-hidden>
+      {placed.map((tr, i) => (
+        <text
+          key={tr.series.listing.listing_id}
+          x={tr.now.x + 6}
+          y={ys[i] + 4}
+          fill={chart.inkSecondary}
+          fontSize={11}
+          fontFamily="'IBM Plex Mono', monospace"
+        >
+          {numbers.get(tr.series.listing.listing_id)}
+        </text>
+      ))}
+    </g>
+  )
+}
+
 /** Per-listing price traces for one item over the range, with the ember tip and sweep-beam scan. */
 export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse; range: TimeRange }) {
   const glowId = useId()
@@ -109,6 +132,11 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
 
   const { plotted, foldedCount } = useMemo(() => prepareSeries(data), [data])
   const labels = useMemo(() => seriesLabels(plotted), [plotted])
+  // one line needs no key; with several, each is numbered on the plot and in the legend
+  const numbers = useMemo(
+    () => new Map(plotted.length > 1 ? plotted.map((s, i) => [s.listing.listing_id, i + 1]) : []),
+    [plotted],
+  )
   const target = data.target_price != null ? Number(data.target_price) : null
 
   const geom = useMemo(() => {
@@ -129,12 +157,16 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
     }
   }, [width, plotted, target, range])
 
-  const sweep = useSweep(geom?.plot ?? null)
+  const stops = useMemo(
+    () => [...new Set(plotted.flatMap((s) => s.points.map((p) => p.ts)))].sort((a, b) => a - b),
+    [plotted],
+  )
+  const sweep = useSweep(geom?.plot ?? null, stops)
 
   if (plotted.length === 0) {
     return (
-      <p className="px-4 py-10 text-center text-[13px] text-ink-3">
-        No price history yet — run the agent to check this item's listings.
+      <p className="px-4 py-10 text-center text-[14px] text-ink-3">
+        No price history yet. It fills in as Snagr checks this item's listings.
       </p>
     )
   }
@@ -147,11 +179,26 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
           .sort((a, b) => a.at.price - b.at.price)
       : []
 
+  const inStockNow = plotted.map((s) => s.points[s.points.length - 1]).filter((p) => p.in_stock)
+  const summary = `Price history of ${plotted.length} ${plotted.length === 1 ? 'listing' : 'listings'}: ${priceSummary(
+    plotted.flatMap((s) => s.points.map((p) => p.price)),
+    inStockNow.length > 0 ? Math.min(...inStockNow.map((p) => p.price)) : null,
+    target,
+    data.currency,
+  )}. Arrow keys step through the checks.`
+
   return (
     <div>
       <div ref={ref} className="relative h-64">
         {geom ? (
-          <svg width={width} height={HEIGHT} className="touch-none" {...sweep.handlers}>
+          <svg
+            width={width}
+            height={HEIGHT}
+            role="img"
+            aria-label={summary}
+            className="touch-pan-y select-none focus-visible:-outline-offset-2"
+            {...sweep.svgProps}
+          >
             <GlowDefs id={glowId} />
             <PlotFrame
               plot={geom.plot}
@@ -159,7 +206,6 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
               yMax={geom.domain[1]}
               xTicks={geom.xTicks}
               target={target}
-              targetLabel={`⌖ TARGET ${formatMoney(data.target_price, data.currency)}`}
               beamX={struck.length > 0 ? sweep.pos!.x : null}
             />
             {geom.traces.map((tr) => (
@@ -173,6 +219,7 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
                 glowId={glowId}
               />
             ))}
+            {numbers.size > 0 ? <EndLabels traces={geom.traces} plot={geom.plot} numbers={numbers} /> : null}
             {sweep.pos && struck.length > 0 ? (
               <SweepBeam
                 plot={geom.plot}
@@ -201,12 +248,25 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
           </FloatingTip>
         ) : null}
       </div>
+      <p aria-live="polite" className="sr-only">
+        {sweep.pos?.keyed
+          ? `${tooltipTimeLabel(sweep.pos.ts)}: ${struck
+              .map(
+                ({ s, at }) =>
+                  `${labels.get(s.listing.listing_id) ?? s.listing.site_name} ${formatMoney(at.price.toFixed(2), data.currency)}${at.in_stock ? '' : ', out of stock'}`,
+              )
+              .join('; ')}`
+          : ''}
+      </p>
 
-      {plotted.length > 1 || foldedCount > 0 ? (
+      {plotted.length > 1 || foldedCount > 0 || data.target_price != null ? (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
           {plotted.map((s) => (
             <span key={s.listing.listing_id} className="flex items-center gap-1.5 text-xs text-ink-2">
               <span aria-hidden className="h-0.5 w-3 rounded-full" style={{ background: s.color }} />
+              {numbers.has(s.listing.listing_id) ? (
+                <span className="font-mono text-ink-3">{numbers.get(s.listing.listing_id)}</span>
+              ) : null}
               {labels.get(s.listing.listing_id)}
             </span>
           ))}
@@ -216,6 +276,7 @@ export function PriceHistoryChart({ data, range }: { data: PriceHistoryResponse;
               Others ({foldedCount}) — see listings below
             </span>
           ) : null}
+          {data.target_price != null ? <TargetKey price={data.target_price} currency={data.currency} /> : null}
         </div>
       ) : null}
     </div>

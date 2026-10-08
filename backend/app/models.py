@@ -8,6 +8,7 @@ Columns added on top of the agent's schema are marked  # + api.
 """
 
 from datetime import datetime
+from uuid import UUID
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Numeric,
     Text,
     UniqueConstraint,
+    Uuid,
     func,
     text,
 )
@@ -79,6 +81,10 @@ class Sites(Base):
     paused_reason: Mapped[str | None] = mapped_column(Text)  # + api
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
+    # agents address a site by name, so two answering to one (however
+    # capitalised) would leave that name ambiguous for everyone
+    __table_args__ = (Index("uq_sites_name", text("lower(name)"), unique=True),)
+
 
 class Categories(Base):
     """Item category (e.g. video games, cards); links items to the sites that
@@ -92,6 +98,8 @@ class Categories(Base):
     condition_tiers: Mapped[list | None] = mapped_column(JSONB)
     price_sources: Mapped[list | None] = mapped_column(JSONB)
     pinned_sources: Mapped[list | None] = mapped_column(JSONB)
+
+    __table_args__ = (Index("uq_categories_name", text("lower(name)"), unique=True),)
 
 
 class SiteCategories(Base):
@@ -115,6 +123,12 @@ class Items(Base):
     search_aliases: Mapped[list | None] = mapped_column(JSONB)
     guide_pages: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # one catalog entry per name in a category, however it is capitalised:
+    # adding a name that exists finds that item rather than making a second
+    __table_args__ = (
+        Index("uq_items_category_name", "category_id", text("lower(name)"), unique=True),
+    )
 
 
 class Listings(Base):
@@ -281,14 +295,35 @@ class Invites(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class PasswordResets(Base):
+    """+ api. Admin-issued link for a user to choose a new password. Only the
+    sha256 is stored, like sessions.refresh_hash; the raw token is shown once,
+    to the admin who issued it. A user has at most one: issuing replaces it."""
+
+    __tablename__ = "password_resets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    token_hash: Mapped[str] = mapped_column(Text, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class Sessions(Base):
     """+ api. Refresh-token store; the raw token lives only in the httpOnly
-    cookie, we persist its sha256. Rotated on every /api/auth/refresh."""
+    cookie, we persist its sha256. Rotated on every /api/auth/refresh.
+
+    `family_id` is the sign-in a row belongs to: every token rotated out of
+    one login shares it, and so does the access JWT (its `sid` claim). An
+    access JWT is honoured only while its family still has an unrevoked row,
+    so revoking a family signs that browser out at once."""
 
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    family_id: Mapped[UUID] = mapped_column(Uuid, index=True)
     refresh_hash: Mapped[str] = mapped_column(Text, unique=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -343,7 +378,8 @@ class Jobs(Base):
     status: Mapped[str] = mapped_column(
         Text, server_default=text("'pending'")
     )  # pending|running|done|failed|cancelled
-    priority: Mapped[int] = mapped_column(server_default=text("0"))  # user-triggered = 100
+    # minutes of head start in the claim order; user-triggered = 100
+    priority: Mapped[int] = mapped_column(server_default=text("0"))
     run_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     attempts: Mapped[int] = mapped_column(server_default=text("0"))
     locked_by: Mapped[str | None] = mapped_column(Text)

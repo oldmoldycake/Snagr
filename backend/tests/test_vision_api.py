@@ -389,6 +389,25 @@ async def test_upload_forwards_to_the_sidecar(client, db_session, vision_on, sid
     assert str(item_id) == sidecar.rescored_items()[-1]
 
 
+async def test_upload_accepts_a_file_at_the_size_cap(client, db_session, vision_on, sidecar):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item, _ = await sc.tracked("Uploadable")
+        item_id = item.id
+    sidecar.upload_response["item_id"] = item_id
+    at_cap = b"x" * (10 * 1024 * 1024)
+
+    res = await client.post(
+        f"/api/items/{item_id}/references",
+        files={"file": ("big.png", at_cap, "image/png")},
+        data={"label": "real"},
+        headers=CSRF,
+    )
+    assert res.status_code == 201, res.text
+    upload = next(r for r in sidecar.requests if r.url.path == "/references")
+    assert at_cap in upload.read()
+
+
 async def test_revoke_is_soft_and_idempotent(client, db_session, vision_on, sidecar):
     owner_id = await _sign_in(client)
     async with _seed_for(db_session, owner_id) as sc:
@@ -520,7 +539,7 @@ async def test_threshold_update_and_bounds(client):
     assert res.json()["vision_auto_reject_fake"] == "0.75"
     assert (await client.get("/api/auth/me")).json()["vision_auto_reject_fake"] == "0.75"
 
-    for bad in ("0.49", "1.01", "abc"):
+    for bad in ("0.49", "1.01", "abc", "NaN", "sNaN", "Infinity"):
         res = await client.patch("/api/me", json={"vision_auto_promote_real": bad}, headers=CSRF)
         assert res.status_code == 422, bad
         body = res.json()["error"]

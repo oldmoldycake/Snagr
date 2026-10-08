@@ -20,10 +20,14 @@ _live_url = os.environ.get("DATABASE_URL") or _env["DATABASE_URL"]
 _test_url = _live_url.rsplit("/", 1)[0] + "/snagr_test"
 assert _test_url != _live_url, "test DB must not be the live DB"
 os.environ["DATABASE_URL"] = _test_url
+# Settings refuses to load without a real JWT_SECRET, and CI has no .env.
+os.environ["JWT_SECRET"] = "test-only-jwt-secret-" + "x" * 32
 # ------------------------------------------------------------------------------
 
+import asyncpg
 import pytest
 from app import models  # noqa: F401 — registers every table on Base.metadata
+from app.core import ratelimit
 from app.database import Base, _sessionmaker
 from app.main import app
 from httpx import ASGITransport, AsyncClient
@@ -147,6 +151,15 @@ async def _clean_tables():
         await conn.execute(text(f"TRUNCATE {_ALL_TABLES} RESTART IDENTITY CASCADE"))
 
 
+@pytest.fixture(autouse=True)
+def _forget_sign_in_attempts():
+    """The sign-in limits count in process memory, and every test signs in
+    from the same address: each starts with a clean count."""
+    yield
+    ratelimit.by_address.clear()
+    ratelimit.by_account.clear()
+
+
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)
@@ -174,6 +187,23 @@ async def make_client():
 def db_session():
     """Direct DB access for seeding data the API can't create yet."""
     return _sessionmaker()
+
+
+@pytest.fixture
+def pg_connections(monkeypatch):
+    """Every raw asyncpg connection opened during the test — the LISTEN
+    tasks' included — so a test can kill one the way a Postgres restart
+    would."""
+    opened: list[asyncpg.Connection] = []
+    real_connect = asyncpg.connect  # the patch below replaces the module attr
+
+    async def connect(*args, **kwargs):
+        conn = await real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(asyncpg, "connect", connect)
+    return opened
 
 
 @pytest.fixture

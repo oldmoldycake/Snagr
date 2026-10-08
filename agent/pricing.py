@@ -5,7 +5,9 @@ The entry point is ground_item(), one item per `ground` job; the scheduler
 picks which items are due with select_grounding_work(). Its model calls are
 recorded inside the trace the ground job opens (llm.job_trace). Grounding is
 best-effort by design: a failed search, fetch or extraction costs
-observations, never the job.
+observations, never the job. The one exception is SearXNG suspending its
+engines: that raises SearchSuspended, and the worker hands the job back to
+the queue for later instead of finishing it on whatever it had.
 
 Every fetch here is async — one blocking GET would stall every other job on
 the daemon's event loop — and guarded against private addresses, the same
@@ -20,7 +22,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from statistics import median
 from urllib.parse import urlparse
 
@@ -42,8 +44,8 @@ from database import (
 )
 from llm import build_llm, callbacks
 from prompt import generate_condition_tiers_prompt, generate_price_extraction_prompt
-from search import search
-from validation import public_url
+from search import SearchSuspended, search, search_gate
+from validation import parse_price, public_url
 
 log = logging.getLogger(__name__)
 
@@ -219,9 +221,14 @@ async def extract_observations(
 
     for raw in raw_observations:
         try:
-            price = Decimal(str(raw["price"]).replace(",", ""))
+            stated = raw["price"]
             source_url = raw["source_url"]
-        except KeyError, TypeError, InvalidOperation:
+        except KeyError, TypeError:
+            dropped += 1
+            continue
+
+        price = parse_price(stated)
+        if price is None or not price > 0:
             dropped += 1
             continue
 
@@ -710,7 +717,14 @@ async def ground_item(item_id: int, item_name: str, category_id: int) -> dict:
     """Ground one item end to end: resolve its category's tier vocabulary,
     collect observations up the fallback ladder, shape them into the
     market_prices payload, and write it. Returns the payload so callers can
-    log or serve it without re-reading the row."""
+    log or serve it without re-reading the row.
+
+    Raises SearchSuspended - before anything is spent when the gate is already
+    closed, or midway when a search meets a fresh suspension. Nothing is
+    written either way: stats built on half a search would read as the
+    market, and a write would stamp the item as attempted for a whole TTL."""
+    if until := search_gate.closed_until():
+        raise SearchSuspended(until)
     tiers = await resolve_condition_tiers(category_id)
     observations = flag_outliers(await collect_observations(item_id, item_name, category_id, tiers))
     payload = build_market_price(tier_stats(observations), observations)

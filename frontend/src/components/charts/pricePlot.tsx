@@ -1,5 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent, ReactNode, RefObject } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode,
+  RefObject,
+} from 'react'
+import { formatMoney } from '@/lib/money'
 import { tickFormatterFor, type TimeRange } from '@/lib/time'
 import { chart, mixToWhite } from './chartTheme'
 
@@ -26,7 +33,11 @@ export interface Plot {
 const MARGIN = { l: 54, r: 14, t: 14, b: 30 } as const
 /** Beam dead zone before the right edge — keeps the scan off the now-dots. */
 const BEAM_INSET = 30
-const TICK_FONT = { fontSize: 10, fontFamily: "'IBM Plex Mono', monospace" } as const
+const TICK_FONT = { fontSize: 12, fontFamily: "'IBM Plex Mono', monospace" } as const
+/** How long a finger must rest on the chart before it scans instead of scrolling the page. */
+const LONG_PRESS_MS = 350
+/** Movement that turns a pending long-press into a scroll. */
+const PRESS_SLOP = 10
 
 /** Measured width of the chart's container — the ResponsiveContainer stand-in. */
 export function useMeasuredWidth(): { ref: RefObject<HTMLDivElement | null>; width: number } {
@@ -136,15 +147,45 @@ export function timeTicks(
   })
 }
 
+/**
+ * The labeled step for a price span: 1-2-5 dollars, then 1-2.5-5 per decade,
+ * always the smallest that leaves at most five majors. Worked out from the
+ * span's magnitude rather than a fixed ladder, so a huge target (the column
+ * allows $99,999,999.99) can't turn the ruler into tens of thousands of lines.
+ */
 function majorStepFor(span: number): number {
-  const steps = [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000]
-  return steps.find((s) => span / s <= 5) ?? 10_000
+  const decade = Math.max(1, 10 ** Math.floor(Math.log10(span / 5)))
+  const mantissas = decade === 1 ? [1, 2, 5, 10] : [1, 2.5, 5, 10]
+  return (mantissas.find((m) => span / (m * decade) <= 5) ?? 10) * decade
+}
+
+/**
+ * Ruler ticks for the y domain: minors every fifth of a major step, majors
+ * labeled. Past $100k the labels go compact ($250k, $25M), in one unit for
+ * the whole axis and with the step's precision: a full `$100000000` is wider
+ * than the left margin and clips.
+ */
+export function priceTicks(yMin: number, yMax: number): { v: number; label: string | null }[] {
+  const major = majorStepFor(yMax - yMin)
+  const minor = major / 5
+  const [unit, suffix] = yMax < 100_000 ? [1, ''] : yMax < 1_000_000 ? [1000, 'k'] : [1_000_000, 'M']
+  const perUnit = major / unit
+  const decimals = [0, 1, 2, 3].find((d) => Number.isInteger(+(perUnit * 10 ** d).toFixed(6))) ?? 3
+  const ticks: { v: number; label: string | null }[] = []
+  for (let k = Math.ceil(yMin / minor); k * minor <= yMax + 1e-9; k++) {
+    const v = k * minor
+    const amount = unit === 1 ? `${+v.toFixed(2)}` : (v / unit).toFixed(decimals)
+    ticks.push({ v, label: k % 5 === 0 && v > yMin ? `$${amount}${suffix}` : null })
+  }
+  return ticks
 }
 
 /**
  * The static chrome: well ground, graduated ruler (minors every fifth of a
  * major, labeled majors with a faint gridline), x axis, and the target zone.
- * While the beam is up, tick labels near it yield to the beam's date.
+ * While the beam is up, tick labels near it yield to the beam's date. The
+ * target line goes unlabeled here: prices hover around the target, so a label
+ * in the well sits on a trace; the chart's legend names it (TargetKey).
  */
 export function PlotFrame({
   plot,
@@ -152,7 +193,6 @@ export function PlotFrame({
   yMax,
   xTicks,
   target,
-  targetLabel,
   beamX,
 }: {
   plot: Plot
@@ -160,28 +200,23 @@ export function PlotFrame({
   yMax: number
   xTicks: { x: number; label: string }[]
   target: number | null
-  targetLabel: string
   beamX: number | null
 }) {
   const { l, r, t, b } = plot.box
-  const minor = majorStepFor(yMax - yMin) / 5
-  const ticks: { v: number; major: boolean }[] = []
-  for (let k = Math.ceil(yMin / minor); k * minor <= yMax + 1e-9; k++) {
-    ticks.push({ v: k * minor, major: k % 5 === 0 && k * minor > yMin })
-  }
+  const ticks = priceTicks(yMin, yMax)
   const yTarget = target != null ? plot.y(target) : null
 
   return (
     <g>
       <rect x={l} y={t} width={r - l} height={b - t} fill={chart.well} stroke={chart.hairline} rx={4} />
       <line x1={l} y1={t} x2={l} y2={b} stroke={chart.hairlineStrong} />
-      {ticks.map(({ v, major }) => (
+      {ticks.map(({ v, label }) => (
         <g key={v}>
-          {major ? <line x1={l} y1={plot.y(v)} x2={r} y2={plot.y(v)} stroke={chart.hairline} /> : null}
-          <line x1={l - (major ? 8 : 4)} y1={plot.y(v)} x2={l} y2={plot.y(v)} stroke={chart.hairlineStrong} />
-          {major ? (
+          {label != null ? <line x1={l} y1={plot.y(v)} x2={r} y2={plot.y(v)} stroke={chart.hairline} /> : null}
+          <line x1={l - (label != null ? 8 : 4)} y1={plot.y(v)} x2={l} y2={plot.y(v)} stroke={chart.hairlineStrong} />
+          {label != null ? (
             <text x={l - 12} y={plot.y(v) + 3} textAnchor="end" fill={chart.inkMuted} {...TICK_FONT}>
-              {`$${+v.toFixed(2)}`}
+              {label}
             </text>
           ) : null}
         </g>
@@ -190,16 +225,6 @@ export function PlotFrame({
         <g>
           <rect x={l} y={yTarget} width={r - l} height={b - yTarget} fill={chart.drop} opacity={0.08} />
           <line x1={l} y1={yTarget} x2={r} y2={yTarget} stroke={chart.drop} opacity={0.5} strokeDasharray="4 4" />
-          <text
-            x={r - 8}
-            y={yTarget - 6}
-            textAnchor="end"
-            fill={chart.drop}
-            letterSpacing="0.08em"
-            {...TICK_FONT}
-          >
-            {targetLabel}
-          </text>
         </g>
       ) : null}
       <line x1={l} y1={b} x2={r} y2={b} stroke={chart.hairlineStrong} />
@@ -211,6 +236,20 @@ export function PlotFrame({
         ),
       )}
     </g>
+  )
+}
+
+/** The target line's legend entry, its swatch dashed like the line. */
+export function TargetKey({ price, currency }: { price: string; currency: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-xs text-ink-2">
+      <span
+        aria-hidden
+        className="h-0.5 w-3"
+        style={{ background: `repeating-linear-gradient(90deg, ${chart.drop} 0 4px, transparent 4px 8px)` }}
+      />
+      Target {formatMoney(price, currency)}
+    </span>
   )
 }
 
@@ -300,33 +339,171 @@ export interface SweepPos {
   x: number
   y: number
   ts: number
+  /** placed by the arrow keys, so the chart's live region announces it */
+  keyed: boolean
 }
 
-/** Cursor scan state — pointer events, so touch-drag scans too. */
-export function useSweep(plot: Plot | null): {
+/**
+ * The text alternative's price summary: `low $X, high $Y, now $Z, target $T`.
+ * A null `now` reads as out of stock; a null target is left out.
+ */
+export function priceSummary(
+  values: number[],
+  now: number | null,
+  target: number | null,
+  currency: string,
+): string {
+  const money = (n: number) => formatMoney(n.toFixed(2), currency)
+  const parts = [
+    `low ${money(Math.min(...values))}`,
+    `high ${money(Math.max(...values))}`,
+    now != null ? `now ${money(now)}` : 'now out of stock',
+  ]
+  if (target != null) parts.push(`target ${money(target)}`)
+  return parts.join(', ')
+}
+
+/**
+ * The stop an arrow key moves the keyboard scan to, out of `count` stops.
+ * From no stop yet, Left starts at the latest and Right at the earliest;
+ * keys that aren't steps return null.
+ */
+export function stepStop(count: number, current: number | null, key: string): number | null {
+  if (count === 0) return null
+  const last = count - 1
+  switch (key) {
+    case 'ArrowLeft':
+      return current == null ? last : Math.max(0, current - 1)
+    case 'ArrowRight':
+      return current == null ? 0 : Math.min(last, current + 1)
+    case 'Home':
+      return 0
+    case 'End':
+      return last
+    default:
+      return null
+  }
+}
+
+/**
+ * Scan state for a chart's SVG, spread onto it as `svgProps`. A mouse or pen
+ * scans on hover. A finger scans only after a long-press: the SVG is
+ * `touch-action: pan-y`, so a swipe that starts on the chart still scrolls
+ * the page, and once the press is held a non-passive touchmove keeps the
+ * drag on the chart. The arrow keys (plus Home/End) step through `stops`,
+ * the check timestamps in ascending order; Escape or leaving the chart
+ * clears the scan.
+ */
+export function useSweep(
+  plot: Plot | null,
+  stops: number[],
+): {
   pos: SweepPos | null
-  handlers: {
+  svgProps: {
+    ref: (el: SVGSVGElement | null) => (() => void) | undefined
+    tabIndex: number
+    onPointerDown: (e: ReactPointerEvent<SVGSVGElement>) => void
     onPointerMove: (e: ReactPointerEvent<SVGSVGElement>) => void
+    onPointerUp: (e: ReactPointerEvent<SVGSVGElement>) => void
     onPointerLeave: () => void
     onPointerCancel: () => void
+    onContextMenu: (e: ReactMouseEvent<SVGSVGElement>) => void
+    onKeyDown: (e: ReactKeyboardEvent<SVGSVGElement>) => void
+    onBlur: () => void
   }
 } {
   const [pos, setPos] = useState<SweepPos | null>(null)
-  const clear = () => setPos(null)
+  const press = useRef<{ x: number; y: number; timer: number | null; held: boolean } | null>(null)
+
+  const endPress = () => {
+    if (press.current?.timer != null) window.clearTimeout(press.current.timer)
+    press.current = null
+  }
+  useEffect(() => endPress, [])
+
+  const clear = () => {
+    endPress()
+    setPos(null)
+  }
+
+  const place = (x: number, y: number) => {
+    if (!plot) return
+    const { l, r, t, b } = plot.box
+    if (x < l || x > r - BEAM_INSET || y < t || y > b) setPos(null)
+    else setPos({ x, y, ts: plot.tsAt(x), keyed: false })
+  }
+
+  const local = (e: ReactPointerEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
+  // React registers touchmove as passive, so the scroll lock needs its own listener.
+  const ref = useCallback((el: SVGSVGElement | null) => {
+    if (!el) return undefined
+    const onTouchMove = (e: TouchEvent) => {
+      if (press.current?.held && e.cancelable) e.preventDefault()
+    }
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => el.removeEventListener('touchmove', onTouchMove)
+  }, [])
+
   return {
     pos,
-    handlers: {
-      onPointerMove: (e) => {
-        if (!plot) return
-        const rect = e.currentTarget.getBoundingClientRect()
-        const x = e.clientX - rect.left
-        const y = e.clientY - rect.top
-        const { l, r, t, b } = plot.box
-        if (x < l || x > r - BEAM_INSET || y < t || y > b) clear()
-        else setPos({ x, y, ts: plot.tsAt(x) })
+    svgProps: {
+      ref,
+      tabIndex: 0,
+      onPointerDown: (e) => {
+        if (e.pointerType !== 'touch') return
+        endPress()
+        const { x, y } = local(e)
+        const p = { x, y, timer: null as number | null, held: false }
+        p.timer = window.setTimeout(() => {
+          p.timer = null
+          p.held = true
+          place(p.x, p.y)
+        }, LONG_PRESS_MS)
+        press.current = p
       },
-      onPointerLeave: clear,
+      onPointerMove: (e) => {
+        const { x, y } = local(e)
+        if (e.pointerType === 'touch') {
+          const p = press.current
+          if (!p) return
+          if (p.held) place(x, y)
+          else if (Math.hypot(x - p.x, y - p.y) > PRESS_SLOP) endPress()
+          return
+        }
+        place(x, y)
+      },
+      onPointerUp: (e) => {
+        if (e.pointerType === 'touch') clear()
+      },
+      onPointerLeave: () => {
+        if (!pos?.keyed) clear()
+      },
       onPointerCancel: clear,
+      // a held press would otherwise open the long-press callout over the scan
+      onContextMenu: (e) => {
+        if (press.current) e.preventDefault()
+      },
+      onKeyDown: (e) => {
+        if (!plot) return
+        if (e.key === 'Escape' && pos) {
+          e.preventDefault()
+          setPos(null)
+          return
+        }
+        const current = pos?.keyed ? stops.indexOf(pos.ts) : -1
+        const next = stepStop(stops.length, current >= 0 ? current : null, e.key)
+        if (next == null) return
+        e.preventDefault()
+        const ts = stops[next]
+        setPos({ x: plot.x(ts), y: plot.box.t, ts, keyed: true })
+      },
+      onBlur: () => {
+        if (pos?.keyed) setPos(null)
+      },
     },
   }
 }

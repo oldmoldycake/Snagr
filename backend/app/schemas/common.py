@@ -13,6 +13,13 @@ from pydantic import BaseModel
 TimeRange = Literal["7d", "30d", "90d", "1y", "all"]
 
 
+def page_param(value: int | None, default: int) -> int:
+    """A page, per_page or limit as the mock's intParam reads one: `default`
+    when missing or below 1. Postgres refuses a negative OFFSET or LIMIT
+    rather than answering with an empty page."""
+    return value if value is not None and value >= 1 else default
+
+
 class PageMeta(BaseModel):
     """Pagination facts for a Paginated response: the page served and the total row count."""
 

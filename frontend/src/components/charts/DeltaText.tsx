@@ -30,7 +30,8 @@ export function DeltaText({
 
   return (
     <span className={cn('font-mono text-xs tnum', color, className)}>
-      <span aria-hidden>{glyph}</span> {text}
+      <span aria-hidden>{glyph}</span>
+      {n !== 0 ? <span className="sr-only">{n < 0 ? 'down' : 'up'}</span> : null} {text}
       {suffix}
     </span>
   )

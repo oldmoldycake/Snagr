@@ -8,9 +8,10 @@ snagged tile counts — so the category chip has to agree with the badge on the
 items underneath it. The tests below are the four ways the old "any historical
 check under anybody's target" query disagreed.
 
-item_count stays instance-wide on purpose: `items` is the shared catalog, and
-the mock's single-user store can't distinguish the two. Only snagged_count is
-scoped to the caller.
+item_count is the caller's too: the chip sits beside a shelf of the caller's
+items, so a count of everyone's would disagree with it. The mock's single-user
+store can't tell the two apart, so these tests pin it. An item nobody watches
+any more stays in the catalog but isn't counted.
 
 Seeding here goes through `db_session` and COMMITS, like test_sites_api.py:
 each request runs on its own session, so uncommitted rows are invisible.
@@ -19,12 +20,16 @@ each request runs on its own session, so uncommitted rows are invisible.
 from contextlib import asynccontextmanager
 
 import pytest
-from app.models import User
+from app.config import settings
+from app.models import Categories, Items, MarketPrices, SiteCategories, User
+from app.services import catalog
+from sqlalchemy import func, select
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
 
 OWNER = {"email": "categories@example.com", "password": "hunter2hunter2"}
+STRANGER = {"email": "stranger@example.com", "password": "hunter2hunter2"}
 
 
 async def _sign_in(client, creds=OWNER):
@@ -94,6 +99,29 @@ async def test_snagged_count_counts_items_at_or_under_my_target(client, db_sessi
     assert categories["Cameras"]["snagged_count"] == 1
 
 
+async def test_item_count_skips_an_item_nobody_watches(client, db_session):
+    """Unwatching keeps the shared items row for whoever adds that name next;
+    until then it is nobody's item, so the chip doesn't count it."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.watch(await sc.item("Watched"))
+        await sc.item("Left behind")
+
+    assert (await _categories_by_name(client))["Cameras"]["item_count"] == 1
+
+
+async def test_item_count_ignores_another_users_items(client, db_session):
+    """The shelf lists only my items, so the chip beside it counts only mine —
+    an item only a stranger watches is not one of them."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        stranger = await sc.other_user()
+        await sc.watch(await sc.item("Mine"))
+        await sc.watch(await sc.item("Theirs"), user=stranger)
+
+    assert (await _categories_by_name(client))["Cameras"]["item_count"] == 1
+
+
 async def test_snagged_count_ignores_a_dip_that_has_since_recovered(client, db_session):
     """Only the latest check per listing counts. A price that fell under target
     once and bounced back is not a snag you can act on today."""
@@ -118,7 +146,7 @@ async def test_snagged_count_ignores_another_users_target(client, db_session):
         await sc.checks(await sc.listing(their_watch, item, "theirs"), (1, "80.00"))
 
     categories = await _categories_by_name(client)
-    assert categories["Cameras"]["item_count"] == 1  # the catalog is shared
+    assert categories["Cameras"]["item_count"] == 1
     assert categories["Cameras"]["snagged_count"] == 0  # their snag, not mine
 
 
@@ -215,6 +243,208 @@ async def test_create_category_rejects_a_duplicate_name(client, db_session, name
     assert error["fields"] == {"name": "A category with this name already exists"}
 
 
+@pytest.mark.parametrize(
+    ("names", "slugs"),
+    [
+        (["🧪", "★★"], ["category", "category-2"]),
+        (["C", "C++", "C#"], ["c", "c-2", "c-3"]),
+    ],
+)
+async def test_create_category_always_gets_a_slug_of_its_own(client, names, slugs):
+    """A name with no letters or digits once made the slug "" (its link went
+    to /categories/, and the next such name 503'd on the unique slug), and
+    "C++" collided with "C" the same way."""
+    await _sign_in(client)
+
+    made = []
+    for name in names:
+        res = await client.post("/api/categories", json={"name": name}, headers=CSRF)
+        assert res.status_code == 201, res.text
+        made.append(res.json()["slug"])
+
+    assert made == slugs
+
+
+@pytest.mark.parametrize("rivals", [1, 2])
+async def test_create_category_that_loses_the_slug_race_takes_the_next_one(
+    client, db_session, monkeypatch, rivals
+):
+    """unique_slug reads before the INSERT, so a concurrent create whose name
+    slugs the same ("C++" beside "C") can take the slug in between. That is
+    no fault of the caller's: the create reads again and takes the next free
+    slug instead of answering 503 — however many times it loses."""
+    await _sign_in(client)
+    real = catalog.unique_slug
+    lost = 0
+
+    async def racing(db, name):
+        nonlocal lost
+        slug = await real(db, name)
+        if lost < rivals:
+            lost += 1
+            async with db_session() as session:
+                session.add(Categories(name=f"C{'+' * lost}", slug=slug))
+                await session.commit()
+        return slug
+
+    monkeypatch.setattr(catalog, "unique_slug", racing)
+
+    res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
+
+    assert res.status_code == 201, res.text
+    assert res.json()["slug"] == f"c-{rivals + 1}"
+    assert {c["name"]: c["slug"] for c in (await _categories_by_name(client)).values()} == {
+        "C": f"c-{rivals + 1}",
+        "C+": "c",
+        **({"C++": "c-2"} if rivals == 2 else {}),
+    }
+
+
+async def test_create_category_that_keeps_losing_the_slug_race_gives_up(
+    client, db_session, monkeypatch
+):
+    """The rereads are bounded: a create that loses every one fails loudly
+    rather than looping, and leaves nothing of itself behind."""
+    await _sign_in(client)
+    real = catalog.unique_slug
+    lost = 0
+
+    async def always_taken(db, name):
+        nonlocal lost
+        slug = await real(db, name)
+        lost += 1
+        async with db_session() as session:
+            session.add(Categories(name=f"Rival {lost}", slug=slug))
+            await session.commit()
+        return slug
+
+    monkeypatch.setattr(catalog, "unique_slug", always_taken)
+
+    res = await client.post("/api/categories", json={"name": "C"}, headers=CSRF)
+
+    assert res.status_code == 409, res.text
+    assert res.json()["error"]["code"] == "conflict"
+    assert lost == catalog._SLUG_ATTEMPTS
+    assert "C" not in await _categories_by_name(client)
+
+
+# --- PATCH /api/categories/{id} -----------------------------------------------
+
+
+async def test_rename_category_trims_and_keeps_the_slug(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "  Film cameras  "}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    assert (res.json()["name"], res.json()["slug"]) == ("Film cameras", "cameras")
+
+
+async def test_rename_category_may_change_only_the_case(client, db_session):
+    """The duplicate check must not count the category being renamed."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "CAMERAS"}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "CAMERAS"
+
+
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_rename_category_rejects_a_blank_name(client, db_session, name):
+    """Create's rules, not a laxer set: a rename used to store "   "."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    res = await client.patch(f"/api/categories/{category_id}", json={"name": name}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert error["fields"] == {"name": "Name is required"}
+    assert "Cameras" in await _categories_by_name(client)
+
+
+async def test_rename_category_rejects_another_categorys_name(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.category("Homelab")
+        category_id = (await sc.category()).id
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": " homelab "}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+    assert set(await _categories_by_name(client)) == {"Homelab", "Cameras"}
+
+
+def _lose_the_name_race(monkeypatch, db_session, rival: str):
+    """Let checked_name pass, then commit a category named `rival` from another
+    session before the write: what a concurrent request that won looks like."""
+    real = catalog.checked_name
+
+    async def racing(db, model, name, exclude_id=None):
+        checked = await real(db, model, name, exclude_id)
+        async with db_session() as session:
+            session.add(Categories(name=rival, slug="rival"))
+            await session.commit()
+        return checked
+
+    monkeypatch.setattr(catalog, "checked_name", racing)
+
+
+@pytest.mark.parametrize("rival", ["Lenses", "LENSES"])
+async def test_create_category_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    """The name check reads before the INSERT, so a concurrent create can take
+    the name in between; the unique index (the exact name, or lower(name))
+    refuses the later one, and that is the same 422 duplicate, not a 503."""
+    await _sign_in(client)
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.post("/api/categories", json={"name": "Lenses"}, headers=CSRF)
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["message"] == "A category with this name already exists"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+
+
+@pytest.mark.parametrize("rival", ["Lenses", "LENSES"])
+async def test_rename_category_that_loses_the_name_race_is_a_duplicate(
+    client, db_session, monkeypatch, rival
+):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    _lose_the_name_race(monkeypatch, db_session, rival)
+
+    res = await client.patch(
+        f"/api/categories/{category_id}", json={"name": "Lenses"}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "duplicate"
+    assert error["fields"] == {"name": "A category with this name already exists"}
+    assert set(await _categories_by_name(client)) == {rival, "Cameras"}
+
+
 # --- the write routes answer with the same counts ------------------------------
 
 
@@ -238,3 +468,102 @@ async def test_write_routes_return_the_callers_snagged_count(client, db_session)
     )
     assert sites.status_code == 200, sites.text
     assert sites.json()["snagged_count"] == 1
+
+
+async def test_set_sites_drops_unknown_ids_even_past_what_an_id_can_be(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+        site_id = (await sc.site()).id
+
+    res = await client.put(
+        f"/api/categories/{category_id}/sites",
+        json={"site_ids": [site_id, site_id, 99999, 2**31]},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["site_ids"] == [site_id]
+
+
+# --- writes are admin-only ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("POST", "/api/categories", {"name": "Consoles"}),
+        ("PATCH", "/api/categories/{id}", {"name": "Games (renamed)"}),
+        ("PUT", "/api/categories/{id}/sites", {"site_ids": []}),
+        ("DELETE", "/api/categories/{id}", None),
+    ],
+)
+async def test_category_writes_are_admin_only(client, db_session, method, path, body):
+    """Categories are shared by every user, so a non-admin's write is 403
+    forbidden and changes nothing."""
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        category = await sc.category("Games")
+        site = await sc.site()
+        sc.db.add(SiteCategories(site_id=site.id, category_id=category.id))
+        category_id, site_id = category.id, site.id
+
+    # the first registered user is the admin, so demote them to test this
+    async with db_session() as session:
+        user = await session.get(User, user_id)
+        user.role = "user"
+        await session.commit()
+
+    res = await client.request(method, path.format(id=category_id), json=body, headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    categories = await _categories_by_name(client)
+    assert list(categories) == ["Games"]
+    assert categories["Games"]["site_ids"] == [site_id]
+
+
+async def test_a_user_cannot_delete_a_category_holding_anothers_watches(
+    client, make_client, monkeypatch
+):
+    """Deleting a category cascades through every user's items, watches and
+    price history in it — a plain user must not be able to trigger that."""
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    await _sign_in(client)  # the admin
+    category = (await client.post("/api/categories", json={"name": "Games"}, headers=CSRF)).json()
+    body = {"category_id": category["id"], "name": "Chrono Trigger", "target_price": "150.00"}
+    item = await client.post("/api/items", json=body, headers=CSRF)
+    assert item.status_code == 201, item.text
+
+    stranger = await make_client()
+    await _sign_in(stranger, STRANGER)
+    res = await stranger.delete(f"/api/categories/{category['id']}", headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    assert (await client.get(f"/api/items/{item.json()['id']}")).status_code == 200
+
+
+# --- delete -------------------------------------------------------------------
+
+
+async def test_deleting_a_category_removes_its_grounded_items(client, db_session):
+    """Every new item gets a grounding job, so in normal use an item has a
+    market_prices row; deleting its category must remove that row too rather
+    than trip the foreign key."""
+    user_id = await _sign_in(client)
+    async with _seed_for(db_session, user_id) as sc:
+        category = await sc.category("Games")
+        item = await sc.item("Chrono Trigger", category=category)
+        watch = await sc.watch(item, target_price="150.00")
+        await sc.checks(await sc.listing(watch, item), (1, "149.00"))
+        sc.db.add(MarketPrices(item_id=item.id, status="ok", as_of=sc.ago(1)))
+        category_id, item_id = category.id, item.id
+
+    res = await client.delete(f"/api/categories/{category_id}", headers=CSRF)
+
+    assert res.status_code == 204, res.text
+    assert await _categories_by_name(client) == {}
+    async with db_session() as session:
+        assert await session.get(Items, item_id) is None
+        assert await session.scalar(select(func.count()).select_from(MarketPrices)) == 0

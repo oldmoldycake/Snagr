@@ -90,8 +90,20 @@ class TestEnqueue:
         assert sorted(j["site_name"] for j in queued) == ["Mercari", "eBay"]
         assert {j["kind"] for j in queued} == {"hunt"}
         assert {j["reason"] for j in queued} == {"user"}
-        assert {j["priority"] for j in queued} == {100}
+        assert sorted(j["priority"] for j in queued) == [90, 100]
         assert queued[0]["label"].startswith("Game Boy Color × ")
+
+    async def test_one_site_asked_for_gets_the_whole_head_start(self, client):
+        """A watch's later sites start a step back only among the sites asked
+        for — hunting one site is asking for that one first."""
+        await _sign_in(client)
+        await _watched_item(client, sites=("eBay", "Mercari"))
+
+        for hunt in await _jobs(client, kind="hunt"):
+            body = {"kind": "hunt", "scope": "site", "scope_id": hunt["site_id"]}
+            res = await client.post("/api/jobs", json=body, headers=CSRF)
+            assert res.status_code == 202, res.text
+            assert [j["priority"] for j in res.json()["data"]] == [100]
 
     async def test_asking_twice_brings_the_same_job_forward(self, client, db_session):
         """The open-job index is the design: a double-click cannot queue two
@@ -359,6 +371,17 @@ class TestList:
 
         assert [j["item_name"] for j in await _jobs(client, item_id=wanted)] == ["Alpha"]
 
+    async def test_a_page_below_one_reads_as_the_default(self, client, db_session):
+        # as the mock reads it; Postgres refuses the negative OFFSET it makes
+        user_id = await _sign_in(client)
+        async with _seed_for(db_session, user_id) as sc:
+            await sc.job(watch=await sc.watch(await sc.item("Alpha")))
+
+        res = await client.get("/api/jobs", params={"page": -1, "per_page": 0})
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert (len(body["data"]), body["meta"]) == (1, {"page": 1, "per_page": 20, "total": 1})
+
 
 # --- GET /api/jobs/summary ------------------------------------------------------
 
@@ -391,6 +414,51 @@ class TestSummary:
         assert summary["hunts_today"] == 1
         assert summary["last_hunt"]["status"] == "done"
         assert datetime.fromisoformat(summary["next_check_at"]) > datetime.now(UTC)
+
+    async def test_a_paused_sites_jobs_come_due_when_the_pause_lifts(self, client, db_session):
+        """The hunter doesn't claim a paused site's jobs, so counting down to
+        their run_after would count down to a time that has already passed."""
+        user_id = await _sign_in(client)
+        now = datetime.now(UTC)
+        lifts = now + timedelta(hours=1)
+        async with _seed_for(db_session, user_id) as sc:
+            item = await sc.item("Alpha")
+            watch = await sc.watch(item)
+            paused = await sc.site("Paused")
+            paused.paused_until = lifts
+            running = await sc.site("Running")
+            listing = await sc.listing(watch, item, site=paused)
+            later = await sc.listing(watch, item, site=running, tag="later")
+            for site, listing_id, due in (
+                (paused, listing.id, now - timedelta(minutes=30)),
+                (running, later.id, now + timedelta(hours=2)),
+            ):
+                await sc.job(
+                    kind="recheck",
+                    watch=watch,
+                    status="pending",
+                    site_id=site.id,
+                    listing_id=listing_id,
+                    run_after=due,
+                )
+            await sc.job(watch=watch, status="pending", site_id=paused.id, run_after=now)
+
+        summary = (await client.get("/api/jobs/summary")).json()
+        assert datetime.fromisoformat(summary["next_check_at"]) == lifts
+        assert datetime.fromisoformat(summary["next_hunt_at"]) == lifts
+
+    async def test_a_lifted_pause_no_longer_holds_a_job_back(self, client, db_session):
+        user_id = await _sign_in(client)
+        due = datetime.now(UTC) - timedelta(minutes=5)
+        async with _seed_for(db_session, user_id) as sc:
+            item = await sc.item("Alpha")
+            watch = await sc.watch(item)
+            site = await sc.site("Lifted")
+            site.paused_until = datetime.now(UTC) - timedelta(minutes=1)
+            await sc.job(watch=watch, status="pending", site_id=site.id, run_after=due)
+
+        summary = (await client.get("/api/jobs/summary")).json()
+        assert datetime.fromisoformat(summary["next_hunt_at"]) == due
 
     async def test_a_paused_site_is_everyones_news(self, client, make_client, monkeypatch, sc):
         """Sites are shared, so the banner shows to every viewer — unlike a
@@ -463,6 +531,20 @@ class TestDetail:
         body = (await client.get(f"/api/jobs/{job_id}/events?after_seq=2")).json()
         assert [e["message"] for e in body["data"]] == ["line 3"]
 
+    async def test_an_event_type_this_backend_does_not_know_is_left_out(self, client, db_session):
+        # a newer agent's event: one missing line, not a 500 for the whole log
+        user_id = await _sign_in(client)
+        async with _seed_for(db_session, user_id) as sc:
+            job = await sc.job(watch=await sc.watch(await sc.item("Alpha")), status="running")
+            await sc.job_event(job, 1)
+            await sc.job_event(job, 2, event_type="from_a_newer_agent")
+            await sc.job_event(job, 3)
+            job_id = job.id
+
+        res = await client.get(f"/api/jobs/{job_id}/events")
+        assert res.status_code == 200, res.text
+        assert [e["seq"] for e in res.json()["data"]] == [1, 3]
+
     async def test_a_check_has_no_log_to_read(self, client, db_session):
         # its whole output is the price check it wrote
         user_id = await _sign_in(client)
@@ -481,6 +563,17 @@ class TestDetail:
         res = await client.get(f"/api/jobs/{job_id}/events?limit=501")
         assert res.status_code == 422
         assert res.json()["error"]["code"] == "validation_error"
+
+    async def test_a_limit_below_one_reads_as_the_default(self, client, db_session):
+        user_id = await _sign_in(client)
+        async with _seed_for(db_session, user_id) as sc:
+            job = await sc.job(watch=await sc.watch(await sc.item("Alpha")), status="running")
+            await sc.job_event(job, 1)
+            job_id = job.id
+
+        res = await client.get(f"/api/jobs/{job_id}/events?limit=-1")
+        assert res.status_code == 200, res.text
+        assert [e["seq"] for e in res.json()["data"]] == [1]
 
 
 # --- POST /api/jobs/{id}/cancel -------------------------------------------------

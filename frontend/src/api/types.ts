@@ -61,6 +61,9 @@ export interface InstanceInfo {
   /** minutes between rechecks for a watch with no interval of its own
    *  (RECHECK_INTERVAL_MINUTES) — the item form's placeholder */
   recheck_interval_default: number
+  /** the shortest interval a watch may be given (RECHECK_INTERVAL_FLOOR_MINUTES) —
+   *  the item form's least custom interval */
+  recheck_interval_floor: number
   /** false when the operator switched hunting off (HUNT_ENABLED): nothing is hunted,
    *  "hunt now" answers 409 hunting_disabled, and prices are still rechecked */
   hunt_enabled: boolean
@@ -106,6 +109,17 @@ export interface InviteValidation {
 /** POST /api/auth/invites/{token}/accept body; an invite pinned to an email ignores this one. */
 export interface InviteAcceptRequest {
   email: string
+  password: string
+}
+
+/** GET /api/auth/password-resets/{token} — 404 invalid, 410 expired/used */
+export interface PasswordResetValidation {
+  email: string
+  expires_at: string
+}
+
+/** POST /api/auth/password-resets/{token} body. */
+export interface PasswordResetRequest {
   password: string
 }
 
@@ -219,6 +233,9 @@ export interface ItemSummary {
   pct_change_range: string | null
   last_checked_at: string | null
   created_at: string
+  /** how many users track this item, the caller included. Above 1 the name is
+   *  not the caller's alone: see ItemUpdateRequest.name */
+  watcher_count: number
   watch: Watch
   /** ≤30 bucketed best-price points over the requested range; null = no data in bucket */
   spark: (string | null)[]
@@ -291,7 +308,11 @@ export interface ItemDetail extends Omit<ItemSummary, 'hunt'> {
   recheck: RecheckFacts
 }
 
-/** POST /api/items body: finds or creates the item and adds the caller's watch. */
+/**
+ * POST /api/items body: finds or creates the item and adds the caller's watch.
+ * Items are matched by name, trimmed and ignoring case: a blank name is 422
+ * validation_error, one the caller already tracks in the category 422 duplicate.
+ */
 export interface ItemCreateRequest {
   category_id: number
   name: string
@@ -315,17 +336,26 @@ export interface ItemCreateRequest {
 
 /** PATCH /api/items/{id} body; omitted fields are left unchanged. */
 export interface ItemUpdateRequest {
+  /**
+   * Trimmed; blank is 422 validation_error. The item is shared, so unless the
+   * caller is its only watcher or an admin, a new name moves the caller's watch
+   * to the category's item of that name — the response then has another id.
+   * A name the caller already tracks is 422 duplicate; recasing a shared item
+   * is 403 forbidden for anyone but an admin.
+   */
   name?: string
+  /** null clears the target */
   target_price?: string | null
+  /** null clears the criteria */
   criteria?: string | null
   selection_mode?: SelectionMode
   max_listings?: number
   allow_reproductions?: boolean
-  /** the one field where null changes something: back to the instance default;
-   *  omitted = unchanged. Same 422s as create */
+  /** null = back to the instance default. Same 422s as create */
   recheck_interval_minutes?: number | null
   /** false drops the hunts the hunter queued for itself; a pending "hunt now" still runs */
   hunt?: boolean
+  /** null = every site of the category. Same subset rule and 422 as create */
   site_ids?: number[] | null
 }
 
@@ -602,7 +632,8 @@ export interface Job {
   attempts: number
   started_at: string | null
   finished_at: string | null
-  /** one sentence for a human, e.g. "eBay answered a challenge page instead of the listing." */
+  /** one sentence for a human naming what kind of failure it was, e.g. "No page on the site
+   *  would load." — the raw error is on the job's last `error` event, as payload.detail */
   error: string | null
   stats: JobStats | null
   /** why it was queued: 'user' | 'created' | 'slot_freed' | 'sweep' | 'paused' | 'backoff'
@@ -637,7 +668,9 @@ export interface JobsSummary {
   hunts_running: number
   checks_running: number
   checks_pending: number
+  /** when the soonest pending check can run — a paused site's jobs wait for the pause to lift */
   next_check_at: string | null
+  /** the same for hunts and grounding */
   next_hunt_at: string | null
   hunts_today: number
   listings_watched: number
@@ -669,6 +702,7 @@ export type JobEventType =
   | 'listing_ended'
   /** the breaker tripped on this job's site — payload: site_id, paused_until, paused_reason */
   | 'site_paused'
+  /** a failed attempt's payload: detail (its raw error text, for debugging) */
   | 'error'
   | 'job_finished'
 
@@ -796,6 +830,20 @@ export interface NotificationChannelCreateRequest {
   enabled?: boolean
 }
 
+/**
+ * POST /api/me/channels/test body — a destination tried before it is saved, so
+ * only the fields that decide where the test goes. 422 validation_error
+ * (+fields) and 422 no_server exactly as create answers them; 502
+ * channel_failed when the destination can't be reached. A webhook's signing
+ * secret is created with the channel, so a webhook test sent from here is
+ * signed with a one-off key the receiver can't verify.
+ */
+export interface NotificationChannelTestRequest {
+  kind: ChannelKind
+  url?: string
+  topic?: string
+}
+
 /** kind is immutable — delete and recreate to change a channel's kind. */
 export interface NotificationChannelUpdateRequest {
   name?: string
@@ -837,7 +885,7 @@ export interface ApiTokenCreateRequest {
   name: string
   /** non-empty subset of the known scopes; 422 with fields.scopes otherwise */
   scopes: ApiTokenScope[]
-  /** omit/null = never expires; 422 with fields.expires_in_days below 1 */
+  /** omit/null = never expires; 422 with fields.expires_in_days outside 1–3650 */
   expires_in_days?: number | null
 }
 
@@ -864,6 +912,16 @@ export interface Invite {
   email: string | null
   expires_at: string
   created_at: string
+}
+
+/**
+ * POST /api/admin/users/{id}/password-reset — a single-use link for the user to
+ * choose a new password. Only its hash is stored, so this is the one time the
+ * token is ever shown.
+ */
+export interface PasswordReset {
+  token: string
+  expires_at: string
 }
 
 /** POST /api/admin/invites body; no email makes an invite anyone can accept. */

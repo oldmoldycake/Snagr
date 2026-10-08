@@ -18,8 +18,17 @@ counter rather than stored: a success is what resets it, so
 `consecutive_errors // SITE_BREAKER_ERRORS` is exactly how many times this
 site has tripped without ever answering in between.
 
+Only a failure the site is to blame for is counted: a unit whose reads all
+came back as errors (worker.answered), or one that raised SiteUnreadable. A
+model provider refusing the key, a Playwright MCP that is down or a database
+blip fails every site's work alike; the worker holds the whole process off for
+those instead (worker.Backoff), because counting them would pause every
+marketplace for the length of the hunter's own outage.
+
 Lifting a pause by hand is a backend concern (PATCH /api/sites/{id} with
 paused_until: null), which is why nothing here ever shortens one.
+SITE_BREAKER_ERRORS=0 switches the breaker off: errors are still counted, but
+nothing ever trips.
 """
 
 import logging
@@ -76,7 +85,7 @@ async def record_outcome(
 
         site.consecutive_errors += 1
         errors = site.consecutive_errors
-        if errors % SITE_BREAKER_ERRORS:
+        if not SITE_BREAKER_ERRORS or errors % SITE_BREAKER_ERRORS:
             await session.commit()
             return None
 

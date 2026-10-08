@@ -1,18 +1,19 @@
-"""Migrations 015 to 018, up and down, against a scratch database.
+"""Migrations 015 to 022, up and down, against a scratch database.
 
 The rest of the suite runs on a schema built by Base.metadata.create_all, so
 nothing else ever executes a revision. This one does: 015 drops three tables
 and rewrites stored token scopes, and both of those are only reversible if the
-downgrade really puts them back; 016 and 017 are data backfills, and the rows
-they write are the only thing there is to test. It builds its own database
-(`snagr_test_...`) rather than touching the suite's, and drops it again on the
-way out.
+downgrade really puts them back; 016, 017 and 022 are data backfills and 019 to
+021 cleanups, and the rows they write are the only thing there is to test. It
+builds its own database (`snagr_test_...`) rather than touching the suite's,
+and drops it again on the way out.
 """
 
 import os
 import subprocess
 import sys
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import asyncpg
@@ -234,3 +235,163 @@ async def test_018_hunts_every_existing_watch_on_its_own(scratch):
         "WHERE (table_name, column_name) IN (('watches', 'hunt'), ('jobs', 'payload'))"
     )
     assert columns == 0
+
+
+async def test_019_clears_a_nan_target_and_leaves_real_ones(scratch):
+    """The API once stored "NaN" as a target; the watch keeps tracking with
+    no target instead."""
+    _alembic("upgrade", "018")
+    await _seed_listings(scratch)
+    await scratch.execute("UPDATE watches SET target_price = 'NaN'")
+    item = await scratch.fetchval("SELECT item_id FROM watches")
+    user = await scratch.fetchval("INSERT INTO users (email) VALUES ('two@test') RETURNING id")
+    await scratch.execute(
+        "INSERT INTO watches (user_id, item_id, target_price) VALUES ($1, $2, 120.00)", user, item
+    )
+
+    _alembic("upgrade", "019")
+
+    targets = await scratch.fetch("SELECT target_price FROM watches ORDER BY id")
+    assert [row["target_price"] for row in targets] == [None, Decimal("120.00")]
+
+
+async def test_020_folds_duplicate_items_into_the_oldest(scratch):
+    """Two users on two "Dbl Click" items end up on one; a user on both (a
+    double-clicked Add) keeps the second under a name that says what it is."""
+    _alembic("upgrade", "019")
+    listings = await _seed_listings(scratch)
+    first, category = (await scratch.fetch("SELECT id, category_id FROM items"))[0]
+    owner = await scratch.fetchval("SELECT user_id FROM watches")
+    stranger = await scratch.fetchval("INSERT INTO users (email) VALUES ('two@test') RETURNING id")
+
+    async def item(name):
+        return await scratch.fetchval(
+            "INSERT INTO items (category_id, name) VALUES ($1, $2) RETURNING id", category, name
+        )
+
+    async def watch(user, item):
+        return await scratch.fetchval(
+            "INSERT INTO watches (user_id, item_id) VALUES ($1, $2) RETURNING id", user, item
+        )
+
+    # the owner watches "Emerald" (first) and its double; the stranger only
+    # a lower-case copy, with its own listing and check
+    double = await item("Emerald")
+    await watch(owner, double)
+    copy = await item(" emerald ")
+    theirs = await watch(stranger, copy)
+    site = await scratch.fetchval("SELECT id FROM sites")
+    listing = await scratch.fetchval(
+        "INSERT INTO listings (watch_id, item_id, site_id, url) "
+        "VALUES ($1, $2, $3, 'https://gamebay.test/theirs') RETURNING id",
+        theirs,
+        copy,
+        site,
+    )
+    job = await scratch.fetchval(
+        "INSERT INTO jobs (kind, watch_id, item_id, site_id, listing_id) "
+        "VALUES ('recheck', $1, $2, $3, $4) RETURNING id",
+        theirs,
+        copy,
+        site,
+        listing,
+    )
+    blank = await item("  ")
+
+    _alembic("upgrade", "020")
+
+    assert await scratch.fetchval("SELECT item_id FROM watches WHERE id = $1", theirs) == first
+    assert await scratch.fetchval("SELECT item_id FROM listings WHERE id = $1", listing) == first
+    assert await scratch.fetchval("SELECT item_id FROM jobs WHERE id = $1", job) == first
+    # the owner's own listings never moved
+    moved = await scratch.fetchval(
+        "SELECT count(*) FROM listings WHERE id = ANY($1::int[]) AND item_id <> $2",
+        list(listings.values()),
+        first,
+    )
+    assert moved == 0
+    names = dict(await scratch.fetch("SELECT id, name FROM items"))
+    assert names == {
+        first: "Emerald",
+        double: f"Emerald (duplicate {double})",
+        copy: f"emerald (duplicate {copy})",
+        blank: f"Untitled item {blank}",
+    }
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await item("EMERALD")
+
+    _alembic("downgrade", "019")
+    assert not await _table(scratch, "uq_items_category_name")
+
+
+async def test_021_renames_blank_and_duplicate_catalog_names(scratch):
+    """Nothing is merged: a blank or duplicate category or site keeps its row
+    under a name an admin can see and fix, and an empty slug gets one."""
+    _alembic("upgrade", "020")
+
+    async def add(table, name, **extra):
+        columns = ", ".join(["name", *extra])
+        values = ", ".join(f"${n}" for n in range(1, len(extra) + 2))
+        return await scratch.fetchval(
+            f"INSERT INTO {table} ({columns}) VALUES ({values}) RETURNING id",
+            name,
+            *extra.values(),
+        )
+
+    homelab = await add("categories", "Homelab", slug="homelab")
+    recased = await add("categories", " homelab ", slug="homelab-2")
+    emoji = await add("categories", "🧪", slug="")
+    blank = await add("categories", "   ", slug="blank")
+    ebay = await add("sites", "Ebay", base_url="https://ebay.test")
+    shouty = await add("sites", "EBAY", base_url="https://ebay.test/uk")
+    unnamed = await add("sites", "", base_url="https://unnamed.test")
+
+    _alembic("upgrade", "021")
+
+    categories = {
+        row["id"]: tuple(row[1:])
+        for row in await scratch.fetch("SELECT id, name, slug FROM categories")
+    }
+    assert categories == {
+        homelab: ("Homelab", "homelab"),
+        recased: (f"homelab (duplicate {recased})", "homelab-2"),
+        emoji: ("🧪", f"category-{emoji}"),
+        blank: (f"Untitled category {blank}", "blank"),
+    }
+    sites = dict(await scratch.fetch("SELECT id, name FROM sites"))
+    assert sites == {
+        ebay: "Ebay",
+        shouty: f"EBAY (duplicate {shouty})",
+        unnamed: f"Untitled site {unnamed}",
+    }
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await add("categories", "HOMELAB", slug="homelab-3")
+    with pytest.raises(asyncpg.UniqueViolationError):
+        await add("sites", "ebay", base_url="https://ebay.test/de")
+
+    _alembic("downgrade", "020")
+    assert not await _table(scratch, "uq_categories_name")
+    assert not await _table(scratch, "uq_sites_name")
+
+
+async def test_022_puts_every_existing_session_in_a_family_of_its_own(scratch):
+    _alembic("upgrade", "021")
+    user = await scratch.fetchval("SELECT id FROM users LIMIT 1")
+    for digest in ("first", "second"):
+        await scratch.execute(
+            "INSERT INTO sessions (user_id, refresh_hash, expires_at) "
+            "VALUES ($1, $2, now() + interval '1 day')",
+            user,
+            digest,
+        )
+
+    _alembic("upgrade", "022")
+
+    families = await scratch.fetch("SELECT family_id FROM sessions")  # NOT NULL, so all filled
+    assert len({row["family_id"] for row in families}) == 2
+
+    _alembic("downgrade", "021")
+    columns = await scratch.fetch(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'sessions'"
+    )
+    assert "family_id" not in {row["column_name"] for row in columns}

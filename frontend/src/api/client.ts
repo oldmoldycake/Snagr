@@ -10,11 +10,24 @@ export class ApiError extends Error {
   fields?: Record<string, string>
 
   constructor(status: number, body: ApiErrorBody | null) {
-    super(body?.error.message ?? `Request failed (${status})`)
+    super(body?.error.message ?? `Something went wrong (error ${status}). Try again, and tell your admin if it keeps happening.`)
     this.status = status
     this.code = body?.error.code ?? 'unknown'
     this.fields = body?.error.fields
   }
+}
+
+/** True only for a 404: any other failure is an error to show, never "not found". */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404
+}
+
+/**
+ * True only for a 401, which `api` throws once the refresh is refused too: a 500
+ * or a request that never reached Snagr is an outage to show, never "signed out".
+ */
+export function isSignedOut(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401
 }
 
 type Method = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'
@@ -33,11 +46,13 @@ export interface RequestOptions {
 /**
  * Auth lives in httpOnly cookies, so "logged in" is invisible to JS — we just
  * send requests and react to 401s: refresh once (single-flight across all
- * concurrent requests), retry once, then give up and let the caller redirect.
+ * concurrent requests), retry once, then give up and throw: the query and
+ * mutation caches in main.tsx send a signed-in visitor back to /login.
  */
 let refreshPromise: Promise<boolean> | null = null
 
-async function tryRefresh(): Promise<boolean> {
+/** Rotate the session cookies; true when the server issued fresh ones. */
+export async function tryRefresh(): Promise<boolean> {
   refreshPromise ??= fetch('/api/auth/refresh', {
     method: 'POST',
     credentials: 'same-origin',
@@ -50,6 +65,14 @@ async function tryRefresh(): Promise<boolean> {
     })
   return refreshPromise
 }
+
+const NO_REFRESH = [
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/auth/logout',
+  '/api/auth/invites/',
+]
 
 function buildUrl(path: string, params?: RequestOptions['params']): string {
   if (!params) return path
@@ -90,9 +113,11 @@ async function doFetch(path: string, opts: RequestOptions): Promise<Response> {
 export async function api<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   let res = await doFetch(path, opts)
 
-  // /api/auth/* answers 401 directly and must not trip this loop: a failed
-  // login would otherwise refresh and silently replay itself.
-  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+  // The credential routes answer 401 directly and must not trip this loop: a
+  // failed login would otherwise refresh and silently replay itself. /me is not
+  // one of them — it is the first request of every page load, so a 401 there
+  // usually just means the short-lived access cookie expired.
+  if (res.status === 401 && !NO_REFRESH.some((prefix) => path.startsWith(prefix))) {
     const refreshed = await tryRefresh()
     if (refreshed) res = await doFetch(path, opts)
   }

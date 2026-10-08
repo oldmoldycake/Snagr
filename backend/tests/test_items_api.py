@@ -4,20 +4,24 @@ allow_reproductions is the one tracking field the mock validated and then
 dropped, so nothing pinned it end to end on either side (the mock now applies
 it in POST and PATCH like its siblings). These tests hold the backend to the
 same contract: it is written on create, changed on PATCH, and a JSON null or
-an absent key leaves it alone — the "only non-null fields change" rule every
-other field on ItemUpdateRequest follows. recheck_interval_minutes is the one
-exception: a null is how the form says "back to the instance default".
+an absent key leaves it alone. The optional fields are the exception: on
+target_price, criteria, recheck_interval_minutes and site_ids a null is how the
+edit form says "none" or "back to the default", so only an absent key leaves
+them alone.
 
 Seeding here goes through `db_session` and COMMITS, like test_sites_api.py:
 each request runs on its own session, so uncommitted rows are invisible.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from app.config import settings
-from app.models import Jobs, Listings, SiteCategories, User
+from app.models import Items, Jobs, Listings, SiteCategories, User, Watches
+from sqlalchemy import func, select
 
 from tests.conftest import CSRF
 from tests.factories import Scenario
@@ -79,6 +83,19 @@ async def test_create_item_defaults_allow_reproductions_to_false(client, db_sess
     assert (await _create(client, category_id))["allow_reproductions"] is False
 
 
+async def test_create_item_in_an_unknown_category_is_404(client):
+    await _sign_in(client)
+
+    res = await client.post(
+        "/api/items",
+        json={"category_id": 99999, "name": "Alpha", "target_price": None},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 404, res.text
+    assert res.json()["error"]["code"] == "not_found"
+
+
 # --- PATCH /api/items/{item_id} -----------------------------------------------
 
 
@@ -112,6 +129,34 @@ async def test_update_item_leaves_allow_reproductions_alone(client, db_session, 
 
     assert res.status_code == 200, res.text
     assert res.json()["allow_reproductions"] is True
+
+
+async def test_a_null_target_and_criteria_clear_them(client, db_session):
+    """The edit form sends null for a blank target or criteria field."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id, target_price="5.00", criteria="boxed"))["id"]
+
+    res = await client.patch(
+        f"/api/items/{item_id}", json={"target_price": None, "criteria": None}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+    assert (detail["target_price"], detail["criteria"]) == (None, None)
+
+
+async def test_an_absent_target_and_criteria_are_left_alone(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id, target_price="5.00", criteria="boxed"))["id"]
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert (res.json()["target_price"], res.json()["criteria"]) == ("5.00", "boxed")
 
 
 # --- the hunting switch --------------------------------------------------------
@@ -317,6 +362,45 @@ async def test_an_interval_outside_the_floor_and_a_day_is_refused(client, db_ses
         assert error["fields"] == {"recheck_interval_minutes": "Must be between 5 and 1440 minutes"}
 
 
+async def test_the_instance_says_the_floor_an_interval_is_held_to(client, db_session, monkeypatch):
+    """The item form takes it as its least custom interval, so the floor it
+    shows is the one a save is refused under."""
+    assert (await client.get("/api/instance")).json()["recheck_interval_floor"] == 5
+    monkeypatch.setattr(settings, "RECHECK_INTERVAL_FLOOR_MINUTES", 15)
+    assert (await client.get("/api/instance")).json()["recheck_interval_floor"] == 15
+
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    body = {"category_id": category_id, "name": "Beta", "target_price": None}
+    res = await client.post(
+        "/api/items", json=body | {"recheck_interval_minutes": 10}, headers=CSRF
+    )
+
+    assert res.status_code == 422, res.text
+    assert res.json()["error"]["fields"] == {
+        "recheck_interval_minutes": "Must be between 15 and 1440 minutes"
+    }
+
+
+@pytest.mark.parametrize("count", [0, 11, 10_000_000_000])
+async def test_max_listings_outside_one_to_ten_is_refused(client, db_session, count):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id))["id"]
+    body = {"category_id": category_id, "name": "Beta", "target_price": None}
+
+    for res in (
+        await client.post("/api/items", json=body | {"max_listings": count}, headers=CSRF),
+        await client.patch(f"/api/items/{item_id}", json={"max_listings": count}, headers=CSRF),
+    ):
+        assert res.status_code == 422, res.text
+        error = res.json()["error"]
+        assert error["code"] == "validation_error"
+        assert error["fields"] == {"max_listings": "Must be between 1 and 10"}
+
+
 async def test_a_below_floor_row_reads_as_the_floor(client, db_session):
     """The API refuses one, but a row written by hand is floored by the
     agent — and the item page says what the agent does."""
@@ -329,6 +413,69 @@ async def test_a_below_floor_row_reads_as_the_floor(client, db_session):
 
     detail = (await client.get(f"/api/items/{item_id}")).json()
     assert detail["recheck"]["interval_minutes"] == 5
+
+
+# --- the target price ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("target", ["0.01", "120", "1.5", "549.99", "99999999.99"])
+async def test_a_target_in_whole_cents_is_taken(client, db_session, target):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    created = await _create(client, category_id, target_price=target)
+
+    assert created["target_price"] == f"{Decimal(target):.2f}"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        # Decimal() takes these, and a NaN target breaks every later price comparison
+        "NaN",
+        "sNaN",
+        "Infinity",
+        "-Infinity",
+        # not numbers at all
+        "abc",
+        "",
+        "1,000",
+        # the column overflows past 99,999,999.99
+        "1e9",
+        "100000000.00",
+        "99999999999.99",
+        # a target nothing could ever be at or below
+        "0",
+        "0.00",
+        "-5",
+        # finer than a cent: the column would round it
+        "1.001",
+    ],
+)
+async def test_a_target_that_is_not_an_amount_is_refused(client, db_session, target):
+    """On all three routes that take one, before anything is written."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    item_id = (await _create(client, category_id, target_price="50.00"))["id"]
+    body = {"category_id": category_id, "name": "Beta", "target_price": target}
+
+    for res in (
+        await client.post("/api/items", json=body, headers=CSRF),
+        await client.patch(f"/api/items/{item_id}", json={"target_price": target}, headers=CSRF),
+        await client.patch(
+            f"/api/items/{item_id}/watch", json={"target_price": target}, headers=CSRF
+        ),
+    ):
+        assert res.status_code == 422, res.text
+        error = res.json()["error"]
+        assert error["code"] == "validation_error"
+        assert set(error["fields"]) == {"target_price"}
+
+    listed = (await client.get("/api/items")).json()
+    assert [row["name"] for row in listed["data"]] == ["Alpha"]
+    assert listed["data"][0]["target_price"] == "50.00"
 
 
 async def _pending_check_due_in(db_session, owner_id, hours, paused=False, active=True):
@@ -424,6 +571,45 @@ async def test_price_checks_carry_how_each_price_was_read(client, db_session):
 
     assert check["method"] == "jsonld"
     assert check["confirmed"] is True
+
+
+async def test_a_limit_below_one_reads_as_the_default(client, db_session):
+    # as the mock reads it; Postgres refuses a negative LIMIT
+    owner_id = await _sign_in(client)
+    item_id = await _seed_checks(db_session, owner_id, (1, "100.00"))
+
+    res = await client.get(f"/api/items/{item_id}/price-checks?limit=-1")
+
+    assert res.status_code == 200, res.text
+    assert len(res.json()["data"]) == 1
+
+
+async def test_a_page_below_one_reads_as_the_default(client, db_session):
+    owner_id = await _sign_in(client)
+    await _seed_checks(db_session, owner_id, (1, "100.00"))
+
+    res = await client.get("/api/items", params={"page": -1, "per_page": 0})
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert (len(body["data"]), body["meta"]) == (1, {"page": 1, "per_page": 50, "total": 1})
+
+
+@pytest.mark.parametrize("search", ["_", "%", "\\"])
+async def test_search_matches_like_wildcards_literally(client, db_session, search):
+    # as the mock's substring match reads it: "_" is an underscore, not any character
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category = await sc.category()
+        for name in ("Leica M6", "Leica_M6", "Leica 50%", "Leica\\M6"):
+            await sc.watch(item=await sc.item(name=name, category=category))
+
+    res = await client.get("/api/items", params={"search": search})
+
+    assert res.status_code == 200, res.text
+    assert [i["name"] for i in res.json()["data"]] == [
+        {"_": "Leica_M6", "%": "Leica 50%", "\\": "Leica\\M6"}[search]
+    ]
 
 
 async def test_an_unbelieved_reading_is_still_in_the_log(client, db_session):
@@ -534,6 +720,9 @@ async def test_a_new_watch_is_hunting_before_the_request_returns(client):
     hunts = [j for j in jobs if j["kind"] == "hunt"]
     assert sorted(j["site_name"] for j in hunts) == ["Mercari", "eBay"]
     assert {j["reason"] for j in hunts} == {"created"}
+    # the first site at the front, the next a step back, so a batch of new
+    # items gets every item's first site hunted before anyone's second
+    assert sorted(j["priority"] for j in hunts) == [90, 100]
     # and the market stats its prompts read from
     assert [j["kind"] for j in jobs if j["kind"] == "ground"] == ["ground"]
 
@@ -551,6 +740,122 @@ async def test_a_pinned_site_subset_is_what_gets_hunted(client):
 
     jobs = (await client.get("/api/jobs", params={"item_id": item["id"], "kind": "hunt"})).json()
     assert [j["site_name"] for j in jobs["data"]] == ["eBay"]
+
+
+async def test_a_site_named_twice_is_pinned_once(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    ebay = catalog["site_ids"][0]
+
+    created = await _create(client, catalog["category_id"], site_ids=[ebay, ebay])
+    patched = await client.patch(
+        f"/api/items/{created['id']}", json={"site_ids": [ebay, ebay]}, headers=CSRF
+    )
+
+    assert created["site_ids"] == [ebay]
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["site_ids"] == [ebay]
+
+
+async def test_create_item_with_every_site_follows_the_category(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+
+    created = await _create(client, catalog["category_id"], site_ids=catalog["site_ids"])
+
+    assert created["site_ids"] is None
+
+
+async def test_update_item_narrows_the_sites(client):
+    await _sign_in(client)
+    catalog = await _catalog(client, sites=("eBay", "Mercari", "Etsy"))
+    item_id = (await _create(client, catalog["category_id"]))["id"]
+    ebay, mercari, _ = catalog["site_ids"]
+
+    res = await client.patch(
+        f"/api/items/{item_id}", json={"site_ids": [ebay, mercari]}, headers=CSRF
+    )
+
+    assert res.status_code == 200, res.text
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+    assert sorted(detail["site_ids"]) == [ebay, mercari]
+
+
+@pytest.mark.parametrize("sites", ["none", "empty", "all"])
+async def test_update_item_widens_the_sites_back_to_the_category(client, sites):
+    """null, none ticked and every one ticked all mean "the category's
+    sites" — stored as no subset, so a site linked later is searched too."""
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    item_id = (await _create(client, catalog["category_id"], site_ids=catalog["site_ids"][:1]))[
+        "id"
+    ]
+    site_ids = {"none": None, "empty": [], "all": catalog["site_ids"]}[sites]
+
+    res = await client.patch(f"/api/items/{item_id}", json={"site_ids": site_ids}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    assert (await client.get(f"/api/items/{item_id}")).json()["site_ids"] is None
+
+
+async def test_an_absent_site_ids_is_left_alone(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    pinned = catalog["site_ids"][:1]
+    item_id = (await _create(client, catalog["category_id"], site_ids=pinned))["id"]
+
+    await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert (await client.get(f"/api/items/{item_id}")).json()["site_ids"] == pinned
+
+
+async def test_a_site_outside_the_category_is_refused(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    item_id = (await _create(client, catalog["category_id"], site_ids=catalog["site_ids"][:1]))[
+        "id"
+    ]
+    body = {"name": "Etsy", "base_url": "https://etsy.test"}
+    unlinked = (await client.post("/api/sites", json=body, headers=CSRF)).json()["id"]
+
+    res = await client.patch(
+        f"/api/items/{item_id}",
+        json={"site_ids": [catalog["site_ids"][1], unlinked], "name": "Renamed"},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 422, res.text
+    error = res.json()["error"]
+    assert error["code"] == "validation_error"
+    assert error["fields"] == {"site_ids": "Must be a subset of the category's linked sites"}
+    # nothing in the request was applied
+    detail = (await client.get(f"/api/items/{item_id}")).json()
+    assert (detail["name"], detail["site_ids"]) == ("Alpha", catalog["site_ids"][:1])
+
+
+async def test_create_item_with_a_site_outside_the_category_is_refused(client):
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    body = {"name": "Etsy", "base_url": "https://etsy.test"}
+    unlinked = (await client.post("/api/sites", json=body, headers=CSRF)).json()["id"]
+
+    for site_ids in ([catalog["site_ids"][0], unlinked], [99999]):
+        res = await client.post(
+            "/api/items",
+            json={
+                "category_id": catalog["category_id"],
+                "name": "Alpha",
+                "target_price": None,
+                "site_ids": site_ids,
+            },
+            headers=CSRF,
+        )
+
+        assert res.status_code == 422, res.text
+        error = res.json()["error"]
+        assert error["code"] == "validation_error"
+        assert error["fields"] == {"site_ids": "Must be a subset of the category's linked sites"}
+    assert (await client.get("/api/items")).json()["data"] == []
 
 
 async def test_untracking_a_listing_takes_it_out_of_the_rotation(client, db_session):
@@ -882,3 +1187,265 @@ async def test_the_facts_say_how_long_the_hunter_is_backing_off(client, db_sessi
 
     assert hunt["backoff_minutes"] == 60
     assert datetime.fromisoformat(hunt["next_at"]) < now + timedelta(minutes=61)
+
+
+# --- item names -----------------------------------------------------------------
+#
+# The items row is shared by every watcher and the hunter searches for its
+# name, so one watcher's rename must not change what another is hunting.
+
+
+async def _shared_item(db_session, owner_id, *, role="user", name="Alpha"):
+    """An item the caller and a stranger both watch, the caller's with a
+    listing and a pending check; the caller's role set to `role`. Returns
+    (item id, stranger's watch id, caller's listing id, check job id)."""
+    async with _seed_for(db_session, owner_id) as sc:
+        (await sc.user()).role = role
+        item = await sc.item(name)
+        theirs = await sc.watch(item, user=await sc.other_user())
+        mine = await sc.watch(item)
+        listing = await sc.listing(mine, item)
+        job = await sc.job("recheck", mine, status="pending", listing_id=listing.id)
+    return item.id, theirs.id, listing.id, job.id
+
+
+async def test_a_name_is_trimmed(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+
+    created = await _create(client, category_id, name="  Alpha \n")
+    assert created["name"] == "Alpha"
+
+    res = await client.patch(f"/api/items/{created['id']}", json={"name": " Beta "}, headers=CSRF)
+    assert res.json()["name"] == "Beta"
+
+
+async def test_a_blank_name_is_refused(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    created = await _create(client, category_id)
+
+    res = await client.post(
+        "/api/items",
+        json={"category_id": category_id, "name": "   ", "target_price": None},
+        headers=CSRF,
+    )
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert "name" in res.json()["error"]["fields"]
+
+    res = await client.patch(f"/api/items/{created['id']}", json={"name": " "}, headers=CSRF)
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "validation_error"
+    assert (await client.get(f"/api/items/{created['id']}")).json()["name"] == "Alpha"
+
+
+async def test_adding_a_name_someone_watches_joins_their_item(client, db_session):
+    """Without regard to case: "switch oled" is the same thing to hunt."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        item = await sc.item("Switch OLED")
+        await sc.watch(item, user=await sc.other_user())
+
+    created = await _create(client, item.category_id, name="switch oled")
+
+    assert created["id"] == item.id
+    assert created["name"] == "Switch OLED"
+
+
+async def test_adding_a_name_you_already_track_is_a_duplicate(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    await _create(client, category_id, name="Dbl Click")
+
+    res = await client.post(
+        "/api/items",
+        json={"category_id": category_id, "name": "DBL CLICK", "target_price": None},
+        headers=CSRF,
+    )
+
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "duplicate"
+    assert "name" in res.json()["error"]["fields"]
+
+
+async def test_a_double_submitted_add_makes_one_item(client, db_session):
+    """Both requests read "no such item" before either inserts: the second
+    must land on the first's row, not make another, and then find the watch
+    taken."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        category_id = (await sc.category()).id
+    body = {"category_id": category_id, "name": "Dbl Click", "target_price": None}
+
+    results = await asyncio.gather(
+        *(client.post("/api/items", json=body, headers=CSRF) for _ in range(2))
+    )
+
+    assert sorted(r.status_code for r in results) == [201, 422]
+    async with db_session() as session:
+        assert await session.scalar(select(func.count(Items.id))) == 1
+    # and the name can still be added — by anyone, onto that one item
+    listed = (await client.get("/api/items")).json()["data"]
+    assert [row["name"] for row in listed] == ["Dbl Click"]
+
+
+async def test_renaming_an_item_others_watch_moves_only_your_watch(client, db_session):
+    owner_id = await _sign_in(client)
+    item_id, their_watch, listing_id, job_id = await _shared_item(db_session, owner_id)
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.status_code == 200, res.text
+    renamed = res.json()
+    assert renamed["id"] != item_id
+    assert renamed["name"] == "Renamed"
+    assert [listing["id"] for listing in renamed["listings"]] == [listing_id]
+    async with db_session() as session:
+        assert (await session.get(Items, item_id)).name == "Alpha"
+        assert (await session.get(Watches, their_watch)).item_id == item_id
+        # the queued check hunts, and reads, under the watch's new item
+        assert (await session.get(Jobs, job_id)).item_id == renamed["id"]
+        assert (await session.get(Listings, listing_id)).item_id == renamed["id"]
+        grounds = await session.scalars(select(Jobs.item_id).where(Jobs.kind == "ground"))
+        assert list(grounds) == [renamed["id"]]
+    assert (await client.get(f"/api/items/{item_id}")).status_code == 404
+
+
+async def test_the_only_watcher_renames_in_place(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        (await sc.user()).role = "user"
+        item = await sc.item()
+        await sc.watch(item)
+
+    res = await client.patch(f"/api/items/{item.id}", json={"name": "Beta"}, headers=CSRF)
+
+    assert res.json()["id"] == item.id
+    assert res.json()["name"] == "Beta"
+
+
+async def test_an_admin_renames_a_shared_item_in_place(client, db_session):
+    """An admin curates the catalog: the rename is everyone's."""
+    owner_id = await _sign_in(client)
+    item_id, their_watch, _, _ = await _shared_item(db_session, owner_id, role="admin")
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "Renamed"}, headers=CSRF)
+
+    assert res.json()["id"] == item_id
+    async with db_session() as session:
+        assert (await session.get(Items, item_id)).name == "Renamed"
+        assert (await session.get(Watches, their_watch)).item_id == item_id
+
+
+@pytest.mark.parametrize("role", ["user", "admin"])
+async def test_renaming_onto_another_items_name_moves_there(client, db_session, role):
+    """Even the only watcher, even an admin: two items of one name is what
+    made the name impossible to add."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        (await sc.user()).role = role
+        mine = await sc.item("Alpha")
+        await sc.watch(mine)
+        theirs = await sc.item("Beta")
+        await sc.watch(theirs, user=await sc.other_user())
+
+    res = await client.patch(f"/api/items/{mine.id}", json={"name": "beta"}, headers=CSRF)
+
+    assert res.json()["id"] == theirs.id
+    assert res.json()["name"] == "Beta"
+
+
+async def test_renaming_onto_a_name_you_track_is_a_duplicate(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        alpha = await sc.item("Alpha")
+        await sc.watch(alpha)
+        await sc.watch(await sc.item("Beta"))
+
+    res = await client.patch(f"/api/items/{alpha.id}", json={"name": "BETA"}, headers=CSRF)
+
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "duplicate"
+    assert (await client.get(f"/api/items/{alpha.id}")).json()["name"] == "Alpha"
+
+
+async def test_recasing_a_shared_item_is_for_an_admin(client, db_session):
+    """There is no other item to move to: "ALPHA" is this one."""
+    owner_id = await _sign_in(client)
+    item_id, _, _, _ = await _shared_item(db_session, owner_id)
+
+    res = await client.patch(f"/api/items/{item_id}", json={"name": "ALPHA"}, headers=CSRF)
+
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "forbidden"
+    assert (await client.get(f"/api/items/{item_id}")).json()["name"] == "Alpha"
+
+
+async def test_an_item_says_how_many_watch_it(client, db_session):
+    """The edit dialog reads it to say whether a rename reaches anyone else."""
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        shared = await sc.item("Alpha")
+        await sc.watch(shared)
+        await sc.watch(shared, user=await sc.other_user())
+        await sc.watch(await sc.item("Beta"))
+
+    listed = (await client.get("/api/items")).json()["data"]
+
+    assert {row["name"]: row["watcher_count"] for row in listed} == {"Alpha": 2, "Beta": 1}
+    assert (await client.get(f"/api/items/{shared.id}")).json()["watcher_count"] == 2
+
+
+# --- the last watcher leaving ----------------------------------------------------
+
+
+async def _ground_status(db_session, item_id: int) -> list[str]:
+    async with db_session() as session:
+        statuses = await session.scalars(
+            select(Jobs.status).where(Jobs.kind == "ground", Jobs.item_id == item_id)
+        )
+        return list(statuses)
+
+
+async def test_unwatching_the_last_watch_cancels_its_grounding(client, db_session):
+    """The item stays in the catalog, but nobody is asking about its price:
+    grounding it would spend search and model calls on nothing."""
+    await _sign_in(client)
+    catalog = await _catalog(client)
+    body = {"category_id": catalog["category_id"], "name": "Game Boy Color", "target_price": None}
+    item = (await client.post("/api/items", json=body, headers=CSRF)).json()
+    assert await _ground_status(db_session, item["id"]) == ["pending"]
+
+    assert (await client.delete(f"/api/items/{item['id']}", headers=CSRF)).status_code == 204
+
+    assert await _ground_status(db_session, item["id"]) == ["cancelled"]
+
+
+async def test_unwatching_a_shared_item_keeps_its_grounding(client, db_session):
+    owner_id = await _sign_in(client)
+    item_id, _, _, _ = await _shared_item(db_session, owner_id)
+    async with _seed_for(db_session, owner_id) as sc:
+        await sc.job("ground", None, status="pending", item_id=item_id)
+
+    assert (await client.delete(f"/api/items/{item_id}", headers=CSRF)).status_code == 204
+
+    assert await _ground_status(db_session, item_id) == ["pending"]
+
+
+async def test_renaming_the_only_watch_away_cancels_the_old_items_grounding(client, db_session):
+    owner_id = await _sign_in(client)
+    async with _seed_for(db_session, owner_id) as sc:
+        mine = await sc.item("Alpha")
+        await sc.watch(mine)
+        await sc.job("ground", None, status="pending", item_id=mine.id)
+        theirs = await sc.item("Beta")
+        await sc.watch(theirs, user=await sc.other_user())
+
+    res = await client.patch(f"/api/items/{mine.id}", json={"name": "Beta"}, headers=CSRF)
+
+    assert res.json()["id"] == theirs.id
+    assert await _ground_status(db_session, mine.id) == ["cancelled"]

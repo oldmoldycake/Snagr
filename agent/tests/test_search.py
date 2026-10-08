@@ -73,6 +73,7 @@ def brave(monkeypatch, served):
 
 @pytest.fixture
 def searxng(monkeypatch, served):
+    monkeypatch.setattr(search, "search_gate", search.SearchGate())
     monkeypatch.setattr(search, "SEARCH_PROVIDER", "searxng")
     monkeypatch.setattr(search, "SEARXNG_URL", "http://searx.lan:8888")
     return served
@@ -188,14 +189,14 @@ class TestSearxng:
         assert len(run(["q"])) == 3
         assert [r.url.params["pageno"] for r in searxng["requests"]] == ["1", "2", "3"]
 
-    def test_a_suspension_is_slept_off_once_then_retried(self, searxng):
+    def test_a_suspension_raises_instead_of_sleeping(self, searxng):
         searxng["responses"] = [
             searxng_answer([], unresponsive=[["google", "Suspended: too many requests"]]),
-            searxng_answer([{"url": "https://a.com/1", "content": "$10"}]),
         ]
 
-        assert run(["q"], pages=1) == {"https://a.com/1": "$10"}
-        assert searxng["slept"][0] == search.SEARXNG_SUSPENSION_BACKOFF_S
+        with pytest.raises(search.SearchSuspended):
+            run(["q"], pages=1)
+        assert searxng["slept"] == []
 
 
 class TestNoProvider:

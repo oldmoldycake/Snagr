@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowDown, ExternalLink } from 'lucide-react'
@@ -7,8 +7,8 @@ import { qk } from '@/api/queries'
 import { Radar } from '@/components/ui/radar'
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { TerminalLog } from '@/components/ui/terminal-log'
-import { cn } from '@/lib/cn'
-import { checkLine } from './lines'
+import { ConnectionStatus } from './ConnectionStatus'
+import { checkLine, runningWork } from './lines'
 import { LiveHunts } from './LiveHunts'
 import { useJobs } from './JobsProvider'
 
@@ -27,7 +27,10 @@ export function ActivitySheet() {
     enabled: panelOpen,
   })
 
-  useEffect(() => {
+  // Before paint, not after: checks arrive in bursts, and a scroll event from
+  // one line's follow that lands after the next line renders reads as the
+  // reader scrolling up, which would switch following off.
+  useLayoutEffect(() => {
     if (following && logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
@@ -49,21 +52,12 @@ export function ActivitySheet() {
             <Radar size={22} animate={live.length + checksRunning > 0} />
             <SheetTitle className="min-w-0 truncate font-display text-[15px] font-semibold tracking-[0.06em] text-ink uppercase">
               {live.length + checksRunning > 0
-                ? `Live · ${live.length} hunts · ${checksRunning} checks`
-                : 'The hunter is quiet'}
+                ? `Running: ${runningWork(live, checksRunning)}`
+                : 'Nothing running'}
             </SheetTitle>
           </div>
           <SheetDescription className="mt-1 flex flex-wrap items-center gap-3 text-xs text-ink-3">
-            <span className="flex items-center gap-1.5">
-              <span
-                aria-hidden
-                className={cn(
-                  'size-1.5 rounded-full',
-                  connection === 'live' ? 'bg-drop' : 'animate-pulse bg-warn',
-                )}
-              />
-              {connection === 'live' ? 'live' : 'reconnecting…'}
-            </span>
+            <ConnectionStatus connection={connection} />
             <Link
               to="/activity"
               onClick={() => setPanelOpen(false)}
@@ -74,11 +68,11 @@ export function ActivitySheet() {
           </SheetDescription>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div ref={logRef} onScroll={onScroll} className="flex-1 overflow-y-auto">
           <div className="p-4">
             <LiveHunts onOpen={() => setPanelOpen(false)} />
           </div>
-          <div ref={logRef} onScroll={onScroll} className="relative bg-well px-4 py-3">
+          <div className="relative bg-well px-4 py-3">
             {checks.length === 0 ? (
               <p className="font-mono text-xs text-ink-3">
                 Nothing checked while this page has been open.

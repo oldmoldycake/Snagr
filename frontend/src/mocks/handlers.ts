@@ -16,9 +16,11 @@ import type {
   LoginRequest,
   MeUpdateRequest,
   NotificationChannelCreateRequest,
+  NotificationChannelTestRequest,
   NotificationChannelUpdateRequest,
   NotificationEvent,
   PasswordChangeRequest,
+  PasswordResetRequest,
   ReviewConfirmRequest,
   SiteCreateRequest,
   SiteUpdateRequest,
@@ -106,11 +108,83 @@ function intParam(request: StrictRequest<DefaultBodyType>, name: string, fallbac
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback
 }
 
-const slugify = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+/**
+ * A new category's slug, never "" (a name of only emoji or symbols has no
+ * letters to keep) and never one another category holds: "C++" after "C"
+ * gets "c-2".
+ */
+function uniqueSlug(name: string) {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'category'
+  let slug = base
+  for (let n = 2; store.categories.some((c) => c.slug === slug); n++) slug = `${base}-${n}`
+  return slug
+}
+
+/**
+ * The backend's name rules for categories and sites, shared by create and
+ * rename: trimmed, required, and unique ignoring case. The trimmed name, or
+ * the 422 to answer with.
+ */
+function checkedName(
+  rows: { id: number; name: string }[],
+  noun: 'category' | 'site',
+  name: string,
+  exceptId?: number,
+): string | HttpResponse<DefaultBodyType> {
+  const trimmed = name.trim()
+  if (!trimmed) return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
+  if (rows.some((r) => r.id !== exceptId && r.name.toLowerCase() === trimmed.toLowerCase())) {
+    const message = `A ${noun} with this name already exists`
+    return err(422, 'duplicate', message, { fields: { name: message } })
+  }
+  return trimmed
+}
+
+const MIN_PASSWORD_LENGTH = 8
+
+/** The backend's rule for a new password; the 422 to answer with, or null when it passes. */
+function weakPassword(password: string, field: 'password' | 'new_password') {
+  if (password.length >= MIN_PASSWORD_LENGTH) return null
+  const message = `Password must be at least ${MIN_PASSWORD_LENGTH} characters`
+  return err(422, 'validation_error', message, { fields: { [field]: message } })
+}
+
+/**
+ * The backend's email-taken 422, or null when no other account holds the
+ * address. Addresses are stored lowercased and matched regardless of case.
+ */
+function emailTaken(email: string, exceptId?: number) {
+  const key = email.toLowerCase()
+  if (!store.users.some((u) => u.id !== exceptId && u.email.toLowerCase() === key)) return null
+  const message = 'An account with this email already exists'
+  return err(422, 'validation_error', message, { fields: { email: message } })
+}
+
+const SIGN_IN_LIMIT = 10
+const SIGN_IN_WINDOW = 15 * MINUTE
+const signInAttempts = new Map<string, number[]>()
+
+/**
+ * The backend's per-account sign-in limit: an attempt counts when it starts,
+ * and an account with SIGN_IN_LIMIT of them in the window is refused, right
+ * password or not. Counts this attempt, or returns the 429 without counting.
+ * (The backend also limits each client address, which the mock has no notion of.)
+ */
+function signInAttempt(email: string) {
+  const now = Date.now()
+  const key = email.toLowerCase()
+  const recent = (signInAttempts.get(key) ?? []).filter((at) => at > now - SIGN_IN_WINDOW)
+  if (recent.length >= SIGN_IN_LIMIT) {
+    const minutes = Math.ceil((recent[0] + SIGN_IN_WINDOW - now) / MINUTE)
+    return err(429, 'rate_limited', `Too many sign-in attempts — try again in ${minutes} minute${minutes === 1 ? '' : 's'}`)
+  }
+  signInAttempts.set(key, [...recent, now])
+  return null
+}
 
 /** Simulated network latency so loading states are visible. */
 const wait = () => new Promise((r) => setTimeout(r, 120 + Math.random() * 180))
@@ -140,6 +214,15 @@ function newJob(kind: MockJob['kind'], over: Partial<MockJob> = {}): MockJob {
     created_at: Date.now(),
     ...over,
   }
+}
+
+/**
+ * The head start a person's hunt of a watch's index-th site gets: 100 for the
+ * first, 10 less for each after it, so a batch of new items has every item's
+ * first site hunted before anyone's second.
+ */
+function sitePriority(index: number): number {
+  return Math.max(100 - index * 10, 0)
 }
 
 /**
@@ -238,8 +321,8 @@ interface TrackingFields {
 /**
  * Normalize + validate the tracking fields shared by item create/update.
  * `existing` supplies defaults on PATCH; omitted fields keep their value.
- * recheck_interval_minutes is the one field where an explicit null changes
- * something: back to the instance default.
+ * An explicit null changes criteria (cleared), recheck_interval_minutes (back
+ * to the instance default) and site_ids (every site of the category).
  * site_ids must be a subset of the category's sites; empty/full set → null.
  */
 function validateTracking(
@@ -305,13 +388,128 @@ function validateTracking(
   }
 }
 
+/** The largest target watches.target_price (numeric(10, 2)) can hold, in cents. */
+const MAX_TARGET_CENTS = 9_999_999_999
+
+/**
+ * A target price → cents (null = no target), or the 422 for anything but a
+ * finite amount in whole cents from 0.01 to 99999999.99 — "NaN", "1,000",
+ * "1e9", "0" and "1.001" alike.
+ */
+function parseTarget(value: string | null | undefined): number | null | HttpResponse<DefaultBodyType> {
+  if (value == null) return null
+  const amount = value.trim() === '' ? NaN : Number(value)
+  const cents = Math.round(amount * 100)
+  if (
+    !Number.isFinite(amount) ||
+    Math.abs(amount * 100 - cents) > 1e-6 ||
+    cents < 1 ||
+    cents > MAX_TARGET_CENTS
+  ) {
+    const bounds = 'between 0.01 and 99999999.99'
+    return err(422, 'validation_error', `Target price must be an amount ${bounds}`, {
+      fields: { target_price: `Must be an amount ${bounds}, in whole cents` },
+    })
+  }
+  return cents
+}
+
+/** The category's item by this name, trimmed and ignoring case — how the backend matches them. */
+function trackedName(categoryId: number, name: string) {
+  const key = name.trim().toLowerCase()
+  return store.items.find((i) => i.category_id === categoryId && i.name.toLowerCase() === key)
+}
+
+function alreadyTracked() {
+  const message = 'You already track an item with this name'
+  return err(422, 'duplicate', message, { fields: { name: message } })
+}
+
 const KNOWN_EVENTS: NotificationEvent[] = ['target.hit', 'listing.new']
+const NTFY_TOPIC = /^[A-Za-z0-9_-]{1,64}$/
+// every channel is another send per event, so one user can't queue unbounded work
+const MAX_CHANNELS = 10
+
+/**
+ * Why a channel URL isn't a public address, or null — an approximation of
+ * the backend's notifications.public_url (which checks every reserved range
+ * via Python's ipaddress): container names, local names, credentials, and
+ * the common private IPv4/IPv6 literals.
+ */
+function privateUrlProblem(raw: string): string | null {
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return 'not a valid URL'
+  }
+  if (url.username || url.password) return 'a URL carrying credentials is not accepted'
+  const host = url.hostname.toLowerCase().replace(/\.$/, '')
+  if (host.startsWith('[')) {
+    return /^\[(::1?|::ffff:.*|f[c-d].*|fe[89ab].*)\]$/.test(host) ? `${host} is a private or reserved address` : null
+  }
+  // URL() normalizes the shorthand IPv4 spellings ("127.1") to dotted quads
+  const quad = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host)
+  if (quad) {
+    const [a, b] = [Number(quad[1]), Number(quad[2])]
+    const reserved =
+      [0, 10, 127].includes(a) ||
+      a >= 224 ||
+      (a === 100 && b >= 64 && b < 128) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b < 32) ||
+      (a === 192 && b === 168)
+    return reserved ? `${host} is a private or reserved address` : null
+  }
+  if (!host.includes('.') || host === 'localhost' || /\.(localhost|internal|local|home\.arpa)$/.test(host)) {
+    return `${host} is not a public hostname`
+  }
+  return null
+}
 
 interface ChannelFields {
   name: string
   url: string | null
   topic: string | null
   events: NotificationEvent[] | null
+}
+
+/**
+ * Validate where a channel of this kind sends, clearing the field its kind
+ * doesn't use. Saves and the unsaved test share it, so a test never reaches a
+ * destination a save would refuse.
+ */
+function validateDestination(
+  kind: MockNotificationChannel['kind'],
+  url: string | null,
+  topic: string | null,
+): Pick<ChannelFields, 'url' | 'topic'> | HttpResponse<DefaultBodyType> {
+  if (kind === 'ntfy') {
+    if (!topic) {
+      return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
+    }
+    if (!NTFY_TOPIC.test(topic)) {
+      return err(422, 'validation_error', 'Not a valid ntfy topic', {
+        fields: { topic: 'Use 1-64 letters, digits, - or _' },
+      })
+    }
+    return { url: null, topic }
+  }
+  if (!url || !/^https?:\/\//.test(url)) {
+    return err(422, 'validation_error', 'A valid URL is required', { fields: { url: 'Must be an http(s) URL' } })
+  }
+  if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
+    return err(422, 'validation_error', 'Not a Discord webhook URL', {
+      fields: { url: 'Must be a Discord incoming-webhook URL' },
+    })
+  }
+  const problem = privateUrlProblem(url)
+  if (problem) {
+    return err(422, 'validation_error', 'Notifications can only be sent to a public address', {
+      fields: { url: problem },
+    })
+  }
+  return { url, topic: null }
 }
 
 /**
@@ -330,24 +528,12 @@ function validateChannel(
     return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
   }
 
-  let url = body.url !== undefined ? body.url.trim() || null : (existing?.url ?? null)
-  let topic = body.topic !== undefined ? body.topic.trim() || null : (existing?.topic ?? null)
-  if (kind === 'ntfy') {
-    url = null
-    if (!topic) {
-      return err(422, 'validation_error', 'Topic is required', { fields: { topic: 'Topic is required' } })
-    }
-  } else {
-    topic = null
-    if (!url || !/^https?:\/\//.test(url)) {
-      return err(422, 'validation_error', 'A valid URL is required', { fields: { url: 'Must be an http(s) URL' } })
-    }
-    if (kind === 'discord' && !/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(url)) {
-      return err(422, 'validation_error', 'Not a Discord webhook URL', {
-        fields: { url: 'Must be a Discord incoming-webhook URL' },
-      })
-    }
-  }
+  const destination = validateDestination(
+    kind,
+    body.url !== undefined ? body.url.trim() || null : (existing?.url ?? null),
+    body.topic !== undefined ? body.topic.trim() || null : (existing?.topic ?? null),
+  )
+  if (destination instanceof HttpResponse) return destination
 
   let events = body.events !== undefined ? body.events : (existing?.events ?? null)
   if (events != null) {
@@ -359,7 +545,7 @@ function validateChannel(
     if (events.length === 0 || events.length === KNOWN_EVENTS.length) events = null
   }
 
-  return { name, url, topic, events }
+  return { name, ...destination, events }
 }
 
 /** Every mock route — the behavioral oracle for the backend's status codes and `error.code`s. */
@@ -374,6 +560,7 @@ export const handlers = [
       vision_enabled: true,
       mcp_enabled: true,
       recheck_interval_default: RECHECK_INTERVAL_MINUTES,
+      recheck_interval_floor: RECHECK_INTERVAL_FLOOR_MINUTES,
       hunt_enabled: HUNT_ENABLED,
     })
   }),
@@ -381,7 +568,10 @@ export const handlers = [
   http.post('/api/auth/login', async ({ request }) => {
     await wait()
     const body = (await request.json()) as LoginRequest
-    const user = store.users.find((u) => u.email === body.email && u.password === body.password)
+    const limited = signInAttempt(body.email)
+    if (limited) return limited
+    const email = body.email.toLowerCase()
+    const user = store.users.find((u) => u.email.toLowerCase() === email && u.password === body.password)
     if (!user || !user.is_active) {
       return err(401, 'invalid_credentials', 'Email or password is incorrect')
     }
@@ -395,9 +585,11 @@ export const handlers = [
       return err(403, 'registration_closed', 'Registration is closed — ask your admin for an invite')
     }
     const body = (await request.json()) as LoginRequest
+    const weak = weakPassword(body.password, 'password')
+    if (weak) return weak
     const user = {
       id: newId(),
-      email: body.email,
+      email: body.email.toLowerCase(),
       password: body.password,
       role: 'admin' as const,
       is_active: true,
@@ -442,9 +634,15 @@ export const handlers = [
       return err(410, 'invite_expired', 'This invite has expired or was already used')
     }
     const body = (await request.json()) as InviteAcceptRequest
+    const weak = weakPassword(body.password, 'password')
+    if (weak) return weak
+    // an invite pinned to an email wins over whatever the form submitted
+    const email = (invite.email ?? body.email).toLowerCase()
+    const taken = emailTaken(email)
+    if (taken) return taken
     const user = {
       id: newId(),
-      email: invite.email ?? body.email,
+      email,
       password: body.password,
       role: 'user' as const,
       is_active: true,
@@ -455,6 +653,35 @@ export const handlers = [
     invite.accepted_at = Date.now()
     localStorage.setItem(SESSION_KEY, String(user.id))
     return HttpResponse.json({ user: toUser(user) }, { status: 201 })
+  }),
+
+  http.get('/api/auth/password-resets/:token', async ({ params }) => {
+    await wait()
+    const reset = store.passwordResets.find((r) => r.token === params.token)
+    const user = store.users.find((u) => u.id === reset?.user_id)
+    if (!reset || !user) return err(404, 'not_found', 'This reset link is not valid')
+    if (reset.used_at || reset.expires_at < Date.now()) {
+      return err(410, 'reset_expired', 'This reset link has expired or was already used')
+    }
+    return HttpResponse.json({ email: user.email, expires_at: new Date(reset.expires_at).toISOString() })
+  }),
+
+  http.post('/api/auth/password-resets/:token', async ({ params, request }) => {
+    await wait()
+    const reset = store.passwordResets.find((r) => r.token === params.token)
+    const user = store.users.find((u) => u.id === reset?.user_id)
+    if (!reset || !user) return err(404, 'not_found', 'This reset link is not valid')
+    if (reset.used_at || reset.expires_at < Date.now()) {
+      return err(410, 'reset_expired', 'This reset link has expired or was already used')
+    }
+    const body = (await request.json()) as PasswordResetRequest
+    const weak = weakPassword(body.password, 'password')
+    if (weak) return weak
+    user.password = body.password
+    reset.used_at = Date.now()
+    // the backend signs the account out everywhere; the mock's one session is this browser's
+    if (localStorage.getItem(SESSION_KEY) === String(user.id)) localStorage.removeItem(SESSION_KEY)
+    return new HttpResponse(null, { status: 204 })
   }),
 
   http.patch('/api/me', async ({ request }) => {
@@ -475,7 +702,11 @@ export const handlers = [
     if (Object.keys(fields).length > 0) {
       return err(422, 'validation_error', 'Thresholds must be between 0.50 and 1.00', { fields })
     }
-    if (body.email !== undefined) user.email = body.email
+    if (body.email !== undefined && body.email.toLowerCase() !== user.email.toLowerCase()) {
+      const taken = emailTaken(body.email, user.id)
+      if (taken) return taken
+      user.email = body.email.toLowerCase()
+    }
     for (const field of thresholds) {
       if (body[field] !== undefined) user[field] = Number(body[field]).toFixed(2)
     }
@@ -485,6 +716,10 @@ export const handlers = [
   http.post('/api/me/password', async ({ request }) => {
     const user = requireUser()
     const body = (await request.json()) as PasswordChangeRequest
+    const weak = weakPassword(body.new_password, 'new_password')
+    if (weak) return weak
+    const limited = signInAttempt(user.email)
+    if (limited) return limited
     if (user.password !== body.current_password) {
       return err(422, 'invalid_password', 'Current password is incorrect', {
         fields: { current_password: 'Current password is incorrect' },
@@ -510,6 +745,9 @@ export const handlers = [
     }
     // mock-parity gap: the mock instance always has a ntfy server, so the 422
     // no_server branch (ntfy kind while NTFY_SERVER_URL is unset) is backend-only
+    if (store.notificationChannels.filter((c) => c.user_id === user.id).length >= MAX_CHANNELS) {
+      return err(409, 'channel_limit', `You can have at most ${MAX_CHANNELS} notification channels`)
+    }
     const fields = validateChannel(body.kind, body)
     if (fields instanceof HttpResponse) return fields
     const secret = body.kind === 'webhook' ? crypto.randomUUID().replace(/-/g, '') : null
@@ -550,6 +788,20 @@ export const handlers = [
     return new HttpResponse(null, { status: 204 })
   }),
 
+  // mock-parity gap: the mock sends nothing, so the 502 channel_failed of a
+  // destination that refuses the test is backend-only — as is no_server
+  http.post('/api/me/channels/test', async ({ request }) => {
+    requireUser()
+    await wait()
+    const body = (await request.json()) as NotificationChannelTestRequest
+    if (body.kind !== 'ntfy' && body.kind !== 'webhook' && body.kind !== 'discord') {
+      return err(422, 'validation_error', 'Unknown channel kind', { fields: { kind: 'Unknown channel kind' } })
+    }
+    const destination = validateDestination(body.kind, body.url?.trim() || null, body.topic?.trim() || null)
+    if (destination instanceof HttpResponse) return destination
+    return new HttpResponse(null, { status: 204 })
+  }),
+
   http.post('/api/me/channels/:id/test', async ({ params }) => {
     const user = requireUser()
     await wait()
@@ -580,6 +832,8 @@ export const handlers = [
     else if (scopes.some((s) => !TOKEN_SCOPES.includes(s))) fields.scopes = 'Unknown scope'
     if (body.expires_in_days != null && body.expires_in_days < 1) {
       fields.expires_in_days = 'Must be at least 1 day'
+    } else if (body.expires_in_days != null && body.expires_in_days > 3650) {
+      fields.expires_in_days = 'Must be 3650 days or fewer'
     }
     if (Object.keys(fields).length > 0) {
       return err(422, 'validation_error', 'Check the token details', { fields })
@@ -616,33 +870,32 @@ export const handlers = [
   }),
 
   http.post('/api/categories', async ({ request }) => {
-    requireUser()
+    requireAdmin()
     const body = (await request.json()) as CategoryCreateRequest
-    const name = body.name?.trim()
-    if (!name) return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
-    if (store.categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
-      return err(422, 'duplicate', 'A category with this name already exists', {
-        fields: { name: 'A category with this name already exists' },
-      })
-    }
-    const category = { id: newId(), name, slug: slugify(name), site_ids: [] }
+    const name = checkedName(store.categories, 'category', body.name ?? '')
+    if (name instanceof HttpResponse) return name
+    const category = { id: newId(), name, slug: uniqueSlug(name), site_ids: [] }
     store.categories.push(category)
     return HttpResponse.json(toCategory(category), { status: 201 })
   }),
 
   http.patch('/api/categories/:id', async ({ params, request }) => {
-    requireUser()
+    requireAdmin()
     const category = store.categories.find((c) => c.id === Number(params.id))
     if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
     const body = (await request.json()) as CategoryUpdateRequest
     // the slug is set once at creation and survives every rename, so links and
     // bookmarks to /categories/<slug> keep working
-    if (body.name) category.name = body.name.trim()
+    if (body.name != null) {
+      const name = checkedName(store.categories, 'category', body.name, category.id)
+      if (name instanceof HttpResponse) return name
+      category.name = name
+    }
     return HttpResponse.json(toCategory(category))
   }),
 
   http.delete('/api/categories/:id', async ({ params }) => {
-    requireUser()
+    requireAdmin()
     const id = Number(params.id)
     const itemIds = new Set(store.items.filter((i) => i.category_id === id).map((i) => i.id))
     store.categories = store.categories.filter((c) => c.id !== id)
@@ -659,7 +912,7 @@ export const handlers = [
   }),
 
   http.put('/api/categories/:id/sites', async ({ params, request }) => {
-    requireUser()
+    requireAdmin()
     const category = store.categories.find((c) => c.id === Number(params.id))
     if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
     const body = (await request.json()) as { site_ids: number[] }
@@ -674,14 +927,16 @@ export const handlers = [
   }),
 
   http.post('/api/sites', async ({ request }) => {
-    requireUser()
+    requireAdmin()
     const body = (await request.json()) as SiteCreateRequest
     if (!body.name?.trim() || !body.base_url?.trim()) {
       return err(422, 'validation_error', 'Name and base URL are required')
     }
+    const name = checkedName(store.sites, 'site', body.name)
+    if (name instanceof HttpResponse) return name
     const site = {
       id: newId(),
-      name: body.name.trim(),
+      name,
       base_url: body.base_url.trim().replace(/\/$/, ''),
       paused_until: null,
       paused_reason: null,
@@ -692,7 +947,7 @@ export const handlers = [
   }),
 
   http.patch('/api/sites/:id', async ({ params, request }) => {
-    requireUser()
+    requireAdmin()
     const site = store.sites.find((s) => s.id === Number(params.id))
     if (!site) return err(404, 'not_found', `Site ${params.id} does not exist`)
     const body = (await request.json()) as SiteUpdateRequest
@@ -703,8 +958,19 @@ export const handlers = [
         fields: { paused_until: 'only null is accepted; the hunter sets pauses' },
       })
     }
-    if (body.name) site.name = body.name.trim()
-    if (body.base_url) site.base_url = body.base_url.trim().replace(/\/$/, '')
+    // "" is "leave it"; what trims to nothing is a blank, not a no-op
+    if (body.name) {
+      const name = checkedName(store.sites, 'site', body.name, site.id)
+      if (name instanceof HttpResponse) return name
+      site.name = name
+    }
+    if (body.base_url) {
+      const baseUrl = body.base_url.trim().replace(/\/$/, '')
+      if (!baseUrl) {
+        return err(422, 'validation_error', 'Base URL is required', { fields: { base_url: 'Base URL is required' } })
+      }
+      site.base_url = baseUrl
+    }
     if ('paused_until' in body) {
       site.paused_until = null
       site.paused_reason = null
@@ -719,15 +985,22 @@ export const handlers = [
   }),
 
   http.delete('/api/sites/:id', async ({ params }) => {
-    requireUser()
+    requireAdmin()
     const id = Number(params.id)
     store.sites = store.sites.filter((s) => s.id !== id)
     for (const category of store.categories) {
       category.site_ids = category.site_ids.filter((sid) => sid !== id)
     }
-    for (const listing of store.listings) {
-      if (listing.site_id === id) listing.active = false
+    // an item left pinning no site follows its category again, the site_ids rule
+    for (const item of store.items) {
+      if (item.site_ids == null) continue
+      const pinned = item.site_ids.filter((sid) => sid !== id)
+      item.site_ids = pinned.length > 0 ? pinned : null
     }
+    // a listing can't outlive its site, so it goes with its price history
+    const listingIds = new Set(store.listings.filter((l) => l.site_id === id).map((l) => l.id))
+    store.listings = store.listings.filter((l) => !listingIds.has(l.id))
+    store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
     return new HttpResponse(null, { status: 204 })
   }),
 
@@ -772,13 +1045,18 @@ export const handlers = [
     if (!category) {
       return err(404, 'not_found', `Category ${body.category_id} does not exist`)
     }
+    // every mock item is one the demo user tracks, so a name already in the
+    // category (ignoring case) is always theirs: the backend's 422 duplicate
+    if (trackedName(body.category_id, body.name)) return alreadyTracked()
     const tracking = validateTracking(body, category)
     if (tracking instanceof HttpResponse) return tracking
+    const target_cents = parseTarget(body.target_price)
+    if (target_cents instanceof HttpResponse) return target_cents
     const item = {
       id: newId(),
       category_id: body.category_id,
       name: body.name.trim(),
-      target_cents: body.target_price != null ? Math.round(Number(body.target_price) * 100) : null,
+      target_cents,
       criteria: tracking.criteria,
       selection_mode: tracking.selection_mode,
       max_listings: tracking.max_listings,
@@ -796,8 +1074,12 @@ export const handlers = [
     // (for the watch, or for the instance) queues no hunt: creating it is not
     // a press of Hunt now.
     if (tracking.hunt && HUNT_ENABLED) {
-      for (const siteId of tracking.site_ids ?? category.site_ids) {
-        enqueueHunt(watch.id, item.id, siteId, { user_id: user.id, reason: 'created', priority: 100 })
+      for (const [index, siteId] of (tracking.site_ids ?? category.site_ids).entries()) {
+        enqueueHunt(watch.id, item.id, siteId, {
+          user_id: user.id,
+          reason: 'created',
+          priority: sitePriority(index),
+        })
       }
     }
     store.jobs.push(newJob('ground', { item_id: item.id, user_id: user.id, reason: 'created' }))
@@ -817,15 +1099,22 @@ export const handlers = [
     const item = store.items.find((i) => i.id === Number(params.id))
     if (!item) return err(404, 'not_found', `Item ${params.id} does not exist`)
     const body = (await request.json()) as ItemUpdateRequest
+    if (body.name !== undefined) {
+      if (!body.name.trim()) {
+        return err(422, 'validation_error', 'Name is required', { fields: { name: 'Name is required' } })
+      }
+      const clash = trackedName(item.category_id, body.name)
+      if (clash && clash.id !== item.id) return alreadyTracked()
+    }
     const category = store.categories.find((c) => c.id === item.category_id)!
     const tracking = validateTracking(body, category, item)
     if (tracking instanceof HttpResponse) return tracking
+    const target_cents = parseTarget(body.target_price)
+    if (target_cents instanceof HttpResponse) return target_cents
     const roomBefore = item.max_listings
     const huntingBefore = item.hunt ?? true
     if (body.name !== undefined) item.name = body.name.trim()
-    if (body.target_price !== undefined) {
-      item.target_cents = body.target_price != null ? Math.round(Number(body.target_price) * 100) : null
-    }
+    if (body.target_price !== undefined) item.target_cents = target_cents
     item.criteria = tracking.criteria
     item.selection_mode = tracking.selection_mode
     item.max_listings = tracking.max_listings
@@ -884,10 +1173,10 @@ export const handlers = [
     const watch = store.watches.find((w) => w.item_id === Number(params.id))
     if (!watch) return err(404, 'not_found', `Item ${params.id} does not exist`)
     const body = (await request.json()) as WatchUpdateRequest
+    const target_cents = parseTarget(body.target_price)
+    if (target_cents instanceof HttpResponse) return target_cents
     if (body.notify !== undefined) watch.notify = body.notify
-    if (body.target_price !== undefined) {
-      watch.target_cents = body.target_price != null ? Math.round(Number(body.target_price) * 100) : null
-    }
+    if (body.target_price !== undefined) watch.target_cents = target_cents
     return HttpResponse.json({ id: watch.id, notify: watch.notify, target_price: cents(watch.target_cents) })
   }),
 
@@ -1330,7 +1619,7 @@ export const handlers = [
     }
     // the operator's kill switch: nothing would claim a hunt, so none is queued
     if (body.kind === 'hunt' && !HUNT_ENABLED) {
-      return err(409, 'hunting_disabled', 'Hunting is paused by the operator')
+      return err(409, 'hunting_disabled', 'Hunting is turned off on this server')
     }
 
     const scopeId = body.scope === 'global' ? null : (body.scope_id ?? null)
@@ -1338,7 +1627,8 @@ export const handlers = [
     // an unknown target and one holding none of the caller's watches are the
     // same 404: neither is anything this caller can ask the hunter about
     if (watches == null || watches.length === 0) {
-      return err(404, 'not_found', `Nothing to ${body.kind} in that scope`)
+      const action = body.kind === 'hunt' ? 'hunt for' : 'check prices for'
+      return err(404, 'not_found', `You have no items here to ${action}`)
     }
 
     const queued: MockJob[] = []
@@ -1349,11 +1639,11 @@ export const handlers = [
         // a full watch still gets a person's hunt: a swap hunt, for something
         // better than its weakest listing
         const full = activeListings(item.id).length >= item.max_listings
-        for (const siteId of sites) {
+        for (const [index, siteId] of sites.entries()) {
           const job = enqueueHunt(watch.id, watch.item_id, siteId, {
             user_id: user.id,
             reason: 'user',
-            priority: 100,
+            priority: sitePriority(index),
             payload: full ? { swap: true } : null,
           })
           if (job) queued.push(job)
@@ -1413,6 +1703,13 @@ export const handlers = [
     const pendingHunts = mine.filter(
       (j) => j.status === 'pending' && (j.kind === 'hunt' || j.kind === 'ground'),
     )
+    // the hunter doesn't claim a paused site's jobs, so they come due when the pause lifts
+    const dueAt = (j: MockJob) => {
+      const pausedUntil = store.sites.find((s) => s.id === j.site_id)?.paused_until
+      return pausedUntil != null && pausedUntil > Date.now()
+        ? Math.max(j.run_after, pausedUntil)
+        : j.run_after
+    }
     const midnight = new Date()
     midnight.setHours(0, 0, 0, 0)
     const finishedHunts = hunts
@@ -1427,10 +1724,10 @@ export const handlers = [
       checks_running: checks.filter((j) => j.status === 'running').length,
       checks_pending: pendingChecks.length,
       next_check_at: pendingChecks.length
-        ? new Date(Math.min(...pendingChecks.map((j) => j.run_after))).toISOString()
+        ? new Date(Math.min(...pendingChecks.map(dueAt))).toISOString()
         : null,
       next_hunt_at: pendingHunts.length
-        ? new Date(Math.min(...pendingHunts.map((j) => j.run_after))).toISOString()
+        ? new Date(Math.min(...pendingHunts.map(dueAt))).toISOString()
         : null,
       hunts_today: finishedHunts.filter((j) => j.finished_at! >= midnight.getTime()).length,
       listings_watched: watched,
@@ -1548,6 +1845,13 @@ export const handlers = [
     const user = store.users.find((u) => u.id === Number(params.id))
     if (!user) return err(404, 'not_found', `User ${params.id} does not exist`)
     const body = (await request.json()) as AdminUserUpdateRequest
+    const losesAdmin =
+      user.role === 'admin' &&
+      user.is_active &&
+      ((body.role !== undefined && body.role !== 'admin') || body.is_active === false)
+    if (losesAdmin && !store.users.some((u) => u.id !== user.id && u.role === 'admin' && u.is_active)) {
+      return err(409, 'last_admin', 'This is the only active admin — make someone else an admin first')
+    }
     if (body.is_active !== undefined) user.is_active = body.is_active
     if (body.role !== undefined) user.role = body.role
     return HttpResponse.json(toAdminUser(user))
@@ -1557,8 +1861,41 @@ export const handlers = [
     const admin = requireAdmin()
     const id = Number(params.id)
     if (id === admin.id) return err(422, 'cannot_delete_self', 'You cannot delete your own account')
+    if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
+    // everything that is theirs goes with them; catalog items stay, and the
+    // listings and history of an item only they watched go with their watch
+    const theirs = store.watches.filter((w) => w.user_id === id)
+    const watchIds = new Set(theirs.map((w) => w.id))
+    store.watches = store.watches.filter((w) => w.user_id !== id)
+    const orphaned = new Set(
+      theirs.map((w) => w.item_id).filter((itemId) => !store.watches.some((w) => w.item_id === itemId)),
+    )
+    const listingIds = new Set(store.listings.filter((l) => orphaned.has(l.item_id)).map((l) => l.id))
+    store.listings = store.listings.filter((l) => !listingIds.has(l.id))
+    store.checks = store.checks.filter((c) => !listingIds.has(c.listing_id))
+    store.jobs = store.jobs.filter((j) => j.watch_id == null || !watchIds.has(j.watch_id))
+    for (const job of store.jobs) if (job.user_id === id) job.user_id = null
+    store.notificationChannels = store.notificationChannels.filter((c) => c.user_id !== id)
+    store.tokens = store.tokens.filter((t) => t.user_id !== id)
+    store.visionQueue = store.visionQueue.filter((q) => q.user_id !== id)
     store.users = store.users.filter((u) => u.id !== id)
     return new HttpResponse(null, { status: 204 })
+  }),
+
+  http.post('/api/admin/users/:id/password-reset', async ({ params }) => {
+    requireAdmin()
+    const id = Number(params.id)
+    if (!store.users.some((u) => u.id === id)) return err(404, 'not_found', `User ${params.id} does not exist`)
+    // a new link replaces any earlier one, so only the newest works
+    store.passwordResets = store.passwordResets.filter((r) => r.user_id !== id)
+    const reset = {
+      token: crypto.randomUUID().replace(/-/g, ''),
+      user_id: id,
+      expires_at: Date.now() + DAY,
+      used_at: null,
+    }
+    store.passwordResets.push(reset)
+    return HttpResponse.json({ token: reset.token, expires_at: new Date(reset.expires_at).toISOString() }, { status: 201 })
   }),
 
   http.get('/api/admin/invites', async () => {
@@ -1575,7 +1912,7 @@ export const handlers = [
     const invite = {
       id: newId(),
       token: crypto.randomUUID().replace(/-/g, ''),
-      email: body.email?.trim() || null,
+      email: body.email?.trim().toLowerCase() || null,
       expires_at: Date.now() + 7 * DAY,
       accepted_at: null,
       created_at: Date.now(),

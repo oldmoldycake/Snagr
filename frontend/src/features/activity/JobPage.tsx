@@ -1,27 +1,38 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { cancelJob, getJob, getJobEvents } from '@/api/endpoints'
+import { isNotFound } from '@/api/client'
+import { cancelJob, getJob, getJobEvents, listUsers } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { Job, JobEvent } from '@/api/types'
+import type { AdminUser, Job, JobEvent, JobKind, User } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
+import { ErrorState } from '@/components/ui/error-state'
+import { NotFound } from '@/components/ui/not-found'
 import { Radar } from '@/components/ui/radar'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TerminalLog } from '@/components/ui/terminal-log'
 import { useSession } from '@/features/auth/useSession'
 import { cn } from '@/lib/cn'
 import { formatDateTime, formatDuration, formatTokens } from '@/lib/time'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { JobStatusDot } from './JobStatusDot'
-import { eventLine, resultText } from './lines'
+import { eventLine, failureDetail, resultText } from './lines'
 import { useJobs } from './JobsProvider'
 
 const LIVE_POLL_MS = 4000
 
+/** What the breadcrumb calls each kind of job. */
+const KIND_NAMES: Record<JobKind, string> = {
+  hunt: 'Hunt',
+  ground: 'Market price',
+  recheck: 'Check',
+}
+
 function Stat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
   return (
     <div className="rounded-md border border-hairline bg-surface px-3.5 py-2.5">
-      <p className="font-mono text-[10px] tracking-[0.13em] text-ink-3 uppercase">{label}</p>
+      <p className="font-mono text-[12px] text-ink-3">{label}</p>
       <p className={cn('mt-1 font-display text-[26px] leading-none font-semibold tnum', tone ?? 'text-ink')}>
         {value}
       </p>
@@ -56,6 +67,16 @@ export function JobPage() {
     enabled: !isLive,
   })
 
+  // an admin sees everyone's jobs, and one someone else asked for names them
+  const askerId = job.data?.user_id
+  const users = useQuery({
+    queryKey: qk.adminUsers,
+    queryFn: listUsers,
+    enabled: me?.role === 'admin' && askerId != null && askerId !== me.id,
+  })
+
+  usePageTitle(job.data ? title(job.data, isLive) : isNotFound(job.error) ? 'Job not found' : undefined)
+
   const events: JobEvent[] = useMemo(
     () => (isLive ? (liveEvents.get(jobId) ?? []) : (fetched.data?.data ?? [])),
     [isLive, liveEvents, jobId, fetched.data],
@@ -79,45 +100,69 @@ export function JobPage() {
     )
   }
 
+  if (job.isError && !isNotFound(job.error)) {
+    return (
+      <ErrorState
+        title="Couldn't load this job"
+        error={job.error}
+        onRetry={() => void job.refetch()}
+        retrying={job.isFetching}
+      />
+    )
+  }
+
   if (!job.data) {
-    return <EmptyState title="Not found" description="It may have been cleaned up." />
+    return (
+      <NotFound
+        title="Job not found"
+        description="It may have been cleaned up."
+        to="/activity"
+        label="Back to Activity"
+      />
+    )
   }
 
   const detail = job.data
   if (detail.kind === 'recheck') {
     return (
-      <EmptyState
-        title="Checks have no page"
-        description="A price check's whole output is the price it read, which is on the item."
-        action={
-          detail.item_id ? (
-            <Link
-              to={`/items/${detail.item_id}`}
-              className="font-mono text-[11px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
-            >
-              Open the item →
-            </Link>
-          ) : undefined
-        }
-      />
+      <div className="space-y-5">
+        <Breadcrumb job={detail} />
+        <EmptyState
+          title="Checks have no page"
+          description="A price check's whole output is the price it read, which is on the item."
+          action={
+            detail.item_id ? (
+              <Link
+                to={`/items/${detail.item_id}`}
+                className="font-mono text-[12px] tracking-[0.08em] text-ink-2 uppercase hover:text-lume"
+              >
+                Open the item →
+              </Link>
+            ) : undefined
+          }
+        />
+      </div>
     )
   }
 
   // the hunter's own work (no watch behind it) is admin-only to cancel
   const canCancel =
-    isLive && me != null && (me.role === 'admin' || detail.watch_id != null)
+    (isLive || detail.status === 'pending') &&
+    me != null &&
+    (me.role === 'admin' || detail.watch_id != null)
 
   return (
     <div className="space-y-5">
+      <Breadcrumb job={detail} />
       <div className="flex items-center gap-4">
         {isLive ? <Radar size={44} glyph /> : null}
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-2 font-mono text-[10.5px] tracking-[0.14em] text-ink-3 uppercase">
+          <p className="flex flex-wrap items-center gap-2 font-mono text-[12px] tracking-[0.14em] text-ink-3 uppercase">
             <JobStatusDot status={detail.status} withLabel />
             <span aria-hidden>·</span>
             <span className="tnum">{formatDateTime(detail.created_at)}</span>
             <span aria-hidden>·</span>
-            <span>{detail.user_id === null ? 'system' : 'you'}</span>
+            <span>{askedBy(detail, me, users.data?.data)}</span>
           </p>
           <h1
             className={cn(
@@ -125,7 +170,7 @@ export function JobPage() {
               isLive ? 'text-lume' : 'text-ink',
             )}
           >
-            {title(detail, isLive)}
+            <Heading job={detail} isLive={isLive} />
           </h1>
           <p className="mt-0.5 font-mono text-xs text-ink-3 tnum">{subline(detail, isLive)}</p>
         </div>
@@ -136,14 +181,7 @@ export function JobPage() {
         ) : null}
       </div>
 
-      {detail.error ? (
-        <p
-          role="alert"
-          className="rounded-sm border border-rise/40 bg-rise/10 px-3 py-2 text-[13px] text-rise"
-        >
-          <span aria-hidden>✗</span> {detail.error}
-        </p>
-      ) : null}
+      {detail.error ? <Failure error={detail.error} detail={failureDetail(events)} /> : null}
 
       {detail.stats ? <Tiles job={detail} /> : null}
 
@@ -151,14 +189,61 @@ export function JobPage() {
         ref={logRef}
         className="max-h-[32rem] overflow-y-auto rounded-lg border border-hairline bg-well px-4 py-3"
       >
-        {events.length === 0 ? (
+        {!isLive && fetched.isError ? (
+          <ErrorState
+            className="border-0 py-4"
+            title="Couldn't load the log"
+            error={fetched.error}
+            onRetry={() => void fetched.refetch()}
+            retrying={fetched.isFetching}
+          />
+        ) : events.length === 0 ? (
           <p className="py-2 font-mono text-xs text-ink-3">
-            {isLive ? 'Waiting for the hunter…' : 'Nothing was recorded for this job.'}
+            {isLive || detail.status === 'pending'
+              ? 'Waiting for Snagr…'
+              : 'Nothing was recorded for this job.'}
           </p>
         ) : (
-          <TerminalLog lines={events.map(eventLine)} />
+          <TerminalLog lines={events.map((event) => eventLine(event, detail.item_id))} />
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Why the job failed, in the sentence Snagr wrote for it. The error it raised is
+ * for whoever runs Snagr, so it waits behind Details rather than reaching the
+ * screen as it is.
+ */
+function Failure({ error, detail }: { error: string; detail: string | null }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-sm border border-rise/40 bg-rise/10 px-3 py-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <p role="alert" className="min-w-0 flex-1 text-[14px] text-rise">
+          <span aria-hidden>✗</span> {error}
+        </p>
+        {detail ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls="failure-detail"
+            onClick={() => setOpen((v) => !v)}
+            className="font-mono text-[12px] tracking-[0.08em] text-ink-3 uppercase hover:text-ink-2"
+          >
+            {open ? 'Hide ▴' : 'Details ▾'}
+          </button>
+        ) : null}
+      </div>
+      {detail && open ? (
+        <p
+          id="failure-detail"
+          className="mt-2 font-mono text-[12px] break-words whitespace-pre-wrap text-ink-2"
+        >
+          {detail}
+        </p>
+      ) : null}
     </div>
   )
 }
@@ -178,7 +263,7 @@ function Tiles({ job }: { job: Job }) {
   const rejected = Math.max(0, stats.listings_checked - stats.new_listings - stats.errors)
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Stat label="Candidates seen" value={stats.listings_checked} />
+      <Stat label="Listings looked at" value={stats.listings_checked} />
       <Stat
         label="Saved"
         value={stats.new_listings}
@@ -190,11 +275,57 @@ function Tiles({ job }: { job: Job }) {
   )
 }
 
+/** Which job this is, and the way back to the rest of Snagr's work. */
+function Breadcrumb({ job }: { job: Job }) {
+  return (
+    <p className="font-mono text-[12px] tracking-[0.06em] text-ink-3 uppercase">
+      <Link to="/activity" className="hover:text-lume">
+        Activity
+      </Link>{' '}
+      / {KIND_NAMES[job.kind]} #{job.id}
+    </p>
+  )
+}
+
+/** What the job did, ahead of what it did it for; nothing for a hunt that
+ *  hasn't run or didn't finish. */
+function verb(job: Job, isLive: boolean): string | null {
+  if (job.kind === 'ground') return 'Market price'
+  if (isLive) return 'Hunting'
+  if (job.status === 'done') return 'Hunted'
+  return null
+}
+
+/** The tab title: the heading, as plain text. */
 function title(job: Job, isLive: boolean): string {
-  if (job.kind === 'ground') return `Market price — ${job.item_name}`
-  if (isLive) return `Hunting — ${job.label}`
-  if (job.status === 'done') return `Hunted — ${job.label}`
-  return job.label
+  const lead = verb(job, isLive)
+  if (lead == null) return job.label
+  return `${lead} — ${job.kind === 'ground' ? job.item_name : job.label}`
+}
+
+/** The heading, with the item linked to its page. */
+function Heading({ job, isLive }: { job: Job; isLive: boolean }) {
+  if (job.item_id == null) return title(job, isLive)
+  const lead = verb(job, isLive)
+  return (
+    <>
+      {lead ? `${lead} — ` : null}
+      <Link to={`/items/${job.item_id}`} className="hover:text-lume hover:underline">
+        {job.item_name}
+      </Link>
+      {job.kind === 'hunt' && job.site_name ? ` × ${job.site_name}` : null}
+    </>
+  )
+}
+
+/** Who asked for the job, as the status line says it. Anyone else's is
+ *  either another person's work in an admin's view, named by email once the
+ *  user list arrives, or a market price someone else watching the item set
+ *  going. */
+function askedBy(job: Job, me: User | undefined, users: AdminUser[] | undefined): string {
+  if (job.user_id === null) return 'system'
+  if (job.user_id === me?.id) return 'you'
+  return users?.find((user) => user.id === job.user_id)?.email ?? 'another user'
 }
 
 function subline(job: Job, isLive: boolean): string {

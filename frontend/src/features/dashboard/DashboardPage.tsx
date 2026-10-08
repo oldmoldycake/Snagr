@@ -1,49 +1,102 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { Plus } from 'lucide-react'
-import { getDashboardStats, getPriceDrops, listCategories, listItems } from '@/api/endpoints'
+import { getPriceDrops, listCategories, listSites } from '@/api/endpoints'
 import { qk } from '@/api/queries'
-import type { PriceDrop } from '@/api/types'
+import type { Category, ItemSummary, PriceDrop } from '@/api/types'
 import { RangeSelector, useRangeParam } from '@/components/charts/RangeSelector'
-import { Card } from '@/components/ui/card'
-import { EmptyState } from '@/components/ui/empty-state'
+import { Button } from '@/components/ui/button'
+import { ErrorState } from '@/components/ui/error-state'
 import { Skeleton } from '@/components/ui/skeleton'
-import { cn } from '@/lib/cn'
-import { AddItemDialog } from '@/features/items/AddItemDialog'
-import { sortByDistanceToTarget, WatchList } from '@/features/items/WatchList'
-import { CategoryChips } from '@/features/categories/CategoryChips'
-import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
+import { RelativeTime } from '@/components/ui/relative-time'
+import { useMediaQuery } from '@/lib/useMediaQuery'
+import { usePageTitle } from '@/lib/usePageTitle'
 import { HunterTicker } from '@/features/activity/HunterTicker'
+import { useTick } from '@/features/activity/useTick'
+import { useSession } from '@/features/auth/useSession'
+import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
+import { EditCategoryDialog } from '@/features/categories/EditCategoryDialog'
+import { EditSitesDialog } from '@/features/categories/EditSitesDialog'
+import { listAllItems } from '@/features/items/allItems'
+import { WatchListLabels } from '@/features/items/WatchList'
+import { AlertsNudge } from './AlertsNudge'
+import { CategoryRow } from './CategoryRow'
+import { CategoryShelf } from './CategoryShelf'
+import { GuideHero, type GuideState } from './GuideHero'
+import { defaultOpen, groupShelves, newlyStruck, resolveOpen, type StoredShelf } from './shelves'
+import { useShelfState } from './useShelfState'
 import { VerdictHero } from './VerdictHero'
 
-/** One page of everything: the self-hosted watch fits in a single fetch. */
-const WATCH_PAGE_SIZE = 200
+/** Rows of categories holding none of your items, before "＋ N more categories". */
+const ROWS_SHOWN = 5
+/** How long a struck row flashes, and how long a shelf or row keeps its outline. */
+const CUE_MS = 1300
+/** Under reduced motion the struck row gets a static edge instead of a flash, so it stays longer. */
+const CUE_REDUCED_MS = 8000
+/** Expand all opens shelf i after min(i, 4) steps, top to bottom. */
+const CASCADE_STEP_MS = 40
+const CASCADE_MAX_STEPS = 4
 
-/** Home page: the verdict hero, the hunter ticker and every watch, sorted by distance to target. */
+/** A dialog opened for one category from a shelf or row, remounted fresh on each open. */
+type CategoryDialog = { category: Category; open: boolean; session: number }
+
+/**
+ * Home page. With items: the verdict hero, the hunter ticker, a nudge while
+ * your alerts have nowhere to go, then one shelf per category you track
+ * something in, most urgent first, and one line for each category you don't.
+ * Without: a guide hero that walks you to your first category and item.
+ */
 export function DashboardPage() {
   const [range, setRange] = useRangeParam()
   const [params] = useSearchParams()
-  const search = params.get('search') ?? undefined
+  const search = params.get('search') || undefined
+  usePageTitle(search ? `Search: ${search}` : 'Dashboard')
+  const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
+  const userId = useSession().data?.id ?? null
+  // categories are shared, so only an admin creates one
+  const isAdmin = useSession().data?.role === 'admin'
 
-  const stats = useQuery({
-    queryKey: qk.dashboard(range),
-    queryFn: () => getDashboardStats(range),
-    placeholderData: keepPreviousData,
-  })
   const drops = useQuery({
     queryKey: qk.dashboardDrops(range),
     queryFn: () => getPriceDrops(range, 20),
     placeholderData: keepPreviousData,
   })
   const items = useQuery({
-    queryKey: qk.items({ range, search, per_page: WATCH_PAGE_SIZE }),
-    queryFn: () => listItems({ range, search, per_page: WATCH_PAGE_SIZE }),
+    queryKey: qk.items({ range }),
+    queryFn: () => listAllItems({ range }),
+    placeholderData: keepPreviousData,
+  })
+  // the unfiltered list above stays loaded during a search: it gives each shelf its "of N"
+  const matches = useQuery({
+    queryKey: qk.items({ range, search }),
+    queryFn: () => listAllItems({ range, search }),
+    enabled: search != null,
     placeholderData: keepPreviousData,
   })
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
+  const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
 
-  const rows = useMemo(() => sortByDistanceToTarget(items.data?.data ?? []), [items.data])
+  const [justCreatedId, setJustCreatedId] = useState<number | null>(null)
+  const [showAllRows, setShowAllRows] = useState(false)
+  const [cascading, setCascading] = useState(false)
+  const [struckIds, setStruckIds] = useState<Set<number>>(new Set())
+  const [edgeIds, setEdgeIds] = useState<Set<number>>(new Set())
+  const [sitesDialog, setSitesDialog] = useState<CategoryDialog | null>(null)
+  const [renameDialog, setRenameDialog] = useState<CategoryDialog | null>(null)
+  // a row or shelf the user just made appear; scrolled to once it renders
+  const scrollTarget = useRef<number | null>(null)
+  // collapse state is neither read nor written while a search forces every shelf open
+  const { stored, write } = useShelfState(search ? null : userId)
+
+  const myItems = useMemo(() => items.data?.data ?? [], [items.data])
+  const categoryList = useMemo(() => categories.data?.data ?? [], [categories.data])
+  const liveIds = useMemo(() => new Set(categoryList.map((c) => c.id)), [categoryList])
+  const { shelves, rows } = useMemo(
+    () => groupShelves(myItems, categoryList, justCreatedId),
+    [myItems, categoryList, justCreatedId],
+  )
+  const defaults = useMemo(() => defaultOpen(shelves), [shelves])
+  const resolved = shelves.map((shelf) => resolveOpen(stored.get(shelf.category.id), shelf, defaults))
   const dropsByItem = useMemo(() => {
     const map = new Map<number, PriceDrop>()
     for (const drop of drops.data?.data ?? []) {
@@ -52,99 +105,387 @@ export function DashboardPage() {
     }
     return map
   }, [drops.data])
+  const siteNamesOf = (category: Category) =>
+    (sites.data?.data ?? []).filter((s) => category.site_ids.includes(s.id)).map((s) => s.name)
 
-  // Bootstrap only when there is truly nothing — with categories but no items,
-  // the page must still render (the chips line is the only category nav).
-  const isBootstrap =
-    items.isSuccess &&
-    categories.isSuccess &&
-    rows.length === 0 &&
-    categories.data.data.length === 0 &&
-    !search
+  // Strikes: items in range now that weren't in the previous response (the
+  // SSE provider refetches items as jobs finish). Tracked during render, not in
+  // an effect, so the flash lands in the same frame as the new rows.
+  const [seen, setSeen] = useState<{ data: unknown; inRange: Set<number> | null }>({ data: null, inRange: null })
+  if (items.data && items.data !== seen.data) {
+    const struck = newlyStruck(seen.inRange, myItems)
+    setSeen({ data: items.data, inRange: new Set(myItems.filter((i) => i.target_met).map((i) => i.id)) })
+    if (struck.length > 0) setStruckIds(new Set(struck))
+  }
 
-  if (isBootstrap) {
+  // A stored collapse loses to a new strike: store the shelf as open again and outline it.
+  const reopened = shelves.filter((_, i) => resolved[i].reopened)
+  if (reopened.length > 0 && !search) {
+    write(
+      new Map(reopened.map((s): [number, StoredShelf] => [s.category.id, { collapsed: false, snaggedAt: s.hits }])),
+      liveIds,
+    )
+    setEdgeIds((prev) => new Set([...prev, ...reopened.map((s) => s.category.id)]))
+  }
+
+  useEffect(() => {
+    if (struckIds.size === 0) return
+    const t = window.setTimeout(() => setStruckIds(new Set()), reducedMotion ? CUE_REDUCED_MS : CUE_MS)
+    return () => window.clearTimeout(t)
+  }, [struckIds, reducedMotion])
+
+  useEffect(() => {
+    if (edgeIds.size === 0) return
+    const t = window.setTimeout(() => setEdgeIds(new Set()), CUE_MS)
+    return () => window.clearTimeout(t)
+  }, [edgeIds])
+
+  // Scroll to what the user just asked for, once it exists. Never for a strike:
+  // that would pull the page out from under someone reading it.
+  useEffect(() => {
+    const id = scrollTarget.current
+    if (id == null) return
+    const el = document.getElementById(`shelf-${id}`)
+    if (!el) return
+    scrollTarget.current = null
+    el.scrollIntoView({ block: 'nearest', behavior: reducedMotion ? 'auto' : 'smooth' })
+  })
+
+  const reveal = (categoryId: number) => {
+    setEdgeIds((prev) => new Set([...prev, categoryId]))
+    scrollTarget.current = categoryId
+  }
+  const onCreated = (category: Category) => {
+    setJustCreatedId(category.id)
+    reveal(category.id)
+  }
+  const onAdded = (item: ItemSummary) => {
+    write(new Map([[item.category_id, { collapsed: false, snaggedAt: 0 }]]), liveIds)
+    reveal(item.category_id)
+  }
+  const toggle = (index: number, open: boolean) => {
+    const shelf = shelves[index]
+    write(new Map([[shelf.category.id, { collapsed: !open, snaggedAt: shelf.hits }]]), liveIds)
+  }
+  const anyOpen = resolved.some((r) => r.open)
+  const toggleAll = () => {
+    const open = !anyOpen
+    write(
+      new Map(shelves.map((s): [number, StoredShelf] => [s.category.id, { collapsed: !open, snaggedAt: s.hits }])),
+      liveIds,
+    )
+    if (open) {
+      setCascading(true)
+      window.setTimeout(() => setCascading(false), (CASCADE_MAX_STEPS + 1) * CASCADE_STEP_MS + 200)
+    }
+  }
+  const openSites = (category: Category) =>
+    setSitesDialog((prev) => ({ category, open: true, session: (prev?.session ?? 0) + 1 }))
+  const openRename = (category: Category) =>
+    setRenameDialog((prev) => ({ category, open: true, session: (prev?.session ?? 0) + 1 }))
+
+  const dialogs = (
+    <>
+      {sitesDialog ? (
+        <EditSitesDialog
+          key={`sites-${sitesDialog.session}`}
+          category={sitesDialog.category}
+          open={sitesDialog.open}
+          onOpenChange={(open) => setSitesDialog((prev) => prev && { ...prev, open })}
+        />
+      ) : null}
+      {renameDialog ? (
+        <EditCategoryDialog
+          key={`rename-${renameDialog.session}`}
+          category={renameDialog.category}
+          open={renameDialog.open}
+          onOpenChange={(open) => setRenameDialog((prev) => prev && { ...prev, open })}
+        />
+      ) : null}
+    </>
+  )
+
+  if (search) {
+    const failed = matches.isError ? matches : categories.isError ? categories : null
     return (
-      <EmptyState
-        title="Set your first target"
-        description="Create a category, link the sites to search, and add an item with a target price. The agent does the rest."
-        action={
-          <CreateCategoryDialog
-            trigger={
-              <span className="inline-flex items-center gap-1.5">
-                <Plus className="size-4" /> New category
-              </span>
-            }
-          />
-        }
+      <div>
+        <SearchResults
+          search={search}
+          matches={matches.data?.data}
+          myItems={myItems}
+          categories={categoryList}
+          loading={matches.isLoading || categories.isLoading}
+          error={
+            failed ? (
+              <ErrorState
+                title="Couldn't search your items"
+                error={failed.error}
+                onRetry={() => void failed.refetch()}
+                retrying={failed.isFetching}
+              />
+            ) : null
+          }
+          siteNamesOf={siteNamesOf}
+          drops={dropsByItem}
+          onEditSites={openSites}
+          onRename={openRename}
+        />
+        {dialogs}
+      </div>
+    )
+  }
+
+  if (items.isLoading || categories.isLoading) {
+    return (
+      <div>
+        <div className="space-y-3">
+          <Skeleton className="h-3 w-40" />
+          <Skeleton className="h-8 w-60" />
+          <Skeleton className="h-5 w-96" />
+        </div>
+        <div className="mt-[62px] space-y-2.5">
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+        </div>
+      </div>
+    )
+  }
+
+  // the guide and the shelves both say what exists, so neither may stand in for a failed load
+  const failed = items.isError ? items : categories.isError ? categories : null
+  if (failed) {
+    return (
+      <ErrorState
+        title="Couldn't load your watch"
+        error={failed.error}
+        onRetry={() => void failed.refetch()}
+        retrying={failed.isFetching}
       />
     )
   }
 
+  if (myItems.length === 0) {
+    const justCreated = categoryList.find((c) => c.id === justCreatedId)
+    const guide: GuideState = justCreated
+      ? { kind: 'ready', category: justCreated, siteNames: siteNamesOf(justCreated) }
+      : categoryList.length > 0
+        ? { kind: 'shared', categoryCount: categoryList.length }
+        : { kind: 'empty' }
+    return (
+      <div>
+        <GuideHero state={guide} onCreated={onCreated} onAdded={onAdded} />
+        {categoryList.length > 0 ? (
+          <section className="mt-[26px]">
+            <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
+              <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">
+                Categories
+              </h2>
+              <span className="font-mono text-[12px] text-ink-3 tnum">{categoryList.length} on this instance</span>
+              <span className="flex-1" />
+              {justCreated ? (
+                <CreateCategoryDialog variant="default" trigger="＋ New category" onCreated={onCreated} />
+              ) : null}
+            </div>
+            <div className="grid grid-cols-1 gap-2.5">
+              {rows.map((category) => (
+                <CategoryRow
+                  key={category.id}
+                  category={category}
+                  siteNames={siteNamesOf(category)}
+                  isNew={category.id === justCreatedId}
+                  edge={edgeIds.has(category.id)}
+                  onEditSites={openSites}
+                  onRename={openRename}
+                  onAdded={onAdded}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
+        {dialogs}
+      </div>
+    )
+  }
+
+  const shownRows = showAllRows ? rows : rows.slice(0, ROWS_SHOWN)
+  const hiddenRows = rows.length - shownRows.length
   return (
     <div>
-      {search || (items.isSuccess && rows.length === 0) ? null : items.isLoading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-3 w-40" />
-          <Skeleton className="h-11 w-72" />
-          <Skeleton className="h-5 w-96" />
-        </div>
-      ) : (
-        <VerdictHero items={rows} drops={dropsByItem} className={cn(items.isFetching && 'opacity-60')} />
-      )}
+      <VerdictHero items={myItems} drops={dropsByItem} />
+      <HunterTicker className="mt-2" />
+      {userId != null && myItems.some((i) => i.watch.notify) ? (
+        <AlertsNudge userId={userId} className="mt-2" />
+      ) : null}
 
-      {search ? null : <HunterTicker className="mt-9" />}
-
-      <section className={search ? undefined : 'mt-7'}>
-        <div className="mb-3 flex flex-wrap items-baseline gap-x-4 gap-y-2">
-          <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">
-            {search ? 'Search' : 'The Watch'}
-          </h2>
-          {search ? (
-            <span className="font-mono text-[11px] text-ink-3">
-              matching “{search}” ·{' '}
-              <Link to="/" className="text-ink-2 hover:text-lume">
-                clear
-              </Link>
-            </span>
-          ) : stats.data ? (
-            <span className="font-mono text-[11px] text-ink-3 tnum">
-              {stats.data.tracked_items.value} items · {stats.data.active_listings.value} listings
-            </span>
-          ) : null}
-          {search ? null : <CategoryChips className="ml-2" />}
+      <section className="mt-[26px]">
+        <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
+          <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">Your items</h2>
+          <span className="font-mono text-[12px] text-ink-3 tnum">
+            {shelves.length} {shelves.length === 1 ? 'category' : 'categories'} · {myItems.length}{' '}
+            {myItems.length === 1 ? 'item' : 'items'}
+            <span aria-hidden> · </span>
+            <UpdatedAgo at={items.dataUpdatedAt} />
+          </span>
           <span className="flex-1" />
-          <RangeSelector value={range} onChange={setRange} />
-          <AddItemDialog />
+          {shelves.length >= 2 ? (
+            <Button variant="ghost" size="sm" onClick={toggleAll}>
+              {anyOpen ? 'Collapse all' : 'Expand all'}
+            </Button>
+          ) : null}
+          <RangeSelector value={range} onChange={setRange} className="max-sm:order-last max-sm:w-full" />
+          {isAdmin ? <CreateCategoryDialog trigger="＋ New category" onCreated={onCreated} /> : null}
         </div>
 
-        <Card className={cn(items.isFetching && 'opacity-60')}>
-          {items.isLoading ? (
-            <div className="space-y-2 p-4">
-              <Skeleton className="h-6" />
-              <Skeleton className="h-6" />
-              <Skeleton className="h-6" />
-            </div>
-          ) : rows.length === 0 && search ? (
-            <p className="px-4 py-6 text-[13px] text-ink-3">No items match this search.</p>
-          ) : rows.length === 0 ? (
-            <EmptyState
-              className="m-4 border-0"
-              title="Add an item to start tracking"
-              description="Pick a category, give the item a name and a target price — the agent searches the category's sites for listings."
-              action={<AddItemDialog />}
+        <LabelStrip hidden={!anyOpen} />
+        <div className="busy-edge grid grid-cols-1 gap-2.5" aria-busy={items.isPlaceholderData}>
+          {shelves.map((shelf, i) => (
+            <CategoryShelf
+              key={shelf.category.id}
+              shelf={shelf}
+              siteNames={siteNamesOf(shelf.category)}
+              open={resolved[i].open}
+              onToggle={(open) => toggle(i, open)}
+              drops={dropsByItem}
+              struck={struckIds}
+              edge={edgeIds.has(shelf.category.id)}
+              openDelay={cascading ? Math.min(i, CASCADE_MAX_STEPS) * CASCADE_STEP_MS : 0}
+              onEditSites={openSites}
+              onRename={openRename}
             />
-          ) : (
-            <>
-              <WatchList items={rows} drops={dropsByItem} showCategory showSite />
-              <div className="flex items-center justify-between border-t border-hairline bg-well px-4 py-2 font-mono text-[11px] text-ink-3">
-                <span>
-                  {rows.length} {rows.length === 1 ? 'item' : 'items'} · sorted by distance to target
-                </span>
-              </div>
-            </>
-          )}
-        </Card>
+          ))}
+        </div>
+
+        {rows.length > 0 ? (
+          <>
+            <h3 className="mt-[18px] mb-1 ml-0.5 font-mono text-[12px] font-medium text-ink-3">
+              No items of yours yet
+            </h3>
+            <div className="grid grid-cols-1 gap-2.5">
+              {shownRows.map((category) => (
+                <CategoryRow
+                  key={category.id}
+                  category={category}
+                  siteNames={siteNamesOf(category)}
+                  isNew={category.id === justCreatedId}
+                  edge={edgeIds.has(category.id)}
+                  onEditSites={openSites}
+                  onRename={openRename}
+                  onAdded={onAdded}
+                />
+              ))}
+            </div>
+            {hiddenRows > 0 ? (
+              <Button variant="ghost" size="sm" className="mt-2" onClick={() => setShowAllRows(true)}>
+                ＋ {hiddenRows} more {hiddenRows === 1 ? 'category' : 'categories'}
+              </Button>
+            ) : null}
+          </>
+        ) : null}
       </section>
+      {dialogs}
     </div>
+  )
+}
+
+/** The column labels, once, above every shelf; hidden while no shelf is open to label. */
+function LabelStrip({ hidden }: { hidden?: boolean }) {
+  // transparent side borders match the shelves' own, so the columns line up to the pixel
+  return (
+    <div hidden={hidden} className="sticky top-0 z-10 mb-2.5 border-x border-transparent bg-page">
+      <WatchListLabels showSite />
+    </div>
+  )
+}
+
+/** `?search=`: only the shelves holding a match, all open, with no hero, rows or collapse state. */
+function SearchResults({
+  search,
+  matches,
+  myItems,
+  categories,
+  loading,
+  error,
+  siteNamesOf,
+  drops,
+  onEditSites,
+  onRename,
+}: {
+  search: string
+  matches: ItemSummary[] | undefined
+  myItems: ItemSummary[]
+  categories: Category[]
+  loading: boolean
+  error: ReactNode
+  siteNamesOf: (category: Category) => string[]
+  drops: Map<number, PriceDrop>
+  onEditSites: (category: Category) => void
+  onRename: (category: Category) => void
+}) {
+  const { shelves } = useMemo(() => groupShelves(matches ?? [], categories), [matches, categories])
+  const totals = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const item of myItems) map.set(item.category_id, (map.get(item.category_id) ?? 0) + 1)
+    return map
+  }, [myItems])
+  const clear = (
+    <Link to="/" className="text-ink-2 hover:text-lume">
+      clear
+    </Link>
+  )
+
+  return (
+    <section>
+      <div className="mb-2.5 flex flex-wrap items-baseline gap-x-3.5 gap-y-2">
+        <h2 className="font-display text-[19px] font-semibold tracking-[0.12em] text-ink-2 uppercase">Search</h2>
+        <span className="font-mono text-[12px] text-ink-3">
+          matching “{search}” · {clear}
+        </span>
+      </div>
+      {loading ? (
+        <div className="space-y-2.5">
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+        </div>
+      ) : error ? (
+        error
+      ) : shelves.length === 0 ? (
+        <p className="rounded-md border border-dashed border-hairline-strong px-3.5 py-[26px] text-center text-[14px] text-ink-3">
+          None of your items match “{search}”. · {clear}
+        </p>
+      ) : (
+        <>
+          <LabelStrip />
+          <div className="grid grid-cols-1 gap-2.5">
+            {shelves.map((shelf) => (
+              <CategoryShelf
+                key={shelf.category.id}
+                shelf={shelf}
+                siteNames={siteNamesOf(shelf.category)}
+                open
+                total={totals.get(shelf.category.id) ?? shelf.items.length}
+                drops={drops}
+                onEditSites={onEditSites}
+                onRename={onRename}
+              />
+            ))}
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+/**
+ * When this tab last fetched the prices it shows. The live feed and window
+ * focus keep that recent; this says so when they haven't. Ticks on its own so
+ * the dashboard doesn't re-render every second.
+ */
+function UpdatedAgo({ at }: { at: number }) {
+  useTick(true)
+  return (
+    <span>
+      updated <RelativeTime iso={new Date(at).toISOString()} />
+    </span>
   )
 }

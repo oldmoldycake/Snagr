@@ -10,19 +10,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import csrf_guard, reject_bearer, require_admin
 from app.core.errors import err
+from app.core.security import new_reset_token
 from app.database import get_db
-from app.models import Invites, Sessions, User, Watches
+from app.models import Invites, PasswordResets, Sessions, User, Watches
 from app.schemas.auth import (
     AdminUser,
     AdminUserUpdateRequest,
     Invite,
     InviteCreateRequest,
+    PasswordReset,
     admin_user_out,
     invite_out,
 )
 from app.schemas.common import DataList
+from app.services import items as items_service
 
 INVITE_TTL_DAYS = 7
+# long enough to hand the link over by hand, short enough that one forgotten
+# in a chat log is dead by the time anyone finds it; issuing another is a click
+RESET_TTL_HOURS = 24
 
 router = APIRouter(
     prefix="/api/admin",
@@ -57,8 +63,24 @@ async def list_users(db: AsyncSession = Depends(get_db)):
 async def update_user(
     user_id: int, body: AdminUserUpdateRequest, db: AsyncSession = Depends(get_db)
 ):
-    """Activate/deactivate a user or change their role; 404 for an unknown user."""
+    """Activate/deactivate a user or change their role; 404 for an unknown user,
+    409 last_admin for a change that would leave no active admin."""
     user = await _get_user(db, user_id)
+    demoting = body.role is not None and body.role != "admin"
+    if user.role == "admin" and user.is_active and (demoting or body.is_active is False):
+        # FOR UPDATE on every active admin: two admins demoting each other at
+        # once would otherwise each see the other and both succeed
+        admins = (
+            await db.scalars(
+                select(User.id).where(User.role == "admin", User.is_active).with_for_update()
+            )
+        ).all()
+        if admins == [user.id]:
+            raise err(
+                409,
+                "last_admin",
+                "This is the only active admin — make someone else an admin first",
+            )
     if body.is_active is not None:
         user.is_active = body.is_active
     if body.role is not None:
@@ -74,32 +96,51 @@ async def update_user(
 async def delete_user(
     user_id: int, admin=Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
-    """Delete a user along with their sessions and the invites they issued.
+    """Delete a user along with everything that is theirs: their watches (with
+    the listings and price history found for them), sessions and the invites
+    they issued. 422 cannot_delete_self for the caller's own account.
 
-    422 cannot_delete_self for the caller's own account; 409 user_has_items while
-    they still have watches, since those anchor listings and price history —
-    deactivating is the way to lock such a user out."""
+    Shared catalog items stay for anyone else watching them. Their API tokens,
+    channels and pending notifications go by FK cascade, and jobs they asked
+    for survive as system jobs (ON DELETE SET NULL). Deactivating is the way to
+    lock someone out and keep their data."""
     if user_id == admin.id:
         raise err(422, "cannot_delete_self", "You cannot delete your own account")
     user = await _get_user(db, user_id)
 
-    # a user's watches anchor real data (listings, price history) — refuse
-    # rather than cascade-delete it. Deactivating keeps the data and locks them out.
-    watch_count = await db.scalar(
-        select(func.count()).select_from(Watches).where(Watches.user_id == user_id)
-    )
-    if watch_count:
-        raise err(
-            409,
-            "user_has_items",
-            "This user still has tracked items — deactivate the account instead",
-        )
-
+    for watch in (await db.scalars(select(Watches).where(Watches.user_id == user_id))).all():
+        await items_service.delete_watch(db, watch)
     # their sessions and issued invites go with them (FKs would block otherwise)
     await db.execute(delete(Sessions).where(Sessions.user_id == user_id))
     await db.execute(delete(Invites).where(Invites.created_by == user_id))
     await db.delete(user)
     await db.commit()
+
+
+@router.post(
+    "/users/{user_id}/password-reset",
+    response_model=PasswordReset,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(csrf_guard)],
+)
+async def create_password_reset(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Issue a single-use link for the user to choose a new password, valid for
+    RESET_TTL_HOURS. It replaces any earlier link for them, and nothing is
+    emailed: the admin hands it over. Only its hash is kept, so the response is
+    the one time the token is shown.
+
+    404 for an unknown user; 422 sso_account for an account with no password,
+    which signs in through the identity provider — a password would be a second
+    way in around it."""
+    user = await _get_user(db, user_id)
+    if user.password_hash is None:
+        raise err(422, "sso_account", "This account signs in with SSO and has no password")
+    await db.execute(delete(PasswordResets).where(PasswordResets.user_id == user_id))
+    raw, digest = new_reset_token()
+    expires_at = datetime.now(UTC) + timedelta(hours=RESET_TTL_HOURS)
+    db.add(PasswordResets(user_id=user_id, token_hash=digest, expires_at=expires_at))
+    await db.commit()
+    return PasswordReset(token=raw, expires_at=expires_at.isoformat())
 
 
 @router.get("/invites", response_model=DataList[Invite])
