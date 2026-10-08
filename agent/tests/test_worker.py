@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langgraph.errors import GraphRecursionError
 from observations import UnitContext
-from pricing import SearchSuspended
+from search import SearchSuspended
 
 import agent
 
@@ -891,6 +891,26 @@ class TestHousekeeping:
         monkeypatch.setattr(worker, "get_grounding_candidates", candidates)
         asyncio.run(worker.once())
         assert seen["swept"] == 1
+
+
+class TestSearchNotice:
+    def _once(self, monkeypatch, provider):
+        wire(monkeypatch, queue=[])
+
+        async def candidates():
+            return []
+
+        monkeypatch.setattr(worker, "get_grounding_candidates", candidates)
+        monkeypatch.setattr(worker, "SEARCH_PROVIDER", provider)
+        asyncio.run(worker.once())
+
+    def test_no_search_provider_is_announced_at_startup(self, monkeypatch, caplog):
+        self._once(monkeypatch, "none")
+        assert "Grounding search is off" in caplog.text
+
+    def test_a_configured_provider_says_nothing(self, monkeypatch, caplog):
+        self._once(monkeypatch, "brave")
+        assert "Grounding search is off" not in caplog.text
 
 
 class TestBrowserFailureDetection:

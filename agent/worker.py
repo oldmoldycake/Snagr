@@ -40,6 +40,7 @@ from config import (
     HUNT_ENABLED,
     JOB_HEARTBEAT_INTERVAL_SECONDS,
     RECHECK_CONCURRENCY,
+    SEARCH_PROVIDER,
 )
 from database import (
     DATABASE_URL,
@@ -50,8 +51,9 @@ from database import (
 )
 from langgraph.errors import GraphRecursionError
 from llm import build_llm, count_tokens, flush_traces, job_trace
-from pricing import SearchSuspended, ground_item, select_grounding_work
+from pricing import ground_item, select_grounding_work
 from recheck import recheck_deterministic
+from search import SearchSuspended
 from sqlalchemy.exc import SQLAlchemyError
 
 from agent import Cancelled as JobCancelled
@@ -528,6 +530,16 @@ def _say_if_hunting_is_off() -> None:
         )
 
 
+def _say_if_search_is_off() -> None:
+    """Once, at startup, for the same reason: with no search provider every
+    grounding still runs, and would otherwise say so on every item."""
+    if SEARCH_PROVIDER == "none":
+        log.warning(
+            "Grounding search is off (SEARCH_PROVIDER=none): market prices refresh "
+            "from guide pages already found, and no new ones are looked for"
+        )
+
+
 async def serve() -> None:
     """Run until stopped: the pools, the listener and the scheduler."""
     workers = worker_ids()
@@ -542,6 +554,7 @@ async def serve() -> None:
         f"{HUNT_CONCURRENCY if HUNT_ENABLED else 0} hunt and {GROUND_CONCURRENCY} ground worker(s)"
     )
     _say_if_hunting_is_off()
+    _say_if_search_is_off()
     try:
         await asyncio.gather(*tasks)
     finally:
@@ -561,6 +574,7 @@ async def once() -> None:
     """
     workers = worker_ids()
     _say_if_hunting_is_off()
+    _say_if_search_is_off()
     await housekeeping()
     try:
         for worker in workers:

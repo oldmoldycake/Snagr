@@ -12,7 +12,9 @@ from decimal import Decimal
 import httpx
 import pricing
 import pytest
-from pricing import Observation, SearchGate, SearchSuspended
+import search
+from pricing import Observation
+from search import SearchGate, SearchSuspended
 
 NOW = datetime(2026, 8, 13, 12, 0, tzinfo=UTC)
 
@@ -249,15 +251,19 @@ def searxng(monkeypatch):
     def client(**kwargs):
         return original(transport=httpx.MockTransport(handler), **kwargs)
 
-    monkeypatch.setattr(pricing.httpx, "AsyncClient", client)
-    monkeypatch.setattr(pricing, "search_gate", SearchGate())
-    monkeypatch.setattr(pricing, "INTER_REQUEST_DELAY_S", 0)
-    monkeypatch.setattr(pricing, "SEARXNG_URL", "http://searxng")
+    # pricing holds its own reference to the gate; both must see the same one
+    gate = SearchGate()
+    monkeypatch.setattr(search.httpx, "AsyncClient", client)
+    monkeypatch.setattr(search, "search_gate", gate)
+    monkeypatch.setattr(pricing, "search_gate", gate)
+    monkeypatch.setattr(search, "SEARXNG_INTER_REQUEST_DELAY_S", 0)
+    monkeypatch.setattr(search, "SEARCH_PROVIDER", "searxng")
+    monkeypatch.setattr(search, "SEARXNG_URL", "http://searxng")
     return state
 
 
-def search(queries=("emerald",), pages=1):
-    return asyncio.run(pricing.search_searxng(list(queries), "http://searxng", pages=pages))
+def run_search(queries=("emerald",), pages=1):
+    return asyncio.run(search.search(list(queries), pages=pages))
 
 
 class TestSearchSuspension:
@@ -269,24 +275,24 @@ class TestSearchSuspension:
         async def no_sleeping(seconds):
             raise AssertionError(f"slept {seconds}s")
 
-        monkeypatch.setattr(pricing.asyncio, "sleep", no_sleeping)
+        monkeypatch.setattr(search.asyncio, "sleep", no_sleeping)
         searxng["replies"] = [SUSPENDED]
 
         with pytest.raises(SearchSuspended) as raised:
-            search()
+            run_search()
 
         wait = raised.value.until - datetime.now(UTC)
-        assert timedelta(seconds=pricing.SUSPENSION_BACKOFF_S - 5) < wait
-        assert wait <= timedelta(seconds=pricing.SUSPENSION_BACKOFF_S)
+        assert timedelta(seconds=search.SEARXNG_SUSPENSION_BACKOFF_S - 5) < wait
+        assert wait <= timedelta(seconds=search.SEARXNG_SUSPENSION_BACKOFF_S)
         assert searxng["queries"] == ["emerald"]
 
     def test_a_closed_gate_asks_searxng_nothing(self, searxng):
         searxng["replies"] = [SUSPENDED]
         with pytest.raises(SearchSuspended):
-            search()
+            run_search()
 
         with pytest.raises(SearchSuspended):
-            search(["another item"])
+            run_search(["another item"])
         assert searxng["queries"] == ["emerald"]
 
     def test_a_suspension_that_outlasts_the_wait_doubles_it_to_the_cap(self):
@@ -301,18 +307,18 @@ class TestSearchSuspension:
     def test_results_reset_the_wait(self, searxng):
         searxng["replies"] = [SUSPENDED]
         with pytest.raises(SearchSuspended):
-            search()
-        pricing.search_gate.until = datetime.now(UTC) - timedelta(seconds=1)
+            run_search()
+        search.search_gate.until = datetime.now(UTC) - timedelta(seconds=1)
         searxng["replies"] = [RESULTS]
 
-        assert search() == {"https://guide.example/emerald": "Loose $226"}
-        assert pricing.search_gate.closed_until() is None
-        assert pricing.search_gate.backoff_s == pricing.SUSPENSION_BACKOFF_S
+        assert run_search() == {"https://guide.example/emerald": "Loose $226"}
+        assert search.search_gate.closed_until() is None
+        assert search.search_gate.backoff_s == search.SEARXNG_SUSPENSION_BACKOFF_S
 
     def test_an_empty_page_without_a_suspension_is_just_empty(self, searxng):
         searxng["replies"] = [{"results": [], "unresponsive_engines": []}]
-        assert search() == {}
-        assert pricing.search_gate.closed_until() is None
+        assert run_search() == {}
+        assert search.search_gate.closed_until() is None
 
     def test_a_closed_gate_defers_a_grounding_before_it_spends_anything(self, searxng, monkeypatch):
         async def never(*args, **kwargs):
@@ -320,7 +326,7 @@ class TestSearchSuspension:
 
         monkeypatch.setattr(pricing, "resolve_condition_tiers", never)
         monkeypatch.setattr(pricing, "upsert_market_price", never)
-        until = pricing.search_gate.close()
+        until = search.search_gate.close()
 
         with pytest.raises(SearchSuspended) as raised:
             asyncio.run(pricing.ground_item(7, "Pokemon Emerald", 1))

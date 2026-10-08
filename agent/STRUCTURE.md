@@ -38,7 +38,8 @@ agent/
 ├── static.py          # the browserless rung: one plain GET, jsonld/meta locators only; the learn-time probe that sets static_ok
 ├── breaker.py         # the per-site circuit breaker: count consecutive read errors, pause the site, push its jobs out
 ├── validation.py      # what the agent may believe (pure): parse_price, validate_observation, url_allowed, clip_text
-├── pricing.py         # market-price grounding: SearXNG + guide pages over plain HTTP, model extraction, tier stats → market_prices
+├── pricing.py         # market-price grounding: search + guide pages over plain HTTP, model extraction, tier stats → market_prices
+├── search.py          # grounding's web search behind one call: SearXNG, the Brave Search API, or none (SEARCH_PROVIDER)
 ├── notify.py          # the target-hit *decision* only (pure): is this reading a crossing, and what is the owner told
 ├── llm.py             # build_llm(): the chat model, built on demand so the check pool pays for one only when it needs it; the tracing handler, job_trace, flush_traces; count_tokens for a ground job's bare model calls
 ├── config.py          # settings from env/.env — every one except DATABASE_URL (see Conventions)
@@ -49,7 +50,7 @@ agent/
 └── tests/
     ├── conftest.py     # DATABASE_URL → snagr_test rewrite, AI_*/MCP stubs, migration 015's index + triggers by hand, unit_runtime()
     ├── fixtures/       # captured page-extractor output (see README.md), raw HTML for the static rung, raw MCP replies
-    └── test_*.py       # one module per concern (23 files) — copy the nearest sibling's pattern
+    └── test_*.py       # one module per concern (24 files) — copy the nearest sibling's pattern
 ```
 
 ---
@@ -90,7 +91,7 @@ across all of it deciding what is believed and which sites are read at all.
    claim `recheck` (browser session always, a model only when the ladder gives
    up), `HUNT_CONCURRENCY` hunt workers that claim `hunt` (model + browser),
    and `GROUND_CONCURRENCY` ground workers that claim `ground` (model +
-   SearXNG + plain HTTP, no browser) — a pool of its own, so grounding stuck
+   web search + plain HTTP, no browser) — a pool of its own, so grounding stuck
    behind SearXNG never holds up a hunt. Under `HUNT_ENABLED=false` there is
    no hunt pool at all (`worker.worker_ids`). Worker ids are
    `host:pid#check-N` / `#hunt-N` / `#ground-N`, recorded on every claimed row.
@@ -304,7 +305,9 @@ Defaults are those in `config.py`; `agent/.env.example` explains each at length.
 | | `AI_URL` / `AI_API_KEY` | `http://localhost:11434` / unset | provider base URL; key passed only when set |
 | Connections | `DATABASE_URL` | required | the shared Postgres (asserted at import by `database.py`) |
 | | `PLAYWRIGHT_MCP_URL` | required for browser jobs | the MCP server; it **must** run with `--isolated` |
+| | `SEARCH_PROVIDER` | `searxng` if `SEAR_XNG_URL` is set, else `none` | grounding's search: `searxng`, `brave` or `none`; a choice missing its URL/key fails the import |
 | | `SEAR_XNG_URL` | unset | SearXNG for grounding (read into `config.SEARXNG_URL`) |
+| | `BRAVE_API_KEY` | unset | Brave Search API key, required by `SEARCH_PROVIDER=brave` |
 | | `VISION_SIDECAR_URL` | unset | vision sidecar; unset = `check_images` not registered |
 | Pools | `RECHECK_CONCURRENCY` | 3 | check workers |
 | | `HUNT_CONCURRENCY` | 1 | hunt workers; raise only after measuring the provider |
