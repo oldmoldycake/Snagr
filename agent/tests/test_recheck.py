@@ -330,6 +330,39 @@ class TestLocatorFailures:
         assert seams["misses"] == []
 
 
+class TestVolumePricing:
+    """A page that prices by order size states a price per tier, and its
+    structured data may carry the cheapest — one nobody buying a single unit
+    can pay. No captured fixture prices that way, so these mark an eBay page
+    as one."""
+
+    def _tiered(self) -> dict:
+        payload = page("ebay_bin")
+        return {**payload, "markers": {**payload["markers"], "volume_pricing": True}}
+
+    def test_an_unlearned_listing_is_left_to_the_model(self, seams):
+        outcome = run(recheck.recheck_deterministic(FakeBrowser(self._tiered()), row()))
+
+        assert outcome.handled is False
+        assert seams["recorded"] == []
+
+    def test_the_sites_consensus_is_not_trusted_either(self, seams):
+        seams["consensus"] = Locator("jsonld", "offers.price")
+
+        outcome = run(recheck.recheck_deterministic(FakeBrowser(self._tiered()), row()))
+
+        assert outcome.handled is False
+
+    def test_the_listings_own_locator_still_reads_it(self, seams):
+        # learned from the model's one-unit read of this very page
+        tracked = row(locator_kind="jsonld", price_locator="offers.price")
+
+        outcome = run(recheck.recheck_deterministic(FakeBrowser(self._tiered()), tracked))
+
+        assert outcome.method == "jsonld"
+        assert seams["recorded"][0]["price"] == EBAY_BIN_PRICE
+
+
 class TestStaticRung:
     """The cheapest rung of all: one HTTP GET and no browser."""
 

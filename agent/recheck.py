@@ -14,6 +14,10 @@ so outright, only when the page offers no way to buy it: "out of stock" and
 "sold" are indistinguishable in eBay's structured data, and untracking a live
 listing is the expensive mistake.
 
+A page that prices by order size ("1-29 pieces", ">=300 pieces") is read only
+through the listing's own learned locator: every other rung may land on a bulk
+tier, and the price tracked is always the one a buyer of a single unit pays.
+
 Nothing here raises for a page problem. Every dead end answers "not handled"
 and the caller falls back to the agentic recheck, which is also what relearns
 the locator. Database failures do propagate — a lost observation is a failed
@@ -182,7 +186,15 @@ async def _read_ladder(
         context["markers"].get("out_of_stock") or jsonld_availability(extract) == "outofstock"
     )
 
-    for locator, source in await _ladder(row, stored):
+    ladder = await _ladder(row, stored)
+    if context["markers"].get("volume_pricing"):
+        # Only the listing's own locator is known to point at the one-unit
+        # price: it was learned from the LLM's read of this page. A
+        # neighbour's locator or offers.price is as likely to land on a bulk
+        # tier, so the rest of the ladder is left to the LLM.
+        ladder = [(locator, source) for locator, source in ladder if source == "listing"]
+
+    for locator, source in ladder:
         found = read_with(locator.kind, locator.locator, extract)
         verdict = _judge(found, context)
         if verdict is None:

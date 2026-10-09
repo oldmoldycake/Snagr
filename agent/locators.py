@@ -8,7 +8,7 @@ loop (agent/recheck.py).
 
 Two fixed JS constants do the browser-side work. PAGE_EXTRACTOR_JS returns
 one compact JSON object per page — structured data, price-shaped leaf
-elements, and the auction/sold/ended markers — which is ~2 KB where the page
+elements, and the auction/sold/ended/volume-pricing markers — which is ~2 KB where the page
 is ~800 KB, and which the model never sees. RUN_LOCATOR_JS replays one
 stored locator so a freshly derived one can be verified before it is
 trusted. The model cannot author either: a hallucinated selector, or one a
@@ -243,12 +243,22 @@ PAGE_EXTRACTOR_JS = r"""() => {
     'i'
   );
   const OUT_OF_STOCK = /out of stock|sold out|currently unavailable|no longer in stock/i;
+  // A price ladder by order size — Alibaba's "1-29 pieces / >=300 pieces".
+  // Such a page states several prices for the same listing, and its
+  // structured data may carry the cheapest tier, which nobody buying one
+  // unit can pay.
+  const VOLUME_PRICING = new RegExp(
+    '(\\d[\\d,]*\\s*[-\u2013~]\\s*\\d[\\d,]*|[\u2265>]=?\\s*\\d[\\d,]*|\\d[\\d,]*\\s*\\+)'
+      + '\\s*(pieces?|pcs|units?|sets?|pairs?)\\b',
+    'i'
+  );
   const markers = {
     auction: AUCTION.test(body),
     buy_now: BUY_NOW.test(body),
     sold: SOLD.test(body),
     ended: ENDED.test(body),
     out_of_stock: OUT_OF_STOCK.test(body),
+    volume_pricing: VOLUME_PRICING.test(body),
   };
 
   return {
