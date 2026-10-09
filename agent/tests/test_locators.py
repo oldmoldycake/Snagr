@@ -110,6 +110,15 @@ class TestSelectLocator:
 
         assert select_locator(both, Decimal("1925.00")) is not None
 
+    def test_a_page_priced_by_order_size_teaches_nothing(self):
+        # which tier a locator lands on cannot be told from the page, and one
+        # that later reads a bulk tier records a price no single buyer pays
+        bin_page = page("ebay_bin")
+        tiered = {**bin_page, "markers": {**bin_page["markers"], "volume_pricing": True}}
+
+        assert select_locator(bin_page, Decimal("14390.00")) is not None
+        assert select_locator(tiered, Decimal("14390.00")) is None
+
     @pytest.mark.parametrize("name", ["allbirds", "gone_404"])
     def test_a_page_that_does_not_state_the_price_teaches_nothing(self, name):
         assert select_locator(page(name), Decimal("98.00")) is None
