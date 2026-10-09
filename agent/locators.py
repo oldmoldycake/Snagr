@@ -247,9 +247,12 @@ PAGE_EXTRACTOR_JS = r"""() => {
   // Such a page states several prices for the same listing, and its
   // structured data may carry the cheapest tier, which nobody buying one
   // unit can pay.
+  // The unit may also follow both ends of a range: "1 piece - 29 pieces".
+  const UNIT = '(pieces?|pcs|units?|sets?|pairs?)';
   const VOLUME_PRICING = new RegExp(
-    '(\\d[\\d,]*\\s*[-\u2013~]\\s*\\d[\\d,]*|[\u2265>]=?\\s*\\d[\\d,]*|\\d[\\d,]*\\s*\\+)'
-      + '\\s*(pieces?|pcs|units?|sets?|pairs?)\\b',
+    '(\\d[\\d,]*(\\s*' + UNIT + ')?\\s*[-\u2013~]\\s*\\d[\\d,]*'
+      + '|[\u2265>]=?\\s*\\d[\\d,]*|\\d[\\d,]*\\s*\\+)'
+      + '\\s*' + UNIT + '\\b',
     'i'
   );
   const markers = {
