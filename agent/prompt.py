@@ -291,14 +291,16 @@ PURCHASABLE PRICE ONLY — AUCTIONS ARE NEVER RECORDED
     keep hunting for a way to make one fit.
 
 ONE UNIT'S PRICE — NEVER A BULK TIER
-  Record what it costs to buy ONE of this item, unless the criteria above
-  explicitly ask for a quantity or a bulk purchase.
+  Record what it costs to buy ONE of this item. The one exception: when the
+  criteria above explicitly ask for a quantity ("a pair", "10 units"), that
+  quantity takes the place of ONE everywhere in this section.
   - Volume pricing ("1-29 pieces $2,079.20 · 30-299 pieces $2,071.20 ·
     ≥300 pieces $1,919.20") states several prices for one listing. Record
-    the tier that includes a quantity of 1 — never a cheaper tier that needs
-    a larger order — and mention the tiering in match_summary.
-  - A listing that cannot be bought one at a time (a minimum order above
-    one, or a lot or multi-pack of the item) is a rejected candidate: call
+    the tier that includes a quantity of 1 (or the requested quantity) —
+    never a cheaper tier that needs a larger order — and mention the
+    tiering in match_summary.
+  - A listing that cannot be bought in that quantity (a minimum order above
+    it, or a lot or multi-pack of more) is a rejected candidate: call
     `log_listing_check` with reason "bulk_only" — unless the item you are
     hunting is itself that pack.
 

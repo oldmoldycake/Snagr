@@ -99,6 +99,8 @@ def test_discovery_prompt_records_one_units_price_not_a_bulk_tier():
     assert "NEVER A BULK TIER" in prompt
     assert "includes a quantity of 1" in prompt
     assert '"bulk_only"' in prompt
+    # a quantity the criteria ask for overrides ONE for the tier and the rejection
+    assert "takes the place of ONE everywhere in this section" in prompt
 
 
 def test_recheck_prompt_records_one_units_price_not_a_bulk_tier():
