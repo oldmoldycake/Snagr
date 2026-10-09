@@ -331,10 +331,10 @@ class TestLocatorFailures:
 
 
 class TestVolumePricing:
-    """A page that prices by order size states a price per tier, and its
-    structured data may carry the cheapest — one nobody buying a single unit
-    can pay. No captured fixture prices that way, so these mark an eBay page
-    as one."""
+    """A page that prices by order size states a price per tier, and any
+    locator may land on the cheapest — one nobody buying a single unit can
+    pay. No captured fixture prices that way, so these mark an eBay page as
+    one."""
 
     def _tiered(self) -> dict:
         payload = page("ebay_bin")
@@ -353,14 +353,24 @@ class TestVolumePricing:
 
         assert outcome.handled is False
 
-    def test_the_listings_own_locator_still_reads_it(self, seams):
-        # learned from the model's one-unit read of this very page
+    def test_nor_is_the_listings_own_locator(self, seams):
+        # one learned before tiers were recognised may point at a bulk tier
         tracked = row(locator_kind="jsonld", price_locator="offers.price")
 
         outcome = run(recheck.recheck_deterministic(FakeBrowser(self._tiered()), tracked))
 
-        assert outcome.method == "jsonld"
-        assert seams["recorded"][0]["price"] == EBAY_BIN_PRICE
+        assert outcome.handled is False
+        assert seams["recorded"] == []
+        assert seams["misses"] == []
+
+    def test_a_listing_read_without_a_browser_stops_being(self, seams):
+        # the raw HTML carries no tier marker, so the GET would keep reading
+        # the stored locator; the browser saw the tiers, so it goes off
+        tracked = row(locator_kind="jsonld", price_locator="offers.price", static_ok=True)
+
+        run(recheck.recheck_deterministic(FakeBrowser(self._tiered()), tracked))
+
+        assert seams["static_cleared"] == [1]
 
 
 class TestStaticRung:

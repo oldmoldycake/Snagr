@@ -215,8 +215,8 @@ across all of it deciding what is believed and which sites are read at all.
    static rung (`STATIC_FETCH`), then one browser load and the ladder: the
    listing's locator → the site's consensus locator → the JSON-LD/meta
    fallbacks. A page that prices by order size (`markers.volume_pricing`:
-   "1-29 pieces", "≥300 pieces") keeps only the listing's own locator, since
-   the other rungs may read a bulk tier; the price tracked is always one
+   "1-29 pieces", "≥300 pieces") is left to the model and learns no locator,
+   since any locator may read a bulk tier; the price tracked is always one
    unit's. The LLM is the fallback, and its read relearns the locator; a
    locator that misses `LOCATOR_MAX_FAILURES` times is cleared.
    `CHEAP_RECHECK=false` sends every recheck through the model.

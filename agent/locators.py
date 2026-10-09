@@ -658,6 +658,10 @@ def select_locator(extract: dict, confirmed_price: Decimal) -> Locator | None:
     Offer.price on an auction-only listing, so a locator learned there would
     faithfully record a number that is not a price anyone can pay.
 
+    So does a page that prices by order size: which of its tiers a locator
+    lands on cannot be told from the page alone, and a locator that later
+    reads a bulk tier records a price nobody buying one unit can pay.
+
     Args:
       extract: A PAGE_EXTRACTOR_JS payload from the page the price was read on.
       confirmed_price: The price the LLM just confirmed, already validated.
@@ -667,6 +671,8 @@ def select_locator(extract: dict, confirmed_price: Decimal) -> Locator | None:
     """
     markers = extract.get("markers") or {}
     if markers.get("auction") and not markers.get("buy_now"):
+        return None
+    if markers.get("volume_pricing"):
         return None
 
     for block in _jsonld_blocks(extract):
