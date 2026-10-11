@@ -1,15 +1,15 @@
 # Web framework
-fastapi==0.142.2
+fastapi==0.143.0
 uvicorn[standard]==0.54.0
 starlette==1.7.0
 python-multipart  # multipart parsing for the reference-upload endpoint
 
 # Data / DB
-sqlalchemy[asyncio]==2.1.1
+sqlalchemy[asyncio]==2.1.4
 asyncpg
 alembic
 pgvector
-pydantic==2.13.5
+pydantic==2.14.0
 pydantic-settings
 python-dotenv
 email-validator
@@ -23,7 +23,7 @@ authlib<2
 sse-starlette
 
 # MCP server (POST /api/mcp) — pinned: it pulls ~40 transitive packages
-fastmcp==4.0.10
+fastmcp==4.0.11
 
 # Outbound HTTP — notification delivery, vision sidecar client, OIDC
 httpx
