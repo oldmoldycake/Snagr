@@ -1,6 +1,8 @@
-"""Categories — /api/categories. Auth required; every write is admin-only
-(403 forbidden otherwise): categories are shared by every user, and deleting
-one takes every user's items, watches and price history in it with it.
+"""Categories — /api/categories. Auth required. Any user may create one; only
+its creator or an admin may rename it or choose its sites, and only an admin
+may delete one (403 forbidden otherwise): categories are shared by every user,
+and deleting one takes every user's items, watches and price history in it
+with it.
 
 item_count / snagged_count / site_ids are computed at query time
 (services/catalog.py, shared with the MCP tools).
@@ -36,22 +38,25 @@ async def list_categories(user=Depends(current_user), db: AsyncSession = Depends
     dependencies=[Depends(csrf_guard)],
 )
 async def create_category(
-    body: CategoryCreateRequest, user=Depends(require_admin), db: AsyncSession = Depends(get_db)
+    body: CategoryCreateRequest, user=Depends(current_user), db: AsyncSession = Depends(get_db)
 ):
-    """Create a category; 422 validation_error for a blank name, 422 duplicate
-    for one that already exists (case-insensitive)."""
-    return await catalog_service.create_category(db, body.name)
+    """Create a category the caller can then manage; 422 validation_error for a
+    blank name, 422 duplicate for one that already exists (case-insensitive)."""
+    return await catalog_service.create_category(db, body.name, user.id)
 
 
 @router.patch("/{category_id}", response_model=Category, dependencies=[Depends(csrf_guard)])
 async def update_category(
     category_id: int,
     body: CategoryUpdateRequest,
-    user=Depends(require_admin),
+    user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Rename a category (the slug stays); 404 for an unknown category."""
-    return await catalog_service.update_category(db, category_id, body.name, user.id)
+    """Rename a category (the slug stays); 404 for an unknown category, 403
+    forbidden unless the caller created it or is an admin."""
+    return await catalog_service.update_category(
+        db, category_id, body.name, user.id, is_admin=user.role == "admin"
+    )
 
 
 @router.delete(
@@ -70,9 +75,12 @@ async def delete_category(
 async def set_category_sites(
     category_id: int,
     body: SetCategorySitesRequest,
-    user=Depends(require_admin),
+    user=Depends(current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Replace the sites a category is searched on; unknown site ids are dropped.
-    404 for an unknown category."""
-    return await catalog_service.set_category_sites(db, category_id, body.site_ids, user.id)
+    404 for an unknown category, 403 forbidden unless the caller created it or
+    is an admin."""
+    return await catalog_service.set_category_sites(
+        db, category_id, body.site_ids, user.id, is_admin=user.role == "admin"
+    )

@@ -79,6 +79,7 @@ export function toCategory(c: (typeof store.categories)[number]): Category {
     site_ids: c.site_ids,
     item_count: items.length,
     snagged_count: items.filter((i) => targetMet(i.id)).length,
+    created_by: c.created_by,
   }
 }
 

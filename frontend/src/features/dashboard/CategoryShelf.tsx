@@ -20,6 +20,7 @@ import { cn } from '@/lib/cn'
 import { useJobs } from '@/features/activity/JobsProvider'
 import { useHuntNow } from '@/features/activity/useHuntNow'
 import { useInstance, useSession } from '@/features/auth/useSession'
+import { canEditCategory } from '@/features/categories/categoryEdits'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { WatchList } from '@/features/items/WatchList'
 import type { Lead, Shelf } from './shelves'
@@ -66,8 +67,7 @@ export function CategoryShelf({
   onRename: (category: Category) => void
 }) {
   const { category, items, hits, lead } = shelf
-  // categories are shared, so only an admin links their sites
-  const isAdmin = useSession().data?.role === 'admin'
+  const canEdit = canEditCategory(category, useSession().data)
   const sectionRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const mounted = useRef(false)
@@ -208,7 +208,7 @@ export function CategoryShelf({
         </h3>
         <div className="flex shrink-0 items-center gap-1">
           {noSites ? (
-            isAdmin ? (
+            canEdit ? (
               <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
                 Link sites
               </Button>
@@ -254,7 +254,7 @@ export function CategoryShelf({
                 {items.length === 1 ? 'this item' : `these ${items.length} items`}.
               </span>
             </div>
-          ) : isAdmin ? (
+          ) : canEdit ? (
             <button
               type="button"
               aria-label={`Edit sites for ${category.name}`}
@@ -322,8 +322,10 @@ export function ShelfMenu({
   const huntNow = useHuntNow()
   const huntingOff = useInstance().data?.hunt_enabled === false
   const live = liveHuntFor('category', category.id)
-  // categories are shared, so only an admin edits or deletes one
-  const isAdmin = useSession().data?.role === 'admin'
+  const me = useSession().data
+  const canEdit = canEditCategory(category, me)
+  // deleting takes everyone's items in the category, so it stays an admin's
+  const isAdmin = me?.role === 'admin'
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirming, setConfirming] = useState(false)
   const keepRef = useRef<HTMLDivElement>(null)
@@ -433,7 +435,7 @@ export function ShelfMenu({
             )}
           </DropdownMenuItem>
         )}
-        {isAdmin ? (
+        {canEdit ? (
           <>
             <DropdownMenuItem onSelect={() => onEditSites(category)}>
               <Globe /> Edit sites

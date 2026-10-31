@@ -155,6 +155,7 @@ async def build_category(db: AsyncSession, cat: Categories, user_id: int) -> Cat
         site_ids=site_ids,
         item_count=item_count or 0,
         snagged_count=snagged_count,
+        created_by=cat.created_by,
     )
 
 
@@ -164,14 +165,14 @@ async def list_categories(db: AsyncSession, user_id: int) -> list[Category]:
     return [await build_category(db, cat, user_id) for cat in rows]
 
 
-async def create_category(db: AsyncSession, name: str) -> Category:
-    """A new category with a generated, unique slug; the name is trimmed, then
-    a blank one is 422 validation_error and a duplicate (case-insensitive) is
-    422 duplicate — mock parity, including the `fields` the form renders.
-    Commits."""
+async def create_category(db: AsyncSession, name: str, user_id: int) -> Category:
+    """A new category with a generated, unique slug, created by `user_id`; the
+    name is trimmed, then a blank one is 422 validation_error and a duplicate
+    (case-insensitive) is 422 duplicate — mock parity, including the `fields`
+    the form renders. Commits."""
     name = await checked_name(db, Categories, name)
     for attempt in range(_SLUG_ATTEMPTS):
-        cat = Categories(name=name, slug=await unique_slug(db, name))
+        cat = Categories(name=name, slug=await unique_slug(db, name), created_by=user_id)
         try:
             # a savepoint, so a lost slug rolls back only this INSERT
             async with db.begin_nested():
@@ -187,19 +188,42 @@ async def create_category(db: AsyncSession, name: str) -> Category:
     await db.commit()
 
     return Category(
-        id=cat.id, name=cat.name, slug=cat.slug, site_ids=[], item_count=0, snagged_count=0
+        id=cat.id,
+        name=cat.name,
+        slug=cat.slug,
+        site_ids=[],
+        item_count=0,
+        snagged_count=0,
+        created_by=cat.created_by,
     )
 
 
-async def update_category(
-    db: AsyncSession, category_id: int, name: str | None, user_id: int
-) -> Category:
-    """Rename (the slug stays, so links to the category keep working); 404
-    unknown, then the name is held to create's rules — trimmed, 422
-    validation_error blank, 422 duplicate taken by another category. Commits."""
+async def editable_category(
+    db: AsyncSession, category_id: int, user_id: int, *, is_admin: bool
+) -> Categories:
+    """The category the caller may rename and choose the sites of: 404
+    unknown, then 403 forbidden unless they are an admin or created it.
+
+    Either change reaches everyone with items in it — a rename is the name
+    they see, and the sites are where the hunter searches for every one of
+    those items — so it is not open to whoever happens to track something
+    there. A category nobody created (created_by NULL) is an admin's alone."""
     cat = await db.get(Categories, category_id)
     if cat is None:
         raise err(404, "not_found", f"Category {category_id} does not exist")
+    if not is_admin and cat.created_by != user_id:
+        raise err(403, "forbidden", "Only an admin or the category's creator can change it")
+    return cat
+
+
+async def update_category(
+    db: AsyncSession, category_id: int, name: str | None, user_id: int, *, is_admin: bool
+) -> Category:
+    """Rename (the slug stays, so links to the category keep working); 404
+    unknown, 403 for a caller who may not (editable_category), then the name
+    is held to create's rules — trimmed, 422 validation_error blank, 422
+    duplicate taken by another category. Commits."""
+    cat = await editable_category(db, category_id, user_id, is_admin=is_admin)
 
     if name is not None:
         cat.name = await checked_name(db, Categories, name, exclude_id=cat.id)
@@ -235,13 +259,12 @@ async def delete_category(db: AsyncSession, category_id: int) -> None:
 
 
 async def set_category_sites(
-    db: AsyncSession, category_id: int, site_ids: list[int], user_id: int
+    db: AsyncSession, category_id: int, site_ids: list[int], user_id: int, *, is_admin: bool
 ) -> Category:
     """Replace the set of sites a category is searched on; unknown site ids
-    are silently dropped. 404 unknown category. Commits."""
-    cat = await db.get(Categories, category_id)
-    if cat is None:
-        raise err(404, "not_found", f"Category {category_id} does not exist")
+    are silently dropped. 404 unknown category, 403 for a caller who may not
+    (editable_category). Commits."""
+    cat = await editable_category(db, category_id, user_id, is_admin=is_admin)
 
     # read every id and match here, not `WHERE id IN (...)`: an id past what
     # the column holds is unknown too, and asyncpg refuses to send it

@@ -137,6 +137,11 @@ export interface Category {
   site_ids: number[]
   item_count: number
   snagged_count: number
+  /**
+   * The user who may rename it and choose its sites besides an admin; null when
+   * only an admin may. Anyone may create a category; only an admin deletes one.
+   */
+  created_by: number | null
 }
 
 /** POST /api/categories body. */

@@ -1,6 +1,5 @@
 import type { Category, ItemSummary } from '@/api/types'
 import { StepPips } from '@/components/ui/step-pips'
-import { useSession } from '@/features/auth/useSession'
 import { CreateCategoryDialog } from '@/features/categories/CreateCategoryDialog'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { siteList } from '@/features/sites/siteList'
@@ -18,10 +17,7 @@ const CTA = 'h-[38px] px-4 text-xs'
  * The dashboard's hero until the caller has an item: it walks them through
  * ① a category → ② items in it → ③ where alerts go, the step AlertsNudge
  * carries on once the first item replaces this hero. "Ready" is only known to
- * the page that just ran New category (categories have no owner), so after a
- * reload it reads "shared".
- * Categories are shared, so only an admin creates one: everyone else is walked
- * to an existing category, or told to ask an admin when there is none.
+ * the page that just ran New category, so after a reload it reads "shared".
  */
 export function GuideHero({
   state,
@@ -32,7 +28,6 @@ export function GuideHero({
   onCreated: (category: Category) => void
   onAdded: (item: ItemSummary) => void
 }) {
-  const isAdmin = useSession().data?.role === 'admin'
   const eyebrow = `Getting started · ${formatToday()}`
 
   return (
@@ -43,9 +38,7 @@ export function GuideHero({
           {state.kind === 'ready'
             ? `${state.category.name} is ready`
             : state.kind === 'shared'
-              ? isAdmin
-                ? 'Pick a category, or make your own'
-                : 'Pick a category'
+              ? 'Pick a category, or make your own'
               : 'Nothing to hunt yet'}
         </h1>
         <p className="mt-2 max-w-[58ch] text-[15px] text-ink-2">
@@ -61,15 +54,12 @@ export function GuideHero({
               <b className="font-semibold text-ink">
                 {state.categoryCount} {state.categoryCount === 1 ? 'category' : 'categories'}
               </b>
-              . {isAdmin ? 'Add an item to one below, or create your own.' : 'Add an item to one below.'}
+              . Add an item to one below, or create your own.
             </>
           ) : (
             <>
               Everything you track belongs to a category, which sets the sites Snagr searches, like eBay or
-              Newegg.{' '}
-              {isAdmin
-                ? 'Create a category first, then add items to it.'
-                : 'An admin creates categories. Ask yours for one, then add items to it.'}
+              Newegg. Create a category first, then add items to it.
             </>
           )}
         </p>
@@ -77,13 +67,7 @@ export function GuideHero({
           size="md"
           className="mt-4"
           steps={[
-            state.kind === 'shared'
-              ? isAdmin
-                ? 'Choose or create a category'
-                : 'Choose a category'
-              : isAdmin
-                ? 'Create a category'
-                : 'Get a category from an admin',
+            state.kind === 'shared' ? 'Choose or create a category' : 'Create a category',
             'Add items to it',
             'Choose where alerts go',
           ]}
@@ -98,17 +82,15 @@ export function GuideHero({
               trigger={`＋ Add item to ${state.category.name}`}
               onAdded={onAdded}
             />
-          ) : isAdmin ? (
+          ) : (
             <CreateCategoryDialog
               className={CTA}
               trigger={state.kind === 'shared' ? '＋ Create a category' : '＋ Create your first category'}
               onCreated={onCreated}
             />
-          ) : null}
+          )}
           {state.kind === 'shared' ? (
-            <span className="text-[14px] text-ink-3">
-              {isAdmin ? 'or use Add item on a category below' : 'Use Add item on a category below'}
-            </span>
+            <span className="text-[14px] text-ink-3">or use Add item on a category below</span>
           ) : null}
         </div>
       </section>

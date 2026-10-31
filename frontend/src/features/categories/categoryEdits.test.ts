@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasCategoryEdits } from './categoryEdits'
+import { canEditCategory, hasCategoryEdits } from './categoryEdits'
 
 const keyboards = { name: 'Keyboards', site_ids: [1, 3] }
 
@@ -23,5 +23,27 @@ describe('hasCategoryEdits', () => {
 
   it('sees nothing in a picker left empty on a category with no sites', () => {
     expect(hasCategoryEdits({ name: 'Lenses', site_ids: [] }, 'Lenses', [])).toBe(false)
+  })
+})
+
+describe('canEditCategory', () => {
+  const admin = { id: 1, role: 'admin' as const }
+  const creator = { id: 2, role: 'user' as const }
+  const other = { id: 3, role: 'user' as const }
+
+  it("lets the creator and an admin edit a user's category, and no one else", () => {
+    const theirs = { created_by: creator.id }
+    expect(canEditCategory(theirs, creator)).toBe(true)
+    expect(canEditCategory(theirs, admin)).toBe(true)
+    expect(canEditCategory(theirs, other)).toBe(false)
+  })
+
+  it('leaves a category nobody created to an admin', () => {
+    expect(canEditCategory({ created_by: null }, admin)).toBe(true)
+    expect(canEditCategory({ created_by: null }, other)).toBe(false)
+  })
+
+  it('lets no one edit before the session has loaded', () => {
+    expect(canEditCategory({ created_by: creator.id }, undefined)).toBe(false)
   })
 })

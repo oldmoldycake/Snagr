@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/cn'
+import { useSession } from '@/features/auth/useSession'
 import { defaultSiteName, findDuplicate, hostOf, isPlausibleUrl, normalizeBaseUrl } from './siteUrl'
 
 type Notice = { kind: 'invalid' | 'duplicate'; text: string }
@@ -22,6 +23,8 @@ type Notice = { kind: 'invalid' | 'duplicate'; text: string }
 export function SitePicker({ selected, onChange }: { selected: number[]; onChange: (ids: number[]) => void }) {
   const queryClient = useQueryClient()
   const sites = useQuery({ queryKey: qk.sites, queryFn: listSites })
+  // sites are shared and the hunter browses their URLs, so only an admin adds one
+  const isAdmin = useSession().data?.role === 'admin'
   // "paused" is judged once, when the picker opens, rather than on every render
   const [openedAt] = useState(Date.now)
 
@@ -210,7 +213,7 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
           type="button"
           aria-expanded={adding}
           aria-controls={formId}
-          hidden={adding}
+          hidden={adding || !isAdmin}
           onClick={openForm}
           className="flex h-10 w-full items-center gap-2.5 border-t border-hairline px-3 text-[14px] text-ink-3 transition-colors hover:text-lume focus-visible:-outline-offset-2"
         >
@@ -219,6 +222,11 @@ export function SitePicker({ selected, onChange }: { selected: number[]; onChang
           </span>
           Add a site that isn't listed
         </button>
+        {isAdmin ? null : (
+          <p className="flex h-10 items-center border-t border-hairline px-3 text-[14px] text-ink-3">
+            Missing a site? Ask an admin to add it.
+          </p>
+        )}
 
         <div
           id={formId}
