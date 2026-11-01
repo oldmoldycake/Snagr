@@ -3,7 +3,7 @@ import type { Category, ItemSummary } from '@/api/types'
 import { defaultOpen, groupShelves, lead, newlyStruck, orderShelves, resolveOpen, type Shelf } from './shelves'
 
 function category(id: number, name: string, siteIds: number[] = [1]): Category {
-  return { id, name, slug: name.toLowerCase(), site_ids: siteIds, item_count: 99, snagged_count: 0 }
+  return { id, name, slug: name.toLowerCase(), site_ids: siteIds, item_count: 99, snagged_count: 0, created_by: null }
 }
 
 /** An item whose target_met follows from its prices, like the API's. */

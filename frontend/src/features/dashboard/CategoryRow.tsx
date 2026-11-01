@@ -3,6 +3,7 @@ import type { Category, ItemSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/cn'
 import { useSession } from '@/features/auth/useSession'
+import { canEditCategory } from '@/features/categories/categoryEdits'
 import { AddItemDialog } from '@/features/items/AddItemDialog'
 import { ShelfMenu } from './CategoryShelf'
 
@@ -27,8 +28,7 @@ export function CategoryRow({
   onAdded: (item: ItemSummary) => void
 }) {
   const noSites = category.site_ids.length === 0
-  // categories are shared, so only an admin links their sites
-  const isAdmin = useSession().data?.role === 'admin'
+  const canEdit = canEditCategory(category, useSession().data)
   return (
     <div
       id={`shelf-${category.id}`}
@@ -56,7 +56,7 @@ export function CategoryRow({
       </span>
       <div className="flex shrink-0 items-center gap-1">
         {noSites ? (
-          isAdmin ? (
+          canEdit ? (
             <Button variant="warn" size="sm" onClick={() => onEditSites(category)}>
               Link sites
             </Button>

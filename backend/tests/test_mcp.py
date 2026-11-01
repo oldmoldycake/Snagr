@@ -16,7 +16,7 @@ import httpx2
 import pytest
 from app.config import settings
 from app.main import app, mcp_app
-from app.models import Items, User
+from app.models import Categories, Items, User
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 
@@ -501,25 +501,26 @@ async def test_catalog_writes(client):
         assert await _ok(agent, "list_categories") == []
 
 
-async def test_catalog_writes_are_admin_only(client, db_session):
+async def test_catalog_writes_need_an_admin_or_the_categorys_creator(client, db_session):
     """The catalog is shared, so its write tools answer `forbidden` to a
-    non-admin's token — checked before the category or site is even looked
-    up — while the reads stay open."""
+    non-admin's token — except that anyone may create a category and then
+    change it. Deleting one and every site write stay an admin's, checked
+    before the category or site is even looked up. The reads stay open."""
     user_id = await _sign_in(client)
-    cat = (await client.post("/api/categories", json={"name": "Cameras"}, headers=CSRF)).json()
     site_body = {"name": "eBay", "base_url": "https://ebay.com"}
     site = (await client.post("/api/sites", json=site_body, headers=CSRF)).json()
     token = await _token(client, scopes=("read", "write"))
 
-    # the first registered user is the admin, so demote them to test this
     async with db_session() as session:
+        # created by nobody, so only an admin may change it
+        session.add(Categories(name="Cameras", slug="cameras"))
+        # the first registered user is the admin, so demote them to test this
         user = await session.get(User, user_id)
         user.role = "user"
         await session.commit()
 
     async with _agent(token) as agent:
         calls = [
-            ("create_category", {"name": "Lenses"}),
             ("update_category", {"category": "cameras", "name": "Film cameras"}),
             ("update_category", {"category": "cameras", "site_ids": ["ebay"]}),
             ("delete_category", {"category": "cameras"}),
@@ -531,11 +532,20 @@ async def test_catalog_writes_are_admin_only(client, db_session):
         for tool, args in calls:
             assert (await _error(agent, tool, **args))["code"] == "forbidden", tool
 
-        (category,) = await _ok(agent, "list_categories")
-        assert (category["id"], category["name"], category["site_ids"]) == (
-            cat["id"],
+        lenses = await _ok(agent, "create_category", name="Lenses")
+        assert lenses["created_by"] == user_id
+        changed = await _ok(
+            agent, "update_category", category="lenses", name="Prime lenses", site_ids=["ebay"]
+        )
+        assert (changed["name"], changed["site_ids"]) == ("Prime lenses", [site["id"]])
+        assert (await _error(agent, "delete_category", category="lenses"))["code"] == "forbidden"
+
+        categories = {c["slug"]: c for c in await _ok(agent, "list_categories")}
+        cameras = categories["cameras"]
+        assert (cameras["name"], cameras["site_ids"], cameras["created_by"]) == (
             "Cameras",
             [],
+            None,
         )
         (listed,) = await _ok(agent, "list_sites")
         assert (listed["id"], listed["base_url"]) == (site["id"], "https://ebay.com")

@@ -17,14 +17,15 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { useSession } from '@/features/auth/useSession'
 import { SitePicker } from '@/features/sites/SitePicker'
 import { hasCategoryEdits } from './categoryEdits'
 
 /**
- * Rename a category, choose which sites it searches, or delete it. Seeds its
- * name from props once — remount it (via key) each time it opens. Saving stays
- * on the page it was opened from, since a rename keeps the slug; deleting goes
- * to the dashboard.
+ * Rename a category, choose which sites it searches, or (for an admin) delete
+ * it. Seeds its name from props once — remount it (via key) each time it opens.
+ * Saving stays on the page it was opened from, since a rename keeps the slug;
+ * deleting goes to the dashboard.
  */
 export function EditCategoryDialog({
   category,
@@ -45,6 +46,8 @@ export function EditCategoryDialog({
   const siteIds = pickedSiteIds ?? category.site_ids
   const [sitesMissing, setSitesMissing] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  // its creator may edit it too, but deleting takes everyone's items in it
+  const isAdmin = useSession().data?.role === 'admin'
 
   const save = useMutation({
     mutationFn: async () => {
@@ -123,29 +126,31 @@ export function EditCategoryDialog({
               ) : null}
             </div>
 
-            <div className="border-t border-hairline pt-3">
-              {confirmingDelete ? (
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-xs text-rise">
-                    Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be
-                    undone.
-                  </p>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    disabled={remove.isPending}
-                    onClick={() => remove.mutate()}
-                  >
-                    {remove.isPending ? <Loader2 className="animate-spin" /> : null}
-                    Delete
+            {isAdmin ? (
+              <div className="border-t border-hairline pt-3">
+                {confirmingDelete ? (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-rise">
+                      Delete “{category.name}” and every item in it, yours and everyone else's? This cannot be
+                      undone.
+                    </p>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate()}
+                    >
+                      {remove.isPending ? <Loader2 className="animate-spin" /> : null}
+                      Delete
+                    </Button>
+                  </div>
+                ) : (
+                  <Button variant="ghost" size="sm" className="text-rise" onClick={() => setConfirmingDelete(true)}>
+                    <Trash2 /> Delete category
                   </Button>
-                </div>
-              ) : (
-                <Button variant="ghost" size="sm" className="text-rise" onClick={() => setConfirmingDelete(true)}>
-                  <Trash2 /> Delete category
-                </Button>
-              )}
-            </div>
+                )}
+              </div>
+            ) : null}
           </DialogBody>
 
           <DialogFooter>
