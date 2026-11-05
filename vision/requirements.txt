@@ -3,7 +3,7 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 # Web framework
-fastapi==0.142.2
+fastapi==0.162.0
 uvicorn[standard]==0.54.0
 python-multipart==0.0.32
 
@@ -17,19 +17,19 @@ torch==2.14.0
 # in degraded mode even with a valid HF_TOKEN. 0.29 is the torch-2.14 pair
 # (same untagged pin as torch, for the same arm64 reason).
 torchvision==0.29.0
-transformers==5.18.0
+transformers==5.22.0
 huggingface_hub==1.33.0
-pillow==12.3.0
-numpy==2.5.3
+pillow==13.0.0
+numpy==2.5.4
 
 # Data / DB
-sqlalchemy==2.1.2
+sqlalchemy==2.1.6
 psycopg[binary]==3.3.6
-pgvector==0.5.0
+pgvector==0.5.1
 python-dotenv==1.2.4
 
 # Object store / image fetching
-boto3==1.43.107
+boto3==1.43.122
 httpx==0.28.1
 
 # Dev / test
@@ -37,4 +37,4 @@ httpx==0.28.1
 # .github/workflows/ci.yml and bumped deliberately — a pin here would let
 # Dependabot drift the two apart.
 ruff
-pytest==9.1.1
+pytest==9.2.0
