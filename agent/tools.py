@@ -745,7 +745,7 @@ async def log_listing_check(
       url: The full http(s) URL of the listing you evaluated and rejected. It must be
         a page on THIS site - a URL on any other domain is refused.
       reason: Short category for the rejection, e.g. "poor_fit", "duplicate",
-        "authenticity", "auction". A few words, not a sentence.
+        "authenticity", "auction", "bulk_only". A few words, not a sentence.
       notes: Optional ONE-LINE detail on why, e.g. "no repro flags but price is 3x
         market". This text is shown back to you on later searches of this site, so keep
         it factual and short; long text is truncated.

@@ -1,7 +1,10 @@
 """Auctions are never recorded — a bid is a clock reading, not a price. The
 discovery and re-check prompts carry the ban (Buy It Now is the one stated
 exception); the market-grounding extraction prompt deliberately does NOT,
-because sold auction results are exactly the comps grounding wants."""
+because sold auction results are exactly the comps grounding wants.
+
+The same two prompts hold the companion rule: the price recorded is one
+unit's, never a cheaper tier that only a bulk order pays."""
 
 import asyncio
 
@@ -89,3 +92,16 @@ def test_extraction_prompt_keeps_auction_results_as_comps():
     prompt = _extraction_prompt()
     assert "AUCTIONS ARE NEVER RECORDED" not in prompt
     assert "auction results" in prompt
+
+
+def test_discovery_prompt_records_one_units_price_not_a_bulk_tier():
+    prompt = _discovery_prompt()
+    assert "NEVER A BULK TIER" in prompt
+    assert "includes a quantity of 1" in prompt
+    assert '"bulk_only"' in prompt
+    # a quantity the criteria ask for overrides ONE for the tier and the rejection
+    assert "takes the place of ONE everywhere in this section" in prompt
+
+
+def test_recheck_prompt_records_one_units_price_not_a_bulk_tier():
+    assert "includes a\n    quantity of 1" in _recheck_prompt()
