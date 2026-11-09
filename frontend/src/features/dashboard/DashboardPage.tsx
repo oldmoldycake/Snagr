@@ -53,8 +53,6 @@ export function DashboardPage() {
   usePageTitle(search ? `Search: ${search}` : 'Dashboard')
   const reducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
   const userId = useSession().data?.id ?? null
-  // categories are shared, so only an admin creates one
-  const isAdmin = useSession().data?.role === 'admin'
 
   const drops = useQuery({
     queryKey: qk.dashboardDrops(range),
@@ -334,7 +332,7 @@ export function DashboardPage() {
             </Button>
           ) : null}
           <RangeSelector value={range} onChange={setRange} className="max-sm:order-last max-sm:w-full" />
-          {isAdmin ? <CreateCategoryDialog trigger="＋ New category" onCreated={onCreated} /> : null}
+          <CreateCategoryDialog trigger="＋ New category" onCreated={onCreated} />
         </div>
 
         <LabelStrip hidden={!anyOpen} />

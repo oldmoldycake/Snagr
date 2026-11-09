@@ -98,6 +98,11 @@ class Categories(Base):
     condition_tiers: Mapped[list | None] = mapped_column(JSONB)
     price_sources: Mapped[list | None] = mapped_column(JSONB)
     pinned_sources: Mapped[list | None] = mapped_column(JSONB)
+    # who may rename it and choose its sites besides an admin; NULL = only an
+    # admin (made before users could, or its creator's account was deleted)
+    created_by: Mapped[int | None] = mapped_column(  # + api
+        ForeignKey("users.id", ondelete="SET NULL")
+    )
 
     __table_args__ = (Index("uq_categories_name", text("lower(name)"), unique=True),)
 

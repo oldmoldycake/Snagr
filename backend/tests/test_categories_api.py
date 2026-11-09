@@ -77,7 +77,15 @@ async def test_category_shape_and_plain_list_envelope(client, db_session):
 
     assert list(body) == ["data"]
     (category,) = body["data"]
-    assert set(category) == {"id", "name", "slug", "site_ids", "item_count", "snagged_count"}
+    assert set(category) == {
+        "id",
+        "name",
+        "slug",
+        "site_ids",
+        "item_count",
+        "snagged_count",
+        "created_by",
+    }
     assert category["name"] == "Cameras"
     assert category["item_count"] == 0
     assert category["snagged_count"] == 0
@@ -486,41 +494,139 @@ async def test_set_sites_drops_unknown_ids_even_past_what_an_id_can_be(client, d
     assert res.json()["site_ids"] == [site_id]
 
 
-# --- writes are admin-only ------------------------------------------------------
+# --- who may write -------------------------------------------------------------
+
+
+async def _admin_and_user(client, make_client, monkeypatch):
+    """The admin signed in on `client` (the first account is the admin) and a
+    plain user signed in on a second client: (admin_id, user, user_id)."""
+    monkeypatch.setattr(settings, "REGISTRATION_OPEN", True)
+    admin_id = await _sign_in(client)
+    user = await make_client()
+    user_id = await _sign_in(user, STRANGER)
+    return admin_id, user, user_id
+
+
+async def test_any_user_can_create_a_category_and_change_it(client, make_client, monkeypatch):
+    """A category is the only way to track something new, so creating one is
+    open to everyone; its creator may then rename it and choose its sites."""
+    _, user, user_id = await _admin_and_user(client, make_client, monkeypatch)
+    site = await client.post(
+        "/api/sites", json={"name": "eBay", "base_url": "https://ebay.com"}, headers=CSRF
+    )
+    site_id = site.json()["id"]
+
+    created = await user.post("/api/categories", json={"name": "Keyboards"}, headers=CSRF)
+    assert created.status_code == 201, created.text
+    assert created.json()["created_by"] == user_id
+    category_id = created.json()["id"]
+
+    renamed = await user.patch(
+        f"/api/categories/{category_id}", json={"name": "Mechanical keyboards"}, headers=CSRF
+    )
+    assert renamed.status_code == 200, renamed.text
+    linked = await user.put(
+        f"/api/categories/{category_id}/sites", json={"site_ids": [site_id]}, headers=CSRF
+    )
+    assert linked.status_code == 200, linked.text
+
+    category = (await _categories_by_name(client))["Mechanical keyboards"]
+    assert (category["site_ids"], category["created_by"]) == ([site_id], user_id)
 
 
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [
-        ("POST", "/api/categories", {"name": "Consoles"}),
         ("PATCH", "/api/categories/{id}", {"name": "Games (renamed)"}),
         ("PUT", "/api/categories/{id}/sites", {"site_ids": []}),
-        ("DELETE", "/api/categories/{id}", None),
     ],
 )
-async def test_category_writes_are_admin_only(client, db_session, method, path, body):
-    """Categories are shared by every user, so a non-admin's write is 403
-    forbidden and changes nothing."""
-    user_id = await _sign_in(client)
-    async with _seed_for(db_session, user_id) as sc:
+@pytest.mark.parametrize("creator", ["admin", "nobody"])
+async def test_a_user_cannot_change_a_category_they_did_not_create(
+    client, make_client, monkeypatch, db_session, method, path, body, creator
+):
+    """Renaming a category or changing its sites reaches everyone with items in
+    it, so a user who didn't create it gets 403 forbidden and changes nothing —
+    the same for one nobody created, which is an admin's alone."""
+    admin_id, user, _ = await _admin_and_user(client, make_client, monkeypatch)
+    async with _seed_for(db_session, admin_id) as sc:
         category = await sc.category("Games")
+        category.created_by = admin_id if creator == "admin" else None
         site = await sc.site()
         sc.db.add(SiteCategories(site_id=site.id, category_id=category.id))
         category_id, site_id = category.id, site.id
 
-    # the first registered user is the admin, so demote them to test this
-    async with db_session() as session:
-        user = await session.get(User, user_id)
-        user.role = "user"
-        await session.commit()
-
-    res = await client.request(method, path.format(id=category_id), json=body, headers=CSRF)
+    res = await user.request(method, path.format(id=category_id), json=body, headers=CSRF)
 
     assert res.status_code == 403, res.text
     assert res.json()["error"]["code"] == "forbidden"
     categories = await _categories_by_name(client)
     assert list(categories) == ["Games"]
     assert categories["Games"]["site_ids"] == [site_id]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("PATCH", "/api/categories/{id}", {"name": "Games (renamed)"}),
+        ("PUT", "/api/categories/{id}/sites", {"site_ids": []}),
+    ],
+)
+async def test_a_user_changing_an_unknown_category_gets_not_found(
+    client, make_client, monkeypatch, method, path, body
+):
+    """404 before 403: every category is listed to every user, so an unknown
+    id is simply not there, whoever asks."""
+    _, user, _ = await _admin_and_user(client, make_client, monkeypatch)
+
+    res = await user.request(method, path.format(id=99999), json=body, headers=CSRF)
+
+    assert res.status_code == 404, res.text
+    assert res.json()["error"]["code"] == "not_found"
+
+
+async def test_an_admin_can_change_a_category_a_user_created(client, make_client, monkeypatch):
+    _, user, user_id = await _admin_and_user(client, make_client, monkeypatch)
+    category = (await user.post("/api/categories", json={"name": "Games"}, headers=CSRF)).json()
+
+    renamed = await client.patch(
+        f"/api/categories/{category['id']}", json={"name": "Retro games"}, headers=CSRF
+    )
+    linked = await client.put(
+        f"/api/categories/{category['id']}/sites", json={"site_ids": []}, headers=CSRF
+    )
+
+    assert renamed.status_code == 200, renamed.text
+    assert linked.status_code == 200, linked.text
+    # an admin's change leaves the category its creator's
+    assert linked.json()["created_by"] == user_id
+
+
+async def test_a_user_cannot_delete_even_a_category_they_created(client, make_client, monkeypatch):
+    """Deleting takes every user's items in the category with it, and anyone
+    may have added one since — so it stays an admin's, creator or not."""
+    _, user, _ = await _admin_and_user(client, make_client, monkeypatch)
+    category = (await user.post("/api/categories", json={"name": "Games"}, headers=CSRF)).json()
+
+    res = await user.delete(f"/api/categories/{category['id']}", headers=CSRF)
+
+    assert res.status_code == 403, res.text
+    assert res.json()["error"]["code"] == "forbidden"
+    assert list(await _categories_by_name(client)) == ["Games"]
+
+
+async def test_deleting_the_creators_account_leaves_the_category_to_admins(
+    client, make_client, monkeypatch
+):
+    """Others may track items in it, so the category outlives its creator's
+    account, and is then an admin's alone."""
+    _, user, user_id = await _admin_and_user(client, make_client, monkeypatch)
+    await user.post("/api/categories", json={"name": "Games"}, headers=CSRF)
+
+    res = await client.delete(f"/api/admin/users/{user_id}", headers=CSRF)
+
+    assert res.status_code == 204, res.text
+    assert (await _categories_by_name(client))["Games"]["created_by"] is None
 
 
 async def test_a_user_cannot_delete_a_category_holding_anothers_watches(

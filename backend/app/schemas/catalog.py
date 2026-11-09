@@ -18,6 +18,9 @@ class Category(BaseModel):
     site_ids: list[int]
     item_count: int
     snagged_count: int
+    # the user who may rename it and choose its sites besides an admin; null
+    # when only an admin may
+    created_by: int | None
 
 
 class CategoryCreateRequest(BaseModel):

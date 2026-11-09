@@ -50,6 +50,7 @@ export interface MockCategory {
   name: string
   slug: string
   site_ids: number[]
+  created_by: number | null
 }
 
 /** A site the hunter shops. */
@@ -500,6 +501,7 @@ function seed() {
       name: cat.name,
       slug: cat.slug,
       site_ids: cat.sites.map((s) => s + 1),
+      created_by: null,
     })
 
     for (const seedItem of cat.items) {
@@ -668,6 +670,7 @@ function seedRetroGames(lastItemId: number, lastListingId: number) {
     name: 'Retro Games',
     slug: 'retro-games',
     site_ids: [AMAZON_ID, EBAY_ID],
+    created_by: null,
   })
 
   let itemId = lastItemId

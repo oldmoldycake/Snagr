@@ -96,6 +96,21 @@ function requireAdmin() {
   return user
 }
 
+/**
+ * The category the caller may rename and choose the sites of: 404 unknown, then
+ * 403 unless they are an admin or created it. Either change reaches everyone
+ * with items in it, so it isn't open to whoever tracks something there.
+ */
+function editableCategory(id: number) {
+  const user = requireUser()
+  const category = store.categories.find((c) => c.id === id)
+  if (!category) throw err(404, 'not_found', `Category ${id} does not exist`)
+  if (user.role !== 'admin' && category.created_by !== user.id) {
+    throw err(403, 'forbidden', "Only an admin or the category's creator can change it")
+  }
+  return category
+}
+
 function rangeParam(request: StrictRequest<DefaultBodyType>): TimeRange {
   const url = new URL(request.url)
   const raw = url.searchParams.get('range')
@@ -870,19 +885,18 @@ export const handlers = [
   }),
 
   http.post('/api/categories', async ({ request }) => {
-    requireAdmin()
+    // anyone may create one, and then manage it (editableCategory)
+    const user = requireUser()
     const body = (await request.json()) as CategoryCreateRequest
     const name = checkedName(store.categories, 'category', body.name ?? '')
     if (name instanceof HttpResponse) return name
-    const category = { id: newId(), name, slug: uniqueSlug(name), site_ids: [] }
+    const category = { id: newId(), name, slug: uniqueSlug(name), site_ids: [], created_by: user.id }
     store.categories.push(category)
     return HttpResponse.json(toCategory(category), { status: 201 })
   }),
 
   http.patch('/api/categories/:id', async ({ params, request }) => {
-    requireAdmin()
-    const category = store.categories.find((c) => c.id === Number(params.id))
-    if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
+    const category = editableCategory(Number(params.id))
     const body = (await request.json()) as CategoryUpdateRequest
     // the slug is set once at creation and survives every rename, so links and
     // bookmarks to /categories/<slug> keep working
@@ -895,6 +909,7 @@ export const handlers = [
   }),
 
   http.delete('/api/categories/:id', async ({ params }) => {
+    // an admin's alone, its creator's included: it takes everyone's items in it
     requireAdmin()
     const id = Number(params.id)
     const itemIds = new Set(store.items.filter((i) => i.category_id === id).map((i) => i.id))
@@ -912,9 +927,7 @@ export const handlers = [
   }),
 
   http.put('/api/categories/:id/sites', async ({ params, request }) => {
-    requireAdmin()
-    const category = store.categories.find((c) => c.id === Number(params.id))
-    if (!category) return err(404, 'not_found', `Category ${params.id} does not exist`)
+    const category = editableCategory(Number(params.id))
     const body = (await request.json()) as { site_ids: number[] }
     category.site_ids = body.site_ids.filter((id) => store.sites.some((s) => s.id === id))
     return HttpResponse.json(toCategory(category))
@@ -1878,6 +1891,8 @@ export const handlers = [
     store.notificationChannels = store.notificationChannels.filter((c) => c.user_id !== id)
     store.tokens = store.tokens.filter((t) => t.user_id !== id)
     store.visionQueue = store.visionQueue.filter((q) => q.user_id !== id)
+    // others may track items in their categories, which stay, for an admin to manage
+    for (const category of store.categories) if (category.created_by === id) category.created_by = null
     store.users = store.users.filter((u) => u.id !== id)
     return new HttpResponse(null, { status: 204 })
   }),

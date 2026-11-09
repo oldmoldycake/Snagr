@@ -34,6 +34,7 @@ import { useSession } from '@/features/auth/useSession'
 import { useHuntNow } from '@/features/activity/useHuntNow'
 import { CategoryChangeChart } from './CategoryChangeChart'
 import { CategoryChips } from './CategoryChips'
+import { canEditCategory } from './categoryEdits'
 import { type CategoryFilters, readCategoryFilters, STATUS_FILTERS, withCategoryFilters } from './categoryFilters'
 import { EditCategoryDialog } from './EditCategoryDialog'
 import { EditSitesDialog } from './EditSitesDialog'
@@ -72,8 +73,7 @@ function CategoryView({ slug }: { slug: string }) {
   const [deletingItem, setDeletingItem] = useState<ItemSummary | null>(null)
   const queryClient = useQueryClient()
   const huntNow = useHuntNow()
-  // categories are shared, so only an admin renames one or links its sites
-  const isAdmin = useSession().data?.role === 'admin'
+  const me = useSession().data
 
   const categories = useQuery({ queryKey: qk.categories, queryFn: listCategories })
   const category = categories.data?.data.find((c) => c.slug === slug)
@@ -162,6 +162,7 @@ function CategoryView({ slug }: { slug: string }) {
     return <NotFound title="Category not found" description="It may have been deleted." />
   }
 
+  const canEdit = canEditCategory(category, me)
   const rows = sortByDistanceToTarget(items.data?.data ?? [])
   const openEdit = () => {
     setEditSession((n) => n + 1)
@@ -182,7 +183,7 @@ function CategoryView({ slug }: { slug: string }) {
             <h1 className="min-w-0 font-display text-[26px] leading-tight font-semibold tracking-[0.03em] wrap-anywhere text-ink">
               {category.name}
             </h1>
-            {isAdmin ? (
+            {canEdit ? (
               <Button variant="ghost" size="iconSm" aria-label="Edit category" onClick={openEdit}>
                 <Pencil />
               </Button>
@@ -192,7 +193,7 @@ function CategoryView({ slug }: { slug: string }) {
             {linkedSites.length === 0 ? (
               <span className="text-xs text-warn">
                 <span aria-hidden>⚠</span> No sites linked, so Snagr has nowhere to search.{' '}
-                {isAdmin ? 'Edit the category to link sites.' : 'Ask an admin to link sites.'}
+                {canEdit ? 'Edit the category to link sites.' : 'Ask an admin to link sites.'}
               </span>
             ) : linkedSites.length === 1 ? (
               // a lone site leaves nothing to filter by (the site picker hides too), so it stays a label
@@ -229,7 +230,7 @@ function CategoryView({ slug }: { slug: string }) {
           <HuntButton scope="category" scopeId={category.id} label="Hunt this category" size="sm" />
           {/* a category with no sites can't take new items from the UI: the hunter would have nowhere to look */}
           {linkedSites.length === 0 ? (
-            isAdmin ? (
+            canEdit ? (
               <Button variant="warn" size="sm" onClick={openEditSites}>
                 Link sites
               </Button>
@@ -292,7 +293,7 @@ function CategoryView({ slug }: { slug: string }) {
             } for listings.`}
             action={
               category.site_ids.length === 0 ? (
-                isAdmin ? (
+                canEdit ? (
                   <Button variant="warn" size="sm" onClick={openEditSites}>
                     Link sites
                   </Button>

@@ -1,8 +1,10 @@
 """Catalog tools — categories and the sites that get searched.
 
-Reads are open to every token; writes are admin-only, like REST, because the
-catalog is shared: one user's delete_category takes every user's watches and
-price history in that category with it."""
+Reads are open to every token. Writes follow REST: any user may create a
+category, only its creator or an admin may change it, and everything else —
+deleting a category, every site write — is admin-only, because the catalog is
+shared: one user's delete_category takes every user's watches and price
+history in that category with it."""
 
 from fastmcp import FastMCP
 
@@ -19,8 +21,10 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool(auth=READ, annotations=READ_ONLY)
     async def list_categories() -> list[Category]:
         """Every category (video games, trading cards, …) with its slug, the
-        ids of the sites linked to it, how many of YOUR items it holds, and how
-        many of those are currently at or below your target ("snagged"). The
+        ids of the sites linked to it, how many of YOUR items it holds, how
+        many of those are currently at or below your target ("snagged"), and
+        `created_by`: the id of the user who may change it besides an admin
+        (null when only an admin may; compare it with whoami's id). The
         catalog itself is shared by every user of the instance."""
         async with caller_session() as (db, user):
             return await catalog_service.list_categories(db, user.id)
@@ -37,11 +41,12 @@ def register(mcp: FastMCP) -> None:
     async def create_category(name: str) -> Category:
         """Add a category, e.g. "Game Boy games". The name is trimmed and the
         slug derived from it; a blank name is a `validation_error` and one
-        already in use (case-insensitive) is a `duplicate`. Link sites to it
-        afterwards with update_category. Admins only (`forbidden` otherwise)."""
+        already in use (case-insensitive) is a `duplicate`. You become its
+        creator, so you can rename it and link sites to it afterwards with
+        update_category — until then the agent has nowhere to search for
+        items in it."""
         async with caller_session() as (db, user):
-            require_admin(user)
-            return await catalog_service.create_category(db, name)
+            return await catalog_service.create_category(db, name, user.id)
 
     @mcp.tool(auth=WRITE)
     async def update_category(
@@ -51,16 +56,19 @@ def register(mcp: FastMCP) -> None:
         one call for what the REST API splits in two. `category` is an id or
         slug; `site_ids` are ids or names and REPLACE the current set (an empty
         list unlinks every site). A new name follows create_category's rules;
-        the slug stays. Arguments you leave out are left alone. Admins only
-        (`forbidden` otherwise)."""
+        the slug stays. Arguments you leave out are left alone. Only the
+        category's creator or an admin may (`forbidden` otherwise; see
+        list_categories' `created_by`)."""
         async with caller_session() as (db, user):
-            require_admin(user)
+            is_admin = user.role == "admin"
             cat = await resolve_category(db, category)
             if name is not None:
-                await catalog_service.update_category(db, cat.id, name, user.id)
+                await catalog_service.update_category(db, cat.id, name, user.id, is_admin=is_admin)
             if site_ids is not None:
                 ids = [(await resolve_site(db, ref)).id for ref in site_ids]
-                await catalog_service.set_category_sites(db, cat.id, ids, user.id)
+                await catalog_service.set_category_sites(
+                    db, cat.id, ids, user.id, is_admin=is_admin
+                )
             return await build_category(db, cat, user.id)
 
     @mcp.tool(auth=WRITE, annotations=DESTRUCTIVE)
